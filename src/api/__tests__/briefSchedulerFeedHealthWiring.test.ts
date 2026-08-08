@@ -64,3 +64,28 @@ describe("briefScheduler.ts source — per-feed health for registry batches", ()
     expect(matches).toHaveLength(2);
   });
 });
+
+describe("briefScheduler.ts source — KEV ETag 304 is reported as healthy, not as a zero-signal fetch", () => {
+  // IQ-1 WS-A A4. The 15-min kevPoller and the weekly scheduler share one
+  // Redis ETag key (CISA_KEV_ETAG_KEY), so the scheduler's own fetch normally
+  // returns 304 → { signals: [], total: 0, fromCache: true }. Before this
+  // wiring, the run logged "CISA KEV feed fetched, total: 0" — indistinguishable
+  // from an empty catalog — and the operator could not tell a healthy cache hit
+  // from a silent feed collapse.
+  it("destructures fromCache from fetchCisaKevSignals", () => {
+    expect(schedulerSource).toMatch(
+      /const \{ signals, total, fromCache \} = await fetchCisaKevSignals\(\)/
+    );
+  });
+
+  it("logs the dedicated not-modified event on the cache-hit branch, keeping the fetched event for real fetches", () => {
+    expect(schedulerSource).toMatch(/scheduler_cisa_kev_not_modified/);
+    expect(schedulerSource).toMatch(/scheduler_cisa_kev_fetched/);
+  });
+
+  it("still records feed health on the 304 branch (a cache hit is a healthy feed)", () => {
+    expect(schedulerSource).toMatch(
+      /await recordFeedSuccess\("cisa_kev", total\);\s*\n\s*if \(fromCache\)/
+    );
+  });
+});

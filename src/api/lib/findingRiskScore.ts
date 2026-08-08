@@ -119,6 +119,12 @@ export interface AffectedResolutions {
   ai_systems: AffectedResolution;
   controls: AffectedResolution;
   obligations: AffectedResolution;
+  /**
+   * ERG convergence C5 — canonical Enterprise Assets. Optional and absent while
+   * the convergence is dark. Business impact deliberately does NOT consume it:
+   * asset-weighted impact is graph propagation (roadmap §3), a later phase.
+   */
+  assets?: AffectedResolution;
 }
 
 export interface BusinessImpactDimension {

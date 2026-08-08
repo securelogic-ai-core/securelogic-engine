@@ -135,7 +135,7 @@ Current recent hardening work has focused on:
 The current offer stack is:
 - Intelligence Brief — Free
 - Brief Pro
-- Team Professional
+- Brief Team
 - Platform Professional
 - Enterprise
 
@@ -147,9 +147,9 @@ Customer-facing package names map to internal Stripe / entitlement keys as follo
 
 | External (docs, UI, marketing) | Internal (Stripe key, entitlement_level) |
 |---|---|
-| Intelligence Brief — Free | `free` |
+| Intelligence Brief — Free | `starter` |
 | Brief Pro | `professional` |
-| Team Professional | `teams` |
+| Brief Team | `teams` |
 | Platform Professional | `platform` |
 | Platform Annual (billing variant) | `platform_annual` |
 | Enterprise | no Stripe key (custom contract) |
@@ -203,7 +203,7 @@ Status (honest):
 - query scoping is route-by-route discipline; an approximate ~74% of route files reference `organization_id` directly, the rest are health/public/auth/admin (figure is an unverified estimate — not re-measured this cycle)
 - Postgres Row-Level Security is being rolled out table-by-table under A04-G1 (findings pilot, then batch A.1: `risks` + `posture_snapshots`); policies exist but are INERT pre-flip (owner cred, NOT FORCE), so route-by-route query scoping remains the only *live* tenant defense until the `app_request` role flip
 - a Cloudflare R2 blob layer has shipped (`src/api/lib/blobStorage.ts`); vendor-assurance document storage is its first consumer (staging-gated)
-- per-org background jobs follow the canonical posture-worker pattern; the intelligence worker is global and fans out per-org at consumption time — the consumption path is now verified (brief and digest schedulers enumerate per-org on `pgElevated` with per-org `withTenant` bodies)
+- per-org background jobs follow the canonical posture-worker pattern; the intelligence worker is global and fans out per-org at consumption time — the consumption path is now verified (brief and digest schedulers enumerate per-org on `pgElevated` with per-org `withTenant` bodies). The brief scheduler's fan-out population is every `status='active'` organization (ADR-0007: generation is an organizational entitlement; `intelligence_brief_subscribers` is email-recipient data consulted only at the delivery step)
 - audit logging is wired but coverage across mutations is uneven
 - the standard surfaces 11 specific code risks (R1–R11 in `TENANT_ISOLATION_STANDARD.md` §11) that drive the recommended `tenant-isolation-enforcement` follow-on package
 

@@ -12,7 +12,8 @@ import {
 } from "@/lib/api";
 import { FindingsList } from "./FindingsList";
 import { FindingCard } from "@/components/FindingCard";
-import { ExportCsvButton } from "./ExportCsvButton";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { FilterPill } from "@/components/FilterPill";
 import { isActiveStatus, urgencyBucket, URGENCY_LABELS } from "./decisionQueue";
 import SavedViewsBar from "./SavedViewsBar";
 import { currentViewFilters } from "./savedViews";
@@ -60,6 +61,75 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   padding: "16px 20px",
 };
 
+// Metric Contract, final step: a tile's link must land on EXACTLY the
+// population its number counts — the same rule that repointed every dashboard
+// findings tile at ?active=true (#638). These tiles held org-wide ACTIVE
+// counts but were inert, so the nearest click (the bare severity pill, which
+// includes closed findings) disagreed with the number the reader just trusted.
+// The href IS the tile's definition; it deliberately REPLACES any current
+// filters rather than intersecting with them. Hover/focus affordance uses a
+// ring so the inline card style stays byte-identical at rest.
+function StatTile({
+  label,
+  value,
+  color,
+  href,
+  population,
+}: {
+  label: string;
+  // null = the count is genuinely unknown (every source failed). Render the
+  // ops-center's em-dash convention, never a fabricated zero — "0 Critical"
+  // during an outage is a lie an executive acts on.
+  value: number | null;
+  color: string;
+  href: string;
+  population: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-label={
+        value === null
+          ? `${label} count unavailable right now — view the list`
+          : `${value} ${population} — view the list`
+      }
+      className="block transition-shadow hover:ring-1 hover:ring-teal-600/50 focus-visible:ring-2 focus-visible:ring-teal-500 outline-none rounded-xl"
+      style={STAT_CARD_STYLE}
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+        {label}
+      </p>
+      <p className="text-3xl font-bold" style={{ color: value === null ? "#64748b" : color }}>
+        {value ?? "—"}
+      </p>
+    </Link>
+  );
+}
+
+// A failed fetch is a loading problem, not an empty result. Rendering the
+// filtered-empty message on an engine error told the reader their findings
+// were gone (or that nothing matched) — the one thing a trust product must
+// never do. role="alert" so assistive tech hears the difference too.
+function FindingsUnavailable({ retryHref }: { retryHref: string }) {
+  return (
+    <div
+      role="alert"
+      className="rounded-xl border p-10 text-center"
+      style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+    >
+      <p className="text-sm font-semibold mb-1" style={{ color: "#f1f5f9" }}>
+        Findings couldn’t be loaded right now.
+      </p>
+      <p className="text-sm mb-4" style={{ color: "#94a3b8" }}>
+        This is a loading problem, not an empty list — your findings are unchanged.
+      </p>
+      <Link href={retryHref} className="text-sm font-medium" style={{ color: "#00c4b4" }}>
+        Try again
+      </Link>
+    </div>
+  );
+}
+
 type Params = Record<string, string | undefined>;
 
 function filterHref(current: Params, key: string, value: string | null): string {
@@ -72,29 +142,7 @@ function filterHref(current: Params, key: string, value: string | null): string 
   return `/findings${qs ? `?${qs}` : ""}`;
 }
 
-function FilterPill({
-  label,
-  href,
-  active,
-}: {
-  label: string;
-  href: string;
-  active: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors"
-      style={
-        active
-          ? { background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }
-          : { background: "transparent", color: "#94a3b8", border: "1px solid #1e293b" }
-      }
-    >
-      {label}
-    </Link>
-  );
-}
+// FilterPill migrated to the shared component (@/components/FilterPill).
 
 export default async function FindingsPage({
   searchParams,
@@ -137,6 +185,14 @@ export default async function FindingsPage({
 
   const findings = findingsData?.findings ?? [];
   const summary = summaryData?.summary;
+  // getFindings returns null ONLY on failure (a successful empty list is
+  // {findings: []}). Track the distinction — it decides between "no findings
+  // match" (an answer) and "couldn't load" (an outage).
+  const findingsUnavailable = findingsData === null;
+  // Tiles fabricate zeros only when EVERY source is gone: no org summary AND
+  // no slice to fall back to. Summary-missing-but-slice-present keeps the
+  // documented under-reporting fallback unchanged.
+  const countsUnavailable = !summary && findingsUnavailable;
 
   // Metric Contract: these tiles count the ACTIVE population (operational_status
   // <> 'closed'), not the strictly-open one. A Critical finding under active
@@ -354,6 +410,8 @@ export default async function FindingsPage({
           ↑ Import CSV
         </Link>
         <ExportCsvButton
+          endpoint="/api/export/findings"
+          filenamePrefix="findings"
           queryString={new URLSearchParams(
             Object.fromEntries(
               Object.entries(currentSp).filter(([, v]) => v !== undefined)
@@ -367,6 +425,11 @@ export default async function FindingsPage({
           mode={workFirstMode}
           counts={wfCounts}
           unknownCounts={wfUnknown}
+          hasAnyFindings={
+            summary
+              ? (summary.active_total ?? 0) > 0 || (summary.closed_count ?? 0) > 0
+              : null
+          }
           independentReview={independentReviewEnabled}
           summaryItems={summaryItems}
           generatedAt={generatedAt}
@@ -397,13 +460,27 @@ export default async function FindingsPage({
           {queueSummaryItems && (
             <FindingsSummaryBar items={queueSummaryItems} generatedAt={queueGeneratedAt} />
           )}
+          {/* Saved views apply to THIS branch too (the browse queue is where
+              analysts filter daily) — previously rendered only on the legacy
+              list, which is unreachable under the queue-controls flag, so the
+              feature shipped to no one. Filters captured here are the queue's
+              own URL params; applying a view pins queue=all so it always lands
+              back on this view. */}
+          {savedViewsEnabled && (
+            <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
+          )}
           {/* Scalable Risk Findings queue: compact toolbar + server-paged cards. */}
           <FindingsQueueToolbar
             state={queueState}
             total={queueTotal}
             count={queueFindings.length}
           />
-          {queueFindings.length === 0 ? (
+          {queueData === null ? (
+            /* Engine failure ≠ zero matches: the filtered-empty message with a
+               "Clear all" link would send the reader chasing their own filters
+               for an outage that isn't theirs. */
+            <FindingsUnavailable retryHref={queueHref(queueState)} />
+          ) : queueFindings.length === 0 ? (
             <div
               className="rounded-xl border p-10 text-center"
               style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
@@ -461,44 +538,17 @@ export default async function FindingsPage({
         </>
       ) : (
         <>
-      {/* Summary stat cards */}
+      {/* Summary stat tiles — every number is a door to the exact population
+          it counts. Severity tiles count *_active, so their href carries BOTH
+          axes (active=true + severity); In Progress counts in_progress_open,
+          which the status filter expresses exactly. */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Active
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{activeCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Critical
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{criticalCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            High
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fdba74" }}>{highCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Moderate
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#fbbf24" }}>{moderateCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Low
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#86efac" }}>{lowCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            In Progress
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#93c5fd" }}>{inProgressCount}</p>
-        </div>
+        <StatTile label="Active"      value={countsUnavailable ? null : activeCount}     color="#fca5a5" href="/findings?active=true"                   population="active findings" />
+        <StatTile label="Critical"    value={countsUnavailable ? null : criticalCount}   color="#fca5a5" href="/findings?active=true&severity=Critical" population="active critical findings" />
+        <StatTile label="High"        value={countsUnavailable ? null : highCount}       color="#fdba74" href="/findings?active=true&severity=High"     population="active high-severity findings" />
+        <StatTile label="Moderate"    value={countsUnavailable ? null : moderateCount}   color="#fbbf24" href="/findings?active=true&severity=Moderate" population="active moderate-severity findings" />
+        <StatTile label="Low"         value={countsUnavailable ? null : lowCount}        color="#86efac" href="/findings?active=true&severity=Low"      population="active low-severity findings" />
+        <StatTile label="In Progress" value={countsUnavailable ? null : inProgressCount} color="#93c5fd" href="/findings?status=in_progress"            population="findings in progress" />
       </div>
 
       {/* Filter bar */}
@@ -565,14 +615,18 @@ export default async function FindingsPage({
       {savedViewsEnabled && (
         <SavedViewsBar views={savedViews} currentFilters={currentViewFilters(sp)} />
       )}
-      <FindingsList
-        findings={findings}
-        hasFilters={hasFilters}
-        workspace={workspace}
-        orgSummary={summary}
-        total={findingsData?.total}
-        ownerNames={ownerNames}
-      />
+      {findingsUnavailable ? (
+        <FindingsUnavailable retryHref={filterHref(currentSp, "", null)} />
+      ) : (
+        <FindingsList
+          findings={findings}
+          hasFilters={hasFilters}
+          workspace={workspace}
+          orgSummary={summary}
+          total={findingsData?.total}
+          ownerNames={ownerNames}
+        />
+      )}
         </>
       )}
     </div>

@@ -29,6 +29,13 @@ import { requireAdminRole } from "../middleware/requireRole.js";
 import { validateControlCreate, validateControlPatch } from "../lib/controlValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import {
+  CONTROL_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
 
 const router = Router();
 
@@ -460,6 +467,74 @@ router.get(
         "GET /api/controls/:id/findings failed"
       );
       res.status(500).json({ error: "control_findings_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/controls/:id/history
+   Per-control audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   control plus its assessments and risk-control links, newest
+   first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/controls/:id (no admin gate) — anyone
+   who can read the control can read its history.
+   ========================================================= */
+
+router.get(
+  "/controls/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const controlId = String(req.params.id ?? "").trim();
+    if (!controlId) {
+      res.status(400).json({ error: "control_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(controlId)) {
+      res.status(400).json({ error: "control_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM controls WHERE id = $1 AND organization_id = $2`,
+        [controlId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "control_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        CONTROL_HISTORY_SPEC,
+        organizationId,
+        controlId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "control_history_failed", err, controlId },
+        "GET /api/controls/:id/history failed"
+      );
+      res.status(500).json({ error: "control_history_failed" });
     }
   })
 );

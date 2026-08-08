@@ -13,6 +13,7 @@ import { ScrollSpyTOC, type TocEntry } from "@/components/ScrollSpyTOC";
 import { CollapsibleSignalList } from "@/components/CollapsibleSignalList";
 import { PrintButton } from "@/components/PrintButton";
 import { IntelligenceBriefSignalGroup } from "@/components/IntelligenceBriefSignalGroup";
+import { formatDateOnlyUTC } from "@/lib/dates";
 
 function formatDate(date: string): string {
   return new Date(date).toLocaleDateString("en-US", {
@@ -112,12 +113,24 @@ function estimateReadingTime(issue: NewsletterIssue): number {
   return Math.max(1, Math.ceil(wordCount / 200));
 }
 
+/**
+ * W0 (Brief content integrity): the posture label is a deterministic rollup
+ * of REAL stored tier/risk fields — never a verdict conjured from absence.
+ * When no signal in the issue carries either field, there is no basis for
+ * "Monitor" (absence read as "fine"), so the derivation returns null and the
+ * chip is simply not rendered.
+ */
 function derivePosture(signals: BriefSignal[]): {
   label: string;
   textClass: string;
   bgClass: string;
   borderClass: string;
-} {
+} | null {
+  const hasPostureBasis = signals.some(
+    (s) => Boolean(s.priorityTier) || Boolean(s.riskLevel)
+  );
+  if (!hasPostureBasis) return null;
+
   const hasImmediate = signals.some((s) => s.priorityTier === "IMMEDIATE");
   const hasCritical = signals.some((s) => (s.riskLevel ?? "").toLowerCase() === "critical");
   const hasNearTerm = signals.some((s) => s.priorityTier === "NEAR-TERM");
@@ -157,16 +170,22 @@ function deriveTopSignals(sections: BriefSections): BriefSignal[] {
     .slice(0, 3);
 }
 
+/**
+ * W0 (Brief content integrity): the executive summary is either the stored
+ * analyst summary or an honest absence — NEVER a client-side template. The
+ * previous fallback synthesized reassurance ("No escalation this week …
+ * within normal range") from nothing, presenting generated sentences as
+ * analysis on archived issues. The actions list remains: it is assembled
+ * only from stored action items and stored per-signal recommendations.
+ */
 function buildExecutiveSummary(args: {
   issue: NewsletterIssue;
-  posture: string;
   topSignals: BriefSignal[];
-  domains: string[];
 }): {
-  summaryText: string;
+  summaryText: string | null;
   requiredActions: string[];
 } {
-  const { issue, posture, topSignals, domains } = args;
+  const { issue, topSignals } = args;
 
   const rawActions: string[] = [];
   const action = issue.action_summary_json;
@@ -187,19 +206,7 @@ function buildExecutiveSummary(args: {
   // Deduplicate by exact string before rendering
   const requiredActions = [...new Set(rawActions)];
 
-  const domainText =
-    domains.length > 0 ? domains.join(", ") : "security, governance, and compliance";
-
-  const leadSignal = topSignals[0]?.title ?? null;
-  const summaryText =
-    issue.summary ??
-    (posture === "Act Now"
-      ? `${leadSignal ? `${leadSignal} and related signals require` : "Multiple signals require"} action this week. Review the priority items below and confirm ownership of each required action.`
-      : posture === "Watch Closely"
-      ? `${leadSignal ? `${leadSignal} and other signals are progressing` : `Signals across ${domainText} are developing`}. No immediate action is required, but track movement through the next issue.`
-      : `No escalation this week. Signals across ${domainText} are within normal range — keep them in view.`);
-
-  return { summaryText, requiredActions };
+  return { summaryText: issue.summary ?? null, requiredActions };
 }
 
 function SectionHeader({
@@ -238,26 +245,20 @@ function ExecutiveSummarySection({
   issue,
   posture,
   topSignals,
-  domains,
-  totalSignals,
   criticalCount,
   highCount,
   immediateCount,
 }: {
   issue: NewsletterIssue;
-  posture: string;
+  posture: string | null;
   topSignals: BriefSignal[];
-  domains: string[];
-  totalSignals: number;
   criticalCount: number;
   highCount: number;
   immediateCount: number;
 }) {
   const { summaryText, requiredActions } = buildExecutiveSummary({
     issue,
-    posture,
     topSignals,
-    domains,
   });
 
   return (
@@ -283,12 +284,16 @@ function ExecutiveSummarySection({
             {highCount > 0 && (
               <span className="text-xs font-bold text-orange-400">{highCount} high</span>
             )}
-            {(criticalCount > 0 || highCount > 0) && (
-              <span className="text-slate-600 select-none">·</span>
+            {posture !== null && (
+              <>
+                {(criticalCount > 0 || highCount > 0) && (
+                  <span className="text-slate-600 select-none">·</span>
+                )}
+                <span className={`text-sm font-bold uppercase tracking-wide ${postureColorOnDark(posture)}`}>
+                  {posture}
+                </span>
+              </>
             )}
-            <span className={`text-sm font-bold uppercase tracking-wide ${postureColorOnDark(posture)}`}>
-              {posture}
-            </span>
           </div>
         </div>
 
@@ -299,9 +304,18 @@ function ExecutiveSummarySection({
             </p>
           )}
 
-          <p className={`text-slate-800 leading-relaxed ${issue.thesis_headline ? "text-base" : "text-lg font-medium"}`}>
-            {summaryText}
-          </p>
+          {summaryText !== null ? (
+            <p className={`text-slate-800 leading-relaxed ${issue.thesis_headline ? "text-base" : "text-lg font-medium"}`}>
+              {summaryText}
+            </p>
+          ) : (
+            // W0: an issue stored without an analyst summary says so — the
+            // signal counts and stored actions below remain, but no summary
+            // sentence is synthesized in its place.
+            <p className="text-sm text-slate-500 italic">
+              No executive summary was recorded for this issue.
+            </p>
+          )}
 
           {topSignals.length > 0 && (
             <div className="mt-5 border-t border-slate-100 pt-5">
@@ -738,12 +752,8 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
     (s) => s.priorityTier === "IMMEDIATE"
   ).length;
 
-  const domains = Object.entries(sections)
-    .filter(([, items]) => Array.isArray(items) && items.length > 0)
-    .map(([key]) => deriveSectionLabel(key));
-
   const readingTime = estimateReadingTime(issue);
-  const posture = derivePosture(allSignals).label;
+  const posture = derivePosture(allSignals)?.label ?? null;
 
   const sectionOrder = [
     "securityIncidents",
@@ -845,8 +855,6 @@ function BriefReader({ issue }: { issue: NewsletterIssue }) {
             issue={issue}
             posture={posture}
             topSignals={topSignals}
-            domains={domains}
-            totalSignals={allSignals.length}
             criticalCount={criticalCount}
             highCount={highCount}
             immediateCount={immediateCount}
@@ -946,7 +954,13 @@ function IntelligenceBriefDetailView({
   const synthesis = brief.content_json?.synthesis ?? null;
   const headline = synthesis?.headline ?? null;
   const execSummary = synthesis?.exec_summary ?? null;
-  const date = formatDate(brief.period_end);
+  // IQP Q2 / IQ-1 A3: state the coverage window, not just its end date — the
+  // masthead is the promise every item's "Reported" date is checked against.
+  // UTC-pinned so the label can't drift a day from the stored period.
+  const windowStart = formatDateOnlyUTC(brief.period_start);
+  const windowEnd = formatDateOnlyUTC(brief.period_end);
+  const date =
+    windowStart && windowEnd ? `${windowStart} – ${windowEnd}` : formatDate(brief.period_end);
 
   // Inline rather than extracting to a util — IntelligenceBriefDashboardCard
   // has its own copy and cross-importing between app/src/components and
@@ -974,10 +988,10 @@ function IntelligenceBriefDetailView({
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <div className="mb-6">
           <Link
-            href="/dashboard"
+            href="/briefs"
             className="text-brand-teal hover:text-teal-300 text-sm font-medium transition-colors"
           >
-            ← Back to dashboard
+            ← All Briefs
           </Link>
         </div>
 

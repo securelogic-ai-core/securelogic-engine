@@ -8,6 +8,10 @@
  * latest brief carries an explicit age warning (walkthrough item 4), on the
  * canonical Intelligence Brief card and on the legacy newsletter-issue
  * fallback card alike. One rule, one label, everywhere.
+ *
+ * The server-side sweep (src/api/lib/briefStalenessMonitor.ts,
+ * BRIEF_STALE_AFTER_DAYS) enforces the same 8-day rule as an operator alert —
+ * keep the two constants in sync.
  */
 export const STALE_AFTER_DAYS = 8;
 

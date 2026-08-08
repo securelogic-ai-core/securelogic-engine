@@ -1,11 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { WebhookEndpoint, WebhookEndpointWithSecret, WebhookDelivery } from "@/lib/api";
+import type {
+  WebhookEndpoint,
+  WebhookEndpointWithSecret,
+  WebhookDelivery,
+  WebhookEventDefinition,
+} from "@/lib/api";
 import {
   createWebhookAction,
   deleteWebhookAction,
   testWebhookAction,
+  rotateWebhookSecretAction,
   getDeliveriesAction,
 } from "./actions";
 
@@ -25,16 +31,6 @@ const INPUT: React.CSSProperties = {
   fontSize: "13px",
   outline: "none",
 };
-
-const ALL_EVENT_TYPES = [
-  { value: "finding.created",          label: "finding.created" },
-  { value: "finding.updated",          label: "finding.updated" },
-  { value: "risk.created",             label: "risk.created" },
-  { value: "vendor.assessed",          label: "vendor.assessed" },
-  { value: "posture.snapshot_created", label: "posture.snapshot_created" },
-  { value: "action.created",           label: "action.created" },
-  { value: "action.updated",           label: "action.updated" },
-];
 
 function statusColor(status: string): string {
   if (status === "active") return "#86efac";
@@ -90,7 +86,13 @@ function SecretReveal({ secret, onDone }: { secret: string; onDone: () => void }
   );
 }
 
-function AddForm({ onSuccess }: { onSuccess: (ep: WebhookEndpointWithSecret) => void }) {
+function AddForm({
+  onSuccess,
+  eventTypes,
+}: {
+  onSuccess: (ep: WebhookEndpointWithSecret) => void;
+  eventTypes: WebhookEventDefinition[];
+}) {
   const [url, setUrl]             = useState("");
   const [description, setDesc]    = useState("");
   const [allEvents, setAllEvents] = useState(true);
@@ -139,10 +141,15 @@ function AddForm({ onSuccess }: { onSuccess: (ep: WebhookEndpointWithSecret) => 
           <input type="checkbox" checked={allEvents} onChange={(e) => setAllEvents(e.target.checked)} />
           All events (*)
         </label>
-        {!allEvents && ALL_EVENT_TYPES.map(({ value, label }) => (
-          <label key={value} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#94a3b8", marginBottom: "4px", cursor: "pointer", paddingLeft: "20px" }}>
-            <input type="checkbox" checked={selected.includes(value)} onChange={() => toggle(value)} />
-            {label}
+        {!allEvents && eventTypes.length === 0 && (
+          <p style={{ margin: "4px 0 0 20px", fontSize: "12px", color: "#64748b" }}>
+            Event catalog unavailable — save with “All events” or reload.
+          </p>
+        )}
+        {!allEvents && eventTypes.map(({ event_type, description }) => (
+          <label key={event_type} title={description} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#94a3b8", marginBottom: "4px", cursor: "pointer", paddingLeft: "20px" }}>
+            <input type="checkbox" checked={selected.includes(event_type)} onChange={() => toggle(event_type)} />
+            {event_type}
           </label>
         ))}
       </div>
@@ -207,11 +214,29 @@ function EndpointCard({
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, startTest]        = useTransition();
   const [deleting, startDelete]     = useTransition();
+  const [rotating, startRotate]     = useTransition();
+  // Rotation returns the new secret ONCE (create contract) and a fresh hint;
+  // both are local state so the card is correct without a page reload.
+  const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
+  const [secretHint, setSecretHint]       = useState(endpoint.secret_hint);
 
   function handleTest() {
     startTest(async () => {
       const result = await testWebhookAction(endpoint.id);
       setTestResult(result?.status ?? "error");
+    });
+  }
+
+  function handleRotate() {
+    if (!confirm(
+      "Rotate this endpoint's signing secret? Deliveries are signed with the new secret immediately — update the receiving side with the secret shown next."
+    )) return;
+    startRotate(async () => {
+      const result = await rotateWebhookSecretAction(endpoint.id);
+      if ("endpoint" in result) {
+        setRotatedSecret(result.endpoint.secret);
+        setSecretHint(result.endpoint.secret_hint);
+      }
     });
   }
 
@@ -247,7 +272,7 @@ function EndpointCard({
             Events: <span style={{ color: "#94a3b8" }}>{eventLabel}</span>
           </p>
           <p style={{ margin: 0, fontSize: "12px", color: "#475569", fontFamily: "monospace" }}>
-            {endpoint.secret_hint}
+            {secretHint}
           </p>
           {endpoint.last_success_at && (
             <p style={{ margin: "4px 0 0", fontSize: "11px", color: "#475569" }}>
@@ -265,6 +290,15 @@ function EndpointCard({
           </button>
           {isAdmin && (
             <button
+              onClick={handleRotate}
+              disabled={rotating}
+              style={{ padding: "5px 12px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "1px solid #1e2d45", background: "transparent", color: rotating ? "#475569" : "#94a3b8", cursor: rotating ? "not-allowed" : "pointer" }}
+            >
+              {rotating ? "Rotating…" : "Rotate secret"}
+            </button>
+          )}
+          {isAdmin && (
+            <button
               onClick={handleDelete}
               disabled={deleting}
               style={{ padding: "5px 12px", fontSize: "12px", fontWeight: 600, borderRadius: "6px", border: "1px solid rgba(239,68,68,0.3)", background: "transparent", color: deleting ? "#475569" : "#fca5a5", cursor: deleting ? "not-allowed" : "pointer" }}
@@ -279,6 +313,9 @@ function EndpointCard({
           Test result: {testResult}
         </p>
       )}
+      {rotatedSecret && (
+        <SecretReveal secret={rotatedSecret} onDone={() => setRotatedSecret(null)} />
+      )}
       <DeliveryLog endpointId={endpoint.id} />
     </div>
   );
@@ -287,9 +324,11 @@ function EndpointCard({
 interface Props {
   initialEndpoints: WebhookEndpoint[];
   isAdmin: boolean;
+  /** Engine-owned event catalog; empty when the engine was unreachable. */
+  eventTypes: WebhookEventDefinition[];
 }
 
-export function WebhooksClient({ initialEndpoints, isAdmin }: Props) {
+export function WebhooksClient({ initialEndpoints, isAdmin, eventTypes }: Props) {
   const [endpoints, setEndpoints]       = useState<WebhookEndpoint[]>(initialEndpoints);
   const [newSecret, setNewSecret]       = useState<string | null>(null);
   const [showForm, setShowForm]         = useState(false);
@@ -310,7 +349,7 @@ export function WebhooksClient({ initialEndpoints, isAdmin }: Props) {
       {newSecret && <SecretReveal secret={newSecret} onDone={() => setNewSecret(null)} />}
 
       {showForm ? (
-        <AddForm onSuccess={handleCreated} />
+        <AddForm onSuccess={handleCreated} eventTypes={eventTypes} />
       ) : (
         <button
           onClick={() => setShowForm(true)}

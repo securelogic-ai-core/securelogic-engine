@@ -43,11 +43,11 @@
  * signalMatchSuggestions.test.ts can invoke them directly with mocked pg.
  *
  * NOT IN SCOPE FOR THIS PACKAGE
- *   - The matcher itself. Today there is no code path that INSERTs into
- *     signal_match_suggestions; the matcher rewire is a separate package.
- *     This package lands the table, the validation lib, the route, the
- *     audit hooks, and the canonical-model row so the matcher work has a
- *     stable target to write against.
+ *   - The matcher itself. (Historical note: at package time no code path
+ *     INSERTed into signal_match_suggestions. The matcher rewire has since
+ *     landed — suggestions are written by runMatcherForSignal
+ *     (cyberSignalProcessingService.ts), llmControlMatcher.ts, and the
+ *     applicability workflow dispatcher.)
  *   - Bulk endpoints, backfill, posture/brief surfacing, UI work.
  *   - Per-target-type sidecar tables for forensic-grade link-row provenance
  *     (Option B in the design discussion). Revisit if/when CSV-export
@@ -64,6 +64,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
+import { assetSearchPattern, normalizeAssetSearchTerm } from "../lib/assetSearchResolver.js";
 import {
   validateSignalMatchSuggestionAccept,
   validateSignalMatchSuggestionDismiss,
@@ -364,9 +365,9 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     targetTypeFilter = assetAllowed ? "asset" : (rawTargetType as TargetType);
   }
 
-  // R3 — entity-name search. Same 2..120 bounds as the Findings entity search
-  // (findingEntitySearch.ts) so the two surfaces behave identically, and the same
-  // escaping of LIKE metacharacters so a literal "%" is a literal "%".
+  // R3 — entity search. The bounds and escaping are the SHARED asset-search
+  // semantics (assetSearchResolver.ts — the same 2..120 / LIKE-escape contract
+  // findingEntitySearch established), so every search surface behaves identically.
   let nameQuery: string | null = null;
   const rawQ = req.query.q;
   if (rawQ !== undefined) {
@@ -376,14 +377,15 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     }
     const trimmed = rawQ.trim();
     if (trimmed.length > 0) {
-      if (trimmed.length < 2 || trimmed.length > 120) {
+      const normalized = normalizeAssetSearchTerm(trimmed);
+      if (normalized === null) {
         res.status(400).json({
           error: "invalid_q",
           detail: "q must be between 2 and 120 characters",
         });
         return;
       }
-      nameQuery = `%${trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      nameQuery = assetSearchPattern(normalized);
     }
   }
 
@@ -414,16 +416,34 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
     sql += ` AND s.target_type = $${params.length}`;
   }
   // R3 — free-text filter on the ENTITY the suggestion is about, so the queue is
-  // searchable the way the Findings page is. Matches the same COALESCE the enriched
-  // SELECT already exposes as target_name (vendor / AI system / control name, or an
-  // obligation's title), so a search finds exactly what the row displays.
+  // searchable the way the Findings page is. Two match paths, one parameter:
+  //   1. the display name the row shows (the COALESCE the enriched SELECT exposes
+  //      as target_name — vendor / AI system / control name, obligation title);
+  //   2. the SHARED asset-search projection (asset_search_index_v), so an
+  //      asset-shaped target also matches on any subtype identifier — hostname,
+  //      cloud account, alias, native ref — without the caller knowing subtype
+  //      boundaries. Asset targets key on the registry asset_id; vendor / AI
+  //      targets key on their backing id (EAR-AD-1 federation). A correlated
+  //      EXISTS keeps this ONE query (no resolver round-trip, no cap).
   //
   // The pattern is parameterised and the operand is a fixed column expression, never
   // interpolated input. LIKE metacharacters in the user's string are escaped so a
   // query of "100%" means the literal text, not "anything".
   if (nameQuery !== null) {
     params.push(nameQuery);
-    sql += ` AND COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}`;
+    sql += ` AND (
+      COALESCE(v.name, ai.name, c.name, o.title, ar.name) ILIKE $${params.length}
+      OR EXISTS (
+        SELECT 1 FROM asset_search_index_v si
+         WHERE si.organization_id = s.organization_id
+           AND si.term ILIKE $${params.length}
+           AND (
+             (s.target_type = 'asset' AND si.asset_id = s.target_id)
+             OR (s.target_type = 'vendor' AND si.backing_kind = 'vendors' AND si.backing_id = s.target_id)
+             OR (s.target_type = 'ai_system' AND si.backing_kind = 'ai_systems' AND si.backing_id = s.target_id)
+           )
+      )
+    )`;
   }
   sql += ` ${SORT_DISPATCH[sort]}`;
   params.push(limit);
@@ -1173,6 +1193,7 @@ export async function getSignalMatchSuggestionCounts(
       ai_system: string;
       control: string;
       obligation: string;
+      asset: string;
       lifetime_total: string;
     }>(
       `SELECT
@@ -1181,6 +1202,7 @@ export async function getSignalMatchSuggestionCounts(
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'ai_system') AS ai_system,
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'control')   AS control,
          COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'obligation') AS obligation,
+         COUNT(*) FILTER (WHERE accepted_at IS NULL AND dismissed_at IS NULL AND target_type = 'asset')     AS asset,
          COUNT(*)                                                                                          AS lifetime_total
          FROM signal_match_suggestions
         WHERE organization_id = $1`,
@@ -1199,7 +1221,12 @@ export async function getSignalMatchSuggestionCounts(
         vendor:     Number(row.vendor),
         ai_system:  Number(row.ai_system),
         control:    Number(row.control),
-        obligation: Number(row.obligation)
+        obligation: Number(row.obligation),
+        // EAR Phase 2: the asset key appears only while the registry is
+        // enabled — same gating as the `?target_type=asset` list filter, and
+        // the signal the queue UI uses to decide whether to render the Assets
+        // chip. Flag-off the response is byte-identical to pre-registry.
+        ...(assetRegistryEnabled() ? { asset: Number(row.asset) } : {})
       },
       lifetime_total: Number(row.lifetime_total)
     });

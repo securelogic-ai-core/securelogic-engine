@@ -27,6 +27,7 @@ import { fetch as undiciFetch } from "undici";
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { buildWebhookHeaders } from "./webhookSigning.js";
+import { webhookWave1Enabled } from "./webhookWave1FeatureFlag.js";
 import {
   assertSafeWebhookUrl,
   buildPinnedAgent,
@@ -60,9 +61,14 @@ export async function dispatchWebhookEvent(event: WebhookEvent): Promise<void> {
 
   if (endpoints.length === 0) return;
 
+  // Envelope `version` ships with wave 1 (DS-15: versioned payloads). The
+  // schema key for consumers is (event_type, version); existing event data
+  // shapes are grandfathered as version 1 unchanged. Flag-off the envelope is
+  // byte-identical to the pre-wave-1 shape.
   const payload = JSON.stringify({
     id: crypto.randomUUID(),
     event_type: event.event_type,
+    ...(webhookWave1Enabled() ? { version: 1 } : {}),
     created_at: new Date().toISOString(),
     data: event.data,
   });
@@ -79,8 +85,6 @@ export async function deliverWebhook(
   payload: string,
   event: WebhookEvent
 ): Promise<{ deliveryId: string; status: string; responseStatus: number | null }> {
-  const headers = buildWebhookHeaders(payload, endpoint.secret);
-
   const deliveryResult = await pgElevated.query<{ id: string }>(
     `INSERT INTO webhook_deliveries
        (webhook_endpoint_id, organization_id, event_type, payload, status)
@@ -91,6 +95,26 @@ export async function deliverWebhook(
 
   const deliveryId = deliveryResult.rows[0]?.id;
   if (!deliveryId) return { deliveryId: "", status: "failed", responseStatus: null };
+
+  const attempt = await attemptWebhookDelivery(deliveryId, endpoint, payload);
+  return { deliveryId, ...attempt };
+}
+
+/**
+ * One HTTP delivery attempt against an EXISTING webhook_deliveries row.
+ * Shared verbatim between the first attempt (deliverWebhook, above) and the
+ * retry worker (workers/webhookRetryWorker.ts), so a retry gets the exact
+ * same SSRF pinning, timeout, redirect, and bookkeeping semantics as the
+ * original send. Signs with the endpoint's CURRENT secret — after a secret
+ * rotation, retries sign with the new secret, matching the rotation
+ * contract (immediate cutover).
+ */
+export async function attemptWebhookDelivery(
+  deliveryId: string,
+  endpoint: { id: string; url: string; secret: string },
+  payload: string
+): Promise<{ status: string; responseStatus: number | null }> {
+  const headers = buildWebhookHeaders(payload, endpoint.secret);
 
   // SSRF defense (A10-G1): re-validate the URL at delivery time, which
   // re-resolves DNS. The returned IP is then pinned via the undici Agent's
@@ -112,7 +136,7 @@ export async function deliverWebhook(
         "webhookDispatcher: refused to dispatch — URL failed safety check"
       );
       await scheduleRetry(deliveryId, endpoint.id, null, null, message);
-      return { deliveryId, status: "failed", responseStatus: null };
+      return { status: "failed", responseStatus: null };
     }
     throw err;
   }
@@ -138,7 +162,7 @@ export async function deliverWebhook(
     // blocked target. Do not read or persist the redirect body.
     if (response.status >= 300 && response.status < 400) {
       await scheduleRetry(deliveryId, endpoint.id, response.status, null, "redirect_blocked");
-      return { deliveryId, status: "retrying", responseStatus: response.status };
+      return { status: "retrying", responseStatus: response.status };
     }
 
     if (response.ok) {
@@ -159,7 +183,7 @@ export async function deliverWebhook(
          WHERE id = $1`,
         [endpoint.id]
       );
-      return { deliveryId, status: "delivered", responseStatus: response.status };
+      return { status: "delivered", responseStatus: response.status };
     } else {
       // Non-2xx (A10-G1 Layer C): do NOT persist response_body. The body was
       // previously stored and surfaced via GET /api/webhooks/:id/deliveries,
@@ -171,12 +195,12 @@ export async function deliverWebhook(
         null,
         `HTTP ${response.status}`
       );
-      return { deliveryId, status: "retrying", responseStatus: response.status };
+      return { status: "retrying", responseStatus: response.status };
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";
     await scheduleRetry(deliveryId, endpoint.id, null, null, message);
-    return { deliveryId, status: "failed", responseStatus: null };
+    return { status: "failed", responseStatus: null };
   } finally {
     await agent.close().catch(() => undefined);
   }

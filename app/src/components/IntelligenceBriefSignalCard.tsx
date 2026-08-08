@@ -1,10 +1,22 @@
 import Link from "next/link";
 import type { IntelligenceBriefItem, IntelligenceBriefUrgency } from "@/lib/api";
+import { BriefItemContextStrip } from "@/components/BriefItemPlatformContext";
+import { WindowContradictionNote } from "@/components/edx/WindowContradictionNote";
+import { formatDateOnlyUTC } from "@/lib/dates";
+import { windowContradictionAge } from "@/lib/edx/freshness";
 
 interface IntelligenceBriefSignalCardProps {
   briefId: string;
   item: IntelligenceBriefItem;
   index: number;
+  /**
+   * The brief's coverage-window start (period_start). When the item's
+   * source-asserted date predates it beyond the EDX-8 grace period, the card
+   * discloses the contradiction instead of leaving the reader to compare
+   * "Reported {date}" against the masthead themselves. Optional so legacy
+   * call sites without a window render byte-identically.
+   */
+  periodStart?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +109,15 @@ export function IntelligenceBriefSignalCard({
   briefId,
   item,
   index,
+  periodStart = null,
 }: IntelligenceBriefSignalCardProps) {
   const action = firstAction(item.recommended_actions);
   const detailHref = `/briefs/${briefId}/signal/item/${index}`;
   const bandBg = urgencyBg(item.urgency ?? null);
   const bandLabel = urgencyLabel(item.urgency ?? null);
+  // IQP Q2 / EDX-8: asserted only from two REAL dates — an item without a
+  // source date renders no note (and no date), same as before.
+  const contradictionAge = windowContradictionAge(item.signal_published_at, periodStart);
 
   return (
     <div
@@ -135,6 +151,10 @@ export function IntelligenceBriefSignalCard({
           </span>
         </div>
 
+        {/* Personalization: this item matched the org's own records — say so,
+            and link straight to them. */}
+        <BriefItemContextStrip item={item} />
+
         {action && (
           <div className="mb-4 bg-slate-700/40 rounded-lg p-4 border border-slate-700/50">
             <p className="text-xs font-bold text-teal-300 uppercase tracking-wide mb-1.5">
@@ -158,13 +178,21 @@ export function IntelligenceBriefSignalCard({
         )}
 
         <div className="flex items-center justify-between pt-4 border-t border-slate-700 gap-3">
-          {item.affected_cve ? (
-            <span className="text-xs font-mono text-slate-400 uppercase tracking-wide truncate">
-              {item.affected_cve}
-            </span>
-          ) : (
-            <span />
-          )}
+          <div className="flex items-center gap-3 min-w-0">
+            {item.affected_cve && (
+              <span className="text-xs font-mono text-slate-400 uppercase tracking-wide truncate">
+                {item.affected_cve}
+              </span>
+            )}
+            {/* Source-authoritative event date (IQP Q2): how old this item
+                actually is, per the source itself. Absent → render nothing;
+                a date is never inferred. */}
+            {formatDateOnlyUTC(item.signal_published_at) && (
+              <span className="text-xs text-slate-500 flex-shrink-0">
+                Reported {formatDateOnlyUTC(item.signal_published_at)}
+              </span>
+            )}
+          </div>
           <Link
             href={detailHref}
             className="inline-flex items-center gap-1.5 text-xs font-semibold border border-teal-200 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
@@ -173,6 +201,8 @@ export function IntelligenceBriefSignalCard({
             Read full analysis →
           </Link>
         </div>
+
+        <WindowContradictionNote age={contradictionAge} className="mt-2" />
       </div>
     </div>
   );

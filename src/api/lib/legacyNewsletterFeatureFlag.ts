@@ -10,21 +10,24 @@
  *     sendNewsletter()  →  Resend                   (the customer email)
  *
  * This path is SEPARATE from — and duplicative of — the canonical Intelligence
- * Brief, which the engine produces and sends on its own daily cron:
+ * Brief, which the engine produces on its own weekly cron (Tuesday 07:00 UTC,
+ * schedulerRunner.ts):
  *
  *     briefScheduler.runScheduler()  →  intelligence_briefs / intelligence_brief_items
  *     sendBrief() (briefEmailSender.ts)  →  Resend  (to intelligence_brief_subscribers)
  *
- * A paying customer is enrolled in BOTH lists by the Stripe webhook
- * (stripeWebhook.ts writes intelligence_brief_subscribers AND subscribers), so
- * with the legacy path live a customer could receive two daily emails from two
- * pipelines an hour apart (Brief at 07:00 UTC, Newsletter at 08:00 UTC).
+ * Historically the Stripe webhook enrolled a paying customer in BOTH lists, so
+ * with the legacy path live a customer could receive two emails from two
+ * pipelines an hour apart. The webhook no longer writes the legacy
+ * `subscribers` list (2026-06-24 policy; asserted by emailCadence.test.ts) —
+ * it enrolls only `intelligence_brief_subscribers`, which under ADR-0007 is an
+ * email-recipient list and never gates brief generation.
  *
  * OFF by default. The legacy Newsletter path runs ONLY when
  * SECURELOGIC_LEGACY_NEWSLETTER_ENABLED === "true". With the flag unset (the
  * default, and the intended state in staging and production), the worker
  * performs NO newsletter generation, promotion, delivery-queueing, or send —
- * leaving the Intelligence Brief as the sole daily customer email path.
+ * leaving the Intelligence Brief as the sole recurring customer email path.
  *
  * The flag lives on the intelligence-worker service only. It has no effect on
  * the engine Brief pipeline, which runs in a different service and reads a

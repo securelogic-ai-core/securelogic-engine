@@ -1,15 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-function planDisplayName(entitlementLevel: string | null): string {
-  switch (entitlementLevel) {
-    case "premium":      return "Team";
-    case "professional": return "Brief Pro";
-    case "admin":        return "Enterprise";
-    default:             return "Premium";
-  }
-}
+import { planDisplayName } from "@/lib/api";
 
 /**
  * /success — Post-Stripe-checkout landing page.
@@ -42,6 +34,7 @@ export default function SuccessPage() {
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           const level: string | null = data?.entitlementLevel ?? null;
+          const tier: string | null = data?.stripeSubscriptionTier ?? null;
           const isPaid =
             level === "premium" ||
             level === "professional" ||
@@ -50,7 +43,7 @@ export default function SuccessPage() {
             level === "admin";
 
           if (isPaid) {
-            setPlanName(planDisplayName(level));
+            setPlanName(planDisplayName(level ?? "starter", tier));
             setStatus("ready");
             return;
           }

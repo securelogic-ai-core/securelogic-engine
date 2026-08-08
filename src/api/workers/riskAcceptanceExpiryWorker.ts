@@ -26,6 +26,8 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sweepExpiredAcceptances } from "../lib/riskAcceptance.js";
 import { riskAcceptanceEnabled } from "../lib/riskAcceptanceFeatureFlag.js";
+import { webhookWave1Enabled } from "../lib/webhookWave1FeatureFlag.js";
+import { emitAcceptanceEvent } from "../lib/acceptanceWebhookEmitter.js";
 
 /** Once an hour. Expiry is a DATE, so this is 24x more often than strictly needed. */
 const INTERVAL_MS = 60 * 60 * 1000;
@@ -85,6 +87,106 @@ export async function runRiskAcceptanceExpirySweep(): Promise<{
   return { organizations: orgs.rowCount ?? 0, expired, reopened };
 }
 
+/**
+ * Advance-warning window (days before expiry). Product default mirrors the
+ * read-side `expiring_within_days` review-queue convention; a governance
+ * team's monthly review cadence is the widest cycle that must still see the
+ * warning before the lapse.
+ */
+const EXPIRING_WARNING_WINDOW_DAYS = 30;
+
+/**
+ * Wave-1 (DS-15) advance-warning phase: acceptances entering the expiry
+ * window emit acceptance.expiring, at most once each.
+ *
+ * Claim-then-emit: the UPDATE both selects and marks the rows inside one
+ * per-tenant transaction, so a crashed run can never double-emit — a re-run
+ * simply finds nothing left to claim. Emission happens AFTER the claim
+ * commits (post-commit, no phantom events). The WORM trigger permits this
+ * write: expiring_notified_at is bookkeeping, outside the frozen decision
+ * columns (see migration 20260911).
+ *
+ * No-op unless BOTH the acceptance flag and the wave-1 flag are on.
+ */
+export async function runRiskAcceptanceExpiringWarnings(): Promise<{
+  organizations: number;
+  warned: number;
+}> {
+  if (!riskAcceptanceEnabled() || !webhookWave1Enabled()) {
+    return { organizations: 0, warned: 0 };
+  }
+
+  const orgs = await pg.query<{ organization_id: string }>(
+    `SELECT DISTINCT organization_id
+       FROM finding_risk_acceptances
+      WHERE state = 'approved'
+        AND expires_at IS NOT NULL
+        AND expires_at >= CURRENT_DATE
+        AND expires_at <= CURRENT_DATE + make_interval(days => $1)
+        AND expiring_notified_at IS NULL`,
+    [EXPIRING_WARNING_WINDOW_DAYS]
+  );
+
+  let warned = 0;
+
+  for (const { organization_id: organizationId } of orgs.rows) {
+    let claimed: Array<{
+      id: string;
+      finding_id: string;
+      owner_user_id: string | null;
+      expires_at: string;
+    }> = [];
+    try {
+      claimed = await withTenant(organizationId, async () => {
+        const res = await pg.query<{
+          id: string;
+          finding_id: string;
+          owner_user_id: string | null;
+          expires_at: string;
+        }>(
+          `UPDATE finding_risk_acceptances
+              SET expiring_notified_at = NOW()
+            WHERE organization_id = $1
+              AND state = 'approved'
+              AND expires_at IS NOT NULL
+              AND expires_at >= CURRENT_DATE
+              AND expires_at <= CURRENT_DATE + make_interval(days => $2)
+              AND expiring_notified_at IS NULL
+            RETURNING id, finding_id, owner_user_id, expires_at`,
+          [organizationId, EXPIRING_WARNING_WINDOW_DAYS]
+        );
+        return res.rows;
+      });
+    } catch (err) {
+      logger.error(
+        { event: "risk_acceptance_expiring_warning_failed", organizationId, err },
+        "Risk-acceptance expiring-warning claim failed for organization"
+      );
+      continue;
+    }
+
+    for (const row of claimed) {
+      emitAcceptanceEvent("acceptance.expiring", organizationId, {
+        acceptance_id: row.id,
+        finding_id: row.finding_id,
+        owner_user_id: row.owner_user_id,
+        expires_at: row.expires_at,
+        window_days: EXPIRING_WARNING_WINDOW_DAYS,
+      });
+    }
+    warned += claimed.length;
+  }
+
+  if (warned > 0) {
+    logger.info(
+      { event: "risk_acceptance_expiring_warnings_complete", organizations: orgs.rowCount, warned },
+      "Risk-acceptance expiring warnings emitted"
+    );
+  }
+
+  return { organizations: orgs.rowCount ?? 0, warned };
+}
+
 export function startRiskAcceptanceExpiryWorker(): void {
   if (!riskAcceptanceEnabled()) {
     logger.info(
@@ -97,6 +199,14 @@ export function startRiskAcceptanceExpiryWorker(): void {
   const tick = (): void => {
     void runRiskAcceptanceExpirySweep().catch((err) => {
       logger.error({ event: "risk_acceptance_expiry_tick_failed", err }, "Expiry tick failed");
+    });
+    // Wave-1 advance warnings ride the same tick; self-gating (no-op unless
+    // the wave-1 flag is also on), independent failure domain.
+    void runRiskAcceptanceExpiringWarnings().catch((err) => {
+      logger.error(
+        { event: "risk_acceptance_expiring_warning_tick_failed", err },
+        "Expiring-warning tick failed"
+      );
     });
   };
 

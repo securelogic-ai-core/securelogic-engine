@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { AuditLogEvent } from "@/lib/api";
 import { formatEventLabel, eventBadgeStyle } from "@/lib/auditLogUtils";
 
@@ -31,8 +32,16 @@ function ResourceCell({
   resourceId: string | null;
 }) {
   if (!resourceType) return <span style={{ color: "#475569" }}>—</span>;
+
+  const params = new URLSearchParams({ resource_type: resourceType });
+  if (resourceId) params.set("resource_id", resourceId);
+
   return (
-    <span>
+    <Link
+      href={`/audit-log?${params.toString()}`}
+      title="Show all events for this resource"
+      className="hover:underline"
+    >
       <span style={{ color: "#94a3b8" }}>{resourceType}</span>
       {resourceId && (
         <>
@@ -42,7 +51,7 @@ function ResourceCell({
           </span>
         </>
       )}
-    </span>
+    </Link>
   );
 }
 

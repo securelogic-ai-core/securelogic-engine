@@ -41,8 +41,10 @@ export async function attachOrganizationContext(
       entitlement_level: string;
       payment_failed_at: string | null;
       stripe_customer_id: string | null;
+      stripe_subscription_tier: string | null;
     }>(
-      `SELECT entitlement_level, payment_failed_at, stripe_customer_id
+      `SELECT entitlement_level, payment_failed_at, stripe_customer_id,
+              stripe_subscription_tier
          FROM organizations
         WHERE id = $1
         LIMIT 1`,
@@ -56,6 +58,10 @@ export async function attachOrganizationContext(
       entitlementLevel: row?.entitlement_level ?? null,
       paymentFailedAt: row?.payment_failed_at ?? null,
       stripeCustomerId: row?.stripe_customer_id ?? null,
+      // Precise Stripe tier — entitlement_level collapses Brief Team into
+      // 'professional' (rank 2), so tier-scoped capabilities (team invites)
+      // need the raw tier to distinguish 'teams' from solo Brief Pro.
+      stripeSubscriptionTier: row?.stripe_subscription_tier ?? null,
     };
 
     next();

@@ -41,10 +41,15 @@ import { logger } from "../infra/logger.js";
 import { canonicalizeVendorName } from "./vendorNameCanonical.js";
 import { buildSignalFindingTitle, resolveSignalDomain } from "./signalFindingShape.js";
 import { signalApplicabilityEnabled } from "./signalApplicabilityFeatureFlag.js";
+import { signalFindingCveDedupEnabled } from "./signalFindingCveDedupFlag.js";
 import { runSignalApplicabilityShadow, backingAssetIds } from "./signalApplicabilityShadowRunner.js";
 import { extractSignalProductEvidence } from "./signalProductEvidence.js";
 import { upsertCanonicalProduct } from "./canonicalProductStore.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
+// Runtime-safe despite the emitter's type-only import back into this module:
+// the MatcherResult import is erased at compile time, so the runtime edge is
+// one-directional (this module → emitter → dispatcher).
+import { createSignalWebhookBatcher } from "./signalWebhookEmitter.js";
 import { resolveEventIdForSignal } from "./signals/eventSignalResolver.js";
 import {
   computePosture,
@@ -91,6 +96,8 @@ import {
 import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
 import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
 import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
+import { createAlertBatcher } from "./alerting/alertService.js";
+import { matcherAlertsEnabled } from "./alerting/matcherAlertsFeatureFlag.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,6 +139,8 @@ export type MatcherResult = {
   matched_ai_system_id: string | null;
   /** Finding row created by phase 3a, or null when no match. */
   finding: Record<string, unknown> | null;
+  /** True only when phase 3a INSERTed a NEW finding this run; false when the D-14 guard reused the existing (org, signal) finding. Alerting keys off this so a re-fired signal never re-notifies. */
+  finding_was_created: boolean;
   /** Suggestion row created by phase 3b. NULL when no match OR when ON CONFLICT skipped (a row already exists in any state per the partial unique index). */
   suggestion_id: string | null;
   /** Score, integer [0, 100], from computeRiskScore. NULL when no match (so no suggestion was attempted) OR when the suggestion existed already and was skipped. */
@@ -145,6 +154,44 @@ export type MatcherResult = {
   /** Number of open risk rows this run set exposure_flagged=TRUE on (phase 5, org-scoped). 0 when no open risk in the signal's domain needed flagging. */
   risks_flagged: number;
 };
+
+// ---------------------------------------------------------------------------
+// Post-commit alerting
+// ---------------------------------------------------------------------------
+
+/**
+ * Real-time alert for a finding phase 3a NEWLY created on the processSignal
+ * path (API ingest + briefScheduler). The worker fan-out paths (runPipeline,
+ * kevPoller) already run their own per-cycle coalescing batcher; this closes
+ * the same gap for the remaining matcher invocation path using the SAME
+ * flag (`SECURELOGIC_MATCHER_ALERTS_ENABLED`), the SAME batcher, and the SAME
+ * post-commit rule — a rollback must never have emailed about a finding that
+ * doesn't exist. Batch-of-one, mirroring the webhook batcher at this seam.
+ *
+ * finding_was_created gates re-fires (the D-14 guard's reused finding must not
+ * re-notify); the per-(user, finding) ledger inside the batcher is the durable
+ * backstop. Fire-and-forget: an alert failure never breaks signal processing.
+ */
+function alertOnCreatedSignalFinding(orgId: string, result: MatcherResult): void {
+  if (!matcherAlertsEnabled()) return;
+  if (!result.finding_was_created || result.finding === null) return;
+  const severity = result.finding.severity as string;
+  if (severity !== "Critical" && severity !== "High") return;
+
+  const batcher = createAlertBatcher("critical_finding", "signal_processing");
+  batcher.add(orgId, {
+    findingId: result.finding.id as string,
+    title: (result.finding.title as string) ?? "",
+    severity,
+    domain: (result.finding.domain as string | null) ?? null
+  });
+  batcher.flush().catch((err) => {
+    logger.warn(
+      { event: "signal_processing_alert_flush_failed", orgId, err },
+      "Signal-processing alert flush failed (non-fatal)"
+    );
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Domain routing
@@ -213,12 +260,13 @@ export { canonicalizeVendorName } from "./vendorNameCanonical.js";
  * subsequent call — Package 1's deliberate design choice for accidental-
  * dismissal recovery and weight-change re-surfacing.
  *
- * Note: the findings INSERT today has no ON CONFLICT guard. Re-firing
- * the matcher on the same signal produces duplicate findings rows.
- * Pre-existing bug surfaced in Package 3.5 investigation; deferred to
- * a separate small package per the audit doc §7. Worker fan-out's
- * per-cycle ingestion does not increase risk because dedup_hash on
- * cyber_signals blocks signal repeats.
+ * Note: the findings INSERT is guarded (D-14, #693): NOT EXISTS on
+ * (org, source_type='cyber_signal', source_id) — one finding per
+ * (org, signal), the IE-AD-7 grain. A re-fire reuses the existing
+ * finding row for downstream linkage instead of minting a duplicate.
+ * The durable backstop (partial unique index) rides a follow-up
+ * approved migration; dedup_hash on cyber_signals still blocks
+ * signal-level repeats upstream.
  *
  * TRANSACTION OWNERSHIP
  * ---------------------
@@ -266,6 +314,7 @@ export async function runMatcherForSignal(
   let matchedAiSystemName: string | null = null;
   let matchedAiSystemCriticality: string | null = null;
   let createdFinding: Record<string, unknown> | null = null;
+  let findingWasCreated = false;
   let suggestionId: string | null = null;
   let matchScore: number | null = null;
   let matchedBranch: MatcherResult["matched_branch"] = "no_match";
@@ -405,9 +454,70 @@ export async function runMatcherForSignal(
           : { kind: "ai_system", name: entityName },
       });
 
+      // CVE-grain duplicate guard — DARK behind
+      // SECURELOGIC_SIGNAL_FINDING_CVE_DEDUP_ENABLED (see
+      // signalFindingCveDedupFlag.ts for the staging evidence). The D-14 guard
+      // below is per-signal, so a second SOURCE reporting the same CVE (or a
+      // re-ingested signal under a fresh id) mints a duplicate open finding
+      // for the same vulnerability+entity. When ON and the signal carries a
+      // CVE, an ACTIVE cyber_signal finding for the same (org, CVE, matched
+      // entity) is reused instead — the same reuse contract as the D-14
+      // re-fire path, so downstream linkage attaches to the original row.
+      // Entity match is via the machine-asserted link tables, with a
+      // lower(affected_vendor) fallback for findings that predate 3c's
+      // link-writing. CVE-less signals keep per-signal grain untouched.
+      let cveGrainReused: Record<string, unknown> | null = null;
+      if (signalFindingCveDedupEnabled() && signal.affected_cve !== null) {
+        const dedupLinkTable = hasVendorMatch
+          ? "signal_vendor_links"
+          : "signal_ai_system_links";
+        const dedupLinkFk = hasVendorMatch ? "vendor_id" : "ai_system_id";
+        const dedupTargetId = hasVendorMatch ? matchedVendorId : matchedAiSystemId;
+        const dupResult = await client.query(
+          `
+          SELECT f.id, f.organization_id, f.assessment_id, f.source_type,
+                 f.source_id, f.title, f.description, f.severity, f.domain,
+                 f.priority, f.status, f.created_at, f.updated_at
+            FROM findings f
+            JOIN cyber_signals s ON s.id = f.source_id
+           WHERE f.organization_id = $1
+             AND f.source_type = 'cyber_signal'
+             AND ${sqlFindingActive("f.operational_status")}
+             AND s.affected_cve = $2
+             AND (
+               EXISTS (
+                 SELECT 1 FROM ${dedupLinkTable} l
+                  WHERE l.organization_id = $1
+                    AND l.signal_id = f.source_id
+                    AND l.${dedupLinkFk} = $3::uuid
+                    AND l.deleted_at IS NULL
+               )
+               OR (s.affected_vendor IS NOT NULL
+                   AND lower(s.affected_vendor) = lower($4))
+             )
+           ORDER BY f.created_at ASC
+           LIMIT 1
+          `,
+          [orgId, signal.affected_cve, dedupTargetId, signal.affected_vendor]
+        );
+        cveGrainReused = dupResult.rows[0] ?? null;
+      }
+
+      if (cveGrainReused !== null) {
+        createdFinding = cveGrainReused;
+        findingWasCreated = false;
+      } else {
       // SLA policy (20260903): automated signal findings get an org-policy
       // due date at creation (client keeps the read inside this transaction).
       const slaDueDate = await resolveSlaDueDateWith(client, orgId, severity);
+      // D-14 idempotency guard: re-firing the matcher on the same signal must
+      // not mint a second finding (this INSERT is live in production; see the
+      // duplicate acknowledgment above). One finding per (org, signal) —
+      // the same grain IE-AD-7 chose for intelligence_event findings. The
+      // NOT EXISTS runs inside this transaction; the matcher processes a
+      // signal serially per org, so this closes the observed re-fire path.
+      // A partial unique index (like idx_findings_intelligence_event_unique)
+      // is the durable backstop and rides a follow-up approved migration.
       const findingResult = await client.query(
         `
         INSERT INTO findings (
@@ -423,7 +533,13 @@ export async function runMatcherForSignal(
           status,
           due_date
         )
-        VALUES ($1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8)
+        SELECT $1, NULL, 'cyber_signal', $2::uuid, $3, $4, $5, $6, $7, 'open', $8
+        WHERE NOT EXISTS (
+          SELECT 1 FROM findings
+           WHERE organization_id = $1
+             AND source_type = 'cyber_signal'
+             AND source_id = $2::uuid
+        )
         RETURNING
           id,
           organization_id,
@@ -452,6 +568,29 @@ export async function runMatcherForSignal(
       );
 
       createdFinding = findingResult.rows[0] ?? null;
+      findingWasCreated = createdFinding !== null;
+      }
+
+      // Re-fire on an already-processed signal: reuse the existing finding so
+      // downstream linkage (suggestion, GAP-3 action — both already idempotent
+      // on their own keys) attaches to the original row instead of a duplicate.
+      if (createdFinding === null) {
+        const existingFinding = await client.query(
+          `
+          SELECT id, organization_id, assessment_id, source_type, source_id,
+                 title, description, severity, domain, priority, status,
+                 created_at, updated_at
+            FROM findings
+           WHERE organization_id = $1
+             AND source_type = 'cyber_signal'
+             AND source_id = $2::uuid
+           ORDER BY created_at ASC
+           LIMIT 1
+          `,
+          [orgId, signalId]
+        );
+        createdFinding = existingFinding.rows[0] ?? null;
+      }
 
       // GAP-3: action recommendation — turn a high-signal finding into a
       // concrete "what to do next". Flag-gated (OFF by default) and threshold-
@@ -1154,10 +1293,11 @@ export async function runMatcherForSignal(
       "Matcher run for signal"
     );
 
-    return {
+    const result: MatcherResult = {
       matched_vendor_id: matchedVendorId,
       matched_ai_system_id: matchedAiSystemId,
       finding: createdFinding,
+      finding_was_created: findingWasCreated,
       suggestion_id: suggestionId,
       match_score: matchScore,
       domain,
@@ -1165,6 +1305,11 @@ export async function runMatcherForSignal(
       obligation_suggestion_ids: obligationSuggestionIds,
       risks_flagged: risksFlagged
     };
+
+    // No alerting here: the worker fan-out callers (runPipeline, kevPoller) own
+    // per-cycle coalescing batchers, and the processSignal caller alerts after
+    // ITS commit. finding_was_created on the result carries the truth they need.
+    return result;
   } catch (err) {
     if (ownsTransaction) {
       try {
@@ -1296,6 +1441,17 @@ export async function processSignal(
     });
 
     await client.query("COMMIT");
+
+    // Wave-1 (DS-15): emit AFTER the commit so a rollback can never produce a
+    // phantom event. Route path = a batch of one; no-op while wave 1 is dark.
+    const webhookBatch = createSignalWebhookBatcher("signal_processing");
+    webhookBatch.add(orgId, signalId, matcherResult);
+    webhookBatch.flush();
+
+    // Real-time alert (flag-gated, coalesced) for a finding created inside OUR
+    // transaction — same post-commit rule as the webhook emit above. This is
+    // the API-ingest/briefScheduler counterpart of the worker fan-out batchers.
+    alertOnCreatedSignalFinding(orgId, matcherResult);
 
     logger.info(
       {

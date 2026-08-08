@@ -875,8 +875,20 @@ function capTitle(text: string, qualityEnabled: boolean): string {
   return text.length <= 80 ? text : `${text.slice(0, 77)}...`;
 }
 
-function buildItemTitle(
-  signal: CyberSignalForBrief,
+/**
+ * The subset of a signal buildItemTitle actually reads. Narrowed (and the
+ * function exported) for the W0 stored-title backfill
+ * (src/api/lib/briefTitleBackfill.ts), which re-derives titles for
+ * already-persisted brief items from their source signals. Every existing
+ * caller passes a full CyberSignalForBrief, which satisfies this Pick.
+ */
+export type CyberSignalForTitle = Pick<
+  CyberSignalForBrief,
+  "signal_type" | "normalized_summary" | "affected_cve" | "affected_vendor" | "raw_payload"
+>;
+
+export function buildItemTitle(
+  signal: CyberSignalForTitle,
   sanitizeEnabled = false,
   qualityEnabled = false
 ): string {

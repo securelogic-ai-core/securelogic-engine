@@ -56,6 +56,7 @@ const api = vi.hoisted(() => ({
   getIssues: vi.fn(),
   getIssue: vi.fn(),
   getIntelligenceBrief: vi.fn(),
+  getIntelligenceBriefs: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -87,6 +88,8 @@ beforeEach(() => {
   api.getIssues.mockResolvedValue(anIssuesResponse([aNewsletterIssue()]));
   api.getIssue.mockResolvedValue(null);
   api.getIntelligenceBrief.mockResolvedValue(null);
+  // Default: no canonical briefs → the archive falls back to legacy issues.
+  api.getIntelligenceBriefs.mockResolvedValue(null);
 });
 
 // ───────────────────────────── /briefs (the archive) ─────────────────────────
@@ -140,7 +143,8 @@ describe("/briefs — the archive", () => {
   });
 
   it("an entitled reader is not upsold", async () => {
-    // isPremium = entitlementLevel ∈ {premium, professional} (the page's real rule).
+    // Upsell is suppressed for Brief Pro (professional) and the whole platform
+    // family (premium / platform / team) — the dashboard's isPlatformUser rule.
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "professional" }));
     api.getIssues.mockResolvedValue(
       anIssuesResponse([aNewsletterIssue({ id: "locked-1", locked: true })])
@@ -150,6 +154,31 @@ describe("/briefs — the archive", () => {
 
     expect(container.textContent).not.toContain("Upgrade for full access");
     expect(screen.queryByRole("button", { name: "Brief Pro — $49/mo" })).toBeNull();
+  });
+
+  it("a platform tenant is never shown the consumer checkout — a locked issue degrades to the neutral card", async () => {
+    // A locked issue reaching a platform-entitled org is entitlement drift, not a
+    // sales opportunity. The page must suppress the Brief Pro / Brief Team checkout
+    // AND hand BriefCard the viewerIsPlatform flag so the card renders its neutral
+    // unavailable state instead of the Free-tier teaser.
+    for (const entitlementLevel of ["premium", "platform", "team"]) {
+      api.getMe.mockResolvedValue(aMe({ entitlementLevel }));
+      api.getIssues.mockResolvedValue(
+        anIssuesResponse([
+          aNewsletterIssue({ id: "open-1", locked: false }),
+          aNewsletterIssue({ id: "locked-1", title: "Drifted issue", locked: true }),
+        ])
+      );
+
+      const { container } = await renderPage(BriefsPage, {});
+      const text = container.textContent ?? "";
+
+      expect(text).not.toContain("Upgrade for full access");
+      expect(text).not.toContain("Brief Pro — $49/mo");
+      expect(text).not.toContain("Free preview");
+      // The neutral unavailable card, not the consumer teaser.
+      expect(text).toContain("no upgrade is needed");
+    }
   });
 
   it("says so plainly when nothing has been published", async () => {
@@ -229,6 +258,76 @@ describe("/briefs/[id] — the Intelligence Brief", () => {
     expect(hrefs(container)).not.toContain("#");
   });
 
+  it("items matched to the org's inventory read first in their urgency band, without disturbing drill-through indexes", async () => {
+    // BR-3: the Brief's premise is prioritization. An item the matcher tied to
+    // THIS org's own records must outrank — visually — an item about a vendor
+    // the org does not have, and the page must say which is which. Ordering is
+    // display-only: the detail route resolves by items[] index, so the matched
+    // item rendered FIRST still links to its ORIGINAL position.
+    const UNMATCHED_FIRST = anIntelligenceBriefItem({
+      id: "item-unmatched",
+      title: "PlaySMS RCE under active exploitation",
+      urgency: "near_term",
+    });
+    const MATCHED_SECOND = anIntelligenceBriefItem({
+      id: "item-matched",
+      title: "Cisco IOS XE privilege escalation",
+      urgency: "near_term",
+      is_personalized: true,
+      platform_context: { matched_vendors: [{ id: "v-cisco", name: "Cisco" }] },
+    });
+    api.getIntelligenceBrief.mockResolvedValue(
+      anIntelligenceBrief([UNMATCHED_FIRST, MATCHED_SECOND])
+    );
+
+    const { container } = await renderPage(BriefDetailPage, { params: params("brief-1") });
+    const text = container.textContent ?? "";
+
+    // The matched item renders before the unmatched one it followed on the wire.
+    const matchedPos = text.indexOf("Cisco IOS XE privilege escalation");
+    const unmatchedPos = text.indexOf("PlaySMS RCE under active exploitation");
+    expect(matchedPos).toBeGreaterThan(-1);
+    expect(unmatchedPos).toBeGreaterThan(-1);
+    expect(matchedPos).toBeLessThan(unmatchedPos);
+
+    // The partition is labeled at both ends: the band header counts what
+    // applies, and the divider names what does not.
+    expect(text).toContain("1 affects your environment");
+    expect(text).toContain("Not matched to your inventory");
+
+    // Reordering did NOT rewrite the drill-through: matched was items[1].
+    expect(hrefOf(container, "Cisco IOS XE privilege escalation")).toBe(
+      "/briefs/brief-1/signal/item/1"
+    );
+    expect(hrefOf(container, "PlaySMS RCE under active exploitation")).toBe(
+      "/briefs/brief-1/signal/item/0"
+    );
+  });
+
+  it("a brief with no inventory matches renders in wire order with no match labels", async () => {
+    // No matches → nothing to prioritize → no divider, no phantom "0 affect"
+    // count. The pre-BR-3 render, exactly.
+    api.getIntelligenceBrief.mockResolvedValue(anIntelligenceBrief([WATCHING, IMMEDIATE]));
+
+    const { container } = await renderPage(BriefDetailPage, { params: params("brief-1") });
+    const text = container.textContent ?? "";
+
+    expect(text).not.toContain("your environment");
+    expect(text).not.toContain("Not matched to your inventory");
+  });
+
+  it("the reader's back-link returns to the archive, matching every legacy variant", async () => {
+    // A reader who arrived from /briefs must not be bounced to /dashboard —
+    // the canonical view was the only brief surface whose back-link disagreed.
+    api.getIntelligenceBrief.mockResolvedValue(anIntelligenceBrief([IMMEDIATE]));
+
+    const { container } = await renderPage(BriefDetailPage, { params: params("brief-1") });
+
+    expect(screen.getByText("← All Briefs")).toBeInTheDocument();
+    expect(hrefs(container)).toContain("/briefs");
+    expect(container.textContent).not.toContain("Back to dashboard");
+  });
+
   it("an empty brief says it is empty rather than rendering an empty shell", async () => {
     api.getIntelligenceBrief.mockResolvedValue(anIntelligenceBrief([]));
 
@@ -237,7 +336,7 @@ describe("/briefs/[id] — the Intelligence Brief", () => {
     expect(screen.getByText("No signals in this brief.")).toBeInTheDocument();
     expect(container.textContent).not.toContain("IMMEDIATE");
     // Still a way back out — an empty page must not be a trap.
-    expect(hrefs(container)).toContain("/dashboard");
+    expect(hrefs(container)).toContain("/briefs");
   });
 
   it("an id that is neither a brief nor a legacy issue is a 404, not a blank page", async () => {
@@ -389,5 +488,57 @@ describe("/briefs — feature flags (no mixed state)", () => {
     const off = await renderPage(BriefsPage, {});
 
     expect(off.container.textContent).toBe(onText);
+  });
+});
+
+// ─────────────── /briefs — canonical intelligence-brief archive (EG2 slice 4) ───────────────
+
+describe("/briefs — the canonical archive lists intelligence briefs, not the retired newsletter", () => {
+  const listBrief = (id: string, period_end: string) => ({
+    id,
+    period_start: "2026-07-20",
+    period_end,
+    status: "published" as const,
+    signal_count: 41,
+    item_count: 7,
+    generated_at: period_end,
+    published_at: period_end,
+    created_at: period_end,
+  });
+
+  it("published intelligence briefs render as the featured card + previous grid, each linking to its detail page", async () => {
+    api.getIntelligenceBriefs.mockResolvedValue({
+      briefs: [listBrief("ib-2", "2026-07-27"), listBrief("ib-1", "2026-07-20")],
+      next_cursor: null,
+    });
+
+    const { container } = await renderPage(BriefsPage, {});
+
+    expect(screen.getByText("Latest Brief")).toBeInTheDocument();
+    expect(screen.getByText("Previous Briefs")).toBeInTheDocument();
+    expect(container.querySelector('a[href="/briefs/ib-2"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/briefs/ib-1"]')).not.toBeNull();
+    // The list endpoint was asked for published briefs only.
+    expect(api.getIntelligenceBriefs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "published" })
+    );
+    // Legacy issues demote to a clearly-labeled archive section — customer
+    // vocabulary, never "Legacy" (our word for our own migration state).
+    expect(screen.getByText("Archived Issues")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("Legacy");
+    // The masthead count describes EVERYTHING the page lists, not one population.
+    // "1 brief in the archive" above eleven visible issues taught readers to
+    // distrust every other count in the product.
+    expect(container.textContent).toContain("2 briefs · 1 archived issue");
+  });
+
+  it("with no canonical briefs the legacy archive renders exactly as before", async () => {
+    const { container } = await renderPage(BriefsPage, {});
+
+    expect(screen.queryByText("Latest Brief")).toBeNull();
+    expect(screen.queryByText("Legacy Issues")).toBeNull();
+    // The legacy issue from the beforeEach fixture is still reachable.
+    expect(container.textContent).toContain("Latest Issue");
   });
 });

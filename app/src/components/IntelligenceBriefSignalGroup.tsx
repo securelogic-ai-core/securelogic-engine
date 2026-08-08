@@ -4,6 +4,7 @@ import type {
   IntelligenceBriefUrgency,
 } from "@/lib/api";
 import { IntelligenceBriefSignalCard } from "./IntelligenceBriefSignalCard";
+import { platformContextLinks } from "./BriefItemPlatformContext";
 
 interface IntelligenceBriefSignalGroupProps {
   brief: IntelligenceBriefDetailResponse;
@@ -70,6 +71,15 @@ function groupByUrgency(
   return groups;
 }
 
+/**
+ * An item "affects your environment" when the generation-time matcher tied it
+ * to at least one of the org's own records. Same predicate the card's context
+ * strip renders by, so ordering and labeling can never disagree with the strip.
+ */
+function affectsEnvironment(item: IntelligenceBriefItem): boolean {
+  return Boolean(item.is_personalized) && platformContextLinks(item.platform_context).length > 0;
+}
+
 export function IntelligenceBriefSignalGroup({
   brief,
 }: IntelligenceBriefSignalGroupProps) {
@@ -92,6 +102,14 @@ export function IntelligenceBriefSignalGroup({
 
         const label = GROUP_LABEL[key] ?? key.toUpperCase();
         const anchor = URGENCY_ANCHOR[key] ?? key;
+
+        // Inventory-match prioritization: within an urgency band, what applies
+        // to THIS org's environment reads first. Both partitions keep their
+        // original relative order, and originalIndex still travels unchanged —
+        // the detail route resolves by brief.items[] index, not render position.
+        const matched = entries.filter(({ item }) => affectsEnvironment(item));
+        const unmatched = entries.filter(({ item }) => !affectsEnvironment(item));
+
         return (
           <section key={key} id={anchor}>
             <header className="mb-5 flex items-baseline gap-3">
@@ -101,14 +119,34 @@ export function IntelligenceBriefSignalGroup({
               <span className="text-xs text-slate-500 font-medium">
                 · {entries.length}
               </span>
+              {matched.length > 0 && (
+                <span className="text-xs font-semibold text-brand-teal">
+                  · {matched.length} affect{matched.length === 1 ? "s" : ""} your environment
+                </span>
+              )}
             </header>
             <div className="space-y-5">
-              {entries.map(({ item, originalIndex }) => (
+              {matched.map(({ item, originalIndex }) => (
                 <IntelligenceBriefSignalCard
                   key={item.id}
                   briefId={brief.id}
                   item={item}
                   index={originalIndex}
+                  periodStart={brief.period_start}
+                />
+              ))}
+              {matched.length > 0 && unmatched.length > 0 && (
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest pt-2">
+                  Not matched to your inventory
+                </p>
+              )}
+              {unmatched.map(({ item, originalIndex }) => (
+                <IntelligenceBriefSignalCard
+                  key={item.id}
+                  briefId={brief.id}
+                  item={item}
+                  index={originalIndex}
+                  periodStart={brief.period_start}
                 />
               ))}
             </div>

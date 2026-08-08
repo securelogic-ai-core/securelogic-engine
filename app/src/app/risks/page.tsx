@@ -9,6 +9,9 @@ import {
   getRiskScale,
 } from "@/lib/api";
 import { RiskTable } from "@/components/risks/RiskTable";
+import { ListSearchForm } from "@/components/ListSearchForm";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { FilterPill } from "@/components/FilterPill";
 import type { EnrichedRiskRow } from "@/components/risks/RiskRow";
 
 const STAT_CARD_STYLE: React.CSSProperties = {
@@ -67,29 +70,7 @@ function filterHref(current: Params, key: string, value: string | null): string 
   return `/risks${qs ? `?${qs}` : ""}`;
 }
 
-function FilterPill({
-  label,
-  href,
-  active,
-}: {
-  label: string;
-  href: string;
-  active: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors"
-      style={
-        active
-          ? { background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }
-          : { background: "transparent", color: "#94a3b8", border: "1px solid #1e293b" }
-      }
-    >
-      {label}
-    </Link>
-  );
-}
+// FilterPill migrated to the shared component (@/components/FilterPill).
 
 export default async function RisksPage({
   searchParams,
@@ -122,6 +103,11 @@ export default async function RisksPage({
   const lifecycleUiEnabled = process.env.NEXT_PUBLIC_RISK_LIFECYCLE_ENABLED === "true";
   const activeArchived = sp.archived === "true";
   const activeOnly     = sp.active === "true";
+  // Register search — platform 2–120 bounds (never send a term the engine 400s).
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
 
   // Fetch four endpoints in parallel:
   //   1. /api/risks      — full row data (incl. due_date, updated_at) for ALL statuses
@@ -142,8 +128,10 @@ export default async function RisksPage({
     review_status?: "overdue" | "due_soon" | "up_to_date";
     archived?: boolean;
     active?: boolean;
+    q?: string;
     limit: number;
   } = { limit: 200 };
+  if (search) basicParams.q = search;
   if (activeStatus)        basicParams.status        = activeStatus;
   if (activeDomain)        basicParams.domain        = activeDomain;
   if (activeRating)        basicParams.risk_rating   = activeRating;
@@ -216,6 +204,7 @@ export default async function RisksPage({
     ...(sp.risk_rating   ? { risk_rating:   sp.risk_rating }   : {}),
     ...(sp.review_status ? { review_status: sp.review_status } : {}),
     ...(sp.archived ? { archived: sp.archived } : {}),
+    ...(search ? { q: search } : {}),
   };
 
   // `active` must survive a refinement click (else clicking a domain silently widens
@@ -258,6 +247,15 @@ export default async function RisksPage({
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/risks"
+            filenamePrefix="risk-register"
+            queryString={new URLSearchParams(
+              Object.fromEntries(
+                Object.entries(sp).filter(([, v]) => v !== undefined)
+              ) as Record<string, string>
+            ).toString()}
+          />
           <Link
             href="/risks/new"
             style={{
@@ -316,6 +314,18 @@ export default async function RisksPage({
           <p className="text-3xl font-bold" style={{ color: "#fca5a5" }}>{overdueReviews}</p>
         </Link>
       </div>
+
+      {/* Search — the register list-page pattern (2–120 bounds); hidden inputs
+          carry the active filters so a search never drops them. */}
+      <ListSearchForm
+        action="/risks"
+        inputId="risk-search"
+        placeholder="Title or description..."
+        defaultValue={search}
+        hidden={Object.fromEntries(
+          Object.entries(currentSp).filter(([k]) => k !== "q")
+        ) as Record<string, string>}
+      />
 
       {/* Filter bar */}
       <div className="mb-6 space-y-3">

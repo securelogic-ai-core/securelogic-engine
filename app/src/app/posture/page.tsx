@@ -11,6 +11,7 @@ import {
   type FrameworkReadiness,
 } from "@/lib/api";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { postureDelta, formatPostureDelta } from "@/lib/postureTrend";
 import { briefingHomeLabel } from "@/lib/navigation";
 import { PostureAnalyticsGrid } from "./PostureAnalyticsGrid";
 
@@ -50,7 +51,9 @@ export default async function PosturePage() {
   // only; no new calculations.
   const [summary, postureHistory, frameworksData] = await Promise.all([
     getDashboardSummary(token),
-    getPostureHistory(token, 90),
+    // 365 days (cap raised to 400 in EG2 slice 12): feeds the QoQ/YoY trend
+    // windows and the period-delta stats below.
+    getPostureHistory(token, 365),
     getFrameworks(token),
   ]);
   const frameworks = frameworksData?.frameworks ?? [];
@@ -82,6 +85,13 @@ export default async function PosturePage() {
   const { posture, domains, findings } = summary;
   const hasSnapshot = posture.overall_score !== null;
   const scoreStyle = severityStyle(posture.overall_severity);
+
+  // Period deltas (EG2 slice 12) — computed from the same 365-day history the
+  // trend chart draws, through the shared helper, so the stat and the chart
+  // can never disagree.
+  const trendSnapshots = postureHistory?.snapshots ?? [];
+  const delta30 = postureDelta(trendSnapshots, 30);
+  const delta90 = postureDelta(trendSnapshots, 90);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -140,6 +150,23 @@ export default async function PosturePage() {
               <p className="mt-2 text-xs" style={{ color: "#475569" }}>
                 as of {formatDateOnlyUTC(posture.snapshot_date)}
               </p>
+            )}
+            {/* Period deltas (EG2 slice 12): "are we improving?" answered on
+                the score card itself. Rendered only when an honest baseline
+                exists near the window edge — never a fabricated 0%. */}
+            {(delta30 || delta90) && (
+              <div className="mt-2 flex items-center gap-3">
+                {delta30 && (
+                  <span className="text-xs font-semibold" style={{ color: delta30.points >= 0 ? "#86efac" : "#fca5a5" }}>
+                    30d {formatPostureDelta(delta30)}
+                  </span>
+                )}
+                {delta90 && (
+                  <span className="text-xs font-semibold" style={{ color: delta90.points >= 0 ? "#86efac" : "#fca5a5" }}>
+                    90d {formatPostureDelta(delta90)}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -218,17 +245,33 @@ export default async function PosturePage() {
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 rounded-full h-1.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
-                          <div
-                            className={`h-1.5 rounded-full ${severityStyle(d.severity).bar}`}
-                            style={{ width: `${Math.min(d.score ?? 0, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-sm font-bold tabular-nums w-8" style={{ color: severityStyle(d.severity).color }}>
-                          {d.score ?? 0}
+                      {d.score === null ? (
+                        /* Enterprise truth: a domain that has not been scored is
+                           UNKNOWN, not failing. `?? 0` rendered it as the worst
+                           possible health (bold 0, empty bar) — a fabrication on
+                           the executive table. The severity column already
+                           renders its null as "—"; the score column now keeps
+                           the same promise. */
+                        <span
+                          className="text-xs"
+                          style={{ color: "#475569" }}
+                          aria-label={`${d.domain} has not been scored yet`}
+                        >
+                          — not yet scored
                         </span>
-                      </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 rounded-full h-1.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
+                            <div
+                              className={`h-1.5 rounded-full ${severityStyle(d.severity).bar}`}
+                              style={{ width: `${Math.min(d.score, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-bold tabular-nums w-8" style={{ color: severityStyle(d.severity).color }}>
+                            {d.score}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${severityStyle(d.severity).badge}`}>

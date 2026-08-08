@@ -46,6 +46,7 @@ import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
 import aiSystemsRouter from "./aiSystems.js";
+import aiSystemsExportRouter from "./aiSystemsExport.js";
 import governanceReviewsRouter from "./governanceReviews.js";
 import aiGovernanceAssessmentsRouter from "./aiGovernanceAssessments.js";
 import frameworksRouter from "./frameworks.js";
@@ -53,9 +54,11 @@ import frameworkReadinessRouter from "./frameworkReadiness.js";
 import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
 import controlsRouter from "./controls.js";
+import controlsExportRouter from "./controlsExport.js";
 import controlMappingsRouter from "./controlMappings.js";
 import controlAssessmentsRouter from "./controlAssessments.js";
 import obligationsRouter from "./obligations.js";
+import obligationsExportRouter from "./obligationsExport.js";
 import obligationMappingsRouter from "./obligationMappings.js";
 import obligationAssessmentsRouter from "./obligationAssessments.js";
 import evidenceRouter from "./evidence.js";
@@ -69,6 +72,8 @@ import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
 import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
+import risksExportRouter from "./risksExport.js";
+import searchRouter from "./search.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import riskControlLinksRouter from "./riskControlLinks.js";
 import riskObligationLinksRouter from "./riskObligationLinks.js";
@@ -123,6 +128,7 @@ import alertPreferencesRouter from "./alertPreferences.js";
 import dashboardPreferencesRouter from "./dashboardPreferences.js";
 import findingSavedViewsRouter from "./findingSavedViews.js";
 import briefingLayoutsRouter from "./briefingLayouts.js";
+import briefingChangesRouter from "./briefingChanges.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
@@ -451,6 +457,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);
   router.use("/api", aiSystemGovernanceContextRouter);
+  // Export before register — GET /ai-systems/:id captures export.csv otherwise.
+  router.use("/api", aiSystemsExportRouter);
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);
@@ -458,16 +466,25 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
+  // Export routers MUST mount before their register routers: GET /:id would
+  // otherwise capture the literal /export.csv path (the findingsExport trap).
+  router.use("/api", controlsExportRouter);
   router.use("/api", controlsRouter);
   router.use("/api", controlMappingsRouter);
   router.use("/api", controlAssessmentsRouter);
+  router.use("/api", obligationsExportRouter);
   router.use("/api", obligationsRouter);
   router.use("/api", obligationMappingsRouter);
   router.use("/api", obligationAssessmentsRouter);
   router.use("/api", evidenceRouter);
   router.use("/api", dependenciesRouter);
   router.use("/api", dependencyAssessmentsRouter);
+  // risksExportRouter MUST mount before risksRouter: its literal path
+  // /risks/export.csv is otherwise captured by GET /risks/:id (same trap
+  // findingsExport documents above).
+  router.use("/api", risksExportRouter);
   router.use("/api", risksRouter);
+  router.use("/api", searchRouter);
   router.use("/api", riskTreatmentsRouter);
   router.use("/api", riskControlLinksRouter);
   router.use("/api", riskObligationLinksRouter);
@@ -530,6 +547,7 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", dashboardPreferencesRouter);
   router.use("/api", findingSavedViewsRouter);
   router.use("/api", briefingLayoutsRouter);
+  router.use("/api", briefingChangesRouter);
   router.use("/api", policiesRouter);
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);

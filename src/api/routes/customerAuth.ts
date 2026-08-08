@@ -645,6 +645,26 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       return;
     }
 
+    // Removed members must not log back in with their old password —
+    // member removal only flips users.status to 'inactive'. Same
+    // known-user-only shape as the deletion gate: unknown emails still
+    // fall through to the generic 401, so no enumeration oracle.
+    if (user && user.status === "inactive") {
+      writeAuditEvent({
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        resourceId: user.id,
+        payload: { reason: "inactive", email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null
+      });
+      res.status(403).json({
+        error: "account_inactive",
+        detail: "This account no longer has access. Contact your organization administrator."
+      });
+      return;
+    }
+
     const hash = user?.password_hash ?? dummyHash;
 
     let passwordValid = false;
@@ -987,8 +1007,12 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       res.status(400).json({ error: "current_password_required" });
       return;
     }
-    if (typeof newRaw !== "string" || newRaw.length < 12) {
-      res.status(400).json({ error: "password_too_short", detail: "12 characters minimum" });
+    // Same policy as signup/reset — change-password used to check length
+    // only, silently letting rotations downgrade to complexity-free
+    // passwords.
+    const pwErrChange = validatePassword(newRaw);
+    if (pwErrChange) {
+      res.status(400).json(pwErrChange);
       return;
     }
     if (currentRaw === newRaw) {

@@ -1,6 +1,13 @@
 # Risk Lifecycle — Engineering Specification
 
 **Status:** Draft for operator (Simmee) review. Not yet authorized for build.
+**Reality-sync (2026-07-28, doc-sync package):** R1-scope code shipped to `develop` ahead of
+authorization (`riskLifecycle.ts`, `riskLifecycleStateMachine.ts`, `risk_lifecycle_events`,
+`risk_approvals`; flag `SECURELOGIC_RISK_LIFECYCLE_ENABLED` present in all four services,
+**false everywhere including staging** — fully dark, never enabled). Retroactive disposition
+(authorize-with-conditions vs quarantine) is an open operator ruling tracked in issue #694;
+this status line is not amended until that ruling lands. Open Question #1 (approver model)
+remains the gating question.
 **Author:** Platform architecture pass, 2026-07-02.
 **Scope of this document:** the complete engineering blueprint for a formal, gated
 risk-management lifecycle on the SecureLogic risk register. This spec is the

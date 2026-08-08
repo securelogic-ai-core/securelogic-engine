@@ -1342,6 +1342,73 @@ describe("signalMatchSuggestions — list handler", () => {
 });
 
 // ====================================================================
+// list — the q entity search (shared asset-search semantics)
+// ====================================================================
+
+describe("signalMatchSuggestions — the q search", () => {
+  beforeEach(() => {
+    mockPgQuery.mockReset();
+  });
+
+  const reqWith = (q: unknown) =>
+    ({
+      query: { q },
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    }) as unknown as Parameters<typeof listSignalMatchSuggestions>[0];
+
+  it("matches BOTH the display name and the shared asset-search projection, one pattern param", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    await listSignalMatchSuggestions(
+      reqWith("web-01"),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    const [sql, params] = mockPgQuery.mock.calls[0] as [string, unknown[]];
+    // Path 1: what the row displays.
+    expect(sql).toMatch(/COALESCE\(v\.name, ai\.name, c\.name, o\.title, ar\.name\) ILIKE \$2/);
+    // Path 2: the shared projection — subtype identifiers without subtype knowledge.
+    expect(sql).toContain("FROM asset_search_index_v si");
+    expect(sql).toContain("si.organization_id = s.organization_id");
+    expect(sql).toContain("s.target_type = 'asset' AND si.asset_id = s.target_id");
+    expect(sql).toContain("s.target_type = 'vendor' AND si.backing_kind = 'vendors' AND si.backing_id = s.target_id");
+    expect(sql).toContain("s.target_type = 'ai_system' AND si.backing_kind = 'ai_systems' AND si.backing_id = s.target_id");
+    expect(params[1]).toBe("%web-01%");
+  });
+
+  it("escapes LIKE metacharacters via the shared pattern helper", async () => {
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    await listSignalMatchSuggestions(
+      reqWith("50%_off"),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+
+    expect((mockPgQuery.mock.calls[0] as [string, unknown[]])[1][1]).toBe("%50\\%\\_off%");
+  });
+
+  it("keeps the platform 2–120 bounds: 400 invalid_q outside them, blank is a no-op", async () => {
+    for (const bad of ["a", "a".repeat(121)]) {
+      const res = makeRes();
+      await listSignalMatchSuggestions(
+        reqWith(bad),
+        res as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+      );
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "invalid_q" }));
+    }
+    expect(mockPgQuery).not.toHaveBeenCalled();
+
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await listSignalMatchSuggestions(
+      reqWith("   "),
+      makeRes() as unknown as Parameters<typeof listSignalMatchSuggestions>[1]
+    );
+    expect((mockPgQuery.mock.calls[0] as [string, unknown[]])[0]).not.toContain("asset_search_index_v");
+  });
+});
+
+// ====================================================================
 // getSignalMatchSuggestionCounts — pending breakdown + lifetime_total
 // ====================================================================
 
@@ -1384,6 +1451,55 @@ describe("signalMatchSuggestions — counts handler", () => {
     });
     // pg.query was called once — single round-trip aggregate.
     expect(mockPgQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("registry flag ON: by_target_type carries the asset count; OFF: shape is byte-identical to pre-registry", async () => {
+    const row = {
+      total: "12",
+      vendor: "5",
+      ai_system: "3",
+      control: "2",
+      obligation: "1",
+      asset: "1",
+      lifetime_total: "47"
+    };
+
+    // Flag ON → the asset key appears (the queue UI's registry-enabled signal).
+    process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED = "true";
+    try {
+      mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+      const reqOn = {
+        organizationContext: { organizationId: VALID_ORG_UUID }
+      } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+      const resOn = makeRes();
+      await getSignalMatchSuggestionCounts(
+        reqOn,
+        resOn as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+      );
+      expect(resOn.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by_target_type: { vendor: 5, ai_system: 3, control: 2, obligation: 1, asset: 1 }
+        })
+      );
+    } finally {
+      delete process.env.SECURELOGIC_ASSET_REGISTRY_ENABLED;
+    }
+
+    // Flag OFF → no asset key, even when asset rows exist in the DB.
+    mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [row] });
+    const reqOff = {
+      organizationContext: { organizationId: VALID_ORG_UUID }
+    } as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[0];
+    const resOff = makeRes();
+    await getSignalMatchSuggestionCounts(
+      reqOff,
+      resOff as unknown as Parameters<typeof getSignalMatchSuggestionCounts>[1]
+    );
+    const body = (resOff.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      by_target_type: Record<string, number>;
+    };
+    expect(body.by_target_type).toEqual({ vendor: 5, ai_system: 3, control: 2, obligation: 1 });
+    expect("asset" in body.by_target_type).toBe(false);
   });
 
   it("coerces bigint string counts to JS numbers", async () => {

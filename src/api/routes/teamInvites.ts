@@ -20,7 +20,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireTeamCapability } from "../middleware/requireTeamCapability.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -156,7 +156,7 @@ router.post(
   "/team/invite",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requireTeamCapability(),
   requireRole("admin"),
   inviteLimiter,
   async (req, res) => {
@@ -272,7 +272,7 @@ router.get(
   "/team/members",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requireTeamCapability(),
   async (req, res) => {
     try {
       const orgId = (req as any).organizationContext?.organizationId as string | null;
@@ -349,7 +349,7 @@ router.delete(
   "/team/members/:userId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requireTeamCapability(),
   requireRole("admin"),
   async (req, res) => {
     try {
@@ -428,7 +428,7 @@ router.patch(
   "/team/members/:userId/role",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requireTeamCapability(),
   requireRole("admin"),
   async (req, res) => {
     try {
@@ -516,7 +516,7 @@ router.delete(
   "/team/invites/:inviteId",
   requireApiKey,
   attachOrganizationContext,
-  requireEntitlement("premium"),
+  requireTeamCapability(),
   requireRole("admin"),
   async (req, res) => {
     try {

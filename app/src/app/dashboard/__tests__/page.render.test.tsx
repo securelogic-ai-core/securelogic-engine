@@ -170,14 +170,26 @@ describe("/dashboard — an enterprise-wide tile never routes to My Work", () =>
 
 describe("/dashboard — flag branches", () => {
   it("the tile destinations are identical whether the risk workspace is ON or OFF", async () => {
-    // The dashboard reads no workspace flag itself, and that is the contract: the
-    // links it emits must reconcile with their destinations in BOTH flag states, so
+    // The dashboard's TILES read no workspace flag, and that is the contract: the
+    // links they emit must reconcile with their destinations in BOTH flag states, so
     // a flag flip can never produce a half-migrated dashboard.
+    //
+    // NARROWED (EG3 Wave 1): the orientation panel (WhatsNewPanel) is the one
+    // deliberately flag-conditional element on this page — it exists ONLY in the ON
+    // state because it explains the navigation change that the ON state IS. It is
+    // therefore excluded here rather than weakening the tile contract. Its links
+    // cannot half-migrate: they render only when the flag is on, and every one is
+    // pinned to a Wave-1-reachable destination in whatsNew.test.ts.
+    const tileHrefs = (container: HTMLElement) => {
+      container.querySelector('[aria-labelledby="whats-new-heading"]')?.remove();
+      return hrefs(container);
+    };
+
     vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "false");
-    const off = hrefs((await renderDashboard()).container);
+    const off = tileHrefs((await renderDashboard()).container);
 
     vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "true");
-    const on = hrefs((await renderDashboard()).container);
+    const on = tileHrefs((await renderDashboard()).container);
 
     expect(on).toEqual(off);
     expect(on).toContain("/findings?active=true");

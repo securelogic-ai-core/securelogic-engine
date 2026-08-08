@@ -7,7 +7,7 @@ import {
   getVendorAssessmentsForVendor,
   getVendorReviews,
   getVendorFindings,
-  getVendorSignalContext,
+  getVendorSignals,
   getVendorAiDependencies,
   listVendorAssuranceDocuments,
   getVendorAssuranceExtraction,
@@ -19,11 +19,12 @@ import {
   type VendorAssessment,
   type VendorReview,
   type VendorFinding,
-  type VendorSignalContext,
+  type AiSystemLinkedSignal,
   type VendorAiDependency,
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
+import { HistorySection } from "@/components/HistorySection";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
 import { ArchiveVendorButton } from "./ArchiveVendorButton";
@@ -257,10 +258,14 @@ function OpenFindingsSectionClient({
               f.severity === "Moderate" ? { background: "rgba(245,158,11,0.15)", color: "#fcd34d" } :
               f.severity === "Low"      ? { background: "rgba(34,197,94,0.15)",  color: "#86efac" } :
               { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+            // The card links to the finding's own workflow page — these were
+            // static divs, the only findings anywhere in the app you could see
+            // but not open (the AI-system page's cards have always linked).
             return (
-              <div
+              <Link
                 key={f.id}
-                className="bg-brand-surface border border-brand-line rounded-xl p-4"
+                href={`/findings/${f.id}`}
+                className="block bg-brand-surface border border-brand-line rounded-xl p-4 transition-colors hover:border-teal-700/60 group"
               >
                 <div className="flex items-start gap-3">
                   <span
@@ -270,7 +275,7 @@ function OpenFindingsSectionClient({
                     {f.severity}
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium mb-0.5" style={{ color: "#f1f5f9" }}>
+                    <p className="text-sm font-medium mb-0.5 group-hover:text-teal-300 transition-colors" style={{ color: "#f1f5f9" }}>
                       {f.title}
                     </p>
                     {f.description && (
@@ -284,7 +289,7 @@ function OpenFindingsSectionClient({
                     </p>
                   </div>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
@@ -840,15 +845,18 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData, signalContext, aiDeps] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
     getVendorFindings(token, id),
-    // Live intelligence: matched external signals for this vendor (previously
-    // only fetched on the assess page — the resting detail view answered "how
-    // risky is this vendor NOW" with a stale point-in-time card).
-    getVendorSignalContext(token, id),
+    // External intelligence: the DETERMINISTIC accepted vendor↔signal links
+    // (EG2 slice 9). This replaces the previous synchronous LLM call on every
+    // page load, whose rows had no id, date, source, or link and whose output
+    // changed between refreshes — on exactly the surface a CISO judges the
+    // "vendor intelligence" claim by. The LLM analysis remains on the assess
+    // flow, where its suggested-finding output is actually consumed.
+    getVendorSignals(token, id, 10),
     // Concentration signal: which AI systems depend on this vendor.
     getVendorAiDependencies(token, id),
   ]);
@@ -960,7 +968,11 @@ export default async function VendorDetailPage({
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
           <OpenFindingsSectionClient findings={activeFindings} vendorId={vendor.id} />
-          <LiveIntelligenceSection context={signalContext} vendorId={vendor.id} />
+          <ExternalIntelligenceSection
+            signals={linkedSignals}
+            vendorId={vendor.id}
+            vendorName={vendor.name}
+          />
           <FrameworkAssessmentsSection progress={frameworkProgress} vendorId={vendor.id} />
           <AssessmentHistorySection
             assessments={assessments}
@@ -972,12 +984,26 @@ export default async function VendorDetailPage({
             inProgressReviews={inProgressReviews}
             vendorId={vendor.id}
           />
+          <HistorySection resourcePath="vendors" resourceId={vendor.id} />
         </div>
 
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
           <DependentAiSystemsCard dependencies={aiDeps} />
+          {/* The enterprise graph could always answer "what depends on this
+              vendor" but was reachable only via the Assets row — never from
+              the page a TPRM analyst actually lives on. Same flag gate as the
+              asset page's link. */}
+          {process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true" && (
+            <Link
+              href={`/enterprise-context/graph?node_type=vendor&node_id=${encodeURIComponent(vendor.id)}`}
+              className="block text-sm font-medium transition-colors hover:opacity-80"
+              style={{ color: "#00c4b4" }}
+            >
+              View relationships in the enterprise graph →
+            </Link>
+          )}
           <RiskSummaryCard
             vendor={vendor}
             activeFindingCount={activeFindings.length}
@@ -999,78 +1025,133 @@ export default async function VendorDetailPage({
 }
 
 // ─────────────────────────────────────────────────────────────
-// Live Intelligence (W5 read-surface wiring): matched external signals for
-// this vendor, on the RESTING detail view — previously fetched only on the
-// assess page, so "how risky is this vendor NOW" had no live answer here.
+// External Intelligence (EG2 slice 9): the DETERMINISTIC accepted
+// vendor↔signal links, dated, sourced, and drillable — mirroring the
+// AI-system section so the two sibling surfaces agree on what "linked
+// intelligence" looks like. Replaces the per-pageload LLM summary whose rows
+// had no id, date, or link and changed between refreshes.
 // ─────────────────────────────────────────────────────────────
 
-const RELEVANCE_COLOR: Record<string, string> = {
-  high: "#fca5a5",
+const SIGNAL_SEV_COLOR: Record<string, string> = {
+  critical: "#fca5a5",
+  high: "#fdba74",
+  moderate: "#fcd34d",
   medium: "#fcd34d",
   low: "#86efac",
 };
 
-function LiveIntelligenceSection({
-  context,
+function ExternalIntelligenceSection({
+  signals,
   vendorId,
+  vendorName,
 }: {
-  context: VendorSignalContext | null;
+  /** null = the read FAILED — render an outage note, never a clean vendor. */
+  signals: AiSystemLinkedSignal[] | null;
   vendorId: string;
+  vendorName: string;
 }) {
-  const matches = context?.matchedSignals ?? [];
+  if (signals === null) {
+    return (
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide mb-3" style={{ color: "#94a3b8" }}>
+          External Intelligence
+        </h2>
+        <div
+          className="rounded-lg border px-4 py-3"
+          style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(239,68,68,0.25)" }}
+        >
+          <p className="text-xs leading-relaxed" style={{ color: "#fca5a5" }}>
+            Could not load this vendor&apos;s linked intelligence right now — this
+            does not mean the vendor is clear. Refresh to try again.
+          </p>
+        </div>
+      </section>
+    );
+  }
   return (
     <section>
       <div className="flex items-center gap-2 mb-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
-          Live Intelligence
+          External Intelligence
         </h2>
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
           style={{
-            background: matches.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
-            color: matches.length > 0 ? "#fcd34d" : "#475569",
+            background: signals.length > 0 ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.12)",
+            color: signals.length > 0 ? "#fcd34d" : "#475569",
           }}
         >
-          {matches.length}
+          {signals.length}
         </span>
       </div>
-      {matches.length === 0 ? (
+      {signals.length === 0 ? (
         <div className="bg-brand-surface border border-brand-line rounded-lg px-4 py-3">
           <p className="text-xs leading-relaxed" style={{ color: "#64748b" }}>
-            Live Intelligence matches external threat and vendor signals to this vendor
-            as they arrive. No signals currently match — new intelligence will appear here
-            automatically as the pipeline links it to this vendor.
+            No confirmed external signals are linked to this vendor. New matches
+            appear in the{" "}
+            <Link
+              href={`/queue?target_type=vendor&q=${encodeURIComponent(vendorName)}`}
+              style={{ color: "#93c5fd" }}
+            >
+              review queue
+            </Link>{" "}
+            for confirmation — accepted links show here with their dates and sources.
           </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {context?.overallRiskSummary && (
-            <p className="text-sm" style={{ color: "#cbd5e1" }}>{context.overallRiskSummary}</p>
-          )}
-          {matches.map((m, i) => (
+          {signals.map((s) => (
             <div
-              key={i}
+              key={s.link_id}
               className="rounded-lg border p-3"
               style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}
             >
-              <div className="flex items-center gap-2">
-                <span
-                  className="text-xs font-semibold"
-                  style={{ color: RELEVANCE_COLOR[(m.relevance ?? "").toLowerCase()] ?? "#94a3b8" }}
-                >
-                  {m.severity}
+              <div className="flex items-center gap-2 flex-wrap">
+                {s.severity && (
+                  <span
+                    className="text-xs font-semibold"
+                    style={{ color: SIGNAL_SEV_COLOR[s.severity.toLowerCase()] ?? "#94a3b8" }}
+                  >
+                    {s.severity}
+                  </span>
+                )}
+                {s.affected_cve && (
+                  <span className="text-xs" style={{ color: "#94a3b8" }}>{s.affected_cve}</span>
+                )}
+                <span className="text-xs ml-auto" style={{ color: "#475569" }}>
+                  linked {fmt(s.link_created_at)}
                 </span>
-                <span className="text-sm" style={{ color: "#e2e8f0" }}>{m.title}</span>
               </div>
+              <p className="text-sm mt-1" style={{ color: "#cbd5e1" }}>
+                {s.event_summary ?? s.normalized_summary ?? "External signal"}
+              </p>
+              {s.intelligence_event_id && (
+                <Link
+                  href={`/intelligence/${encodeURIComponent(s.intelligence_event_id)}`}
+                  className="text-xs"
+                  style={{ color: "#93c5fd" }}
+                >
+                  View intelligence event →
+                </Link>
+              )}
             </div>
           ))}
-          <Link
-            href={`/vendors/${vendorId}/assess`}
-            className="inline-block text-xs font-medium"
-            style={{ color: "#00c4b4" }}
-          >
-            Reassess with this intelligence →
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/vendors/${vendorId}/assess`}
+              className="inline-block text-xs font-medium"
+              style={{ color: "#00c4b4" }}
+            >
+              Reassess with this intelligence →
+            </Link>
+            <Link
+              href={`/queue?target_type=vendor&q=${encodeURIComponent(vendorName)}`}
+              className="inline-block text-xs font-medium"
+              style={{ color: "#93c5fd" }}
+            >
+              Review suggested links →
+            </Link>
+          </div>
         </div>
       )}
     </section>

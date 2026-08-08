@@ -29,8 +29,11 @@ canonical domain model. No epic may warp the architecture around a single output
 
 ## 2. Governance invariants (non-negotiable, inherited from EAR/ECL)
 
-- `main` frozen; all work lands on `develop`. Branch off `origin/develop` → PR → CI green
-  (8/8) → **squash-merge** → delete branch.
+- All work lands on `develop`. Branch off `origin/develop` → PR → CI green
+  (8/8) → **squash-merge** → delete branch. *(Amended 2026-07-28: the original "`main`
+  frozen" clause was superseded by the 2026-07-21 production launch — `main` now advances
+  via the launch/promotion process (`docs/launch/LAUNCH_MASTER_PLAN.md`), never by direct
+  program pushes. The develop-based flow above is unchanged.)*
 - **Dark launches only.** Every new behavior behind a feature flag, default OFF in all four
   `render.yaml` services. **Never enable production** (GATE B applies program-wide).
 - **Additive migrations only**; backward compatibility is structural, not best-effort. No

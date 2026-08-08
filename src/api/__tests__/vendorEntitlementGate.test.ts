@@ -48,7 +48,7 @@ const PROF = 'requireEntitlement("professional")';
 // ---------------------------------------------------------------------------
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
-  "vendors.ts": 8,
+  "vendors.ts": 9,
   "vendorAssuranceDocuments.ts": 19,
   "vendorAssessments.ts": 3,
   "vendorReviews.ts": 4,
@@ -60,7 +60,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // premium-gated (never standard; the STD==0 assertion below still holds).
   // +1 for POST /findings/from-signal (Brief → Finding promotion): it CREATES a
   // finding, so it is gated exactly like every other finding write.
-  "findings.ts": 10,
+  // +1 for GET /findings/:id/history (per-finding audit trail).
+  "findings.ts": 11,
   "findingsExport.ts": 1,
   // risk engine
   "risks.ts": 8,
@@ -77,8 +78,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "signalObligationLinks.ts": 4,
   "signalMatchSuggestions.ts": 5,
   // controls / frameworks
-  // 6 since GET /controls/:id/findings — dual-gated like the rest.
-  "controls.ts": 6,
+  // 7 since GET /controls/:id/history — dual-gated like the rest.
+  "controls.ts": 7,
   "controlMappings.ts": 2,
   "controlAssessments.ts": 4,
   "controlComplianceContext.ts": 1,
@@ -87,14 +88,14 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworkReadiness.ts": 1,
   "requirements.ts": 6,
   // obligations
-  // 6 since GET /obligations/:id/findings — dual-gated like the rest.
-  "obligations.ts": 6,
+  // 7 since GET /obligations/:id/history — dual-gated like the rest.
+  "obligations.ts": 7,
   "obligationMappings.ts": 2,
   "obligationAssessments.ts": 4,
   "obligationComplianceContext.ts": 1,
   // AI governance
-  // 6 since GET /ai-systems/:id/findings — dual-gated like the rest.
-  "aiSystems.ts": 6,
+  // 7 since GET /ai-systems/:id/history — dual-gated like the rest.
+  "aiSystems.ts": 7,
   "aiGovernanceAssessments.ts": 4,
   "aiSystemGovernanceContext.ts": 1,
   "aiSystemVendorDependencies.ts": 4,
@@ -103,7 +104,8 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "assess.ts": 1,
   "assessments.ts": 2,
   // 6 since POST /evidence/upload + GET /evidence/:id/file (file attachments).
-  "evidence.ts": 6,
+  // 7th gate: GET /evidence/recent (EG2 slice 8, org-wide inventory read).
+  "evidence.ts": 7,
   "dependencies.ts": 5,
   "dependencyAssessments.ts": 4,
   // findings/actions/policies
@@ -120,8 +122,15 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   // cyber signals (customer CRUD + fetch + reprocess)
   "cyberSignals.ts": 13,
   // Bucket C rank-4 flips
+  // teamInvites gates via requireTeamCapability() (#692 A2): premium ranks
+  // pass as before PLUS the 'teams' Stripe tier — Brief Team's headline
+  // feature stopped 403ing for its own paying customers. Counted via the
+  // TEAM_GATE token below; still zero standard, zero bare premium.
   "teamInvites.ts": 5,
-  "webhooks.ts": 7,
+  // 8 since POST /webhooks/:id/rotate-secret (premium + not-viewer, like test).
+  // 9 since GET /webhooks/event-types (premium — the catalog must not
+  // fingerprint feature-flag state for unentitled accounts).
+  "webhooks.ts": 9,
   "templates.ts": 3,
   // auditLog: already premium (#233 era) + admin-role gated — pinned here
   "auditLog.ts": 3,
@@ -139,6 +148,10 @@ const DUAL_GATE_FILES: ReadonlySet<string> = new Set([
 ]);
 const DUAL = "requirePremiumOrCorePlatform";
 
+// teamInvites' tier-scoped gate (#692 A2): premium-or-Brief-Team, team routes only.
+const TEAM_GATE_FILES: ReadonlySet<string> = new Set(["teamInvites.ts"]);
+const TEAM_GATE = "requireTeamCapability";
+
 describe("entitlement gate — Bucket A (core platform) is premium, never standard", () => {
   for (const [file, expectedPremium] of Object.entries(BUCKET_A_PREMIUM)) {
     it(`${file}: zero standard, ${expectedPremium} premium`, () => {
@@ -147,6 +160,11 @@ describe("entitlement gate — Bucket A (core platform) is premium, never standa
       if (DUAL_GATE_FILES.has(file)) {
         // import + route mounts; the count below excludes the import line.
         expect(count(src, DUAL) - count(src, `import { ${DUAL} }`)).toBe(expectedPremium);
+        expect(count(src, PREM)).toBe(0);
+      } else if (TEAM_GATE_FILES.has(file)) {
+        // Count route mounts only — the import line carries the bare name
+        // twice (binding + module path), so match the call form.
+        expect(count(src, `${TEAM_GATE}()`)).toBe(expectedPremium);
         expect(count(src, PREM)).toBe(0);
       } else {
         expect(count(src, PREM)).toBe(expectedPremium);

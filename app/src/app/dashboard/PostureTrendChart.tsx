@@ -45,7 +45,7 @@ function indexToX(i: number, total: number): number {
 }
 
 export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] }) {
-  const [selectedDays, setSelectedDays] = useState<30 | 60 | 90>(90);
+  const [selectedDays, setSelectedDays] = useState<30 | 60 | 90 | 180 | 365>(90);
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - selectedDays);
@@ -53,7 +53,9 @@ export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] 
     .filter((s) => new Date(s.snapshot_date) >= cutoff)
     .sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
 
-  const days: Array<30 | 60 | 90> = [30, 60, 90];
+  // 180/365 added with the raised history cap (EG2 slice 12) — the QoQ and
+  // YoY windows executives actually ask about.
+  const days: Array<30 | 60 | 90 | 180 | 365> = [30, 60, 90, 180, 365];
 
   return (
     <div
@@ -171,6 +173,12 @@ export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] 
               const y = scoreToY(s.overall_score ?? 0);
               const label = formatLabel(s.snapshot_date);
               const isSingle = filtered.length === 1;
+              // Tick thinning: a daily series over 180/365 days would print an
+              // unreadable label per point — show ~6 evenly-spaced ticks plus
+              // the endpoints. Data points and tooltips remain per-snapshot.
+              const tickEvery = Math.max(1, Math.ceil(filtered.length / 6));
+              const showLabel =
+                isSingle || i === filtered.length - 1 || i % tickEvery === 0;
               return (
                 <g key={s.id}>
                   <circle cx={x} cy={y} r={isSingle ? 5 : 3} fill={TEAL}>
@@ -187,15 +195,17 @@ export function PostureTrendChart({ snapshots }: { snapshots: PostureSnapshot[] 
                       {s.overall_score}
                     </text>
                   )}
-                  <text
-                    x={x}
-                    y={PAD_T + INNER_H + 14}
-                    textAnchor="middle"
-                    fontSize="10"
-                    fill={TEXT_MUTED}
-                  >
-                    {label}
-                  </text>
+                  {showLabel && (
+                    <text
+                      x={x}
+                      y={PAD_T + INNER_H + 14}
+                      textAnchor="middle"
+                      fontSize="10"
+                      fill={TEXT_MUTED}
+                    >
+                      {label}
+                    </text>
+                  )}
                 </g>
               );
             })}

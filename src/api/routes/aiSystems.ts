@@ -25,6 +25,11 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset, deregisterAsset } from "../lib/assetRegistrar.js";
+import {
+  backingIdsOf,
+  normalizeAssetSearchTerm,
+  resolveAssetSearch
+} from "../lib/assetSearchResolver.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -36,6 +41,13 @@ import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  AI_SYSTEM_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
 
 const router = Router();
 
@@ -239,6 +251,34 @@ router.get(
         conditions.push(`criticality = $${params.length}`);
       }
 
+      // Shared asset-search q — the platform capability (name, alias, exact
+      // UUID, any registry identifier), narrowed to AI-system-typed assets
+      // and applied by BACKING id, so this list never re-implements matching.
+      const rawQ = req.query.q;
+      if (rawQ !== undefined && !(typeof rawQ === "string" && rawQ.trim().length === 0)) {
+        const searchTerm = normalizeAssetSearchTerm(rawQ);
+        if (searchTerm === null) {
+          res.status(400).json({ error: "invalid_search" });
+          return;
+        }
+        const resolved = await resolveAssetSearch(pg, organizationId, searchTerm, {
+          assetTypes: ["ai_system"]
+        });
+        const aiSystemIds = backingIdsOf(resolved.matches, "ai_systems");
+        if (aiSystemIds.length === 0) {
+          res.status(200).json({
+            count: 0,
+            limit,
+            organizationId,
+            nextCursor: null,
+            ai_systems: []
+          });
+          return;
+        }
+        params.push(aiSystemIds);
+        conditions.push(`id = ANY($${params.length}::uuid[])`);
+      }
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -346,6 +386,74 @@ router.get(
         "GET /api/ai-systems/:id failed"
       );
       res.status(500).json({ error: "ai_system_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/ai-systems/:id/history
+   Per-AI-system audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   system plus its governance reviews and governance assessments,
+   newest first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/ai-systems/:id (no admin gate) — anyone
+   who can read the system can read its history.
+   ========================================================= */
+
+router.get(
+  "/ai-systems/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const aiSystemId = String(req.params.id ?? "").trim();
+    if (!aiSystemId) {
+      res.status(400).json({ error: "ai_system_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(aiSystemId)) {
+      res.status(400).json({ error: "ai_system_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM ai_systems WHERE id = $1 AND organization_id = $2`,
+        [aiSystemId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "ai_system_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        AI_SYSTEM_HISTORY_SPEC,
+        organizationId,
+        aiSystemId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "ai_system_history_failed", err, aiSystemId },
+        "GET /api/ai-systems/:id/history failed"
+      );
+      res.status(500).json({ error: "ai_system_history_failed" });
     }
   })
 );

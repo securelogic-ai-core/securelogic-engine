@@ -11,11 +11,11 @@
  *   DELETE /api/sso/config              — Delete org SSO config (admin + professional+)
  */
 
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
-import { pg } from "../infra/postgres.js";
-import { signJwt } from "../lib/jwt.js";
+import { pg, pgElevated } from "../infra/postgres.js";
+import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit } from "../lib/seatLimit.js";
 import { logger } from "../infra/logger.js";
@@ -25,6 +25,11 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { getAppBaseUrl } from "../lib/alerting/alertPrimitives.js";
+import {
+  ssoCodeExchangeEnabled,
+  createSsoLoginCode,
+  consumeSsoLoginCode,
+} from "../lib/ssoLoginCodes.js";
 
 // No-op schema validator — production IdPs produce valid assertions.
 // Using @authenio/samlify-node-xmllint would require a native dependency
@@ -246,13 +251,32 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       email: string;
       role: string;
       organization_id: string;
+      status: string;
     }>(
-      `SELECT id, name, email, role, organization_id
+      `SELECT id, name, email, role, organization_id, status
        FROM users
        WHERE email = $1 AND organization_id = $2
        LIMIT 1`,
       [email, orgId]
     );
+
+    // GDPR-lifecycle status gate — same rule as the password login path
+    // (customerAuth.ts): a pending_deletion/deleted account must not mint a
+    // session through ANY door, and SSO must not be the documented bypass.
+    const existingStatus = existing.rows[0]?.status ?? null;
+    if (existingStatus === "pending_deletion" || existingStatus === "deleted") {
+      writeAuditEvent({
+        organizationId: orgId,
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        resourceId: existing.rows[0]!.id,
+        payload: { reason: existingStatus, provider: "saml", email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null,
+      });
+      res.redirect(`${APP_URL}/login?error=account_pending_deletion`);
+      return;
+    }
 
     let userId: string;
     let userRole: string;
@@ -260,6 +284,26 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
 
     if (existing.rows.length > 0) {
       const u = existing.rows[0]!;
+
+      // A removed member ('inactive') or deletion-lifecycle user must not
+      // get a fresh session via the IdP: removal is an explicit admin
+      // action and SSO re-auth must not silently undo it. The row still
+      // exists, so without this gate the existing-user branch would
+      // happily reissue a JWT. Admins restore access by re-inviting.
+      if (SESSION_BLOCKED_STATUSES.has(u.status)) {
+        writeAuditEvent({
+          organizationId: orgId,
+          actorUserId: null,
+          eventType: "auth.login_blocked",
+          resourceType: "user",
+          resourceId: u.id,
+          payload: { reason: u.status, method: "sso" },
+          ipAddress: req.ip ?? null
+        });
+        res.redirect(`${APP_URL}/login?error=account_inactive`);
+        return;
+      }
+
       userId   = u.id;
       userRole = u.role ?? "analyst";
     } else {
@@ -306,8 +350,6 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       wasNewUser = true;
     }
 
-    const token = signJwt(userId, orgId, userRole);
-
     writeAuditEvent({
       organizationId: orgId,
       actorUserId: userId,
@@ -317,6 +359,24 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       payload: { email, provider: "saml", jit: wasNewUser },
     });
 
+    if (ssoCodeExchangeEnabled()) {
+      // Hardened handoff: the URL carries only an opaque single-use 60s code;
+      // the app exchanges it server-side (POST /api/sso/exchange) for the
+      // session JWT + profile. No token, no PII in browser history or logs.
+      const code = await createSsoLoginCode({
+        organizationId: orgId,
+        userId,
+        email,
+        displayName,
+      });
+      res.redirect(`${APP_URL}/api/auth-sso-callback?code=${encodeURIComponent(code)}`);
+      return;
+    }
+
+    // Legacy handoff (flag off): session JWT + profile in the URL. Kept
+    // byte-identical until the operator flips the exchange flag, so either
+    // service can deploy first.
+    const token = signJwt(userId, orgId, userRole);
     const callbackUrl =
       `${APP_URL}/api/auth-sso-callback` +
       `?token=${encodeURIComponent(token)}` +
@@ -329,6 +389,118 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ event: "sso_acs_failed", orgId, err }, "POST /api/sso/:orgId/acs failed");
     res.redirect(`${APP_URL}/login?error=sso_failed`);
+  }
+});
+
+// ─── POST /api/sso/exchange ──────────────────────────────────────────────────
+// No auth (this IS the login path). Body: { code }. Consumes a single-use ACS
+// login code and returns the session JWT + the profile fields the app
+// callback previously read from the URL. Unknown / expired / replayed codes
+// are indistinguishable (uniform 401) — a leaked URL reveals nothing.
+// Dark: 404 while the exchange flag is off.
+
+// Sized for AGGREGATE platform login traffic, not per-user: the only
+// legitimate caller is the app server (server-side fetch), so every tenant's
+// SSO logins share ONE ip bucket — a per-user-sized cap would let one
+// tenant's morning peak 429 every other tenant's login (security review B1).
+// The limiter is a bot/abuse ceiling only; brute force is not its job
+// (2^256 code space, hashed at rest). Limit hits are loud in the logs.
+const exchangeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  handler: (req, res) => {
+    logger.warn(
+      { event: "sso_exchange_rate_limited", ip: req.ip ?? null },
+      "SSO exchange rate limit hit — aggregate login traffic exceeded the abuse ceiling"
+    );
+    res.status(429).json({ error: "rate_limit_exceeded" });
+  },
+});
+
+// Flag gate FIRST, limiter second (security review #710 finding 1): with the
+// order reversed, a flag-off probe still received RateLimit-* headers and a
+// 404 body missing the app-wide handler's `path` field — fingerprinting the
+// feature as deployed-but-off. Flag-off now mirrors the default 404 handler
+// byte-for-byte and touches no limiter state.
+const exchangeFlagGate = (req: Request, res: Response, next: NextFunction): void => {
+  if (!ssoCodeExchangeEnabled()) {
+    res.status(404).json({ error: "not_found", path: req.originalUrl });
+    return;
+  }
+  next();
+};
+
+router.post("/sso/exchange", exchangeFlagGate, exchangeLimiter, async (req: Request, res: Response) => {
+  try {
+    const code = (req.body ?? {})["code"];
+    if (typeof code !== "string" || code.length === 0) {
+      res.status(400).json({ error: "code_required" });
+      return;
+    }
+
+    const payload = await consumeSsoLoginCode(code);
+    if (!payload) {
+      // Uniform toward the caller; loud toward operations (a spike here is a
+      // guessing attempt or an integration fault, either way worth seeing).
+      logger.warn({ event: "sso_exchange_invalid_code", ip: req.ip ?? null }, "SSO exchange: invalid code");
+      res.status(401).json({ error: "invalid_code" });
+      return;
+    }
+
+    // Role AND status are read at exchange time, not mint time — a role
+    // change in the 60-second window is honored, the code row never carries
+    // authority, and the full session-blocked gate (SESSION_BLOCKED_STATUSES,
+    // #732) holds at this mint site too: a member removed ('inactive') or in
+    // the deletion lifecycle between ACS and exchange must not mint a JWT
+    // here when every other login door refuses them. Uniform 401 regardless.
+    const userResult = await pgElevated.query<{ role: string; status: string | null }>(
+      `SELECT role, status FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [payload.userId, payload.organizationId]
+    );
+    const user = userResult.rows[0];
+    if (!user || (user.status !== null && SESSION_BLOCKED_STATUSES.has(user.status))) {
+      if (user) {
+        writeAuditEvent({
+          organizationId: payload.organizationId,
+          actorUserId: null,
+          eventType: "auth.login_blocked",
+          resourceType: "user",
+          resourceId: payload.userId,
+          payload: { reason: user.status, provider: "saml_exchange" },
+          ipAddress: req.ip ?? null,
+        });
+      }
+      res.status(401).json({ error: "invalid_code" });
+      return;
+    }
+
+    const token = signJwt(payload.userId, payload.organizationId, user.role);
+
+    // The exchange is where the session JWT is actually minted now — audit it
+    // (security review N2): an intercepted-and-raced code leaves a winning
+    // exchange here and a losing invalid_code warn above, both visible.
+    writeAuditEvent({
+      organizationId: payload.organizationId,
+      actorUserId: payload.userId,
+      eventType: "auth.sso_login_exchanged",
+      resourceType: "user",
+      resourceId: payload.userId,
+      payload: { provider: "saml" },
+      ipAddress: req.ip ?? null,
+    });
+    res.status(200).json({
+      token,
+      userId: payload.userId,
+      email: payload.email,
+      name: payload.displayName,
+      orgId: payload.organizationId,
+    });
+  } catch (err) {
+    logger.error({ event: "sso_exchange_failed", err }, "POST /api/sso/exchange failed");
+    res.status(500).json({ error: "sso_exchange_failed" });
   }
 });
 

@@ -22,6 +22,7 @@ import {
   aFramework,
   aFrameworkReadiness,
   aMe,
+  anAction,
   anActionsSummary,
   anAuthMe,
   aPostureSnapshot,
@@ -39,8 +40,11 @@ const api = vi.hoisted(() => ({
   getFrameworks: vi.fn(),
   getFrameworkReadiness: vi.fn(),
   getActionsSummary: vi.fn(),
+  // EX1 PR-2 — the owner=me actions list behind My Work's NEXT UP items.
+  getActions: vi.fn(),
   // B2 — saved layout + legacy-preference projection inputs.
   getBriefingLayout: vi.fn(),
+  getBriefingChanges: vi.fn(),
   getDashboardPreferences: vi.fn(),
 }));
 
@@ -86,8 +90,11 @@ beforeEach(() => {
   api.getActionsSummary.mockResolvedValue(
     anActionsSummary({ my_open_count: 2, my_overdue_count: 1 })
   );
+  // EX1 PR-2 default: owner=me actions list loads empty (no assigned actions).
+  api.getActions.mockResolvedValue({ actions: [], count: 0 });
   // B2 defaults: no saved layout, no legacy customization → role default.
   api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+  api.getBriefingChanges.mockResolvedValue(null);
   api.getDashboardPreferences.mockResolvedValue({ layout: [], source: "system_default" });
 });
 
@@ -115,6 +122,62 @@ describe("flag ON + platform JWT — The Briefing", () => {
   beforeEach(() => {
     vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
     vi.stubEnv("SECURELOGIC_INDEPENDENT_REVIEW_ENABLED", "true");
+  });
+
+  it("NEXT UP surfaces the user's highest-priority owned items with why, due date, and deep link", async () => {
+    // The owner=me findings call shares the getFindings mock with the
+    // recent-findings fetch; give it an overdue Critical + a dated High.
+    api.getFindings.mockResolvedValue(
+      aFindingsResponse([
+        aFinding({ id: "f-crit", title: "KEV exploit affects vendor: Cisco", severity: "Critical", due_date: "2026-01-01T00:00:00.000Z" }),
+        aFinding({ id: "f-high", title: "Unencrypted backups", severity: "High", due_date: "2099-01-01T00:00:00.000Z" }),
+      ])
+    );
+    api.getActions.mockResolvedValue({
+      actions: [anAction({ id: "a-imm", title: "Rotate exposed key", priority: "immediate", due_date: "2099-06-01T00:00:00.000Z", owner_user_id: "u-1" })],
+      count: 1,
+    });
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(within(myWork as HTMLElement).getByText("Next up")).toBeInTheDocument();
+    const items = within(myWork as HTMLElement).getAllByRole("listitem");
+    // Overdue Critical first; each item carries urgency + due labels.
+    expect(items[0].textContent).toContain("KEV exploit affects vendor: Cisco");
+    expect(items[0].textContent).toContain("Critical");
+    expect(items[0].textContent).toContain("Overdue");
+    expect(within(items[0]).getByRole("link")).toHaveAttribute("href", "/findings/f-crit");
+    const actionItem = items.find((li) => li.textContent?.includes("Rotate exposed key"))!;
+    expect(within(actionItem).getByRole("link")).toHaveAttribute("href", "/actions?view=mine");
+    expect(actionItem.textContent).toContain("Immediate");
+  });
+
+  it("NEXT UP is hidden entirely when the user owns nothing — counts render exactly as before", async () => {
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getActions.mockResolvedValue({ actions: [], count: 0 });
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(within(myWork as HTMLElement).queryByText("Next up")).toBeNull();
+    expect(within(myWork as HTMLElement).getByText("Findings you own")).toBeInTheDocument();
+  });
+
+  it("a FAILED owner=me actions fetch is an explicit notice, never a silent-empty list", async () => {
+    api.getActions.mockResolvedValue(null); // client returns null on failure
+    const { container } = await renderDashboard();
+    const myWork = container.querySelector('[data-briefing-module="my_work"]')!;
+    expect(
+      within(myWork as HTMLElement).getByText(/Couldn't load your assigned actions/)
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT fetch the framework catalog — readiness feeds only the legacy composition", async () => {
+    // EX1 PR-1 perf guard: the Briefing links to /frameworks instead of
+    // rendering readiness, so the catalog fetch (and the per-framework
+    // readiness fan-out it seeds) must be skipped on the Briefing path.
+    // The legacy (flag-off) path keeps fetching it — pinned by the legacy
+    // suite rendering FrameworkReadinessWidget from this same mock.
+    await renderDashboard();
+    expect(api.getFrameworks).not.toHaveBeenCalled();
+    expect(api.getFrameworkReadiness).not.toHaveBeenCalled();
   });
 
   it("renders the three zones, personal work FIRST", async () => {
@@ -350,6 +413,7 @@ describe("flag ON + B2 — legacy-preference projection (the migration path)", (
   it("carries superseded tile visibility, discloses dropped tiles by LABEL, and stays unsaved", async () => {
     vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
     api.getBriefingLayout.mockResolvedValue({ layout: null, updated_at: null });
+  api.getBriefingChanges.mockResolvedValue(null);
     api.getDashboardPreferences.mockResolvedValue({
       source: "personal",
       layout: [
@@ -385,5 +449,329 @@ describe("flag ON + B2 — legacy-preference projection (the migration path)", (
 
     expect(container.querySelector("[data-briefing-migration-disclosure]")).toBeNull();
     expect(container.querySelector('[data-briefing-module="needs_attention"]')).not.toBeNull();
+  });
+});
+
+describe("flag ON — fresh-org truthfulness (EG2 slice 2)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  /** An org with NO platform data at all: no snapshot, findings, actions,
+   *  domains, risks, or frameworks. hasPlatformData (D-2) must be false. */
+  function freshOrg() {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: null,
+        domains: [],
+        findings: {
+          open: 0,
+          by_severity: { Critical: 0, High: 0, Moderate: 0, Low: 0 },
+        },
+        actions: { open: 0, in_progress: 0, blocked: 0, active: 0, overdue: 0 },
+        risks_summary: {
+          open: 0,
+          by_risk_rating: {},
+          by_residual_rating: {},
+          by_residual_likelihood_impact: [],
+        },
+      } as never)
+    );
+    api.getPostureHistory.mockResolvedValue({ snapshots: [] });
+    api.getFindings.mockResolvedValue(aFindingsResponse([]));
+    api.getFrameworks.mockResolvedValue({ frameworks: [] });
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_work_open: 0, active_total: 0, closed_count: 0 }),
+    });
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ my_open_count: 0, my_overdue_count: 0 })
+    );
+  }
+
+  it("an unmeasured org is never told it is clear — zero-count modules read as 'nothing yet'", async () => {
+    freshOrg();
+
+    await renderDashboard();
+
+    // The trust rule: green reassurance must not render on unassessed data.
+    expect(screen.queryByText(/You're clear/)).toBeNull();
+    expect(screen.queryByText(/No Critical or High active findings/)).toBeNull();
+    // Instead: honest not-yet-measured states with a route into setup.
+    expect(screen.getByText(/Nothing assigned to you yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing assessed yet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Start setup/ })).toHaveAttribute(
+      "href",
+      "/getting-started"
+    );
+  });
+
+  it("an org WITH data and zero Critical/High still gets the earned all-clear", async () => {
+    // Real data present (default SUMMARY has domains + snapshot) but no
+    // critical/high and nothing assigned to the caller.
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        findings: {
+          open: 1,
+          by_severity: { Critical: 0, High: 0, Moderate: 1, Low: 0 },
+        },
+      } as never)
+    );
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({ my_work_open: 0 }),
+    });
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ my_open_count: 0, my_overdue_count: 0 })
+    );
+
+    await renderDashboard();
+
+    expect(screen.getByText(/No Critical or High active findings/)).toBeInTheDocument();
+    expect(screen.getByText(/You're clear/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing assessed yet/)).toBeNull();
+  });
+});
+
+describe("flag ON — Since Your Last Visit (EG2 slice 10, Operational Presence)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  const CHANGES = {
+    since: "2026-07-28T09:14:00.000Z",
+    clamped: false,
+    window_days_max: 90,
+    changes: {
+      new_active_findings: 4,
+      new_critical_high: 2,
+      remediation_completed: 3,
+      resolved: 1,
+      newly_overdue_actions: 2,
+      briefs_published: 1,
+    },
+  };
+
+  it("leads the Briefing with the delta: what got worse, what needs a decision, what got better", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue(CHANGES);
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="whats_changed"]') as HTMLElement;
+    expect(mod).not.toBeNull();
+    // The delta is the FIRST module on the page.
+    expect(
+      container.querySelector("[data-briefing-module]")?.getAttribute("data-briefing-module")
+    ).toBe("whats_changed");
+    // The engine was asked for the delta since the REAL previous login.
+    expect(api.getBriefingChanges).toHaveBeenCalledWith(
+      expect.anything(),
+      "2026-07-28T09:14:00.000Z"
+    );
+    // The new-findings NUMBER links to the population that reproduces it.
+    expect(
+      within(mod).getByRole("link", { name: /New active findings/ })
+    ).toHaveAttribute("href", "/findings?queue=all&created_from=2026-07-28");
+    expect(within(mod).getByText("4")).toBeInTheDocument();
+    expect(within(mod).getByText(/2 Critical\/High/)).toBeInTheDocument();
+    // Transitions read as sentences with labeled destinations.
+    expect(within(mod).getByText(/3 findings completed remediation/)).toBeInTheDocument();
+    expect(
+      within(mod).getByRole("link", { name: /Review ready to close/ })
+    ).toHaveAttribute("href", "/findings?bucket=ready_to_close");
+    expect(within(mod).getByText(/1 finding closed — posture improved/)).toBeInTheDocument();
+    expect(within(mod).getByText(/2 actions became overdue/)).toBeInTheDocument();
+  });
+
+  it("a quiet window is an earned quiet, anchored to the real timestamp", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue({
+      ...CHANGES,
+      changes: {
+        new_active_findings: 0,
+        new_critical_high: 0,
+        remediation_completed: 0,
+        resolved: 0,
+        newly_overdue_actions: 0,
+        briefs_published: 0,
+      },
+    });
+
+    await renderDashboard();
+
+    expect(screen.getByText(/Quiet since your last visit/)).toBeInTheDocument();
+  });
+
+  it("first visit (no previous login): the module is absent — and the engine is never asked", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: null }));
+
+    const { container } = await renderDashboard();
+
+    expect(container.querySelector('[data-briefing-module="whats_changed"]')).toBeNull();
+    expect(api.getBriefingChanges).not.toHaveBeenCalled();
+  });
+
+  it("a failed delta read says so — never a fabricated quiet", async () => {
+    api.getAuthMe.mockResolvedValue(anAuthMe({ previousLoginAt: "2026-07-28T09:14:00.000Z" }));
+    api.getBriefingChanges.mockResolvedValue(null);
+
+    await renderDashboard();
+
+    expect(
+      screen.getByText(/does not mean nothing happened/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Quiet since your last visit/)).toBeNull();
+  });
+});
+
+describe("flag ON — posture PRIMARY DRIVER (EX1 PR-3)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  /** The page injects the REAL clock, so non-stale renders must anchor the
+   *  snapshot date to the test's own clock, never a fixed date. */
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  it("explains the score: worst domain leads, provenance stated, recommendation linked", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [
+          aDomainScore({ domain: "Cyber", score: 70, severity: "High", finding_count: 3 }),
+          aDomainScore({ domain: "Vendor Risk", score: 22, severity: "Critical", finding_count: 5 }),
+          aDomainScore({ domain: "Regulatory", score: 48, severity: "Moderate", finding_count: 2 }),
+        ],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(driver).not.toBeNull();
+    // The worst domain (lowest health score) is the primary driver — fact row.
+    expect(within(driver).getByText("Primary driver")).toBeInTheDocument();
+    expect(within(driver).getByText("Vendor Risk")).toBeInTheDocument();
+    expect(within(driver).getByText("Critical")).toBeInTheDocument();
+    expect(within(driver).getByText("22")).toBeInTheDocument();
+    // Provenance: WHY this domain is the driver, from the canonical rule.
+    expect(
+      within(driver).getByText(/Weakest of 3 scored domains/)
+    ).toBeInTheDocument();
+    // The recommendation is labeled as one and links the evidence population.
+    expect(within(driver).getByText(/Recommended focus/)).toBeInTheDocument();
+    expect(
+      within(driver).getByRole("link", { name: /5 active findings in Vendor Risk/ })
+    ).toHaveAttribute("href", "/findings?domain=Vendor%20Risk&active=true");
+    // Supporting factors, worst-first, each linked.
+    expect(within(driver).getByText(/Also weighing on posture/)).toBeInTheDocument();
+    expect(
+      within(driver).getByRole("link", { name: "Regulatory (48)" })
+    ).toHaveAttribute("href", "/findings?domain=Regulatory&active=true");
+    expect(within(driver).getByRole("link", { name: "Cyber (70)" })).toBeInTheDocument();
+    // Fresh snapshot → no stale warning.
+    expect(within(driver).queryByText(/may be out of date/)).toBeNull();
+  });
+
+  it("a zero-finding driver is declared signal-driven — no link to an empty findings list", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [
+          aDomainScore({ domain: "Vendor Risk", score: 30, severity: "High", finding_count: 0 }),
+        ],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(
+      within(driver).getByText(/its score reflects risk and inventory signals/)
+    ).toBeInTheDocument();
+    expect(within(driver).queryByText(/Recommended focus/)).toBeNull();
+    expect(
+      within(driver).getByRole("link", { name: /View posture detail/ })
+    ).toHaveAttribute("href", "/posture");
+    // A single scored domain states its role honestly.
+    expect(
+      within(driver).getByText(/The only scored domain — it sets the posture score/)
+    ).toBeInTheDocument();
+  });
+
+  it("a stale snapshot carries an explicit warning — never presented as current", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: "2026-06-01" },
+        domains: [aDomainScore({ domain: "Cyber", score: 70 })],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const driver = container.querySelector("[data-posture-driver]") as HTMLElement;
+    expect(
+      within(driver).getByText(/Snapshot not refreshed since 2026-06-01/)
+    ).toBeInTheDocument();
+  });
+
+  it("a score WITHOUT a scored domain breakdown renders the module exactly as before — no driver", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: 58, overall_severity: "Moderate", snapshot_date: yesterday },
+        domains: [],
+      })
+    );
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText("58")).toBeInTheDocument();
+    expect(container.querySelector("[data-posture-driver]")).toBeNull();
+  });
+
+  it("no snapshot at all keeps the honest insufficient-data state — no driver", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        posture: { overall_score: null, overall_severity: null, snapshot_date: null },
+        domains: [aDomainScore({ domain: "Cyber" })],
+      } as never)
+    );
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText(/Insufficient data/)).toBeInTheDocument();
+    expect(container.querySelector("[data-posture-driver]")).toBeNull();
+  });
+});
+
+describe("flag ON — posture module 30-day delta (EG2 slice 12)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_DASHBOARD_BRIEFING_ENABLED", "true");
+  });
+
+  it("renders the delta when an honest 30-day baseline exists", async () => {
+    api.getPostureHistory.mockResolvedValue({
+      snapshots: [
+        aPostureSnapshot({ id: "s1", snapshot_date: "2026-06-30", overall_score: 60 }),
+        aPostureSnapshot({ id: "s2", snapshot_date: "2026-07-30", overall_score: 69 }),
+      ],
+    });
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).getByText(/\+9 \(\+15%\) · 30d/)).toBeInTheDocument();
+  });
+
+  it("insufficient history renders NO delta — never a fabricated 0%", async () => {
+    api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
+
+    const { container } = await renderDashboard();
+
+    const mod = container.querySelector('[data-briefing-module="posture_score"]') as HTMLElement;
+    expect(within(mod).queryByText(/30d/)).toBeNull();
   });
 });

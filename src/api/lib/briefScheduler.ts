@@ -4,8 +4,10 @@
  * Runs weekly (Tuesday 07:00 UTC, cron "0 7 * * 2" in schedulerRunner) over a
  * trailing 7-day signal window. Email delivery is additionally gated by
  * isBriefSendDay() (Tuesday UTC) so manual/off-day runs generate but do not
- * email. Processes every organization that has at least one active Intelligence
- * Brief subscriber, running the complete pipeline for each:
+ * email. Processes every ACTIVE organization — brief generation is an
+ * organizational entitlement (ADR-0007); intelligence_brief_subscribers holds
+ * email recipients only and never gates generation — running the complete
+ * pipeline for each:
  *
  *   Step 1 — Fetch signals (once per run, shared across all orgs)
  *     - CISA KEV — full catalog, actively exploited CVEs
@@ -23,6 +25,9 @@
  *
  *   Step 4 — Send brief per org
  *     - Calls sendBrief() — renders HTML, sends via Resend, records audit rows
+ *     - Recipients resolve from intelligence_brief_subscribers; an org with
+ *       zero active recipients keeps its generated in-platform brief and the
+ *       skip is recorded as a delivery-health condition
  *
  * Orgs are processed sequentially to avoid DB and external API contention.
  * Signal feeds are fetched ONCE and ingested per-org to avoid repeated
@@ -75,6 +80,7 @@ import {
 import { recomputeSourceReliability } from "./signals/sourceReliability.js";
 import { signalClusteringEnabled } from "./signals/signalClustering.js";
 import { briefProvenanceEnabled, buildProvenanceRows } from "./signals/briefProvenance.js";
+import { personalizeBriefItems } from "./briefPersonalizationService.js";
 import { intelligenceEventsEnabled } from "./signals/intelligenceEventsFeatureFlag.js";
 import { signalRecencyEnabled } from "./signalRecencyFeatureFlag.js";
 import { briefRelevanceEnabled, filterSignalsByOrgRelevance } from "./briefRelevance.js";
@@ -84,8 +90,10 @@ import {
   fetchPriorBriefContext
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
+import { emitBriefPublished } from "./briefWebhookEmitter.js";
 import { isBriefSendDay } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
+import { listBriefEligibleOrgIds } from "./briefEligibility.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,6 +107,8 @@ const WINDOW_DAYS = 7;
 // ---------------------------------------------------------------------------
 
 export type SchedulerRunSummary = {
+  /** Active organizations enumerated for this run — the generation population. */
+  active_orgs: number;
   orgs_processed: number;
   orgs_skipped: number;
   signals_fetched: {
@@ -117,6 +127,10 @@ export type SchedulerRunSummary = {
   emails_failed: number;
   /** Orgs whose brief was generated but NOT emailed because the run fell on a non-send day (any day except Tuesday UTC). */
   emails_skipped_off_day: number;
+  /** Orgs whose brief was generated + published but NOT emailed because they have zero active recipients (send day only). */
+  emails_skipped_no_recipients: number;
+  /** Org ids with zero active email recipients on a send day — feeds the recurring delivery-health report; never a generation gate. */
+  orgs_without_recipients: string[];
   errors: string[];
 };
 
@@ -452,10 +466,35 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     "Brief capped"
   );
 
+  // Personalize items — the SAME step, in the SAME position, as the manual
+  // generate route (POST /api/intelligence-briefs/generate): match capped
+  // items against the org's vendors, risks, AI systems and obligations BEFORE
+  // synthesis and persistence. Until IQ-1 this call existed only on the manual
+  // route, so every scheduler-produced brief shipped is_personalized=FALSE /
+  // platform_context=NULL and the customer-facing "affects your environment"
+  // surfaces had nothing to render. Non-fatal, exactly like the route: a
+  // personalization failure publishes the brief without personalization.
+  // (fetchOrgPlatformContext opens its own withTenant scope internally.)
+  let personalizedItems: Awaited<ReturnType<typeof personalizeBriefItems>>;
+  try {
+    personalizedItems = await personalizeBriefItems(cappedItems, orgId);
+  } catch (personalizationErr) {
+    logger.warn(
+      { event: "brief_personalization_failed", orgId, briefId, err: personalizationErr },
+      "Brief personalization failed — publishing without personalization data"
+    );
+    personalizedItems = cappedItems.map((item) => ({
+      ...item,
+      is_personalized: false,
+      platform_context: null
+    }));
+  }
+
   // Brief-level synthesis — one Claude call producing a 12-word headline.
   // Non-fatal: failure resolves to null and the brief publishes without one.
-  // Run on cappedItems so headline/teaser describe what's actually in the
-  // brief, not what was dropped.
+  // Run on personalizedItems (same objects as cappedItems, post-cap) so
+  // headline/teaser describe what's actually in the brief, not what was
+  // dropped — and so synthesis sees personalization, matching the route.
   //
   // Prior-brief context drives the exec summary's week-on-week calibration
   // sentence. Returns null on first-brief-ever cases; the prompt drops to
@@ -465,10 +504,10 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
   const priorContext = await withTenant(orgId, () =>
     fetchPriorBriefContext(orgId, briefId)
   );
-  const synthesis = await runSynthesisSafely(cappedItems, priorContext, orgId);
+  const synthesis = await runSynthesisSafely(personalizedItems, priorContext, orgId);
 
   const finalized = finalizeBrief(
-    cappedItems,
+    personalizedItems,
     periodStart.toISOString(),
     periodEnd.toISOString(),
     base.signal_count
@@ -491,17 +530,20 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       try {
         await client.query("BEGIN");
 
-        if (finalized.items.length > 0) {
+        if (personalizedItems.length > 0) {
           const itemValues: unknown[] = [];
           const itemPlaceholders: string[] = [];
 
-          finalized.items.forEach((item: BriefItem, idx: number) => {
-            const b = idx * 17;
+          // 19 columns per item — the manual route's exact insert (incl.
+          // is_personalized + platform_context), so scheduler-produced briefs
+          // persist personalization identically to manually generated ones.
+          personalizedItems.forEach((item, idx: number) => {
+            const b = idx * 19;
             itemPlaceholders.push(
               `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, ` +
               `$${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, ` +
               `$${b + 11}, $${b + 12}, $${b + 13}, $${b + 14}, $${b + 15}, ` +
-              `$${b + 16}, $${b + 17})`
+              `$${b + 16}, $${b + 17}, $${b + 18}, $${b + 19})`
             );
             itemValues.push(
               orgId,
@@ -520,6 +562,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
               item.why_it_matters ?? null,
               item.recommended_actions ?? null,
               item.analyst_notes ?? null,
+              item.is_personalized,
+              item.platform_context ? JSON.stringify(item.platform_context) : null,
               item.urgency ?? null
             );
           });
@@ -530,6 +574,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
                 title, summary, affected_cve, affected_vendor, source_slug,
                 signal_type, severity, sort_order,
                 why_it_matters, recommended_actions, analyst_notes,
+                is_personalized, platform_context,
                 urgency)
              VALUES ${itemPlaceholders.join(", ")}
              RETURNING id, sort_order`,
@@ -596,6 +641,15 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       }
     });
 
+    // Wave-1 (DS-15): emit AFTER the commit — a rollback can never produce a
+    // phantom brief.published. No-op while wave 1 is dark.
+    emitBriefPublished(orgId, {
+      brief_id: briefId,
+      signal_count: finalized.signal_count,
+      item_count: finalized.item_count,
+      trigger: "scheduler",
+    });
+
     return briefId;
   } catch (err) {
     // Mark the brief 'failed' in a SEPARATE tenant scope so the Phase 3
@@ -618,8 +672,8 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full weekly Intelligence Brief pipeline for every org with active
- * subscribers.
+ * Run the full weekly Intelligence Brief pipeline for every active
+ * organization.
  *
  * Called by:
  *   - schedulerRunner.ts (node-cron, Tuesday 07:00 UTC — "0 7 * * 2")
@@ -630,6 +684,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
  */
 export async function runScheduler(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
+    active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
     signals_fetched: {
@@ -647,6 +702,8 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     emails_sent: 0,
     emails_failed: 0,
     emails_skipped_off_day: 0,
+    emails_skipped_no_recipients: 0,
+    orgs_without_recipients: [],
     errors: []
   };
 
@@ -658,17 +715,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
 
   logger.info({ event: "scheduler_run_start", isSendDay }, "Brief scheduler run started");
 
-  // ── Step 1: Find all orgs with active subscribers ───────────────────────
+  // ── Step 1: Enumerate active organizations (the generation population) ──
+  // Generation eligibility comes from the organization's active status alone
+  // (ADR-0007). Recipient resolution happens later, inside sendBrief().
 
   let orgIds: string[];
 
   try {
-    const orgsResult = await pgElevated.query<{ organization_id: string }>(
-      `SELECT DISTINCT organization_id
-       FROM intelligence_brief_subscribers
-       WHERE active = TRUE`
-    );
-    orgIds = orgsResult.rows.map((r) => r.organization_id);
+    orgIds = await listBriefEligibleOrgIds();
+    summary.active_orgs = orgIds.length;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`orgs_query_failed: ${msg}`);
@@ -678,12 +733,12 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   }
 
   if (orgIds.length === 0) {
-    logger.info({ event: "scheduler_no_orgs" }, "No orgs with active subscribers — nothing to do");
+    logger.info({ event: "scheduler_no_active_orgs" }, "No active organizations — nothing to do");
     await maybeAlertBriefDelivery(summary, isSendDay);
     return summary;
   }
 
-  logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Orgs with active subscribers found");
+  logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Active organizations found");
 
   // ── Step 2: Fetch signal feeds once (global, shared across all orgs) ────
 
@@ -693,14 +748,24 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   let federalRegisterSignals: CyberSignalIngestInput[] = [];
 
   try {
-    const { signals, total } = await fetchCisaKevSignals();
+    const { signals, total, fromCache } = await fetchCisaKevSignals();
     cisaKevSignals = signals;
     summary.signals_fetched.cisa_kev = total;
     await recordFeedSuccess("cisa_kev", total);
-    logger.info(
-      { event: "scheduler_cisa_kev_fetched", total, mapped: signals.length },
-      "CISA KEV feed fetched"
-    );
+    if (fromCache) {
+      // The 15-min kevPoller shares CISA_KEV_ETAG_KEY, so the weekly run
+      // normally lands on a 304: zero rows here is the HEALTHY case, not a
+      // dead feed — the brief window reads the poller's global rows instead.
+      logger.info(
+        { event: "scheduler_cisa_kev_not_modified" },
+        "CISA KEV catalog unchanged (ETag 304) — weekly ingest skipped; brief window reads the 15-min poller's global rows"
+      );
+    } else {
+      logger.info(
+        { event: "scheduler_cisa_kev_fetched", total, mapped: signals.length },
+        "CISA KEV feed fetched"
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     summary.errors.push(`cisa_kev_fetch_failed: ${msg}`);
@@ -1151,6 +1216,22 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       const sendResult = await sendBrief(briefId, orgId);
       summary.emails_sent += sendResult.sent;
       summary.emails_failed += sendResult.failed;
+      if (sendResult.skipped) {
+        // Zero active recipients: the brief above is generated + published and
+        // stays current in-platform — only the email leg is skipped. Recorded
+        // so the delivery-health report can surface uncovered orgs weekly.
+        summary.emails_skipped_no_recipients++;
+        summary.orgs_without_recipients.push(orgId);
+        logger.info(
+          {
+            event: "scheduler_brief_send_skipped_no_recipients",
+            orgId,
+            briefId,
+            reason: sendResult.message ?? "no_active_subscribers"
+          },
+          "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
+        );
+      }
       logger.info(
         {
           event: "scheduler_brief_sent",
@@ -1177,12 +1258,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   logger.info(
     {
       event: "scheduler_run_complete",
+      active_orgs: summary.active_orgs,
       orgs_processed: summary.orgs_processed,
       orgs_skipped: summary.orgs_skipped,
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
       emails_skipped_off_day: summary.emails_skipped_off_day,
+      emails_skipped_no_recipients: summary.emails_skipped_no_recipients,
+      orgs_without_recipients: summary.orgs_without_recipients,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"

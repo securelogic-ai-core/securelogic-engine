@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getAuditLog, getAuditLogEventTypes } from "@/lib/api";
+import { getAuditLog, getAuditLogEventTypes, getTeamMembers } from "@/lib/api";
 import AuditLogTable from "./AuditLogTable";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -12,6 +12,9 @@ export default async function AuditLogPage({
   searchParams: Promise<{
     page?: string;
     event_type?: string;
+    user_id?: string;
+    resource_type?: string;
+    resource_id?: string;
     date_from?: string;
     date_to?: string;
   }>;
@@ -21,26 +24,36 @@ export default async function AuditLogPage({
   if (!session.jwtToken) redirect("/login");
   if (session.userRole !== "admin") redirect("/dashboard");
 
-  const sp         = await searchParams;
-  const page       = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
-  const event_type = sp.event_type || undefined;
-  const date_from  = sp.date_from  || undefined;
-  const date_to    = sp.date_to    || undefined;
+  const sp            = await searchParams;
+  const page          = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const event_type    = sp.event_type    || undefined;
+  const user_id       = sp.user_id       || undefined;
+  const resource_type = sp.resource_type || undefined;
+  const resource_id   = sp.resource_id   || undefined;
+  const date_from     = sp.date_from     || undefined;
+  const date_to       = sp.date_to       || undefined;
 
-  const [auditData, eventTypes] = await Promise.all([
-    getAuditLog(session.jwtToken, { page, limit: 50, event_type, date_from, date_to }),
+  const [auditData, eventTypes, team] = await Promise.all([
+    getAuditLog(session.jwtToken, {
+      page, limit: 50, event_type, user_id, resource_type, resource_id, date_from, date_to,
+    }),
     getAuditLogEventTypes(session.jwtToken),
+    getTeamMembers(session.jwtToken),
   ]);
 
   const events      = auditData?.events      ?? [];
   const total       = auditData?.total       ?? 0;
   const totalPages  = auditData?.total_pages ?? 1;
-  const hasFilters  = !!(event_type || date_from || date_to);
+  const members     = team?.members          ?? [];
+  const hasFilters  = !!(event_type || user_id || resource_type || resource_id || date_from || date_to);
 
   const exportParams = new URLSearchParams();
-  if (event_type) exportParams.set("event_type", event_type);
-  if (date_from)  exportParams.set("date_from",  date_from);
-  if (date_to)    exportParams.set("date_to",    date_to);
+  if (event_type)    exportParams.set("event_type",    event_type);
+  if (user_id)       exportParams.set("user_id",       user_id);
+  if (resource_type) exportParams.set("resource_type", resource_type);
+  if (resource_id)   exportParams.set("resource_id",   resource_id);
+  if (date_from)     exportParams.set("date_from",     date_from);
+  if (date_to)       exportParams.set("date_to",       date_to);
   const exportHref = `/api/export/audit-log${exportParams.toString() ? `?${exportParams.toString()}` : ""}`;
 
   const from = total === 0 ? 0 : (page - 1) * 50 + 1;
@@ -74,6 +87,9 @@ export default async function AuditLogPage({
 
       {/* Filter bar */}
       <form action="/audit-log" method="GET" className="flex flex-wrap items-end gap-3 mb-6">
+        {/* Resource drill-down survives a re-filter; it has no visible input. */}
+        {resource_type && <input type="hidden" name="resource_type" value={resource_type} />}
+        {resource_id   && <input type="hidden" name="resource_id"   value={resource_id} />}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
             Event Type
@@ -88,6 +104,25 @@ export default async function AuditLogPage({
             {(eventTypes ?? []).map((et) => (
               <option key={et} value={et} style={{ background: "#0d1626" }}>
                 {et}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
+            Actor
+          </label>
+          <select
+            name="user_id"
+            defaultValue={user_id ?? ""}
+            className="rounded-lg px-3 py-2 text-sm border outline-none"
+            style={{ background: "#0d1626", borderColor: "#1e2d45", color: "#f1f5f9", minWidth: "180px" }}
+          >
+            <option value="" style={{ background: "#0d1626" }}>All actors</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id} style={{ background: "#0d1626" }}>
+                {m.name || m.email}
               </option>
             ))}
           </select>
@@ -126,6 +161,28 @@ export default async function AuditLogPage({
         >
           Filter
         </button>
+
+        {(resource_type || resource_id) && (
+          <span
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium"
+            style={{ background: "rgba(0,196,180,0.08)", border: "1px solid rgba(0,196,180,0.25)", color: "#00c4b4" }}
+          >
+            Resource: {resource_type ?? "any"}
+            {resource_id && (
+              <span style={{ fontFamily: "monospace", color: "#5eead4" }}>
+                {resource_id.slice(0, 8)}…
+              </span>
+            )}
+            <Link
+              href={buildClearResourceHref(event_type, user_id, date_from, date_to)}
+              aria-label="Clear resource filter"
+              className="font-semibold hover:opacity-70"
+              style={{ color: "#00c4b4" }}
+            >
+              ✕
+            </Link>
+          </span>
+        )}
 
         {hasFilters && (
           <Link
@@ -166,7 +223,7 @@ export default async function AuditLogPage({
           <div className="flex items-center gap-2">
             {page > 1 ? (
               <Link
-                href={buildPageHref(page - 1, event_type, date_from, date_to)}
+                href={buildPageHref(page - 1, event_type, user_id, resource_type, resource_id, date_from, date_to)}
                 className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
                 style={{ background: "#0d1626", border: "1px solid #1e2d45", color: "#94a3b8" }}
               >
@@ -182,7 +239,7 @@ export default async function AuditLogPage({
             </span>
             {page < totalPages ? (
               <Link
-                href={buildPageHref(page + 1, event_type, date_from, date_to)}
+                href={buildPageHref(page + 1, event_type, user_id, resource_type, resource_id, date_from, date_to)}
                 className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
                 style={{ background: "#0d1626", border: "1px solid #1e2d45", color: "#94a3b8" }}
               >
@@ -203,13 +260,34 @@ export default async function AuditLogPage({
 function buildPageHref(
   page: number,
   event_type?: string,
+  user_id?: string,
+  resource_type?: string,
+  resource_id?: string,
   date_from?: string,
   date_to?: string
 ): string {
   const p = new URLSearchParams();
   p.set("page", String(page));
+  if (event_type)    p.set("event_type",    event_type);
+  if (user_id)       p.set("user_id",       user_id);
+  if (resource_type) p.set("resource_type", resource_type);
+  if (resource_id)   p.set("resource_id",   resource_id);
+  if (date_from)     p.set("date_from",     date_from);
+  if (date_to)       p.set("date_to",       date_to);
+  return `/audit-log?${p.toString()}`;
+}
+
+function buildClearResourceHref(
+  event_type?: string,
+  user_id?: string,
+  date_from?: string,
+  date_to?: string
+): string {
+  const p = new URLSearchParams();
   if (event_type) p.set("event_type", event_type);
+  if (user_id)    p.set("user_id",    user_id);
   if (date_from)  p.set("date_from",  date_from);
   if (date_to)    p.set("date_to",    date_to);
-  return `/audit-log?${p.toString()}`;
+  const qs = p.toString();
+  return `/audit-log${qs ? `?${qs}` : ""}`;
 }

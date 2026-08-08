@@ -220,3 +220,52 @@ describe("/posture — authorization", () => {
     expect(await expectRedirect(PosturePage, { searchParams: sp({}) })).toBe("/dashboard");
   });
 });
+
+describe("/posture — an unscored domain is unknown, never zero", () => {
+  // DomainScore.score is number|null by contract. `?? 0` rendered a null as a
+  // bold 0 with an empty bar — on a health scale (higher = better) that told
+  // the CISO an unscored domain was catastrophically failing. Fabricated
+  // certainty on the executive table is the exact defect class the Enterprise
+  // Truth principles forbid.
+  it("a null domain score renders '— not yet scored', not a fabricated 0", async () => {
+    const { aDomainScore } = await import("@/test/fixtures");
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        domains: [aDomainScore({ domain: "AI Governance", score: null, severity: null })],
+      })
+    );
+
+    await renderPage(PosturePage, {});
+
+    const cell = screen.getByLabelText("AI Governance has not been scored yet");
+    expect(cell.textContent).toContain("— not yet scored");
+    expect(cell.textContent).not.toContain("0");
+  });
+
+  it("a TRUE zero still renders as 0 — honesty cuts both ways", async () => {
+    const { aDomainScore } = await import("@/test/fixtures");
+    api.getDashboardSummary.mockResolvedValue(
+      aDashboardSummary({
+        domains: [aDomainScore({ domain: "Cyber", score: 0, severity: "Critical" })],
+      })
+    );
+
+    const { container } = await renderPage(PosturePage, {});
+
+    expect(container.textContent).not.toContain("not yet scored");
+    // The scored row keeps its numeric cell (bold tabular 0).
+    const zero = Array.from(container.querySelectorAll("span")).find(
+      (s) => s.className.includes("tabular-nums") && s.textContent === "0"
+    );
+    expect(zero).toBeTruthy();
+  });
+
+  it("a scored domain renders exactly as before (regression guard)", async () => {
+    await renderPage(PosturePage, {});
+    // Default fixture: Cyber, score 72.
+    const scored = Array.from((await renderPage(PosturePage, {})).container.querySelectorAll("span")).find(
+      (s) => s.className.includes("tabular-nums") && s.textContent === "72"
+    );
+    expect(scored).toBeTruthy();
+  });
+});

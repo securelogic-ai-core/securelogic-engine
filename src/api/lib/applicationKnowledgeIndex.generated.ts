@@ -25,6 +25,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     },
     {
       "type": "link",
+      "label": "Search",
+      "href": "/search",
+      "access": "platform"
+    },
+    {
+      "type": "link",
       "label": "Ask",
       "href": "/ask",
       "access": "platform"
@@ -126,6 +132,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Briefs",
       "href": "/briefs",
       "access": "all",
+      "group": null
+    },
+    {
+      "label": "Search",
+      "href": "/search",
+      "access": "platform",
       "group": null
     },
     {
@@ -533,6 +545,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/evidence",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/executive",
       "dynamic": false,
       "navLabel": "Executive",
@@ -741,6 +759,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "dynamic": false,
       "navLabel": null,
       "access": "platform"
+    },
+    {
+      "path": "/search",
+      "dynamic": false,
+      "navLabel": "Search",
+      "access": "platform"
+    },
+    {
+      "path": "/settings/organization",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
     },
     {
       "path": "/settings/risk-policy",

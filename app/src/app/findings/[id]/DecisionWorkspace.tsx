@@ -103,6 +103,8 @@ const ENTITY_ROUTE: Record<string, string> = {
   ai_system: "/ai-systems",
   control: "/controls",
   obligation: "/obligations",
+  // C5: canonical Enterprise Assets deep-link to the registry detail page.
+  asset: "/assets",
 };
 
 const ENTITY_TYPE_LABEL: Record<string, string> = {
@@ -110,6 +112,7 @@ const ENTITY_TYPE_LABEL: Record<string, string> = {
   ai_system: "AI System",
   control: "Control",
   obligation: "Obligation",
+  asset: "Asset",
 };
 
 /**
@@ -623,7 +626,13 @@ export function DecisionWorkspace({
 
   const affected = context.affected;
   const affectedTotal =
-    affected.vendors.length + affected.ai_systems.length + affected.controls.length + affected.obligations.length;
+    affected.vendors.length +
+    affected.ai_systems.length +
+    affected.controls.length +
+    affected.obligations.length +
+    // C5: absent while the convergence is dark, so this adds 0 and the count is
+    // identical to pre-C5.
+    (affected.assets?.length ?? 0);
   const bi = context.business_impact;
   // Headline is a PURE FUNCTION of all five dimension rows rendered in Zone C
   // below, so the header chip can never contradict the detail. Honest about
@@ -1161,6 +1170,14 @@ export function DecisionWorkspace({
       <details style={CARD} open={affectedTotal > 0 || (affected.candidates?.length ?? 0) > 0}>
         <summary style={{ ...H, cursor: "pointer", marginBottom: 0 }}>Affected context ({affectedTotal})</summary>
         <div style={{ marginTop: 12 }}>
+          {/* C5 — canonical Enterprise Assets lead the affected context when the
+              applicability read is live: the asset is the canonical thing that is
+              exposed; vendor / AI system are two of its federated kinds, not the
+              organizing principle. Rendered ONLY when the payload carries the
+              bucket, so the dark surface is byte-identical. */}
+          {affected.assets ? (
+            <AffectedGroup label="Assets" items={affected.assets} resolution={affected.resolution?.assets} />
+          ) : null}
           <AffectedGroup label="Vendors" items={affected.vendors} resolution={affected.resolution?.vendors} />
           <AffectedGroup label="AI systems" items={affected.ai_systems} resolution={affected.resolution?.ai_systems} />
           <AffectedGroup label="Controls" items={affected.controls} resolution={affected.resolution?.controls} />

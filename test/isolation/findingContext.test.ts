@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
+import crypto from "crypto";
 
 import { bootstrapTestDb, seedVendor, seedCyberSignal, seedUser, type TestDbSeed } from "./testDb.js";
 import { resolveFindingContext } from "../../src/api/lib/findingContextResolver.js";
@@ -318,5 +319,150 @@ describe("Activity feed — remediation/reassignment history (action-scoped audi
     expect(rows.some((r) => r.event_type === "finding.created")).toBe(true);
     // Exactly ONE action event — the sibling's and the foreign org's are filtered.
     expect(rows.filter((r) => r.resource_type === "action").length).toBe(1);
+  });
+});
+
+// ── ERG convergence C5 — Decision Workspace reads the applicability ledger ───
+
+/**
+ * Seeds an `affected` applicability decision whose blast radius reaches a
+ * canonical Enterprise Asset. The asset is an ENDPOINT — deliberately neither a
+ * vendor nor an AI system — so these tests prove the resolution path is
+ * genuinely asset-generic and not a vendor/AI-primary shortcut wearing a new
+ * label.
+ */
+async function seedApplicabilityAffectedAsset(
+  orgId: string,
+  dedup: string,
+  decision: "affected" | "potentially_affected"
+) {
+  const signalId = await seedCyberSignal(pool, { orgId, dedup, vendor: "Acme" });
+  const ep = await pool.query<{ id: string }>(
+    `INSERT INTO endpoints (organization_id, name) VALUES ($1, $2) RETURNING id`,
+    [orgId, `EXCH-PROD-${dedup}`]
+  );
+  const assetId = ep.rows[0].id;
+  const a = await pool.query<{ id: string }>(
+    `INSERT INTO applicability_assessments
+       (organization_id, signal_id, target_type, target_id, decision, confidence,
+        confidence_band, reasoning_steps, engine_version, schema_version, content_hash, prev_hash)
+     VALUES ($1, $2, 'asset', $3, $4, 95, 'high', '[]'::jsonb,
+             'iae-v1.0.0', 'applicability-result.v1', $5, $6)
+     RETURNING id`,
+    [orgId, signalId, assetId, decision, crypto.randomUUID(), crypto.randomUUID()]
+  );
+  await pool.query(
+    `INSERT INTO applicability_affected_entities
+       (assessment_id, organization_id, node_type, node_id, min_depth, via_target_type, via_target_id)
+     VALUES ($1, $2, 'asset', $3, 0, 'asset', $3)`,
+    [a.rows[0].id, orgId, assetId]
+  );
+  const f = await pool.query<{ id: string }>(
+    `INSERT INTO findings (organization_id, title, severity, description, source_type, source_id)
+     VALUES ($1, 'C5 finding', 'high', 'ctx', 'cyber_signal', $2)
+     RETURNING id`,
+    [orgId, signalId]
+  );
+  return { signalId, assetId, findingId: f.rows[0].id, assessmentId: a.rows[0].id };
+}
+
+async function withSurfaceMode<T>(fn: () => Promise<T>): Promise<T> {
+  const enabled = process.env.SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED;
+  const mode = process.env.SECURELOGIC_SIGNAL_APPLICABILITY_MODE;
+  process.env.SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED = "true";
+  process.env.SECURELOGIC_SIGNAL_APPLICABILITY_MODE = "surface";
+  try {
+    return await fn();
+  } finally {
+    if (enabled === undefined) delete process.env.SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED;
+    else process.env.SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED = enabled;
+    if (mode === undefined) delete process.env.SECURELOGIC_SIGNAL_APPLICABILITY_MODE;
+    else process.env.SECURELOGIC_SIGNAL_APPLICABILITY_MODE = mode;
+  }
+}
+
+describe("C5 — affected entities read from applicability assessments", () => {
+  it("DARK (default): the payload carries no assets key at all — byte-identical to pre-C5", async () => {
+    const a = await seedApplicabilityAffectedAsset(seed.orgA.id, "c5-dark", "affected");
+    const ctx = await resolveFindingContext(pool, seed.orgA.id, a.findingId);
+    expect(ctx).not.toBeNull();
+    expect(ctx!.affected).not.toHaveProperty("assets");
+    expect(ctx!.affected.resolution).not.toHaveProperty("assets");
+    // The four legacy buckets are untouched by the presence of the assessment.
+    expect(Object.keys(ctx!.affected.resolution).sort()).toEqual([
+      "ai_systems",
+      "controls",
+      "obligations",
+      "vendors",
+    ]);
+  });
+
+  it("SURFACE: the decision's canonical asset appears, resolved through asset_registry_v", async () => {
+    const a = await seedApplicabilityAffectedAsset(seed.orgA.id, "c5-on", "affected");
+    const ctx = await withSurfaceMode(() => resolveFindingContext(pool, seed.orgA.id, a.findingId));
+    expect(ctx).not.toBeNull();
+    expect(ctx!.affected.assets!.map((x) => x.id)).toEqual([a.assetId]);
+    expect(ctx!.affected.assets![0].type).toBe("asset");
+    expect(ctx!.affected.assets![0].name).toContain("EXCH-PROD-");
+    expect(ctx!.affected.resolution.assets).toBe("resolved");
+  });
+
+  it("EVIDENCE GATE (R2): a potentially_affected decision never surfaces as affected", async () => {
+    const a = await seedApplicabilityAffectedAsset(seed.orgA.id, "c5-pa", "potentially_affected");
+    const ctx = await withSurfaceMode(() => resolveFindingContext(pool, seed.orgA.id, a.findingId));
+    expect(ctx!.affected.assets).toEqual([]);
+    // The path RAN and honestly found nothing — not "not_applicable", not a leak.
+    expect(ctx!.affected.resolution.assets).toBe("none_found");
+  });
+
+  it("LEGACY FALLBACK PRESERVED: signal-link vendors still resolve with the C5 read live", async () => {
+    // The finding has an accepted signal_vendor_link and NO applicability
+    // assessment. Convergence must never cost recall the legacy path had.
+    const a = await seedSignalSourcedFinding(seed.orgA.id, "c5-legacy");
+    const ctx = await withSurfaceMode(() => resolveFindingContext(pool, seed.orgA.id, a.findingId));
+    expect(ctx!.affected.vendors.map((v) => v.id)).toContain(a.vendorId);
+    expect(ctx!.affected.resolution.vendors).toBe("resolved");
+    expect(ctx!.affected.assets).toEqual([]);
+  });
+
+  it("never leaks another org's asset through a shared signal", async () => {
+    // Both orgs assess the SAME global signal and each reaches its own asset.
+    const signalId = await seedCyberSignal(pool, { orgId: seed.orgA.id, dedup: "c5-shared", vendor: "Acme" });
+    const mk = async (orgId: string, label: string) => {
+      const ep = await pool.query<{ id: string }>(
+        `INSERT INTO endpoints (organization_id, name) VALUES ($1, $2) RETURNING id`,
+        [orgId, `SHARED-${label}`]
+      );
+      const assetId = ep.rows[0].id;
+      const asmt = await pool.query<{ id: string }>(
+        `INSERT INTO applicability_assessments
+           (organization_id, signal_id, target_type, target_id, decision, confidence,
+            confidence_band, reasoning_steps, engine_version, schema_version, content_hash, prev_hash)
+         VALUES ($1, $2, 'asset', $3, 'affected', 95, 'high', '[]'::jsonb,
+                 'iae-v1.0.0', 'applicability-result.v1', $4, $5)
+         RETURNING id`,
+        [orgId, signalId, assetId, crypto.randomUUID(), crypto.randomUUID()]
+      );
+      await pool.query(
+        `INSERT INTO applicability_affected_entities
+           (assessment_id, organization_id, node_type, node_id, min_depth, via_target_type, via_target_id)
+         VALUES ($1, $2, 'asset', $3, 0, 'asset', $3)`,
+        [asmt.rows[0].id, orgId, assetId]
+      );
+      return assetId;
+    };
+    const assetA = await mk(seed.orgA.id, "a");
+    const assetB = await mk(seed.orgB.id, "b");
+    const f = await pool.query<{ id: string }>(
+      `INSERT INTO findings (organization_id, title, severity, description, source_type, source_id)
+       VALUES ($1, 'C5 shared-signal finding', 'high', 'ctx', 'cyber_signal', $2)
+       RETURNING id`,
+      [seed.orgA.id, signalId]
+    );
+
+    const ctx = await withSurfaceMode(() => resolveFindingContext(pool, seed.orgA.id, f.rows[0].id));
+    const ids = ctx!.affected.assets!.map((x) => x.id);
+    expect(ids).toContain(assetA);
+    expect(ids).not.toContain(assetB);
   });
 });

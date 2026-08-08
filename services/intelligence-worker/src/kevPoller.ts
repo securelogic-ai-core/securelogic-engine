@@ -47,6 +47,7 @@ import {
 // phase 7, which runs the control matcher AFTER its commit.
 import { runLlmControlMatcherForSignal } from "../../../src/api/lib/llmControlMatcher.js";
 import { createAlertBatcher } from "../../../src/api/lib/alerting/alertService.js";
+import { createSignalWebhookBatcher } from "../../../src/api/lib/signalWebhookEmitter.js";
 import { matcherAlertsEnabled } from "../../../src/api/lib/alerting/matcherAlertsFeatureFlag.js";
 
 /**
@@ -238,12 +239,17 @@ async function fanOutKevMatcher(
     ? createAlertBatcher("critical_finding", "kev")
     : null;
 
+  // Wave-1 (DS-15): same post-commit seam as the alert batcher — add() per
+  // (signal, org) result, one signal.matched per org after the loop. No-op dark.
+  const webhookBatcher = createSignalWebhookBatcher("kev");
+
   for (const signal of signals) {
     for (const org of activeOrgs) {
       pairsAttempted++;
       try {
         const result = await runMatcherForSignal(signal, org.id);
         pairsSucceeded++;
+        webhookBatcher.add(org.id, signal.id, result);
         if (result.matched_branch !== "no_match") {
           matchesProduced++;
         }
@@ -296,6 +302,9 @@ async function fanOutKevMatcher(
       );
     }
   }
+
+  // One signal.matched per org for this cycle (fire-and-forget internally).
+  webhookBatcher.flush();
 
   logger.info(
     {

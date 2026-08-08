@@ -82,6 +82,9 @@ They must not be re-declared differently in each module.
 | Applicability Assessment | applicability_assessments (+ children applicability_evidence, applicability_affected_entities) | (no public route yet — internal writer `applicabilityAssessmentWriter`, Slice 4c `cb15c788`; explainability render layer Slice 5 `cb1c2be2`) | Slice 4b (Priority 5). The **immutable, by-value, hash-chained, reproducible** record of a per-org applicability decision (AD-16): `decision` (5-value enum) + `confidence` 0–100 + band + ordered `reasoning_steps` (JSONB narration trace, by value) + `content_hash`/`prev_hash` chain. Produced by the pure `ApplicabilityEngineV1` (Slice 4a, `src/engine/applicability/v1/`). **WORM** — UPDATE/DELETE/TRUNCATE blocked by trigger regardless of role (survives the app_request/FORCE flip); app_request granted SELECT,INSERT only. `applicability_evidence` = by-value input snapshots (reproducibility); `applicability_affected_entities` = normalized blast radius (queryable). **Ships NON-PARTITIONED** (partition strategy deferred to S3.5/pre-4c-write per that gate) and with **no `is_current` column** (WORM forbids the flip; "current" is derived from the `(org,signal,target,created_at DESC)` index) — both reconcile ENTERPRISE_CONTEXT_ARCHITECTURE.md via the S4b doc-sync. Behind SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED; RLS inert (NOT FORCE). **Written by the Slice 4c internal worker** (`cb15c788`; migration `20260727_applicability_assessments_seq.sql`; runs `ApplicabilityEngineV1` and persists under `withTenant` with an advisory-locked `prev_hash` for the hash chain). Rendered by the pure **Slice 5 explainability** layer (`src/engine/applicability/v1/explainability.ts`, `cb1c2be2`). **Slice 6 workflow-recommendation core** (`src/engine/applicability/v1/workflowRecommendations.ts`, `b82bd4cb`) and **Slice 7 signal-linkage / reassessment+drift core** (`33f4a929`) derive downstream recommendations — all pure/inert (no callers). |
 | Enterprise Capability & Caps | `organizations.enterprise_context_capability` (bool, NULL=inherit Platform default) + `organizations.max_enterprise_edges` / `max_enterprise_entities` (caps, SEPARATE from `max_monitored_entities`) | (gate applied in-route via `requireCapability`, not a standalone route) | Slice 9 — package enterprise-context-layer-foundation (Priority 5), **GATE A ruled 2026-07-04**, `c495dc0c`. Access = Platform Professional + Enterprise; capability-based grant (`src/api/lib/enterpriseContextCapability.ts`, capability key `enterprise_context`, Platform default on, per-org override). Migrations `20260728_org_enterprise_context_caps.sql` + `20260729_org_enterprise_context_capability.sql`. Caps default 10k entities / 50k edges; edge-cap enforcement returns 409. Operator grant/tune = ledger L-7 (`UPDATE organizations …`, no DDL). Still behind `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` (GATE B) until prod enable. |
 | Connector Framework | (no domain table — pluggable registry `src/api/lib/connectors/`) | (no public route — dark ingestion adapters) | Slice 8 — package enterprise-context-layer-foundation (Priority 5), `d0351c1c`. Connector registry + normalized-import contract; reference adapter `servicenow_cmdb` (`d0351c1c`) + **all 8 remaining adapters IMPLEMENTED in R7** (Defender/CrowdStrike/Wiz via OAuth client-credentials — `HttpClient` gained optional postForm/postJson; Tenable/Qualys/Rapid7 header-keyed; cloud inventory via a documented v1 pre-authorized-export-URL ingestion; identity provider Okta-first SSWS), each with mock-backed tests. `IMPORT_ENTITY_TYPES` extended with `identity` so IdP users flow through `planImport`. Real-credential round-trips are operator work (ledger L-5.1..L-5.9). Dark — no route/worker calls any connector. |
+| **Enterprise Asset (registry spine)** | `assets` (Tier-0 identity spine, migration `20260803`) + canonical read view `asset_registry_v` (`20260802`, repointed `20260827`) | GET/POST `/api/assets`, GET/PATCH/DELETE `/api/assets/:id`, POST `/api/assets/import` (unified 10-type import), connector config/sync routes | Complete DARK — package enterprise-asset-registry **P0–P16** (PRs #496–#509, #541–#551; final report `docs/validation/enterprise-asset-registry-final-report.md`, tracker rows P12–P16). **THE CANONICAL ENTERPRISE ASSET.** Identity-only spine (`id, organization_id, asset_type, backing_kind, backing_id, lifecycle_status`) — **EAR-AD-1 federate-never-subsume**: `vendors` / `ai_systems` / `enterprise_entities` are Tier-1 *backing* tables, referenced, never copied; **EAR-AD-2**: name/criticality/owner are read through `asset_registry_v`, never duplicated; **EAR-AD-3**: `AssetRef (asset_type, asset_id)` is the canonical reference and the polymorphic `(target_type,target_id)` quartet is FROZEN (nullable `asset_id` added, `20260804`); **EAR-AD-4**: asset edges live in `enterprise_relationships` (infrastructure vocabulary `20260801`), no parallel edge store. Writes register via flag-gated `registerAsset()`; idempotent backfill script. P12 canonical IA: flag on → single "Assets" nav entry (`/assets`), Vendors/AI Systems become type filters (routes retained as deep-links); flag off → byte-identical legacy nav. Behind `SECURELOGIC_ASSET_REGISTRY_ENABLED` (root flag, default `"false"` in all render.yaml services; capability `enterprise_context`; GATE B for prod). ⚠ Enablement runbook (`docs/architecture/enterprise-asset-registry/ENABLEMENT-RUNBOOK.md`) Steps 0–5 NOT executed in any environment as of 2026-07-21. |
+| Asset Detail (Tier-1) | `cloud_resources`, `endpoints`, `apis`, `identity_systems` (migration `20260806`) | (no standalone routes — created/edited through the `/api/assets` lane, `validateAssetDetailCreate`) | Complete DARK — EAR Phase 3a (#500) + P6 lifecycle (#504). S0 rule: load-bearing typed attributes live in typed detail tables, never JSON. `application` / `database` / `business_process` back onto `enterprise_entities` (`business_process` promoted via `20260827`; typed children for business_process/application documented-deferred). `server` / `network_device` / `facility` are **NOT asset types** — deferred by explicit P16 ruling (`FUTURE-ASSET-TYPES.md`); never alias them to `generic`. Import UI aliases: `data_store`→`database`, `custom`→`generic`. |
+| Asset Assessment | `asset_assessments` (migration `20260810`) | POST/GET `/api/asset-assessments`, GET/PATCH `/api/asset-assessments/:id` | Complete DARK — EAR P10 (#508; memo `P10-ASSESSMENT-SERVICE-MEMO.md`). Generic assessment keyed on `AssetRef` covering any of the 10 asset types; obligation-style lifecycle; findings `source_type='asset_assessment'`. **`ASSESSMENT_TYPE_SPECS` (`src/api/lib/assessmentSpec.ts`) is the single source of truth for ALL assessment lifecycles** — the 8 legacy stacks delegate their status-machine data to it (lockstep-tested). **EAR-AD-6: zero per-type assessment tables ever again.** Legacy route-transaction collapse deferred (EAR-AD-7 step 2, one stack per PR). |
 
 ---
 
@@ -204,6 +207,7 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `manual` — manually entered findings
 - `risk` — posture signals derived from open risk register entries
 - `applicability_assessment` — findings auto-drafted by the ECL applicability workflow dispatcher (R2/Slice 6, migration `20260730`); `source_id` = `applicability_assessments.id`, one generated finding per assessment (partial unique index)
+- `asset_assessment` — generic asset-assessment workflow (EAR P10, migration `20260810`); `source_id` = `asset_assessments.id`
 
 ### Source Type (actions)
 - `assessment`
@@ -242,6 +246,7 @@ DB-canonical (findings.source_type CHECK constraint — authoritative):
 - `dependency_review` → `dependency_assessments`
 - `risk_treatment` → `risk_treatments`
 - `finding` → `findings`
+- `asset_assessment` → `asset_assessments` (EAR P10, migration `20260810`)
 
 ### Risk Likelihood
 - `very_likely`
@@ -307,6 +312,25 @@ Maps to canonical Severity enum: `Critical`, `High`, `Moderate`, `Low`
 - `needs_remediation` (triggers finding on first transition)
 
 ---
+
+### Asset Type (assets.asset_type CHECK constraint)
+Single source of truth: `ASSET_TYPES` / `ASSET_TYPE_SPECS` in `src/api/lib/assetRegistry.ts`
+(app mirror `app/src/lib/assetRegistry.ts`, lockstep-tested). Per-type capabilities
+(backing kind, graph-representable, risk-target, match strategy, detail table) are declared
+in the spec — never re-branch on asset type in routes/workers. `vendor` and `ai_system`
+federate to their own backing tables (EAR-AD-1); they are asset TYPES, not separate
+architectural concepts. `server` / `network_device` / `facility` are NOT members
+(deferred — `docs/architecture/enterprise-asset-registry/FUTURE-ASSET-TYPES.md`).
+- vendor
+- ai_system
+- application
+- database  (import alias: `data_store`)
+- cloud_resource
+- endpoint
+- api
+- identity_system
+- business_process  (backing: `enterprise_entities`, migration `20260827`)
+- generic  (import alias: `custom`)
 
 ### Enterprise Entity Type (enterprise_entities.entity_type CHECK constraint)
 Controlled taxonomy for the Enterprise Context Layer header. `vendor` and `ai_system`

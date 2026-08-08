@@ -3,7 +3,11 @@ import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getIntelligenceBrief, getFindings, getFindingContext } from "@/lib/api";
 import { intelligenceEventHref } from "@/lib/intelligenceLinks";
+import { formatDateOnlyUTC } from "@/lib/dates";
+import { windowContradictionAge } from "@/lib/edx/freshness";
+import { WindowContradictionNote } from "@/components/edx/WindowContradictionNote";
 import PromoteSignalButton from "./PromoteSignalButton";
+import { BriefItemContextCallout } from "@/components/BriefItemPlatformContext";
 import {
   briefDecisionAffordance,
   shouldResolveBriefDecision,
@@ -25,7 +29,7 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 const URGENCY_BAND_BG: Record<IntelligenceBriefUrgency, string> = {
-  immediate: "bg-red-600",
+  immediate: "bg-rose-800",
   near_term: "bg-orange-500",
   far_term: "bg-slate-700",
 };
@@ -108,7 +112,9 @@ function parseActions(raw: string | null): string[] {
 // R1: the feed slug is no longer part of what makes a "source" section worth
 // rendering — it is internal plumbing, not something a customer should read.
 function hasAnySource(item: IntelligenceBriefItem): boolean {
-  return Boolean(item.affected_cve || item.affected_vendor || item.ingestion_timestamp);
+  return Boolean(
+    item.affected_cve || item.affected_vendor || item.ingestion_timestamp || item.signal_published_at
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +293,11 @@ export default async function SignalDetailPage({ params }: Props) {
               </span>
             </div>
 
+            {/* Personalization: name the tenant records this item matched and
+                link straight to them — the proof this Brief reads YOUR
+                environment, placed above the generic action list. */}
+            <BriefItemContextCallout item={item} />
+
             {actions.length > 0 && (
               <section className="mb-6 bg-teal-50 rounded-lg p-5 border border-teal-100">
                 <p className="text-xs font-bold text-teal-700 uppercase tracking-wide mb-3">
@@ -384,7 +395,20 @@ export default async function SignalDetailPage({ params }: Props) {
                   {item.affected_vendor && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Vendor</dt>
-                      <dd className="text-slate-300">{item.affected_vendor}</dd>
+                      <dd className="text-slate-300">
+                        {/* When personalization matched this vendor to the org's
+                            own record, the name is a link, not just a string. */}
+                        {(() => {
+                          const matched = item.platform_context?.matched_vendors?.[0];
+                          return matched ? (
+                            <Link href={`/vendors/${matched.id}`} className="hover:underline" style={{ color: "#5eead4" }}>
+                              {item.affected_vendor} →
+                            </Link>
+                          ) : (
+                            item.affected_vendor
+                          );
+                        })()}
+                      </dd>
                     </div>
                   )}
                   {/* R1: the "Feed" row (CISA KEV / NVD / BleepingComputer ...) is
@@ -394,6 +418,24 @@ export default async function SignalDetailPage({ params }: Props) {
                       claim, which is the part that was ever load-bearing. Feed
                       attribution is retained internally (intelligence_brief_item_
                       provenance, cyber_signals.source) for audit. */}
+                  {/* IQP Q2: the source's own event date (KEV dateAdded / NVD
+                      published / RSS pubDate) — how old this item actually is.
+                      Rendered UTC-pinned; absent → no row, never inferred. */}
+                  {formatDateOnlyUTC(item.signal_published_at, { year: "numeric", month: "long", day: "numeric" }) && (
+                    <div>
+                      <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Reported</dt>
+                      <dd className="text-slate-300">
+                        {formatDateOnlyUTC(item.signal_published_at, { year: "numeric", month: "long", day: "numeric" })}
+                        {/* EDX-8: when the source's own date predates the
+                            brief's coverage window, say so here — never leave
+                            the reader to subtract it from the masthead. */}
+                        <WindowContradictionNote
+                          age={windowContradictionAge(item.signal_published_at, brief.period_start)}
+                          className="mt-1"
+                        />
+                      </dd>
+                    </div>
+                  )}
                   {item.ingestion_timestamp && (
                     <div>
                       <dt className="text-xs text-slate-500 uppercase tracking-wide mb-0.5">Ingested</dt>

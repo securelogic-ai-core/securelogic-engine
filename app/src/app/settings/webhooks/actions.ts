@@ -5,6 +5,7 @@ import {
   createWebhook,
   deleteWebhook,
   testWebhook,
+  rotateWebhookSecret,
   getWebhookDeliveries,
   type WebhookEndpointWithSecret,
   type WebhookDelivery,
@@ -29,6 +30,18 @@ export async function deleteWebhookAction(id: string): Promise<boolean> {
   const token = session.jwtToken ?? null;
   if (!token) return false;
   return deleteWebhook(token, id);
+}
+
+export async function rotateWebhookSecretAction(
+  id: string
+): Promise<{ endpoint: WebhookEndpointWithSecret } | { error: string }> {
+  const session = await getSession();
+  const token = session.jwtToken ?? null;
+  if (!token) return { error: "Not authenticated" };
+
+  const result = await rotateWebhookSecret(token, id);
+  if (!result) return { error: "Failed to rotate the signing secret." };
+  return result;
 }
 
 export async function testWebhookAction(

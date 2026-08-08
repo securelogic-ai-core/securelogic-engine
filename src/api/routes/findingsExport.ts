@@ -14,33 +14,27 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import {
+  FINDING_SOURCE_TYPES,
+  FINDING_STATUSES,
+  KNOWN_FINDING_DOMAINS,
+  VALID_SEVERITIES,
+  VALID_PRIORITIES,
+} from "../lib/findingValidation.js";
+import { csvRow } from "../lib/csvExport.js";
 
 const router = Router();
 
-const VALID_STATUSES   = new Set(["open", "in_progress", "closed"]);
-const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
-const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
-const VALID_SOURCE_TYPES = new Set([
-  "vendor_review", "control_test", "obligation_review", "ai_review",
-  "ai_governance_review", "manual", "assessment", "signal", "risk",
-]);
-const VALID_DOMAINS = new Set([
-  "Cyber", "Compliance", "Vendor", "AI", "Operational", "Strategic",
-  "Legal", "Financial", "General",
-]);
+// Filter vocabularies come from the canonical module — this route previously
+// re-declared its own copies (9-value source_type set, status set missing
+// "accepted"), the exact drift class the shared vocabulary exists to kill:
+// the export could silently disagree with the list API on identical filters.
+const VALID_STATUSES = FINDING_STATUSES;
+const VALID_SOURCE_TYPES = FINDING_SOURCE_TYPES;
+const VALID_DOMAINS = KNOWN_FINDING_DOMAINS;
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
-}
-
-// RFC 4180 CSV cell serializer: wrap in double quotes, escape inner quotes by doubling.
-function csvCell(val: string | null | undefined): string {
-  const s = val == null ? "" : String(val);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function csvRow(cells: Array<string | null | undefined>): string {
-  return cells.map(csvCell).join(",");
 }
 
 router.get(
@@ -141,7 +135,8 @@ router.get(
            f.created_at
          FROM findings f
          WHERE ${where}
-         ORDER BY f.created_at DESC, f.id DESC`,
+         ORDER BY f.created_at DESC, f.id DESC
+         LIMIT 10000`,
         params
       );
 

@@ -15,13 +15,21 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
-import { validateFindingCreate } from "../lib/findingValidation.js";
+import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
+import { triggerAssignmentAlert } from "../lib/assignmentAlertTrigger.js";
 import { resolveFindingContext } from "../lib/findingContextResolver.js";
 import { normalizeEntityQuery, searchFindingsByEntity } from "../lib/findingEntitySearch.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
+import {
+  FINDING_HISTORY_SPEC,
+  fetchResourceHistory,
+  parseHistoryLimit,
+  parseHistoryOffset
+} from "../lib/resourceHistory.js";
 import {
   DECISION_STATES,
   evaluateFindingDecisionTransition,
@@ -75,18 +83,10 @@ const MAX_OFFSET = 100_000;
 
 const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
-const VALID_SOURCE_TYPES = new Set([
-  "assessment",
-  "control_test",
-  "vendor_review",
-  "ai_review",
-  "ai_governance_review",
-  "obligation_review",
-  "dependency_review",
-  "signal",
-  "manual",
-  "risk"
-]);
+// Filter vocabulary: the canonical, DB-CHECK-aligned set (D-15 — a route-local
+// copy here silently dropped the engine-written source types, making automated
+// findings unfilterable through the public API).
+const VALID_SOURCE_TYPES = FINDING_SOURCE_TYPES;
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
 // The SYSTEM-DERIVED operational axis (finding-lifecycle-spec §1.1).
 const VALID_OPERATIONAL_STATUSES = new Set(["open", "in_progress", "remediated", "closed"]);
@@ -267,6 +267,23 @@ router.post(
         severity: severity as string,
         domain: (domain as string | null) ?? null,
       });
+
+      // Assignment at creation notifies the owner (post-commit via asTenant;
+      // self-assignment and preference-off are handled inside the trigger).
+      if (owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: owner_user_id as string,
+          actorUserId: (req.userId as string | undefined) ?? null,
+          item: {
+            kind: "finding",
+            id: result.rows[0].id as string,
+            title: title as string,
+            severity: severity as string,
+            dueDate: (effective_due_date as string | null) ?? null,
+          },
+        });
+      }
 
       dispatchWebhookEvent({
         event_type: "finding.created",
@@ -1094,6 +1111,76 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/findings/:id/history
+   Per-finding audit trail — the RR-3 pattern via the shared
+   resourceHistory lib. Events on the finding plus its risk
+   acceptances and the actions it spawned (polymorphic
+   source_type='finding' satellite), newest first, mirroring
+   the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/findings/:id (no admin gate) — anyone
+   who can read the finding can read its history.
+   ========================================================= */
+
+router.get(
+  "/findings/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const findingId = String(req.params["id"] ?? "").trim();
+    if (!findingId) {
+      res.status(400).json({ error: "finding_id_required" });
+      return;
+    }
+    if (!isUuid(findingId)) {
+      res.status(400).json({ error: "finding_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership-404 first — an empty list for a foreign id would leak
+      // existence by absence, mirroring GET /api/findings/:id.
+      const ownership = await pg.query(
+        `SELECT 1 FROM findings WHERE id = $1 AND organization_id = $2`,
+        [findingId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        FINDING_HISTORY_SPEC,
+        organizationId,
+        findingId,
+        limit,
+        offset
+      );
+
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "finding_history_failed", err, findingId },
+        "GET /api/findings/:id/history failed"
+      );
+      res.status(500).json({ error: "finding_history_failed" });
+    }
+  })
+);
+
+/* =========================================================
    GET /api/findings/:id/context
    ERIP Package 3 (Decision Workspace), Phase 3.0 — DARK.
    Read-only composition of everything the Decision Workspace needs
@@ -1912,6 +1999,31 @@ router.patch(
           updated_at: row.updated_at,
         },
       }).catch(() => {});
+
+      // A lifecycle change on a vendor-workflow finding changes the vendor's
+      // risk picture — refresh vendors.current_risk_score so remediating work
+      // is reflected without the manual Recalculate click. Post-commit,
+      // fire-and-forget, no-op for non-vendor findings.
+      if (legacyStatus !== null || decisionTransition !== null || reconciled.changed) {
+        scheduleVendorScoreRecomputeForFinding(organizationId, findingId);
+      }
+
+      // Assignment notifies the new owner (post-commit; the ledger inside the
+      // trigger dedupes re-saves of the same owner; self-assignment is a no-op).
+      if ("owner_user_id" in body && row.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: row.owner_user_id as string,
+          actorUserId: (req.userId as string | undefined) ?? null,
+          item: {
+            kind: "finding",
+            id: row.id as string,
+            title: row.title as string,
+            severity: (row.severity as string | null) ?? null,
+            dueDate: (row.due_date as string | null) ?? null,
+          },
+        });
+      }
 
       res.status(200).json({ finding: row });
     } catch (err) {

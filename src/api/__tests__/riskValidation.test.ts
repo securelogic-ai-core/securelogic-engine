@@ -706,3 +706,42 @@ describe("validateRiskUpdate — owner_user_id", () => {
     if ("error" in r) expect(r.error).toBe("owner_user_id_must_be_uuid_or_null");
   });
 });
+
+// --------------------------------------------------------------------
+// validateRiskListQuery — register search (q)
+// --------------------------------------------------------------------
+
+describe("validateRiskListQuery — register search (q)", () => {
+  it("accepts and trims a usable term", () => {
+    const r = validateRiskListQuery({ q: "  vendor outage " });
+    expect("input" in r).toBe(true);
+    if ("input" in r) expect(r.input.q).toBe("vendor outage");
+  });
+
+  it("absent or blank q means no search", () => {
+    const r1 = validateRiskListQuery({});
+    if ("input" in r1) expect(r1.input.q).toBeNull();
+    const r2 = validateRiskListQuery({ q: "   " });
+    if ("input" in r2) expect(r2.input.q).toBeNull();
+  });
+
+  it("enforces the platform 2–120 bounds with invalid_search", () => {
+    const short = validateRiskListQuery({ q: "x" });
+    expect("error" in short).toBe(true);
+    if ("error" in short) expect(short.error).toBe("invalid_search");
+
+    const long = validateRiskListQuery({ q: "x".repeat(121) });
+    expect("error" in long).toBe(true);
+    if ("error" in long) expect(long.error).toBe("invalid_search");
+  });
+
+  it("q composes with the other filters", () => {
+    const r = validateRiskListQuery({ q: "outage", status: "open", domain: "Vendor Risk" });
+    expect("input" in r).toBe(true);
+    if ("input" in r) {
+      expect(r.input.q).toBe("outage");
+      expect(r.input.status).toBe("open");
+      expect(r.input.domain).toBe("Vendor Risk");
+    }
+  });
+});

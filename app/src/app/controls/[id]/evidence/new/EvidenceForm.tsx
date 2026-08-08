@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { createControlEvidence, type CreateControlEvidenceResult } from "./actions";
-import type { ControlAssessment } from "@/lib/api";
+import { uploadEvidenceFile, type ControlAssessment } from "@/lib/api";
+import { EvidenceFileField } from "@/components/evidence/EvidenceFileField";
 
 const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
@@ -46,12 +48,43 @@ type Props = {
 };
 
 export function EvidenceForm({ controlId, controlName, assessments }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
 
   function handleSubmit(formData: FormData) {
     setError(null);
     startTransition(async () => {
+      // A chosen file goes through the multipart upload lane (the engine has
+      // always accepted control_test there — only this form was metadata-only);
+      // no file keeps the JSON reference-only action, unchanged.
+      if (file) {
+        setProgress(0);
+        const res = await uploadEvidenceFile(
+          "control_test",
+          String(formData.get("source_id") ?? ""),
+          file,
+          {
+            title: String(formData.get("title") ?? ""),
+            evidence_type: String(formData.get("evidence_type") ?? ""),
+            description: String(formData.get("description") ?? "").trim() || null,
+            external_ref: String(formData.get("external_ref") ?? "").trim() || null,
+            collected_at: String(formData.get("collected_at") ?? "").trim() || null,
+            collected_by: String(formData.get("collected_by") ?? "").trim() || null,
+          },
+          setProgress
+        );
+        setProgress(null);
+        if (!res.ok) {
+          setError(`Could not upload the file: ${res.error}`);
+          return;
+        }
+        router.push(`/controls/${controlId}`);
+        router.refresh();
+        return;
+      }
       const result = (await createControlEvidence(controlId, formData)) as CreateControlEvidenceResult | void;
       if (result && "error" in result) {
         setError(result.error);
@@ -169,6 +202,9 @@ export function EvidenceForm({ controlId, controlName, assessments }: Props) {
             style={INPUT_STYLE}
           />
         </div>
+
+        {/* File — the artifact itself (EG2 slice 8) */}
+        <EvidenceFileField file={file} onChange={setFile} disabled={isPending} progress={progress} />
       </div>
 
       {error && (

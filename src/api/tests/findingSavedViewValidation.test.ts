@@ -27,6 +27,17 @@ describe("sanitizeSavedViewFilters", () => {
       source_type: "cyber_signal",
       domain: "Vendor Risk",
       priority: "immediate",
+      // Queue-controls browse keys (EG2 slice 4) — same whitelist, same rules.
+      q: "backup",
+      governance: "needs_review",
+      operational: "in_progress",
+      due: "overdue",
+      mine: "1",
+      has_action: "1",
+      has_evidence: "1",
+      created_from: "2026-01-01",
+      created_to: "2026-06-30",
+      sort: "severity",
     });
     expect(out).toEqual({
       status: "open",
@@ -34,6 +45,16 @@ describe("sanitizeSavedViewFilters", () => {
       source_type: "cyber_signal",
       domain: "Vendor Risk",
       priority: "immediate",
+      q: "backup",
+      governance: "needs_review",
+      operational: "in_progress",
+      due: "overdue",
+      mine: "1",
+      has_action: "1",
+      has_evidence: "1",
+      created_from: "2026-01-01",
+      created_to: "2026-06-30",
+      sort: "severity",
     });
     expect(Object.keys(out).sort()).toEqual([...SAVED_VIEW_FILTER_KEYS].sort());
   });

@@ -11,6 +11,7 @@
  *   GET    /api/webhooks/:id                   — get single endpoint
  *   PATCH  /api/webhooks/:id                   — update url/description/event_types/status
  *   DELETE /api/webhooks/:id                   — delete endpoint
+ *   POST   /api/webhooks/:id/rotate-secret     — rotate signing secret (returned once)
  *   POST   /api/webhooks/:id/test              — send test event
  *   GET    /api/webhooks/:id/deliveries        — delivery log
  */
@@ -24,26 +25,39 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
 import { generateWebhookSecret, maskSecret, buildWebhookHeaders } from "../lib/webhookSigning.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import { deliverWebhook } from "../lib/webhookDispatcher.js";
 import {
   assertSafeWebhookUrl,
   UnsafeWebhookUrlError,
 } from "../lib/webhookUrlSafety.js";
+import {
+  webhookEventCatalog,
+  webhookEventTypes,
+} from "../lib/webhookEventCatalog.js";
 
 const router = Router();
 
 const MAX_ENDPOINTS_PER_ORG = 10;
 
-const VALID_EVENT_TYPES = new Set([
-  "*",
-  "finding.created",
-  "finding.updated",
-  "risk.created",
-  "vendor.assessed",
-  "posture.snapshot_created",
-  "action.created",
-  "action.updated",
-]);
+/** The wildcard is a subscription shape, not a catalog entry. */
+const WILDCARD_EVENT_TYPE = "*";
+
+/**
+ * Event-type validation reads the canonical catalog
+ * (lib/webhookEventCatalog.ts) at call time, so the types this route accepts,
+ * the types the catalog endpoint advertises, and the types the settings UI
+ * offers cannot drift apart. The catalog is itself wave-1-flag-aware: flag-off,
+ * the wave-1 names are absent, so this route stays byte-identical to
+ * pre-wave-1 (new names rejected, never revealed in `allowed`).
+ */
+function isValidEventType(t: string): boolean {
+  return t === WILDCARD_EVENT_TYPE || webhookEventTypes().includes(t);
+}
+
+function allowedEventTypes(): string[] {
+  return [WILDCARD_EVENT_TYPE, ...webhookEventTypes()];
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(v: unknown): v is string {
@@ -175,11 +189,11 @@ router.post(
         : ["*"];
 
       for (const et of rawEventTypes) {
-        if (!VALID_EVENT_TYPES.has(et)) {
+        if (!isValidEventType(et)) {
           res.status(400).json({
             error: "invalid_event_type",
             invalid: et,
-            allowed: [...VALID_EVENT_TYPES],
+            allowed: allowedEventTypes(),
           });
           return;
         }
@@ -225,6 +239,32 @@ router.post(
       logger.error({ event: "webhook_create_failed", err }, "POST /api/webhooks failed");
       res.status(500).json({ error: "webhook_create_failed" });
     }
+  }
+);
+
+/* =========================================================
+   GET /api/webhooks/event-types
+   The event catalog this deployment currently accepts.
+   ========================================================= */
+
+/**
+ * ROUTE ORDER: this MUST stay above GET /webhooks/:id — Express would
+ * otherwise bind the literal path as :id and answer with a 404 for a
+ * webhook whose id is "event-types" (the same trap the register export
+ * routers document against their own /:id routes).
+ *
+ * Org-scoped only in the entitlement sense: the catalog is deployment-wide
+ * (no tenant rows are read), but it stays behind the same premium gate as the
+ * rest of the family so it cannot be used to fingerprint feature-flag state
+ * from an unentitled account.
+ */
+router.get(
+  "/webhooks/event-types",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  async (_req, res) => {
+    res.status(200).json({ event_types: webhookEventCatalog() });
   }
 );
 
@@ -330,8 +370,8 @@ router.patch(
       if ("event_types" in body) {
         const et: string[] = Array.isArray(body.event_types) ? body.event_types : [];
         for (const t of et) {
-          if (!VALID_EVENT_TYPES.has(t)) {
-            res.status(400).json({ error: "invalid_event_type", invalid: t, allowed: [...VALID_EVENT_TYPES] });
+          if (!isValidEventType(t)) {
+            res.status(400).json({ error: "invalid_event_type", invalid: t, allowed: allowedEventTypes() });
             return;
           }
         }
@@ -426,6 +466,98 @@ router.delete(
     } catch (err) {
       logger.error({ event: "webhook_delete_failed", err }, "DELETE /api/webhooks/:id failed");
       res.status(500).json({ error: "webhook_delete_failed" });
+    }
+  }
+);
+
+/* =========================================================
+   POST /api/webhooks/:id/rotate-secret
+   Rotate the endpoint's HMAC signing secret in place.
+
+   Before this route the only way to rotate a compromised or aging secret
+   was delete + recreate — destroying the delivery log, failure counters,
+   and event-type configuration. Rotation is a plain org-scoped UPDATE:
+   the endpoint's identity and history survive, and the new secret is
+   returned ONCE (the create-route contract; masked everywhere after).
+
+   Cutover is immediate: deliveries signed after the UPDATE use the new
+   secret. The caller controls timing — rotate when ready to deploy the
+   new secret on the receiving side; the dispatcher's existing retry
+   path covers the deploy gap. A dual-secret overlap window would need
+   schema + dispatcher signing changes and is deliberately out of scope.
+   ========================================================= */
+
+router.post(
+  "/webhooks/:id/rotate-secret",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  requireNotViewer,
+  async (req, res) => {
+    try {
+      const organizationId = (req as any).organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const id = String(req.params.id ?? "").trim();
+      if (!isUuid(id)) {
+        res.status(400).json({ error: "invalid_endpoint_id" });
+        return;
+      }
+
+      const secret = generateWebhookSecret();
+
+      const result = await pg.query(
+        `UPDATE webhook_endpoints
+            SET secret = $1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3
+          RETURNING id, organization_id, url, secret, description, status,
+                    event_types, failure_count, last_success_at, last_failure_at,
+                    created_at, updated_at`,
+        [secret, id, organizationId]
+      );
+
+      if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "webhook_endpoint_not_found" });
+        return;
+      }
+
+      const row = result.rows[0];
+
+      // Rotation is the security event on this surface — auditors expect it
+      // in the org trail with actor + timestamp. The secret itself (old or
+      // new) never appears in the audit payload.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: ((req as any).apiKey?.id as string) ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "webhook.secret_rotated",
+        resourceType: "webhook_endpoint",
+        resourceId: id,
+        payload: { url: row.url },
+        ipAddress: req.ip ?? null,
+      });
+
+      logger.info(
+        { event: "webhook_secret_rotated", endpointId: id, organizationId },
+        "Webhook endpoint signing secret rotated"
+      );
+
+      // Return the full secret once — never again (create-route contract).
+      res.status(200).json({
+        endpoint: {
+          ...safeEndpoint(row),
+          secret,
+        },
+      });
+    } catch (err) {
+      logger.error(
+        { event: "webhook_rotate_secret_failed", err },
+        "POST /api/webhooks/:id/rotate-secret failed"
+      );
+      res.status(500).json({ error: "webhook_rotate_secret_failed" });
     }
   }
 );

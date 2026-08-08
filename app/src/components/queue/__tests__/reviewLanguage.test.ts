@@ -3,6 +3,7 @@ import {
   describeMatchReason,
   confidenceBand,
   signalHeadline,
+  TARGET_NOUN,
 } from "../reviewLanguage";
 
 describe("describeMatchReason", () => {
@@ -71,5 +72,23 @@ describe("signalHeadline", () => {
     expect(signalHeadline(null)).toBe("External intelligence signal");
     expect(signalHeadline(undefined)).toBe("External intelligence signal");
     expect(signalHeadline("   ")).toBe("External intelligence signal");
+  });
+});
+
+describe("asset targets (EAR Phase 2)", () => {
+  it("has a business noun for asset — never the raw enum value", () => {
+    expect(TARGET_NOUN.asset).toBe("asset");
+  });
+
+  it("explains the registry matcher's asset_name_canonical reason in plain language", () => {
+    expect(describeMatchReason("asset_name_canonical", "asset")).toBe(
+      "SecureLogic found this asset's name in the intelligence signal.",
+    );
+  });
+
+  it("unknown asset reasons degrade honestly, never the raw code", () => {
+    expect(describeMatchReason("registry_v2_widget", "asset")).toBe(
+      "SecureLogic linked this signal to this asset.",
+    );
   });
 });

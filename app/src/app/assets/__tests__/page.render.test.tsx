@@ -14,7 +14,7 @@
  *      the page renders "0 assets" + an empty state, telling an org with a full
  *      inventory that it has none.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, signedOut, apiKeyOnly, sp, hrefs, hrefOf } from "@/test/harness";
 import { aCanonicalAsset } from "@/test/fixtures";
@@ -183,6 +183,103 @@ describe("/assets — the asset-type filters", () => {
   });
 });
 
+// ── 2b · Search ──────────────────────────────────────────────────────
+//
+// Assets adopts the platform list-page search pattern (as on the Finding surface):
+// a SEARCH label + input + button above the filters, submitted as a URL param so it
+// composes with the filters and survives pagination — no client state.
+
+describe("/assets — the search section", () => {
+  it("renders the SEARCH label, the input with the Phase-1 placeholder, and a Search button", async () => {
+    await renderPage(AssetsPage, { searchParams: sp({}) });
+
+    // Uppercase section label consistent with the "Risk" filter label. (The button
+    // also reads "Search", so pin this assertion to the <label>.)
+    expect(screen.getByText("Search", { selector: "label" })).toBeInTheDocument();
+    // The placeholder names only fields the engine actually searches today —
+    // no promising identifiers (alias, IP) the schema does not hold.
+    expect(
+      screen.getByPlaceholderText("Name, asset ID, hostname, cloud account, vendor, business process..."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search" })).toBeInTheDocument();
+  });
+
+  it("an active search is applied to the engine read, not just painted in the box", async () => {
+    await renderPage(AssetsPage, { searchParams: sp({ q: "acme" }) });
+
+    expect(api.getAssets).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ q: "acme" }),
+    );
+    // …and the box echoes the active term so the customer sees what they searched.
+    expect(
+      screen.getByPlaceholderText(/Name, asset ID/),
+    ).toHaveValue("acme");
+  });
+
+  it("a blank / whitespace-only search is ignored, not passed to the engine", async () => {
+    await renderPage(AssetsPage, { searchParams: sp({ q: "   " }) });
+
+    const params = api.getAssets.mock.calls[0][1];
+    expect(params.q).toBeUndefined();
+  });
+
+  it("out-of-bounds terms are not sent — the engine's 2–120 bounds are respected up front", async () => {
+    // A 1-char term or an over-long one must not reach getAssets: sending it
+    // would 400 the read and the page would render a failure panel over a
+    // registry that is actually fine.
+    for (const bad of ["a", "a".repeat(121)]) {
+      vi.clearAllMocks();
+      signedIn();
+      api.getAssets.mockResolvedValue(okAssets());
+      await renderPage(AssetsPage, { searchParams: sp({ q: bad }) });
+      expect(api.getAssets.mock.calls[0][1].q).toBeUndefined();
+    }
+  });
+
+  it("the search form submits a GET to /assets and carries the active filters as hidden inputs", async () => {
+    const { container } = await renderPage(AssetsPage, {
+      searchParams: sp({ asset_type: "ai_system", at_risk: "true", q: "acme" }),
+    });
+
+    const form = container.querySelector("form[action='/assets']") as HTMLFormElement;
+    expect(form).not.toBeNull();
+    expect(form.getAttribute("method")).toBe("get");
+    // A new search must not silently drop the filters the customer already applied…
+    expect(form.querySelector("input[name='asset_type'][value='ai_system']")).not.toBeNull();
+    expect(form.querySelector("input[name='at_risk'][value='true']")).not.toBeNull();
+    // …but it must NOT carry a stale offset — a new search honestly resets to page 1.
+    expect(form.querySelector("input[name='offset']")).toBeNull();
+  });
+
+  it("the filter chips PRESERVE the active search — refining type must not drop the query", async () => {
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({ q: "acme" }) });
+
+    expect(hrefOf(container, /^All$/)).toBe("/assets?q=acme");
+    expect(hrefOf(container, new RegExp(`^${assetTypeLabel("ai_system")}$`))).toContain("q=acme");
+    expect(hrefOf(container, /^At risk$/)).toContain("q=acme");
+  });
+
+  it("PAGINATION preserves the active search — Next must not widen the population", async () => {
+    api.getAssets.mockResolvedValue(okAssets(ASSETS, 40));
+
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({ q: "acme" }) });
+
+    const next = hrefOf(container, /Next/);
+    expect(next).toContain("q=acme");
+    expect(next).toContain("offset=25");
+  });
+
+  it("an empty search result says so — it does not claim the registry is empty", async () => {
+    api.getAssets.mockResolvedValue(okAssets([], 0));
+
+    await renderPage(AssetsPage, { searchParams: sp({ q: "nomatch" }) });
+
+    expect(screen.getByText(/No assets match your search/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No assets registered yet/)).not.toBeInTheDocument();
+  });
+});
+
 // ── 3 · Rows and federation ──────────────────────────────────────────
 
 describe("/assets — the rows", () => {
@@ -335,5 +432,45 @@ describe("/assets — the caller is not entitled", () => {
     expect(screen.getByText(/Something went wrong loading assets/i)).toBeInTheDocument();
     expect(screen.queryByText(/No assets registered yet/)).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/\b0 assets\b/);
+  });
+});
+
+// ── 6 · Entity-backed rows never link into a dark Enterprise Context ─────────
+//
+// EAR-AD-1 sends enterprise-entity-backed assets to their ECL screens — but ECL
+// is independently flag-gated, and a deployment can run the registry with ECL
+// dark (staging did exactly this, 2026-07-26). A row that links into a dark
+// surface lands the customer on "isn't available for your organization yet".
+// The registry must degrade to its own canonical read-only page instead.
+
+describe("entity-backed row destination follows the Enterprise Context flag", () => {
+  const entityAsset = aCanonicalAsset({
+    asset_id: "as-3",
+    name: "Billing Platform",
+    asset_type: "application",
+    backing_kind: "enterprise_entities",
+    backing_id: "ee-7",
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("falls back to the canonical asset page while Enterprise Context is dark", async () => {
+    vi.stubEnv("SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED", "false");
+    api.getAssets.mockResolvedValue(okAssets([entityAsset]));
+
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({}) });
+
+    expect(hrefOf(container, /Billing Platform/)).toBe("/assets/as-3");
+  });
+
+  it("links to the Enterprise Context entity page when the surface is lit", async () => {
+    vi.stubEnv("SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED", "true");
+    api.getAssets.mockResolvedValue(okAssets([entityAsset]));
+
+    const { container } = await renderPage(AssetsPage, { searchParams: sp({}) });
+
+    expect(hrefOf(container, /Billing Platform/)).toBe("/enterprise-context/entities/ee-7");
   });
 });

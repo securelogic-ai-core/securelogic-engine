@@ -7,6 +7,9 @@ import {
   ASSESSMENT_AFFECTED_MAP,
   affectedPathsRan,
   bucketResolution,
+  applicabilitySurfaceEnabled,
+  resolveApplicabilityAffected,
+  resolveAssetNames,
   type Queryable,
 } from "../lib/findingContextResolver.js";
 
@@ -221,5 +224,152 @@ describe("bucketResolution (empty ≠ zero ≠ unknowable)", () => {
 
   it("the honest zero survives: no failure, path ran, nothing found", () => {
     expect(bucketResolution(true, 0, false)).toBe("none_found");
+  });
+});
+
+// ── ERG convergence C5 — read affected entities from applicability ───────────
+
+describe("applicabilitySurfaceEnabled (C5 gate — no new flag)", () => {
+  it("is OFF unless the convergence flag is on AND the sub-mode is surface", () => {
+    expect(applicabilitySurfaceEnabled({} as NodeJS.ProcessEnv)).toBe(false);
+    // Flag on but still measuring — shadow must never reach a customer surface.
+    expect(
+      applicabilitySurfaceEnabled({ SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED: "true" } as NodeJS.ProcessEnv)
+    ).toBe(false);
+    expect(
+      applicabilitySurfaceEnabled({
+        SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED: "true",
+        SECURELOGIC_SIGNAL_APPLICABILITY_MODE: "shadow",
+      } as NodeJS.ProcessEnv)
+    ).toBe(false);
+    // Surface mode alone is not enough either — the convergence flag still gates.
+    expect(
+      applicabilitySurfaceEnabled({ SECURELOGIC_SIGNAL_APPLICABILITY_MODE: "surface" } as NodeJS.ProcessEnv)
+    ).toBe(false);
+    expect(
+      applicabilitySurfaceEnabled({
+        SECURELOGIC_SIGNAL_APPLICABILITY_ENABLED: "true",
+        SECURELOGIC_SIGNAL_APPLICABILITY_MODE: "surface",
+      } as NodeJS.ProcessEnv)
+    ).toBe(true);
+  });
+});
+
+describe("resolveAssetNames (canonical assets via asset_registry_v)", () => {
+  it("resolves canonical asset ids through the registry projection, org-scoped", async () => {
+    const { client, calls } = fakeClient([
+      { match: /FROM asset_registry_v/i, rows: [{ id: "a1", name: "EXCH-PROD-01" }] },
+    ]);
+    const out = await resolveAssetNames(client, ORG, ["a1", "a1"]);
+    expect(out).toEqual([{ type: "asset", id: "a1", name: "EXCH-PROD-01" }]);
+    // The registry is the ONLY name source — no vendors/ai_systems fallback join.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toMatch(/asset_registry_v/);
+    expect(calls[0].sql).not.toMatch(/FROM vendors|FROM ai_systems/);
+    // org first, deduped ids second; org never comes from request input.
+    expect(calls[0].params).toEqual([ORG, ["a1"]]);
+  });
+
+  it("issues no query when there is nothing to resolve", async () => {
+    const { client, calls } = fakeClient([]);
+    expect(await resolveAssetNames(client, ORG, [])).toEqual([]);
+    expect(calls.length).toBe(0);
+  });
+});
+
+describe("resolveApplicabilityAffected (C5 — the applicability decision ledger)", () => {
+  it("resolves assets through asset_registry_v and the quartet through their canonical tables", async () => {
+    const { client, calls } = fakeClient([
+      {
+        match: /FROM current_assessment ca/i,
+        rows: [
+          { ttype: "asset", tid: "a1" },
+          { ttype: "vendor", tid: "v1" },
+        ],
+      },
+      { match: /FROM asset_registry_v/i, rows: [{ id: "a1", name: "EXCH-PROD-01" }] },
+      { match: /FROM vendors\s+WHERE organization_id/i, rows: [{ id: "v1", name: "Acme" }] },
+    ]);
+    const out = await resolveApplicabilityAffected(client, ORG, ["s1"]);
+    expect(out.assets).toEqual([{ type: "asset", id: "a1", name: "EXCH-PROD-01" }]);
+    expect(out.vendors).toEqual([{ type: "vendor", id: "v1", name: "Acme" }]);
+    // Every query carries the caller's org.
+    for (const c of calls) expect(c.params[0]).toBe(ORG);
+  });
+
+  it("EVIDENCE GATE (ERG R2): only decision='affected' populates affected context", async () => {
+    // The gate is in SQL, so assert the predicate is actually there — a
+    // potentially_affected / needs_review assessment must never be promoted
+    // into displayed certainty.
+    const { client, calls } = fakeClient([{ match: /FROM current_assessment ca/i, rows: [] }]);
+    await resolveApplicabilityAffected(client, ORG, ["s1"]);
+    expect(calls[0].sql).toMatch(/ca\.decision = 'affected'/);
+  });
+
+  it("takes the CURRENT assessment per target — WORM forbids an is_current flag", async () => {
+    const { client, calls } = fakeClient([{ match: /FROM current_assessment ca/i, rows: [] }]);
+    await resolveApplicabilityAffected(client, ORG, ["s1"]);
+    expect(calls[0].sql).toMatch(/DISTINCT ON \(a\.target_type, a\.target_id\)/);
+    expect(calls[0].sql).toMatch(/a\.created_at DESC/);
+  });
+
+  it("issues no query and returns empty buckets when the finding reaches no signal", async () => {
+    const { client, calls } = fakeClient([]);
+    const out = await resolveApplicabilityAffected(client, ORG, []);
+    expect(out.vendors).toEqual([]);
+    expect(out.assets).toEqual([]);
+    expect(calls.length).toBe(0);
+  });
+});
+
+describe("resolveAssessmentAffected — asset rows (C5 opt-in)", () => {
+  const routes = [
+    {
+      match: /FROM applicability_affected_entities/i,
+      rows: [
+        { ttype: "asset", tid: "a1" },
+        { ttype: "vendor", tid: "v9" },
+      ],
+    },
+    { match: /FROM asset_registry_v/i, rows: [{ id: "a1", name: "EXCH-PROD-01" }] },
+    { match: /FROM vendors\s+WHERE organization_id/i, rows: [{ id: "v9", name: "Ivanti" }] },
+  ];
+
+  it("DARK (default): asset rows are dropped and no registry query is issued", async () => {
+    const { client, calls } = fakeClient(routes);
+    const out = await resolveAssessmentAffected(client, ORG, "applicability_assessment", "aa1");
+    expect(out.assets).toBeUndefined();
+    expect(out.vendors).toEqual([{ type: "vendor", id: "v9", name: "Ivanti" }]);
+    expect(calls.some((c) => /asset_registry_v/.test(c.sql))).toBe(false);
+  });
+
+  it("C5 opt-in: the same decision now names its canonical asset", async () => {
+    const { client } = fakeClient(routes);
+    const out = await resolveAssessmentAffected(client, ORG, "applicability_assessment", "aa1", {
+      includeAssets: true,
+    });
+    expect(out.assets).toEqual([{ type: "asset", id: "a1", name: "EXCH-PROD-01" }]);
+    // The quartet is unchanged — C5 adds a dimension, it does not replace one.
+    expect(out.vendors).toEqual([{ type: "vendor", id: "v9", name: "Ivanti" }]);
+  });
+});
+
+describe("mergeAffected — assets (C5 shape)", () => {
+  const base = { vendors: [], ai_systems: [], controls: [], obligations: [] };
+
+  it("keeps the assets key ABSENT when neither side carries it (dark byte-identity)", () => {
+    expect("assets" in mergeAffected(base, base)).toBe(false);
+  });
+
+  it("de-duplicates assets by canonical asset id across both applicability paths", () => {
+    const a = { ...base, assets: [{ type: "asset" as const, id: "a1", name: "EXCH-PROD-01" }] };
+    const b = {
+      ...base,
+      assets: [
+        { type: "asset" as const, id: "a1", name: "EXCH-PROD-01" },
+        { type: "asset" as const, id: "a2", name: "PAY-GW-02" },
+      ],
+    };
+    expect(mergeAffected(a, b).assets?.map((x) => x.id)).toEqual(["a1", "a2"]);
   });
 });

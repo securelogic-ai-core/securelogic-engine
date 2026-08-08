@@ -165,16 +165,24 @@ export default async function AssetDetailPage({
  * offering an Edit/Delete the engine would 409.
  */
 function ManagedElsewhereNote({ asset }: { asset: CanonicalAsset }) {
-  const href = assetDetailHref(asset);
+  const href = assetDetailHref(asset, {
+    enterpriseContextEnabled: process.env.SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED === "true",
+  });
+  // With Enterprise Context dark, an entity-backed asset's href falls back to
+  // THIS page — no self-link, and "its own screen" would name a surface that
+  // doesn't exist here, so the copy degrades to read-only phrasing.
+  const isSelf = href === `/assets/${asset.asset_id}`;
   return (
     <div
       className="mb-8 rounded-xl border px-5 py-4 flex flex-wrap items-center justify-between gap-3"
       style={{ borderColor: "#1e293b", background: "#0f172a" }}
     >
       <p className="text-xs" style={{ color: "#94a3b8" }}>
-        This {assetTypeLabel(asset.asset_type).toLowerCase()} is managed on its own screen.
+        {isSelf
+          ? `This ${assetTypeLabel(asset.asset_type).toLowerCase()} is read-only here.`
+          : `This ${assetTypeLabel(asset.asset_type).toLowerCase()} is managed on its own screen.`}
       </p>
-      {href && (
+      {href && !isSelf && (
         <Link
           href={href}
           className="text-sm font-semibold transition-opacity hover:opacity-80"
