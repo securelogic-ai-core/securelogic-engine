@@ -22,6 +22,7 @@ import type { BriefingModuleDef, BriefingScope } from "@/lib/briefing/contracts"
 import type { BriefingViewModel } from "@/lib/briefing/composeBriefing";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { BriefCard } from "@/components/BriefCard";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
 import { RecentFindings } from "../RecentFindings";
 import { CustomizeBriefing, type CustomizeBriefingProps } from "./CustomizeBriefing";
 
@@ -97,6 +98,12 @@ export type TheBriefingProps = {
    */
   hasPlatformData: boolean;
   latestBrief: IntelligenceBriefDetailResponse | null;
+  /**
+   * EDX-1: the brief read FAILED, as opposed to succeeding with nothing. The
+   * two must stay distinguishable here — the module's fallback prints a claim
+   * about the org's publication history, which an outage cannot support.
+   */
+  latestBriefUnavailable: boolean;
   latestIssue: NewsletterIssue | null;
   issuesCount: number;
   recentFindings: Finding[];
@@ -751,6 +758,13 @@ function renderModule(
             <IntelligenceBriefDashboardCard brief={props.latestBrief} />
           ) : props.latestIssue ? (
             <BriefCard issue={props.latestIssue} viewerIsPlatform showStaleWarning />
+          ) : props.latestBriefUnavailable ? (
+            <UnavailableNotice
+              subject="Your latest brief"
+              denial="not a sign that no brief has been published"
+              reassurance="Published briefs are unaffected."
+              retryHref="/dashboard"
+            />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-slate-400 text-sm">

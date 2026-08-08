@@ -73,7 +73,7 @@ beforeEach(() => {
   api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
   api.getAuthMe.mockResolvedValue(anAuthMe());
   api.getIssues.mockResolvedValue(null);
-  api.getLatestBrief.mockResolvedValue(null);
+  api.getLatestBrief.mockResolvedValue({ state: "none" });
   api.getDashboardSummary.mockResolvedValue(SUMMARY);
   api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
   api.getFindings.mockResolvedValue(

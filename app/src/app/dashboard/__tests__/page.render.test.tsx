@@ -69,7 +69,7 @@ beforeEach(() => {
   api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
   api.getAuthMe.mockResolvedValue(anAuthMe());
   api.getIssues.mockResolvedValue(null);
-  api.getLatestBrief.mockResolvedValue(null);
+  api.getLatestBrief.mockResolvedValue({ state: "none" });
   api.getDashboardSummary.mockResolvedValue(SUMMARY);
   api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
   api.getFindings.mockResolvedValue(
@@ -360,7 +360,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
     // The staging defect verbatim: entitlement 'platform', no intelligence
     // brief, engine returned the newsletter issue locked.
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: true, audience_tier: "premium", publish_date: staleDate, created_at: staleDate }),
@@ -380,7 +380,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
 
   it("a stale latest issue carries the amber age warning (platform tenant, unlocked)", async () => {
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: false, publish_date: staleDate, created_at: staleDate }),
@@ -395,7 +395,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
   });
 
   it("a current latest issue shows NO staleness warning", async () => {
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: false, publish_date: freshDate, created_at: freshDate }),
@@ -409,7 +409,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
 
   it("a free-tier tenant keeps the locked teaser + Brief Pro upsell", async () => {
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: true, audience_tier: "standard", publish_date: freshDate, created_at: freshDate }),

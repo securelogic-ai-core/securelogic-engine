@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActions, getActionsSummary, getBriefingChanges, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { BillingPortalForm } from "@/components/BillingPortalForm";
@@ -47,7 +48,7 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
+  const [me, issuesData, latestBriefResult, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
     getMe(token),
     getIssues(token),
     getLatestBrief(token),
@@ -125,6 +126,12 @@ export default async function DashboardPage({
     frameworks.map((f, i) => ({ framework: f, readiness: frameworkReadinessResults[i] ?? null }));
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
+  // EDX-1: "no brief published yet" is a claim about the customer's publication
+  // history, so it may only be printed when the read that would have found one
+  // SUCCEEDED. getLatestBrief now discriminates; the page must not flatten that
+  // back into a single falsy check.
+  const latestBrief = latestBriefResult.state === "brief" ? latestBriefResult.brief : null;
+  const latestBriefUnavailable = latestBriefResult.state === "unavailable";
   const entitlementLevel = me?.entitlementLevel ?? "starter";
   const onboardingCompleted = session.onboardingCompleted ?? false;
   const isPaid = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
@@ -279,6 +286,7 @@ export default async function DashboardPage({
           vm={briefingVm}
           hasPlatformData={hasPlatformData}
           latestBrief={latestBrief}
+          latestBriefUnavailable={latestBriefUnavailable}
           latestIssue={latestIssue}
           issuesCount={issuesData?.count ?? 0}
           recentFindings={recentFindings}
@@ -341,6 +349,16 @@ export default async function DashboardPage({
               issue={latestIssue}
               viewerIsPlatform={isPlatformUser}
               showStaleWarning
+            />
+          ) : latestBriefUnavailable ? (
+            // The read failed. "No briefs published yet" here would state
+            // something about the customer's publication history that nothing
+            // in this response supports.
+            <UnavailableNotice
+              subject="Your latest brief"
+              denial="not a sign that no brief has been published"
+              reassurance="Published briefs are unaffected."
+              retryHref="/dashboard"
             />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">

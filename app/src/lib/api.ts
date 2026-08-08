@@ -1398,20 +1398,39 @@ export async function getIntelligenceBriefs(
  *
  * Returns null when no briefs exist or any request fails.
  */
+/**
+ * The three answers "what is the latest brief?" can have (EDX-1).
+ *
+ * This reader is the one place in lib/api that MUST discriminate, because its
+ * consumer prints a sentence about publication history — "No briefs published
+ * yet" — which is a claim about the customer's data, not about the request. A
+ * bare `T | null` cannot support that claim: `null` covered a failed list read,
+ * an empty list, and a failed detail read alike, so an outage told a subscriber
+ * nothing had ever been published.
+ */
+export type LatestBriefResult =
+  | { state: "unavailable" }
+  | { state: "none" }
+  | { state: "brief"; brief: IntelligenceBriefDetailResponse };
+
 export async function getLatestBrief(
   apiKey: string
-): Promise<IntelligenceBriefDetailResponse | null> {
+): Promise<LatestBriefResult> {
   try {
     const listRes = await engineFetch("/api/intelligence-briefs?limit=1", apiKey);
-    if (!listRes.ok) return null;
+    if (!listRes.ok) return { state: "unavailable" };
 
     const list = (await listRes.json()) as IntelligenceBriefListResponse;
     const latest = list.briefs?.[0];
-    if (!latest) return null;
+    // The list read SUCCEEDED and holds nothing. That is an answer.
+    if (!latest) return { state: "none" };
 
-    return await getIntelligenceBrief(apiKey, latest.id);
+    const brief = await getIntelligenceBrief(apiKey, latest.id);
+    // A brief exists but its detail could not be fetched. Emphatically not
+    // "none": the list just said otherwise.
+    return brief ? { state: "brief", brief } : { state: "unavailable" };
   } catch {
-    return null;
+    return { state: "unavailable" };
   }
 }
 

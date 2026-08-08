@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 import {
   buildQueueHref,
   isUuid,
@@ -141,7 +143,13 @@ export default async function QueuePage({
 
   // First-time-empty: this org has never seen a suggestion. Distinguish
   // from filtered-empty using lifetime_total from /counts.
-  const isFirstTimeEmpty = lifetimeTotal === 0;
+  //
+  // EDX-1: `counts?.lifetime_total ?? 0` turned a FAILED counts read into the
+  // strongest possible claim about the org's history — "SecureLogic hasn't
+  // found any links ... yet". `counts !== null` is the evidence that claim
+  // needs; without it the page falls back to the filtered-empty state, which
+  // asserts nothing about lifetime history.
+  const isFirstTimeEmpty = counts !== null && lifetimeTotal === 0;
 
   const emptyState = isFirstTimeEmpty ? (
     <div
@@ -403,11 +411,21 @@ export default async function QueuePage({
         </div>
       )}
 
-      <SuggestionList
-        initialSuggestions={suggestions}
-        emptyState={emptyState}
-        workspace={workspace}
-      />
+      {/* EDX-1: a failed list read is not an empty review queue. */}
+      {isUnavailable(listData) ? (
+        <UnavailableNotice
+          subject="Suggested links"
+          denial="not an empty review queue, and not a sign the matcher found nothing"
+          reassurance="Any pending suggestions are unchanged."
+          retryHref="/queue"
+        />
+      ) : (
+        <SuggestionList
+          initialSuggestions={suggestions}
+          emptyState={emptyState}
+          workspace={workspace}
+        />
+      )}
 
       {totalPending > PAGE_SIZE && (
         <div
