@@ -58,6 +58,119 @@ function isIsoDate(v: unknown): boolean {
   return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 }
 
+/**
+ * The action list's filter set, built ONCE and shared by GET /api/actions and
+ * GET /api/actions/summary.
+ *
+ * This exists because the summary is now filter-scoped: a tile that sits above
+ * a filtered list must count the filtered population, not the org. The only
+ * safe way to promise that is for both routes to derive their WHERE clause
+ * from the same code — a second copy of these predicates would agree on the
+ * day it was written and drift on the first day either side changed. The
+ * predicates that have a contract definition (`active`, `overdue`) keep coming
+ * from metricDefinitions; this helper composes them, it does not redefine them.
+ *
+ * Returns the org condition already in place as $1, so callers append their own
+ * params (cursor, limit, viewer identity) after the filter params.
+ *
+ * Validation is part of the shared contract too: an unknown status or a
+ * malformed source_id is rejected identically on both routes, so a filter the
+ * list refuses can never silently widen the summary to the whole org.
+ */
+type ActionFilters =
+  | { kind: "error"; body: Record<string, unknown> }
+  | { kind: "ok"; conditions: string[]; params: unknown[] };
+
+function buildActionFilters(
+  query: Record<string, unknown>,
+  organizationId: string,
+  viewerUserId: string | null
+): ActionFilters {
+  const conditions: string[] = ["organization_id = $1"];
+  const params: unknown[] = [organizationId];
+
+  // owner=me — the caller's own remediation ("My Actions").
+  //
+  // Same security contract as the Findings list (resolveOwnerMeFilter, shared):
+  // the ONLY accepted value is the literal "me", and the user id resolves from
+  // the SESSION — a client can never pass a user id, so assignments cannot be
+  // enumerated. An API-key caller has no user identity and is rejected, never
+  // defaulted to unfiltered.
+  const ownerFilter = resolveOwnerMeFilter(query.owner, viewerUserId);
+  if (ownerFilter.kind === "error") {
+    return { kind: "error", body: { error: ownerFilter.error } };
+  }
+  if (ownerFilter.kind === "me") {
+    params.push(ownerFilter.userId);
+    conditions.push(`owner_user_id = $${params.length}`);
+  }
+
+  const filterStatus = isNonEmptyString(query.status) ? query.status : null;
+  if (filterStatus !== null) {
+    if (!VALID_STATUSES.has(filterStatus)) {
+      return {
+        kind: "error",
+        body: { error: "invalid_status_filter", allowed: [...VALID_STATUSES] }
+      };
+    }
+    params.push(filterStatus);
+    conditions.push(`status = $${params.length}`);
+  }
+
+  const filterPriority = isNonEmptyString(query.priority) ? query.priority : null;
+  if (filterPriority !== null) {
+    if (!VALID_PRIORITIES.has(filterPriority)) {
+      return {
+        kind: "error",
+        body: { error: "invalid_priority_filter", allowed: [...VALID_PRIORITIES] }
+      };
+    }
+    params.push(filterPriority);
+    conditions.push(`priority = $${params.length}`);
+  }
+
+  // `active=true` — the destination for every ACTIVE actions count.
+  //
+  // Without it, the dashboard's "N active actions" tile had no URL that could
+  // reproduce it: the only status filter was a single exact `status=`, so the
+  // tile's link fell back to the org-wide list and showed closed and accepted
+  // actions alongside the N it promised. The count and its destination could
+  // not agree BY CONSTRUCTION. Built from the contract, so they now do.
+  if (query.active === "true") {
+    conditions.push(sqlActionActive());
+  }
+
+  // Overdue comes from the contract too. The hand-rolled predicate this
+  // replaces (`status NOT IN ('closed','accepted')`) matched the contract only
+  // because a CHECK constraint happens to permit exactly five statuses — add a
+  // sixth (`deferred`, `cancelled`) and the list would have silently diverged
+  // from the count with no test failing.
+  if (query.overdue === "true") {
+    conditions.push(sqlActionOverdue());
+  }
+
+  // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
+  const filterSourceType = isNonEmptyString(query.source_type)
+    ? query.source_type.trim()
+    : null;
+  const filterSourceId = isNonEmptyString(query.source_id)
+    ? query.source_id.trim()
+    : null;
+  if (filterSourceType !== null) {
+    params.push(filterSourceType);
+    conditions.push(`source_type = $${params.length}`);
+  }
+  if (filterSourceId !== null) {
+    if (!isUuid(filterSourceId)) {
+      return { kind: "error", body: { error: "source_id_must_be_uuid" } };
+    }
+    params.push(filterSourceId);
+    conditions.push(`source_id = $${params.length}::uuid`);
+  }
+
+  return { kind: "ok", conditions, params };
+}
+
 /* =========================================================
    POST /api/actions
    Create a new action. org-scoped to the calling organization.
@@ -242,101 +355,20 @@ router.get(
         : null;
       const useCursor = Boolean(beforeCreatedAt && beforeId);
 
-      const conditions: string[] = ["organization_id = $1"];
-      const params: unknown[] = [organizationId];
-
-      // owner=me — the caller's own remediation ("My Actions").
-      //
-      // This filter has to exist SERVER-SIDE. Before it did, /actions?view=mine fetched
-      // the org's actions and filtered them in the app — over a page the engine silently
-      // capped at MAX_LIMIT (100). In any org with more than 100 actions a user's own
-      // assigned work could fall outside that page and simply not be shown, with no
-      // truncation disclosed. Silent loss of a person's work queue.
-      //
-      // Same security contract as the Findings list (resolveOwnerMeFilter, shared): the
-      // ONLY accepted value is the literal "me", and the user id resolves from the SESSION
-      // — a client can never pass a user id, so assignments cannot be enumerated. An
-      // API-key caller has no user identity and is rejected, never defaulted to unfiltered.
-      const ownerFilter = resolveOwnerMeFilter(req.query.owner, (req.userId as string | undefined) ?? null);
-      if (ownerFilter.kind === "error") {
-        res.status(400).json({ error: ownerFilter.error });
+      // The filter set, from the ONE definition GET /api/actions/summary also
+      // uses — so a filtered list and a filtered count cannot describe
+      // different populations.
+      const filters = buildActionFilters(
+        req.query as Record<string, unknown>,
+        organizationId,
+        (req.userId as string | undefined) ?? null
+      );
+      if (filters.kind === "error") {
+        res.status(400).json(filters.body);
         return;
       }
-      if (ownerFilter.kind === "me") {
-        params.push(ownerFilter.userId);
-        conditions.push(`owner_user_id = $${params.length}`);
-      }
-
-      const filterStatus = isNonEmptyString(req.query.status)
-        ? req.query.status
-        : null;
-      if (filterStatus !== null) {
-        if (!VALID_STATUSES.has(filterStatus)) {
-          res.status(400).json({
-            error: "invalid_status_filter",
-            allowed: [...VALID_STATUSES]
-          });
-          return;
-        }
-        params.push(filterStatus);
-        conditions.push(`status = $${params.length}`);
-      }
-
-      const filterPriority = isNonEmptyString(req.query.priority)
-        ? req.query.priority
-        : null;
-      if (filterPriority !== null) {
-        if (!VALID_PRIORITIES.has(filterPriority)) {
-          res.status(400).json({
-            error: "invalid_priority_filter",
-            allowed: [...VALID_PRIORITIES]
-          });
-          return;
-        }
-        params.push(filterPriority);
-        conditions.push(`priority = $${params.length}`);
-      }
-
-      // `active=true` — the destination for every ACTIVE actions count.
-      //
-      // Without it, the dashboard's "N active actions" tile had no URL that could
-      // reproduce it: the only status filter was a single exact `status=`, so the
-      // tile's link fell back to the org-wide list and showed closed and accepted
-      // actions alongside the N it promised. The count and its destination could
-      // not agree BY CONSTRUCTION. Built from the contract, so they now do.
-      if (req.query.active === "true") {
-        conditions.push(sqlActionActive());
-      }
-
-      // Overdue comes from the contract too. The hand-rolled predicate this
-      // replaces (`status NOT IN ('closed','accepted')`) matched the contract only
-      // because a CHECK constraint happens to permit exactly five statuses — add a
-      // sixth (`deferred`, `cancelled`) and the list would have silently diverged
-      // from the count with no test failing.
-      const overdue = req.query.overdue === "true";
-      if (overdue) {
-        conditions.push(sqlActionOverdue());
-      }
-
-      // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
-      const filterSourceType = isNonEmptyString(req.query.source_type)
-        ? (req.query.source_type as string).trim()
-        : null;
-      const filterSourceId = isNonEmptyString(req.query.source_id)
-        ? (req.query.source_id as string).trim()
-        : null;
-      if (filterSourceType !== null) {
-        params.push(filterSourceType);
-        conditions.push(`source_type = $${params.length}`);
-      }
-      if (filterSourceId !== null) {
-        if (!isUuid(filterSourceId)) {
-          res.status(400).json({ error: "source_id_must_be_uuid" });
-          return;
-        }
-        params.push(filterSourceId);
-        conditions.push(`source_id = $${params.length}::uuid`);
-      }
+      const conditions = filters.conditions;
+      const params = filters.params;
 
       // Snapshot the filter set BEFORE the cursor + limit params so the total
       // COUNT reflects the SAME filters (cursor excluded) — pagination truth,
@@ -422,6 +454,15 @@ router.get(
 /* =========================================================
    GET /api/actions/summary
    Aggregate counts for actions scoped to the org.
+
+   Accepts the SAME filter params as GET /api/actions (status, priority,
+   active, overdue, owner, source_type, source_id) and applies them through
+   the same builder, so the counts describe the same population as the list
+   under the same query string. Unfiltered calls are unchanged.
+
+   Pagination params (limit, before_created_at, before_id) are not accepted
+   here and could not matter if they were: an aggregate over a page is the
+   defect this route exists to avoid.
    ========================================================= */
 
 router.get(
@@ -448,6 +489,34 @@ router.get(
       // must never quietly widen to everyone's.
       const viewerUserId = (req as { userId?: string }).userId ?? null;
 
+      // FILTER-SCOPED (product ruling): these counts describe the same
+      // population as GET /api/actions under the same query string, because
+      // both build their WHERE from buildActionFilters.
+      //
+      // The tiles this serves sit directly above a filtered list. Feeding them
+      // org-wide numbers would have been a different lie from the capped-slice
+      // arithmetic they replace, not a fix: a view filtered to `blocked` would
+      // have shown the org's open count above a list of blocked work. An
+      // aggregate has to describe the population its label implies.
+      //
+      // Backward compatible by construction: with no filter params the
+      // conditions reduce to `organization_id = $1`, which is exactly the query
+      // this route ran before, so existing callers see identical numbers.
+      const filters = buildActionFilters(
+        req.query as Record<string, unknown>,
+        organizationId,
+        viewerUserId
+      );
+      if (filters.kind === "error") {
+        res.status(400).json(filters.body);
+        return;
+      }
+      // The viewer param goes AFTER the filter params — the my_* counters
+      // reference it by position, which is no longer fixed at $2.
+      const summaryParams = [...filters.params, viewerUserId];
+      const viewerParam = summaryParams.length;
+      const whereClause = filters.conditions.join(" AND ");
+
       const result = await pg.query<{
         open_count: string;
         open_only_count: string;
@@ -472,15 +541,15 @@ router.get(
           -- tiles must read: computing them by filtering a fetched page is how a user's
           -- work went missing in the first place.
           COUNT(*) FILTER (WHERE ${sqlActionActive()}
-                             AND $2::uuid IS NOT NULL
-                             AND owner_user_id = $2::uuid)                      AS my_open_count,
+                             AND $${viewerParam}::uuid IS NOT NULL
+                             AND owner_user_id = $${viewerParam}::uuid)         AS my_open_count,
           COUNT(*) FILTER (WHERE ${sqlActionOverdue()}
-                             AND $2::uuid IS NOT NULL
-                             AND owner_user_id = $2::uuid)                      AS my_overdue_count
+                             AND $${viewerParam}::uuid IS NOT NULL
+                             AND owner_user_id = $${viewerParam}::uuid)         AS my_overdue_count
         FROM actions
-        WHERE organization_id = $1
+        WHERE ${whereClause}
         `,
-        [organizationId, viewerUserId]
+        summaryParams
       );
 
       const row = result.rows[0];

@@ -90,6 +90,24 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
+/**
+ * The criticality breakdown for a population with no members.
+ *
+ * A genuine zero is an ANSWER and must be shaped exactly like a non-zero one:
+ * the search-miss early return below would otherwise omit the aggregate keys
+ * entirely, and a caller reading `by_criticality.critical` would get
+ * `undefined` — which renders as blank or NaN, not as the 0 it actually is.
+ */
+function emptyCriticalityCounts(): {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  uncategorized: number;
+} {
+  return { critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0 };
+}
+
 /* =========================================================
    POST /api/vendors
    Create a vendor for the requesting organization.
@@ -311,6 +329,8 @@ router.get(
           res.status(200).json({
             count: 0,
             limit,
+            total: 0,
+            by_criticality: emptyCriticalityCounts(),
             organizationId,
             statusFilter: filterStatus,
             nextCursor: null,
@@ -321,6 +341,20 @@ router.get(
         params.push(vendorIds);
         conditions.push(`id = ANY($${params.length}::uuid[])`);
       }
+
+      // Snapshot the filter set BEFORE the cursor + limit params, so the
+      // aggregates below describe the SAME population as the list and are
+      // untouched by paging — the identical discipline GET /api/actions and
+      // GET /api/findings already use for their `total`.
+      //
+      // This is the whole point of the contract: `count` is the length of the
+      // returned slice and always was, so a caller that needed the size of the
+      // register had nothing to read and could only count rows it had been
+      // given — capped at MAX_LIMIT. A cap counted as if it were a population
+      // is not a small error, it is a confident wrong number, and it silently
+      // stops being wrong only for orgs small enough not to notice.
+      const preCursorConditions = [...conditions];
+      const preCursorParams = [...params];
 
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
@@ -385,12 +419,58 @@ router.get(
         params
       );
 
+      // Exact aggregates over the SAME filter set (cursor + limit excluded).
+      // One extra query, served by idx_vendors_org_status /
+      // idx_vendors_org_criticality — the same index path the list itself uses.
+      const aggregateRow = await pg.query<{
+        total: string;
+        critical: string;
+        high: string;
+        medium: string;
+        low: string;
+        uncategorized: string;
+      }>(
+        `
+        SELECT
+          COUNT(*)                                                     AS total,
+          COUNT(*) FILTER (WHERE criticality = 'critical')             AS critical,
+          COUNT(*) FILTER (WHERE criticality = 'high')                 AS high,
+          COUNT(*) FILTER (WHERE criticality = 'medium')               AS medium,
+          COUNT(*) FILTER (WHERE criticality = 'low')                  AS low,
+          -- NULL and any value outside the four known bands, so the parts
+          -- always sum to total. A vendor with an unrecognised criticality
+          -- must appear SOMEWHERE in the breakdown rather than vanish from it.
+          COUNT(*) FILTER (
+            WHERE criticality IS NULL
+               OR criticality NOT IN ('critical', 'high', 'medium', 'low')
+          )                                                            AS uncategorized
+        FROM vendors
+        WHERE ${preCursorConditions.join(" AND ")}
+        `,
+        preCursorParams
+      );
+
+      const agg = aggregateRow.rows[0];
+      const total = parseInt(agg?.total ?? "0", 10);
+      const byCriticality = {
+        critical:      parseInt(agg?.critical ?? "0", 10),
+        high:          parseInt(agg?.high ?? "0", 10),
+        medium:        parseInt(agg?.medium ?? "0", 10),
+        low:           parseInt(agg?.low ?? "0", 10),
+        uncategorized: parseInt(agg?.uncategorized ?? "0", 10),
+      };
+
       const vendors = result.rows;
       const last = vendors.length > 0 ? vendors[vendors.length - 1] : null;
 
       res.status(200).json({
         count: vendors.length,
         limit,
+        // Additive: `count` keeps its meaning (the slice length) so every
+        // existing caller is unaffected. `total` and `by_criticality` describe
+        // the whole matching population.
+        total,
+        by_criticality: byCriticality,
         organizationId,
         statusFilter: filterStatus,
         nextCursor:
