@@ -2680,16 +2680,43 @@ export async function getActions(
 }
 
 /**
- * Org-wide action counts from GET /api/actions/summary. These are authoritative
- * (server COUNT(*), org-scoped, uncapped) — the workspace attention tiles read
- * these instead of scanning a paginated slice, so tile numbers reconcile with
- * the dashboard Actions ring rather than drifting at >100 actions.
+ * The filter set GET /api/actions/summary accepts — deliberately ActionsParams
+ * minus `limit`.
+ *
+ * Pagination has no meaning for an aggregate, and an aggregate computed over a
+ * page is the exact defect this route exists to avoid, so the type refuses to
+ * carry `limit` rather than relying on a caller to remember not to send it.
+ */
+export type ActionsSummaryParams = Omit<ActionsParams, "limit">;
+
+/**
+ * Exact action counts from GET /api/actions/summary — server COUNT(*) FILTER,
+ * org-scoped, uncapped — for the SAME filter set passed to getActions.
+ *
+ * Pass the identical filter object to both readers. The engine builds the WHERE
+ * for the list and for this summary from one shared `buildActionFilters()`, so
+ * an identical query string is a guarantee (not a convention) that the counts
+ * describe the population the list is showing.
+ *
+ * Called with no params the URL is byte-identical to the org-wide form this
+ * reader has always sent, so existing callers are unaffected.
  */
 export async function getActionsSummary(
-  apiKey: string
+  apiKey: string,
+  params?: ActionsSummaryParams
 ): Promise<ActionsSummary | null> {
   try {
-    const res = await engineFetch(`/api/actions/summary`, apiKey);
+    const qs = new URLSearchParams();
+    if (params?.status)   qs.set("status",   params.status);
+    if (params?.priority) qs.set("priority", params.priority);
+    if (params?.overdue)  qs.set("overdue",  "true");
+    if (params?.active)   qs.set("active",   "true");
+    if (params?.owner)    qs.set("owner",    params.owner);
+    const query = qs.toString();
+    const res = await engineFetch(
+      `/api/actions/summary${query ? `?${query}` : ""}`,
+      apiKey
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as { summary?: ActionsSummary };
     return body?.summary ?? null;

@@ -24,6 +24,7 @@ import {
   hrefOf,
 } from "@/test/harness";
 import { aMe, anAction, anActionsResponse, anActionsSummary } from "@/test/fixtures";
+import type { Action } from "@/lib/api";
 
 const api = vi.hoisted(() => ({
   getMe: vi.fn(),
@@ -167,6 +168,241 @@ describe("/actions — workspace flag OFF (legacy list)", () => {
   });
 });
 
+// ── 1b. Flag OFF — the legacy tiles are EXACT server counts ──────────────────
+//
+// This is the PRODUCTION-visible path (SECURELOGIC_DECISION_WORKSPACE_ENABLED is
+// false in prod, true on staging), so it is the one place where deterministic
+// tests are the only proof available: a staging walkthrough renders Path B and
+// cannot exercise any of this.
+//
+// Every tile here derived its number from `actions.filter(…).length` — a scan of
+// a page the engine caps at 100. That arithmetic is CORRECT below the cap, which
+// is exactly why it survived review: the tiles only begin lying once an org has
+// more than one page of matching work. So every population below is seeded PAST
+// the cap, and each assertion is about a number the page cannot have counted.
+
+const EM_DASH = "—";
+
+describe("/actions — legacy tiles are exact server counts (Path A)", () => {
+  beforeEach(() => vi.stubEnv("SECURELOGIC_DECISION_WORKSPACE_ENABLED", "false"));
+
+  /** A full page, which is all the engine will ever hand this route. */
+  const CAPPED_PAGE = Array.from({ length: 100 }, (_, i) =>
+    anAction({ id: `a-${i}`, title: `Action ${i}`, status: "open" })
+  );
+
+  /**
+   * An engine holding `total` matching actions, of which `immediate`/`nearTerm`
+   * carry those priorities. The priority totals are answered through the list
+   * route's exact `total`, so the mock must key on the priority param the page
+   * sends — the same discrimination the engine performs in SQL.
+   */
+  function engine({
+    total = 340,
+    immediate = 22,
+    nearTerm = 31,
+    rows = CAPPED_PAGE,
+  }: { total?: number; immediate?: number; nearTerm?: number; rows?: Action[] } = {}) {
+    api.getActions.mockImplementation((_t: unknown, p?: { priority?: string }) => {
+      if (p?.priority === "immediate")
+        return Promise.resolve({ ...anActionsResponse([]), total: immediate });
+      if (p?.priority === "near_term")
+        return Promise.resolve({ ...anActionsResponse([]), total: nearTerm });
+      return Promise.resolve({ ...anActionsResponse(rows), total });
+    });
+  }
+
+  const BIG_SUMMARY = { open_only_count: 180, in_progress_count: 25, overdue_count: 47 };
+
+  it("counts the whole population past the 100-row cap, not the slice it was handed", async () => {
+    engine({ total: 340, immediate: 22, nearTerm: 31 });
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    // Scanning the 100 returned rows yields 100 / 0 / 0 — a capped number wearing
+    // a total's clothes, directly above a "Showing 100 of 340" line disclosing the
+    // truncation of the list but not of the tiles.
+    expect(tileValue(container, "Open")).toBe("205");
+    expect(tileValue(container, "Overdue")).toBe("47");
+    expect(tileValue(container, "High Priority")).toBe("53");
+    expect(screen.getByText(/Showing 100 of 340/)).toBeInTheDocument();
+  });
+
+  it("the size of the returned slice moves no tile at all", async () => {
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+    const labels = ["Open", "Overdue", "High Priority"];
+
+    engine({ rows: CAPPED_PAGE });
+    const wide = await renderPage(ActionsPage, { searchParams: sp({}) });
+    const fromFullPage = labels.map((l) => tileValue(wide.container, l));
+
+    // Same population, three rows returned. Any tile that reads page length moves.
+    engine({ rows: CAPPED_PAGE.slice(0, 3) });
+    const narrow = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    expect(labels.map((l) => tileValue(narrow.container, l))).toEqual(fromFullPage);
+    expect(fromFullPage).toEqual(["205", "47", "53"]);
+  });
+
+  it("asks the summary for EXACTLY the filters it asks the list for, and never for a page", async () => {
+    engine();
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    await renderPage(ActionsPage, {
+      searchParams: sp({ status: "blocked", overdue: "true" }),
+    });
+
+    const listParams = api.getActions.mock.calls[0][1];
+    const summaryParams = api.getActionsSummary.mock.calls[0][1];
+
+    expect(summaryParams.status).toBe(listParams.status);
+    expect(summaryParams.overdue).toBe(listParams.overdue);
+    expect(summaryParams.priority).toBe(listParams.priority);
+    expect(summaryParams.active).toBe(listParams.active);
+    // Pagination has no meaning for an aggregate, and an aggregate over a page is
+    // the defect this whole change removes.
+    expect(summaryParams).not.toHaveProperty("limit");
+    expect(listParams.limit).toBe(100);
+  });
+
+  it("changing a filter changes the tiles with it — the counts are filter-scoped", async () => {
+    engine();
+    api.getActionsSummary.mockImplementation((_t: unknown, p?: { status?: string }) =>
+      Promise.resolve(
+        p?.status === "blocked"
+          ? anActionsSummary({ open_only_count: 0, in_progress_count: 0, overdue_count: 9 })
+          : anActionsSummary(BIG_SUMMARY)
+      )
+    );
+
+    const unfiltered = await renderPage(ActionsPage, { searchParams: sp({}) });
+    expect(tileValue(unfiltered.container, "Overdue")).toBe("47");
+
+    const filtered = await renderPage(ActionsPage, { searchParams: sp({ status: "blocked" }) });
+    // 9 overdue blocked actions, and — truthfully — zero of them are open or in
+    // progress. A tile above a blocked list must describe the blocked list.
+    expect(tileValue(filtered.container, "Overdue")).toBe("9");
+    expect(tileValue(filtered.container, "Open")).toBe("0");
+  });
+
+  it("the Open tile counts open|in_progress — un-capping a number does not redefine it", async () => {
+    engine();
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({
+        open_only_count: 10,
+        in_progress_count: 5,
+        blocked_count: 7,
+        open_count: 22,
+        overdue_count: 0,
+      })
+    );
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    expect(tileValue(container, "Open")).toBe("15");
+    // `open_count` is ACTIVE (open|in_progress|blocked) — a different population.
+    // Substituting it would change what the tile means while claiming to fix it.
+    expect(tileValue(container, "Open")).not.toBe("22");
+  });
+
+  it("a genuine zero is still 0 — an empty population is an answer", async () => {
+    engine({ total: 0, immediate: 0, nearTerm: 0, rows: [] });
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ open_only_count: 0, in_progress_count: 0, overdue_count: 0 })
+    );
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    expect(tileValue(container, "Open")).toBe("0");
+    expect(tileValue(container, "Overdue")).toBe("0");
+    expect(tileValue(container, "High Priority")).toBe("0");
+    expect(screen.queryByText(/shown as/)).not.toBeInTheDocument();
+  });
+
+  it("a failed summary is disclosed as unknown — it never becomes 0", async () => {
+    engine();
+    api.getActionsSummary.mockResolvedValue(null);
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    expect(tileValue(container, "Open")).toBe(EM_DASH);
+    expect(tileValue(container, "Overdue")).toBe(EM_DASH);
+    expect(screen.getByText(/shown as/)).toBeInTheDocument();
+    // The high-priority count comes from the list route, which did answer.
+    expect(tileValue(container, "High Priority")).toBe("53");
+  });
+
+  it("a summary missing the exact parts is unknown — no fallback to scanning rows", async () => {
+    engine();
+    api.getActionsSummary.mockResolvedValue(
+      anActionsSummary({ open_only_count: undefined, in_progress_count: undefined })
+    );
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    // 100 open rows are sitting right there. Counting them would produce "100",
+    // which is the capped defect returning through the back door.
+    expect(tileValue(container, "Open")).toBe(EM_DASH);
+    expect(tileValue(container, "Open")).not.toBe("100");
+  });
+
+  it("a failed list does not fabricate a zero for the high-priority count", async () => {
+    api.getActions.mockResolvedValue(null);
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    expect(tileValue(container, "High Priority")).toBe(EM_DASH);
+    // The summary answered, so those two tiles are still exact.
+    expect(tileValue(container, "Open")).toBe("205");
+  });
+
+  it("a priority-filtered view answers High Priority from its own total — no extra count", async () => {
+    // 88 immediate actions in the org; the page is filtered to exactly them.
+    engine({ total: 340, immediate: 88 });
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    const { container } = await renderPage(ActionsPage, {
+      searchParams: sp({ priority: "immediate" }),
+    });
+
+    // The filtered population IS entirely high-priority, so its own total answers
+    // the tile exactly and the two priority sub-counts are unnecessary. Note this
+    // is still 88 and not 100: the list route's total, not the page it returned.
+    expect(tileValue(container, "High Priority")).toBe("88");
+    expect(api.getActions).toHaveBeenCalledTimes(1);
+  });
+
+  it("a planned-filtered view has a PROVABLE zero high-priority count", async () => {
+    engine({ total: 88 });
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    const { container } = await renderPage(ActionsPage, {
+      searchParams: sp({ priority: "planned" }),
+    });
+
+    // Nothing filtered to `planned` can be immediate or near-term. Zero here is
+    // derived from the filter, not assumed from an empty scan.
+    expect(tileValue(container, "High Priority")).toBe("0");
+    expect(api.getActions).toHaveBeenCalledTimes(1);
+  });
+
+  it("no tile is a link, so no destination can disagree with the number it shows", async () => {
+    engine();
+    api.getActionsSummary.mockResolvedValue(anActionsSummary(BIG_SUMMARY));
+
+    const { container } = await renderPage(ActionsPage, { searchParams: sp({}) });
+
+    for (const label of ["Open", "Overdue", "High Priority"]) {
+      const heading = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent?.trim() === label
+      )!;
+      expect(heading.closest("div")!.querySelectorAll("a")).toHaveLength(0);
+    }
+  });
+});
+
 // ── 2. Flag ON — the Decision Workspace remediation queue ─────────────────────
 
 describe("/actions — workspace flag ON", () => {
@@ -218,6 +454,17 @@ describe("/actions — workspace flag ON", () => {
     const { container } = await renderPage(ActionsPage, { searchParams: sp({ view: "mine" }) });
 
     expect(hrefOf(container, "Rotate the eu-west-1 backup keys")).toBe("/findings/f-1");
+  });
+
+  it("Path B's summary request is unchanged — the Path A filter work did not leak into it", async () => {
+    await renderPage(ActionsPage, { searchParams: sp({ view: "team", status: "blocked" }) });
+
+    // getActionsSummary now ACCEPTS filters, and the workspace view deliberately
+    // still sends none: its tiles are org-wide by design and its disclosure text
+    // says so. Making the summary filterable must not silently re-scope a view
+    // that was never asked to change.
+    expect(api.getActionsSummary).toHaveBeenCalledTimes(1);
+    expect(api.getActionsSummary.mock.calls[0][1]).toBeUndefined();
   });
 });
 
