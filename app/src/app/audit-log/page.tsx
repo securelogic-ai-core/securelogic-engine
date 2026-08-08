@@ -3,6 +3,8 @@ import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { getAuditLog, getAuditLogEventTypes, getTeamMembers } from "@/lib/api";
 import AuditLogTable from "./AuditLogTable";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -195,8 +197,21 @@ export default async function AuditLogPage({
         )}
       </form>
 
-      {/* Table */}
-      {events.length === 0 ? (
+      {/* Table.
+
+          EDX-1: an audit log that reports "No audit events found." because the
+          read failed is the most consequential empty state in the product. It
+          is the surface an auditor, an incident responder, or a regulator opens
+          precisely to establish whether something happened, and a fabricated
+          absence of events is evidence of the wrong fact. */}
+      {isUnavailable(auditData) ? (
+        <UnavailableNotice
+          subject="The audit log"
+          denial="not an absence of audit events, and not a filter that matched nothing"
+          reassurance="Recorded events are unchanged."
+          retryHref={`/audit-log${exportParams.toString() ? `?${exportParams.toString()}` : ""}`}
+        />
+      ) : events.length === 0 ? (
         <div
           className="rounded-xl p-16 text-center"
           style={{ background: "#0d1626", border: "1px solid #1e2d45" }}

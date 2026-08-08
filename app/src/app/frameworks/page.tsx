@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { UnknownValue } from "@/components/edx/UnknownValue";
+import { isUnavailable } from "@/lib/edx/loadState";
 import { getFrameworks, getFrameworkReadiness, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { ActivateButton } from "./ActivateButton";
 import { DeactivateButton } from "./DeactivateButton";
@@ -215,7 +218,15 @@ function ActiveFrameworkCard({
           </div>
         ) : (
           <p className="text-xs" style={{ color: "#475569" }}>
-            {readiness === null ? "Loading readiness…" : "No requirements yet"}
+            {readiness === null ? (
+              // "Loading readiness…" was rendered by a SERVER component for a
+              // fetch that had already failed: a spinner-shaped sentence for a
+              // load that will never complete. It also read as 0% coverage
+              // sitting next to frameworks that showed a real score.
+              <>Readiness <UnknownValue label="Readiness" /></>
+            ) : (
+              "No requirements yet"
+            )}
           </p>
         )}
       </Link>
@@ -322,6 +333,19 @@ export default async function FrameworksPage() {
         </p>
       </div>
 
+      {/* EDX-1: a failed catalog read is not "no frameworks activated yet" —
+          a sentence that invites a customer to activate frameworks they may
+          already be running, and that hides their compliance posture behind an
+          onboarding prompt. */}
+      {isUnavailable(frameworksData) && (
+        <UnavailableNotice
+          subject="Your frameworks"
+          denial="not a sign that no frameworks are activated"
+          reassurance="Your activated frameworks are unchanged."
+          retryHref="/frameworks"
+        />
+      )}
+
       {/* Active frameworks */}
       {frameworks.length > 0 && (
         <section className="mb-10">
@@ -347,7 +371,7 @@ export default async function FrameworksPage() {
         <h2 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
           {frameworks.length > 0 ? "Framework Templates" : "Available Frameworks"}
         </h2>
-        {frameworks.length === 0 && (
+        {frameworks.length === 0 && !isUnavailable(frameworksData) && (
           <p className="text-sm mb-6" style={{ color: "#475569" }}>
             No frameworks activated yet. Activate a template to start tracking compliance readiness.
           </p>

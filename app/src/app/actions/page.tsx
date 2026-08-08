@@ -9,6 +9,8 @@ import {
   type ActionsSummaryParams,
 } from "@/lib/api";
 import { UnknownValue, UnknownValueNote } from "@/components/edx/UnknownValue";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 import { myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
 import MyActionsView from "./MyActionsView";
 
@@ -467,8 +469,21 @@ export default async function ActionsPage({
         </p>
       )}
 
-      {/* Action list */}
-      {actions.length === 0 ? (
+      {/* Action list.
+
+          EDX-1: a failed read is not "all clear". `actionsData?.actions ?? []`
+          made an outage render the most reassuring sentence on the page —
+          "All clear — no open actions." — to a customer whose remediation
+          queue could not be reached. Of every empty state in the app this is
+          the one most likely to end a check on outstanding work. */}
+      {isUnavailable(actionsData) ? (
+        <UnavailableNotice
+          subject="Your remediation actions"
+          denial="not an all-clear, and not an empty queue"
+          reassurance="Your actions are unchanged."
+          retryHref={filterHref(currentSp, "__none__", null)}
+        />
+      ) : actions.length === 0 ? (
         <div
           className="rounded-xl border p-10 text-center"
           style={{

@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 import {
   getMe,
   getRisks,
@@ -411,8 +413,24 @@ export default async function RisksPage({
         )}
       </div>
 
-      {/* Risk table */}
-      <RiskTable risks={rows} scaleLevels={scaleLevels} />
+      {/* Risk table.
+
+          EDX-1: a failed read is not an empty register. `basicData?.risks ?? []`
+          fed RiskTable an empty array, which renders "No risks match your
+          current filters." — telling a customer their filters found nothing
+          when in fact nothing was ever fetched. The register is where risk
+          acceptance and treatment decisions are tracked; a phantom "no matches"
+          there is a governance-grade falsehood, not a cosmetic one. */}
+      {isUnavailable(basicData) ? (
+        <UnavailableNotice
+          subject="Your risk register"
+          denial="not an empty register, and not a filter that matched nothing"
+          reassurance="Your risks are unchanged."
+          retryHref={filterHref(currentSp, "__none__", null)}
+        />
+      ) : (
+        <RiskTable risks={rows} scaleLevels={scaleLevels} />
+      )}
     </div>
   );
 }
