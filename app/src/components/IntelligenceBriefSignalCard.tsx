@@ -1,12 +1,22 @@
 import Link from "next/link";
 import type { IntelligenceBriefItem, IntelligenceBriefUrgency } from "@/lib/api";
 import { BriefItemContextStrip } from "@/components/BriefItemPlatformContext";
+import { WindowContradictionNote } from "@/components/edx/WindowContradictionNote";
 import { formatDateOnlyUTC } from "@/lib/dates";
+import { windowContradictionAge } from "@/lib/edx/freshness";
 
 interface IntelligenceBriefSignalCardProps {
   briefId: string;
   item: IntelligenceBriefItem;
   index: number;
+  /**
+   * The brief's coverage-window start (period_start). When the item's
+   * source-asserted date predates it beyond the EDX-8 grace period, the card
+   * discloses the contradiction instead of leaving the reader to compare
+   * "Reported {date}" against the masthead themselves. Optional so legacy
+   * call sites without a window render byte-identically.
+   */
+  periodStart?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,11 +109,15 @@ export function IntelligenceBriefSignalCard({
   briefId,
   item,
   index,
+  periodStart = null,
 }: IntelligenceBriefSignalCardProps) {
   const action = firstAction(item.recommended_actions);
   const detailHref = `/briefs/${briefId}/signal/item/${index}`;
   const bandBg = urgencyBg(item.urgency ?? null);
   const bandLabel = urgencyLabel(item.urgency ?? null);
+  // IQP Q2 / EDX-8: asserted only from two REAL dates — an item without a
+  // source date renders no note (and no date), same as before.
+  const contradictionAge = windowContradictionAge(item.signal_published_at, periodStart);
 
   return (
     <div
@@ -187,6 +201,8 @@ export function IntelligenceBriefSignalCard({
             Read full analysis →
           </Link>
         </div>
+
+        <WindowContradictionNote age={contradictionAge} className="mt-2" />
       </div>
     </div>
   );

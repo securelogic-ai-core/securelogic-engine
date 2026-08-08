@@ -132,6 +132,7 @@ export function IntelligenceBriefSignalGroup({
                   briefId={brief.id}
                   item={item}
                   index={originalIndex}
+                  periodStart={brief.period_start}
                 />
               ))}
               {matched.length > 0 && unmatched.length > 0 && (
@@ -145,6 +146,7 @@ export function IntelligenceBriefSignalGroup({
                   briefId={brief.id}
                   item={item}
                   index={originalIndex}
+                  periodStart={brief.period_start}
                 />
               ))}
             </div>
