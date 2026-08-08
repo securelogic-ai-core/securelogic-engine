@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getPolicies, type Policy } from "@/lib/api";
 import { PoliciesList } from "./PoliciesList";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 export default async function PoliciesPage() {
   const session = await getSession();
@@ -53,12 +55,16 @@ export default async function PoliciesPage() {
         </div>
       </div>
 
-      {policiesData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Policies data is not available for your current plan.
-          </p>
-        </div>
+      {/* EDX-1: a failed fetch, not a plan limit. getPolicies returns null for
+          ANY non-OK response or thrown request, and this page already
+          redirected non-platform callers above. */}
+      {isUnavailable(policiesData) && (
+        <UnavailableNotice
+          subject="Policies"
+          denial="not a limit of your plan, and not an empty library"
+          reassurance="Your policies are unchanged."
+          retryHref="/policies"
+        />
       )}
 
       {policiesData !== null && policies.length === 0 && (

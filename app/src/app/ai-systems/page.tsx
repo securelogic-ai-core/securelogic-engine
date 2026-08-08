@@ -7,6 +7,8 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 export default async function AiSystemsPage({
   searchParams,
@@ -104,12 +106,25 @@ export default async function AiSystemsPage({
       />
 
       {/* Not entitled */}
-      {systemsData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: '#94a3b8' }}>
-            AI system data is not available for your current plan.
-          </p>
-        </div>
+      {/* EDX-1: getAiSystems returns null for ANY non-OK response or thrown
+          request, so this branch cannot know why the fetch failed and must
+          claim nothing about the cause.
+
+          NOTE — unlike /vendors, /obligations and /policies, this page has no
+          platform-entitlement redirect above, while GET /api/ai-systems IS
+          gated (requirePremiumOrCorePlatform). A 403 is therefore genuinely
+          reachable here, so the denial deliberately refuses only the reading
+          the data DOES rule out — an empty register — rather than asserting
+          "not a limit of your plan", which would trade one unsupported claim
+          for its opposite. Aligning the page gate is a follow-up, not a
+          silent entitlement change in this PR. */}
+      {isUnavailable(systemsData) && (
+        <UnavailableNotice
+          subject="AI systems"
+          denial="not an empty register"
+          reassurance="Your AI systems are unchanged."
+          retryHref={search ? `/ai-systems?q=${encodeURIComponent(search)}` : "/ai-systems"}
+        />
       )}
 
       {/* Entitled but nothing to show — an active search gets an honest "no match",

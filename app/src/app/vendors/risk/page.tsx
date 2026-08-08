@@ -7,6 +7,8 @@ import {
   type Vendor,
   type VendorAssessment,
 } from "@/lib/api";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -315,15 +317,22 @@ export default async function VendorRiskPage() {
     getVendorAssessments(token, 100),
   ]);
 
-  if (vendorsData === null) {
+  // EDX-1: the whole page depends on the vendor register, so a failed fetch
+  // fails the page — but it fails HONESTLY. This branch previously blamed the
+  // customer's plan for what is any non-OK response from getVendors, on a
+  // route that already redirected non-platform callers above.
+  if (isUnavailable(vendorsData)) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12">
         <Link href="/vendors" className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80" style={{ color: "#64748b" }}>
           ← Vendors
         </Link>
-        <div className="rounded-xl border p-10 text-center" style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}>
-          <p className="text-sm" style={{ color: "#94a3b8" }}>Vendor data is not available for your current plan.</p>
-        </div>
+        <UnavailableNotice
+          subject="Vendor risk"
+          denial="not a limit of your plan, and not an empty register"
+          reassurance="Your vendors are unchanged."
+          retryHref="/vendors/risk"
+        />
       </div>
     );
   }

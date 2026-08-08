@@ -9,6 +9,8 @@ import {
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
 import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 const CRIT_ORDER: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3,
@@ -254,13 +256,18 @@ export default async function VendorsPage({
         </div>
       )}
 
-      {/* Not entitled */}
-      {vendorsData === null && (
-        <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Vendor data is not available for your current plan.
-          </p>
-        </div>
+      {/* EDX-1: a failed fetch, not a plan limit. getVendors returns null for
+          ANY non-OK response or thrown request, and this page already
+          redirected non-platform callers above — so "not available for your
+          current plan" told a paying customer their subscription excluded a
+          feature they had bought, every time the engine hiccupped. */}
+      {isUnavailable(vendorsData) && (
+        <UnavailableNotice
+          subject="Vendors"
+          denial="not a limit of your plan, and not an empty register"
+          reassurance="Your vendors are unchanged."
+          retryHref={vendorsHref()}
+        />
       )}
 
       {/* Entitled but nothing to show — an active search gets an honest "no match",
