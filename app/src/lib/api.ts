@@ -1114,8 +1114,25 @@ export type BillingSessionResult = { url: string } | { error: string };
 
 // ─── Customer auth types ────────────────────────────────────────────────────
 
+/**
+ * What the engine says happened to the verification email.
+ *
+ * `sent` is the only value that licenses "check your inbox" copy. The other two
+ * mean the account exists but nothing was delivered, so the customer is locked
+ * out until they recover — login answers 403 `email_not_verified` and the token
+ * lives only in the database.
+ */
+export type VerificationEmailStatus = "sent" | "unavailable" | "failed";
+
 export type AuthSignupResponse =
-  | { ok: true; message: string }
+  | {
+      ok: true;
+      message: string;
+      /** Absent on engines predating the truthful-signup fix; treat as unknown. */
+      verification_email?: VerificationEmailStatus;
+      detail?: string;
+      recovery?: { resend_path: string; resend_endpoint: string; support_email: string };
+    }
   | { error: string; detail?: string };
 
 export type AuthLoginResponse =
@@ -1988,17 +2005,32 @@ export async function authVerifyEmail(
   return res.json() as Promise<{ ok: true; token: string } | { error: string }>;
 }
 
+/**
+ * Ask the engine to resend a verification email.
+ *
+ * The engine answers identically for every address on purpose — a per-address
+ * outcome here would be an account-existence oracle — so `attempted` is as
+ * specific as this can get, and it means exactly that: handed to the mail
+ * provider, result unobserved. `unavailable` is the one honest exception: no
+ * provider is configured at all, which is true of every address equally and so
+ * gives nothing away.
+ */
 export async function authResendVerification(
   email: string
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; verificationEmail: "attempted" | "unavailable" }> {
   const res = await fetch(`${ENGINE_URL}/api/auth/resend-verification`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
     cache: "no-store",
   });
-  if (!res.ok) return { ok: false };
-  return { ok: true };
+  if (!res.ok) return { ok: false, verificationEmail: "attempted" };
+
+  const body = (await res.json().catch(() => ({}))) as { verification_email?: unknown };
+  return {
+    ok: true,
+    verificationEmail: body.verification_email === "unavailable" ? "unavailable" : "attempted",
+  };
 }
 
 export async function authForgotPassword(

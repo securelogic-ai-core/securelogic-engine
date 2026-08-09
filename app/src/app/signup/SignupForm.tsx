@@ -85,7 +85,12 @@ export function SignupForm({ plan: rawPlan }: Props) {
       }),
     });
 
-    const data = (await res.json()) as { ok?: boolean; error?: string; detail?: string };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      detail?: string;
+      verification_email?: string;
+    };
 
     if (!res.ok) {
       setError(
@@ -107,6 +112,17 @@ export function SignupForm({ plan: rawPlan }: Props) {
     const target = new URL("/verify-email", window.location.origin);
     target.searchParams.set("email", email.trim());
     if (plan) target.searchParams.set("plan", plan);
+
+    // Carry the engine's verdict on the verification email to the next screen,
+    // which otherwise opens on "We sent a verification email to …" no matter
+    // what happened. The account was created either way — this only decides
+    // whether the customer is told to check an inbox or told the mail never
+    // left. Absent means an engine that predates the truthful signup response;
+    // there is nothing to correct, so the inbox copy stands.
+    if (data.verification_email && data.verification_email !== "sent") {
+      target.searchParams.set("mail", data.verification_email);
+    }
+
     router.push(target.pathname + target.search);
   }
 
