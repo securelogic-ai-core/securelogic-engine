@@ -2,19 +2,27 @@
  * /vendors — the register counts describe the register, not the page.
  *
  * Every number on this surface was derived from the ≤100-row slice the engine
- * returned: the criticality pills, the "Never reviewed" pill, the "N active"
- * chip, and — worst — the M in "Showing N of M", where the same idiom on
- * /actions means a true total. A cap counted as a population is not a small
- * error; it is a confident wrong number that stops being wrong only for orgs
- * small enough not to notice.
+ * returned: the criticality pills, the review pill, the "N active" chip, and —
+ * worst — the M in "Showing N of M", where the same idiom on /actions means a
+ * true total. A cap counted as a population is not a small error; it is a
+ * confident wrong number that stops being wrong only for orgs small enough not
+ * to notice.
  *
- * Criticality and "never reviewed" were also applied to the fetched page rather
- * than in SQL, so past the cap a filtered view omitted matching vendors
- * outright. Aggregates and rows had to move together: an exact count above a
- * client-filtered slice would only have produced a new contradiction.
+ * The filters were also applied to the fetched page rather than in SQL, so past
+ * the cap a filtered view omitted matching vendors outright. Aggregates and
+ * rows had to move together: an exact count above a client-filtered slice would
+ * only have produced a new contradiction.
  *
- * Every population below is therefore seeded PAST the cap. A 20-row fixture
- * proves nothing here — capped arithmetic is correct until it isn't.
+ * RULING (2026-08-09) — the review axis was then found to be counting a
+ * DEFINITION, not just a population. The old "Never reviewed" pill filtered
+ * `last_reviewed_at IS NULL`, and nothing in the product ever writes that
+ * column, so an exact engine-computed count reported ~the entire register as
+ * unreviewed. Exactness cannot rescue a meaningless predicate. The axis is now
+ * "Never assessed" = zero rows in vendor_assessments, and the pill's label,
+ * count, and destination are held to ONE population by these tests.
+ *
+ * Every population below is seeded PAST the cap. A 20-row fixture proves
+ * nothing here — capped arithmetic is correct until it isn't.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
@@ -42,7 +50,8 @@ const CAPPED_PAGE: Vendor[] = Array.from({ length: 100 }, (_, i) =>
 function response(
   vendors: Vendor[],
   total: number,
-  by: Partial<VendorsResponse["by_criticality"]> = {}
+  by: Partial<VendorsResponse["by_criticality"]> = {},
+  neverAssessed = 0
 ): VendorsResponse {
   return {
     count: vendors.length,
@@ -51,6 +60,7 @@ function response(
     by_criticality: {
       critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0, ...by,
     },
+    never_assessed_count: neverAssessed,
     organizationId: "org-1",
     statusFilter: "active",
     nextCursor: null,
@@ -65,27 +75,39 @@ function response(
  */
 const REGISTER = { critical: 140, high: 90, medium: 70, low: 40, uncategorized: 0 };
 const REGISTER_TOTAL = 340;
-/** The never-reviewed slice of that register — deliberately a DIFFERENT shape. */
-const NEVER_REVIEWED = { critical: 55, high: 30, medium: 20, low: 10, uncategorized: 0 };
-const NEVER_REVIEWED_TOTAL = 115;
+/** The never-ASSESSED slice of that register — deliberately a DIFFERENT shape. */
+const NEVER_ASSESSED = { critical: 55, high: 30, medium: 20, low: 10, uncategorized: 0 };
+const NEVER_ASSESSED_TOTAL = 115;
 
 const sum = (b: typeof REGISTER) => b.critical + b.high + b.medium + b.low + b.uncategorized;
 
 /**
- * The engine, keyed on the FILTER SET exactly as SQL is. The never-reviewed
- * breakdown differs from the register's, so which population the page asked for
- * is visible in the rendered pills rather than inferred from call shapes.
+ * The engine, keyed on the FILTER SET exactly as SQL is — including
+ * `never_assessed_count`, which it computes over whatever population the
+ * response describes.
+ *
+ * The never-assessed breakdown differs from the register's, so which population
+ * the page asked for is visible in the rendered pills rather than inferred from
+ * call shapes. And because the mock derives the count the same way the engine
+ * does, a page that prints one population's count while linking to another's
+ * list shows up as a mismatch here.
  */
 function engine(rows: Vendor[] = CAPPED_PAGE) {
   api.getVendors.mockImplementation(
-    (_t: unknown, status: string, opts: { criticality?: string; reviewed?: string } = {}) => {
-      if (status === "archived") return Promise.resolve(response([], 12, { low: 12 }));
-      const base = opts.reviewed === "never" ? NEVER_REVIEWED : REGISTER;
+    (_t: unknown, status: string, opts: { criticality?: string; assessed?: string } = {}) => {
+      if (status === "archived") return Promise.resolve(response([], 12, { low: 12 }, 4));
+      const assessedOnly = opts.assessed === "never";
+      const base = assessedOnly ? NEVER_ASSESSED : REGISTER;
       if (opts.criticality) {
-        const n = base[opts.criticality as keyof typeof base];
-        return Promise.resolve(response(rows, n, { [opts.criticality]: n }));
+        const k = opts.criticality as keyof typeof base;
+        const n = base[k];
+        // Under ?assessed=never the population IS the never-assessed one, so
+        // the aggregate equals the total — exactly as the engine returns it.
+        return Promise.resolve(response(rows, n, { [k]: n }, NEVER_ASSESSED[k]));
       }
-      return Promise.resolve(response(rows, sum(base), base));
+      return Promise.resolve(
+        response(rows, sum(base), base, sum(NEVER_ASSESSED))
+      );
     }
   );
 }
@@ -120,12 +142,12 @@ describe("/vendors — criticality pills count the register", () => {
   });
 
   it("counts the population each pill NAVIGATES to — the number is reproducible by clicking", async () => {
-    // With ?reviewed=never active, "Critical" links to
-    // ?criticality=critical&reviewed=never, so it must count THAT population.
+    // With ?assessed=never active, "Critical" links to
+    // ?criticality=critical&assessed=never, so it must count THAT population.
     // Printing the register's 140 would put a number on a pill that clicking it
     // can never reproduce.
     const { container } = await renderPage(VendorsPage, {
-      searchParams: sp({ reviewed: "never" }),
+      searchParams: sp({ assessed: "never" }),
     });
 
     expect(pill(container, "Critical")).toBe("Critical (55)");
@@ -133,20 +155,20 @@ describe("/vendors — criticality pills count the register", () => {
     expect(pill(container, "Critical")).not.toBe("Critical (140)");
   });
 
-  it("the 'Never reviewed' pill is counted with the criticality filter applied", async () => {
+  it("the 'Never assessed' pill is counted with the criticality filter applied", async () => {
     const { container } = await renderPage(VendorsPage, {
       searchParams: sp({ criticality: "critical" }),
     });
 
-    // Its href is /vendors?criticality=critical&reviewed=never, so its count is
-    // of that population (55) — not of every never-reviewed vendor (115).
-    expect(pill(container, "Never reviewed")).toBe("Never reviewed (55)");
+    // Its href is /vendors?criticality=critical&assessed=never, so its count is
+    // of that population (55) — not of every never-assessed vendor (115).
+    expect(pill(container, "Never assessed")).toBe("Never assessed (55)");
   });
 
   it("the unfiltered register shows the whole-register breakdown and total", async () => {
     const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
 
-    expect(pill(container, "Never reviewed")).toBe("Never reviewed (115)");
+    expect(pill(container, "Never assessed")).toBe("Never assessed (115)");
     expect(container.textContent).toMatch(/340 active/);
   });
 
@@ -179,24 +201,40 @@ describe("/vendors — filtering happens in SQL, not over the page", () => {
     expect(listCall).toBeDefined();
   });
 
-  it("sends the never-reviewed filter to the engine", async () => {
-    await renderPage(VendorsPage, { searchParams: sp({ reviewed: "never" }) });
+  it("sends the never-assessed filter to the engine", async () => {
+    await renderPage(VendorsPage, { searchParams: sp({ assessed: "never" }) });
 
     const listCall = api.getVendors.mock.calls.find(
-      (c) => c[1] === "active" && c[2]?.reviewed === "never" && c[2]?.limit !== 1
+      (c) => c[1] === "active" && c[2]?.assessed === "never" && c[2]?.limit !== 1
     );
     expect(listCall).toBeDefined();
   });
 
   it("composes both axes in one engine request", async () => {
     await renderPage(VendorsPage, {
-      searchParams: sp({ criticality: "high", reviewed: "never" }),
+      searchParams: sp({ criticality: "high", assessed: "never" }),
     });
 
     const listCall = api.getVendors.mock.calls.find(
-      (c) => c[2]?.criticality === "high" && c[2]?.reviewed === "never" && c[2]?.limit !== 1
+      (c) => c[2]?.criticality === "high" && c[2]?.assessed === "never" && c[2]?.limit !== 1
     );
     expect(listCall).toBeDefined();
+  });
+
+  it("never sends the legacy reviewed=never filter — no surface may use it", async () => {
+    // RULING: last_reviewed_at is written by nothing, so ?reviewed=never counts
+    // a column that is NULL for effectively every vendor. The engine keeps the
+    // filter for API compatibility; this page must not reach for it on any
+    // path, including when an old bookmark carries the param.
+    for (const params of [{}, { assessed: "never" }, { reviewed: "never" }]) {
+      vi.clearAllMocks();
+      signedIn();
+      engine();
+      await renderPage(VendorsPage, { searchParams: sp(params) });
+      for (const call of api.getVendors.mock.calls) {
+        expect(call[2]?.reviewed).toBeUndefined();
+      }
+    }
   });
 });
 
@@ -296,7 +334,7 @@ describe("/vendors — pagination cannot move an aggregate", () => {
       return [
         pill(container, "Critical"),
         pill(container, "High"),
-        pill(container, "Never reviewed"),
+        pill(container, "Never assessed"),
         (container.textContent?.match(/(\d+) active/) ?? [])[1],
       ];
     };
@@ -311,8 +349,145 @@ describe("/vendors — pagination cannot move an aggregate", () => {
     expect(fromFullPage).toEqual([
       "Critical (140)",
       "High (90)",
-      `Never reviewed (${NEVER_REVIEWED_TOTAL})`,
+      `Never assessed (${NEVER_ASSESSED_TOTAL})`,
       String(REGISTER_TOTAL),
     ]);
+  });
+});
+
+/**
+ * The truth invariant, stated directly: a pill's LABEL, its COUNT, and the
+ * POPULATION its link reaches must be the same thing.
+ *
+ * This is the seam the ruling exists to protect. An authoritative count that
+ * navigates to a differently-defined list is worse than a capped count, because
+ * both halves look equally trustworthy and nothing on screen betrays the
+ * mismatch.
+ */
+describe("/vendors — the Never assessed pill: label, count, destination", () => {
+  it("links to ?assessed=never, carrying the other axes", async () => {
+    const { container } = await renderPage(VendorsPage, {
+      searchParams: sp({ criticality: "critical", q: "acme" }),
+    });
+
+    const el = Array.from(container.querySelectorAll("a")).find((a) =>
+      (a.textContent ?? "").startsWith("Never assessed")
+    )!;
+    const href = el.getAttribute("href")!;
+    expect(href).toContain("assessed=never");
+    expect(href).not.toContain("reviewed=never");
+    // The other axes survive the click.
+    expect(href).toContain("criticality=critical");
+    expect(href).toContain("q=acme");
+  });
+
+  it("the printed count equals the total of the list that link reaches", async () => {
+    // Read the pill on the unfiltered register...
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+    const printed = pill(container, "Never assessed");
+    expect(printed).toBe(`Never assessed (${NEVER_ASSESSED_TOTAL})`);
+
+    // ...then follow it, and count what actually arrives.
+    vi.clearAllMocks();
+    signedIn();
+    engine();
+    const followed = await renderPage(VendorsPage, {
+      searchParams: sp({ assessed: "never" }),
+    });
+    expect(followed.container.textContent).toMatch(
+      new RegExp(`${NEVER_ASSESSED_TOTAL} active`)
+    );
+  });
+
+  it("toggles off by dropping the param, not by switching predicate", async () => {
+    const { container } = await renderPage(VendorsPage, {
+      searchParams: sp({ assessed: "never" }),
+    });
+    const el = Array.from(container.querySelectorAll("a")).find((a) =>
+      (a.textContent ?? "").startsWith("Never assessed")
+    )!;
+    expect(el.getAttribute("href")).not.toContain("assessed=never");
+  });
+
+  it("an unavailable aggregate omits the count — it is never rendered as (0)", async () => {
+    api.getVendors.mockResolvedValue({
+      ...response(CAPPED_PAGE, REGISTER_TOTAL, REGISTER),
+      never_assessed_count: undefined,
+    });
+
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+
+    // "(0)" would state that every vendor has been assessed — the most
+    // reassuring possible lie on a TPRM surface.
+    expect(pill(container, "Never assessed")).toBe("Never assessed");
+    expect(pill(container, "Never assessed")).not.toContain("(0)");
+    expect(screen.getByText(/shown as/)).toBeInTheDocument();
+  });
+
+  it("a true zero is an answer: no count on the pill, and no outage language", async () => {
+    api.getVendors.mockResolvedValue(
+      response(CAPPED_PAGE, REGISTER_TOTAL, REGISTER, 0)
+    );
+
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+
+    expect(pill(container, "Never assessed")).toBe("Never assessed");
+    expect(screen.queryByText(/shown as/)).not.toBeInTheDocument();
+  });
+
+  it("the old wording is gone from the corrected surface", async () => {
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+    expect(container.textContent).not.toMatch(/Never reviewed/i);
+    expect(container.textContent).not.toMatch(/\bReviewed\b/);
+    expect(container.textContent).toMatch(/Never assessed/);
+  });
+});
+
+describe("/vendors — per-row assessment state is exact and uncapped", () => {
+  it("an assessed vendor beyond the capped assessment page is not called 'No assessments'", async () => {
+    const deep = aVendor({
+      id: "v-deep", name: "Deep Vendor", criticality: "critical",
+      assessment_count: 4, latest_assessment_at: "2026-05-01T00:00:00.000Z",
+    });
+    api.getVendors.mockResolvedValue(
+      response([deep], 1, { critical: 1 }, 0)
+    );
+
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+
+    expect(container.textContent).toMatch(/4 assessments/);
+    expect(container.textContent).toMatch(/Assessed May 1, 2026/);
+    expect(container.textContent).not.toMatch(/No assessments/);
+    expect(container.textContent).not.toMatch(/Never assessed$/m);
+  });
+
+  it("the page no longer reads the capped org-wide assessment list", async () => {
+    await renderPage(VendorsPage, { searchParams: sp({}) });
+    expect(api.getVendorAssessments).not.toHaveBeenCalled();
+  });
+
+  it("a genuinely unassessed vendor still says so", async () => {
+    const fresh = aVendor({
+      id: "v-new", name: "Fresh Vendor", assessment_count: 0, latest_assessment_at: null,
+    });
+    api.getVendors.mockResolvedValue(response([fresh], 1, { high: 1 }, 1));
+
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+    expect(container.textContent).toMatch(/No assessments/);
+    expect(container.textContent).toMatch(/Never assessed/);
+  });
+
+  it("unknown per-vendor state is a dash, not an accusation", async () => {
+    const unknown = aVendor({
+      id: "v-unknown", name: "Unknown Vendor", assessment_count: undefined,
+    });
+    api.getVendors.mockResolvedValue(response([unknown], 1, { high: 1 }, 0));
+
+    const { container } = await renderPage(VendorsPage, { searchParams: sp({}) });
+
+    expect(container.textContent).not.toMatch(/No assessments/);
+    expect(
+      container.querySelector('[aria-label*="Assessment state is unavailable"]')
+    ).toBeTruthy();
   });
 });
