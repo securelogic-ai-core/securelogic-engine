@@ -331,6 +331,11 @@ router.get(
             limit,
             total: 0,
             by_criticality: emptyCriticalityCounts(),
+            // A genuine zero, shaped exactly like a non-zero one — see
+            // emptyCriticalityCounts(). Omitting the key here would reach the
+            // caller as `undefined`, which every honest caller must read as
+            // "unknown", and an empty search result is not unknown.
+            never_assessed_count: 0,
             organizationId,
             statusFilter: filterStatus,
             nextCursor: null,
@@ -397,11 +402,40 @@ router.get(
             AND ${predicate})::int
       `;
 
+      // Per-vendor ASSESSMENT state, computed HERE, in the database.
+      //
+      // "Has this vendor ever been assessed?" was answered in the browser by
+      // fetching GET /api/vendor-assessments?limit=100 — the ORG's assessments,
+      // capped — and asking whether the vendor appeared in it. Past 100
+      // assessments in the org, an assessed vendor's rows fell off the end of
+      // that page and the vendor rendered as "Never assessed", which on
+      // /vendors/risk also gave it a red border and pushed it into Requires
+      // Attention. Absence from a capped page is not absence from the table.
+      //
+      // The predicate is deliberately the one the app already used and the one
+      // customers already understand: ANY row in vendor_assessments for this
+      // vendor in this org. No status, type, or recency qualifier is implied,
+      // because GET /api/vendor-assessments applies none. `last_reviewed_at` is
+      // a DIFFERENT metric and is not substituted here.
+      const assessmentScope = `
+        FROM vendor_assessments va
+         WHERE va.vendor_id = vendors.id
+           AND va.organization_id = vendors.organization_id
+      `;
+
       const result = await pg.query(
         `
         SELECT ${VENDOR_SELECT},
                ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
-               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count
+               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count,
+               (SELECT COUNT(*) ${assessmentScope})::int              AS assessment_count,
+               -- The date the surfaces print as "Last Assessment". Ordered the
+               -- way the capped list it replaces was ordered (created_at DESC,
+               -- id DESC) and reading the same column, so un-capping the value
+               -- does not quietly redefine which assessment it refers to.
+               (SELECT va.performed_at ${assessmentScope}
+                 ORDER BY va.created_at DESC, va.id DESC
+                 LIMIT 1)                                             AS latest_assessment_at
         FROM vendors
         ${whereClause}
         ORDER BY
@@ -429,6 +463,7 @@ router.get(
         medium: string;
         low: string;
         uncategorized: string;
+        never_assessed: string;
       }>(
         `
         SELECT
@@ -443,7 +478,21 @@ router.get(
           COUNT(*) FILTER (
             WHERE criticality IS NULL
                OR criticality NOT IN ('critical', 'high', 'medium', 'low')
-          )                                                            AS uncategorized
+          )                                                            AS uncategorized,
+          -- Vendors with NO assessment on record, over the SAME filtered
+          -- population as total. The surfaces that print "Need Assessment"
+          -- counted this by scanning a ≤100-row page against a ≤100-row
+          -- assessment page — two caps multiplied, presented as a total.
+          -- Same predicate as assessment_count above, so the tile and the rows
+          -- beneath it cannot disagree.
+          COUNT(*) FILTER (
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM vendor_assessments va
+               WHERE va.vendor_id = vendors.id
+                 AND va.organization_id = vendors.organization_id
+            )
+          )                                                            AS never_assessed
         FROM vendors
         WHERE ${preCursorConditions.join(" AND ")}
         `,
@@ -459,6 +508,7 @@ router.get(
         low:           parseInt(agg?.low ?? "0", 10),
         uncategorized: parseInt(agg?.uncategorized ?? "0", 10),
       };
+      const neverAssessedCount = parseInt(agg?.never_assessed ?? "0", 10);
 
       const vendors = result.rows;
       const last = vendors.length > 0 ? vendors[vendors.length - 1] : null;
@@ -471,6 +521,9 @@ router.get(
         // the whole matching population.
         total,
         by_criticality: byCriticality,
+        // Exact over the same population as `total` — never a tally of the
+        // returned slice, and never derived from `last_reviewed_at`.
+        never_assessed_count: neverAssessedCount,
         organizationId,
         statusFilter: filterStatus,
         nextCursor:
