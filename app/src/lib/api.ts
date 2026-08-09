@@ -464,6 +464,31 @@ export type Vendor = {
    */
   open_findings_count?: number;
   active_findings_count?: number;
+  /**
+   * Assessment rows on record for this vendor, counted in the DATABASE by
+   * GET /api/vendors — the exact, uncapped answer to "has this vendor ever been
+   * assessed?".
+   *
+   * The surfaces used to answer that by fetching the ORG's assessments with
+   * limit:100 and checking whether the vendor appeared. Past 100 assessments an
+   * assessed vendor dropped out of that page and rendered as "Never assessed" —
+   * on /vendors/risk that also drew a red border and pushed it into Requires
+   * Attention. Absence from a capped page is not absence from the table.
+   *
+   * Predicate: ANY row in vendor_assessments for this vendor in this org — the
+   * definition the app already used and customers already understand. This is
+   * NOT `last_reviewed_at`, which is a different (and effectively unmaintained)
+   * field. Optional because the single-vendor GET does not return it, and a
+   * caller MUST read its absence as "unknown", never as "never assessed".
+   */
+  assessment_count?: number;
+  /**
+   * `performed_at` of the most recently created assessment, or null when there
+   * is none. Same ordering the capped client-side lookup used (created_at DESC,
+   * id DESC), so un-capping the value does not redefine which assessment the
+   * "Last Assessment" column refers to. Optional on the same terms as above.
+   */
+  latest_assessment_at?: string | null;
 };
 
 /** Exact per-band counts over the applied filter set. Parts always sum to `total`. */
@@ -488,6 +513,12 @@ export type VendorsResponse = {
   total?: number;
   /** Exact criticality breakdown over the same population as `total`. */
   by_criticality?: VendorCriticalityCounts;
+  /**
+   * Exact count of vendors in that same population with NO assessment on
+   * record. Optional on the same terms as `total`: absent on older engine
+   * builds, and absence means unknown — never zero.
+   */
+  never_assessed_count?: number;
   organizationId: string;
   statusFilter: string;
   nextCursor: { created_at: string; id: string } | null;
