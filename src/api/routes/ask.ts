@@ -293,16 +293,37 @@ router.post(
           [organizationId]
         );
 
-        // 5a. Active vendor count
+        // 5a. ACTIVE vendor count.
+        //
+        // This filtered `status != 'inactive'`, which is a no-op: vendors.status
+        // is NOT NULL with CHECK (status IN ('active','archived')), so no row can
+        // ever hold 'inactive'. The predicate was an idiom borrowed from the
+        // USERS table (member removal sets users.status = 'inactive'), where it
+        // is correct — on vendors it excluded nothing, and every count below
+        // silently included the archived half of the register while the comment
+        // above it claimed otherwise.
+        //
+        // status = 'active' is the platform-canonical vendor population, already
+        // used by GET /api/vendors (default), /api/vendors/summary, and the
+        // dashboard vendor_risk breakdown. Ask was the sole outlier, so its
+        // numbers disagreed with every other surface the customer can open.
         const vendorCountResult = await pg.query<{ total: string }>(
           `SELECT COUNT(*) AS total
            FROM vendors
            WHERE organization_id = $1
-             AND status != 'inactive'`,
+             AND status = 'active'`,
           [organizationId]
         );
 
-        // 5b. All active vendors ordered by criticality then risk score.
+        // 5b. All ACTIVE vendors ordered by criticality then risk score.
+        //
+        // Same population as 5a, by the same predicate — every metric described
+        // as an active-vendor metric must derive from the identical set, and the
+        // breakdown below would otherwise contradict the total beside it.
+        //
+        // Archived vendors were previously named to the model in `list`, and the
+        // system prompt explicitly authorises it to use names present in the org
+        // context. So Ask could name a decommissioned third party as live risk.
         //
         // Assessment state is computed HERE, in the database, from the ratified
         // definition (Metric Contract): a vendor is assessed when it has at
@@ -329,7 +350,7 @@ router.post(
                     LIMIT 1)                                           AS latest_assessment_at
            FROM vendors
            WHERE organization_id = $1
-             AND status != 'inactive'
+             AND status = 'active'
            ORDER BY
              CASE criticality
                WHEN 'critical' THEN 1
@@ -476,7 +497,12 @@ router.post(
         findings:  findingsSummary,
         top_risks: topRisksResult.rows,
         vendors: {
-          total:          parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
+          // `active_total`, not `total`: the population is active vendors only,
+          // and the model is never told otherwise anywhere else in the prompt.
+          // Correcting the predicate while leaving the key called "total" would
+          // just move the falsehood — the model would keep reporting an
+          // active-only figure as the customer's whole vendor register.
+          active_total:   parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
           critical_count: vendorsResult.rows.filter((v) => v.criticality === "critical").length,
           high_count:     vendorsResult.rows.filter((v) => v.criticality === "high").length,
           // ASSESSED = has at least one vendor_assessments row (Metric

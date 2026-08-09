@@ -36,6 +36,7 @@ const OTHER_ORG = "99999999-9999-4999-8999-999999999999";
 type VendorRow = {
   id: string;
   name: string;
+  status: "active" | "archived";
   criticality: string | null;
   current_risk_score: number | null;
   assessment_count: number;
@@ -53,12 +54,19 @@ vi.mock("../infra/postgres.js", () => ({
   pg: {
     query: vi.fn(async (sql: string, params: unknown[] = []) => {
       h.calls.push({ sql, params });
+      // The mock HONOURS the status predicate rather than trusting a string
+      // assertion. If the filter is ever weakened, archived rows flow straight
+      // through and the exclusion tests fail on the customer-visible VALUES —
+      // which is the failure that actually matters.
+      const rows = (h.vendorRows as VendorRow[]).filter((r) =>
+        /status = 'active'/.test(sql) ? r.status === "active" : true
+      );
       // The vendor LIST query — the one carrying assessment state.
       if (/FROM vendors/.test(sql) && /assessment_count/.test(sql)) {
-        return { rows: h.vendorRows, rowCount: h.vendorRows.length };
+        return { rows, rowCount: rows.length };
       }
       if (/FROM vendors/.test(sql) && /COUNT\(\*\) AS total/.test(sql)) {
-        return { rows: [{ total: String(h.vendorRows.length) }], rowCount: 1 };
+        return { rows: [{ total: String(rows.length) }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     }),
@@ -80,6 +88,14 @@ vi.mock("@anthropic-ai/sdk", () => ({
 }));
 vi.mock("../infra/providerQuotaAlert.js", () => ({
   instrumentAnthropicClient: (c: unknown) => c,
+}));
+// Ask is rate limited to 20 questions/minute per org, and this suite makes more
+// calls than that. Stubbed so the limiter cannot decide the result of a
+// semantics test: without it the suite passes only while it stays under 20
+// cases, which is an accident waiting to be inherited by the next author.
+vi.mock("express-rate-limit", () => ({
+  default: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  ipKeyGenerator: (ip: string) => ip,
 }));
 vi.mock("../middleware/requireApiKey.js", () => ({
   requireApiKey: (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -108,7 +124,7 @@ const ask = () =>
 
 /** The vendor block of the JSON context the model was shown. */
 function vendorContext(): {
-  total: number;
+  active_total: number;
   assessed_count: number;
   never_assessed_count: number;
   list: Array<Record<string, unknown>>;
@@ -122,6 +138,7 @@ function vendorContext(): {
 const vendor = (over: Partial<VendorRow> = {}): VendorRow => ({
   id: "v-1",
   name: "Acme Cloud",
+  status: "active",
   criticality: "high",
   current_risk_score: null,
   assessment_count: 0,
@@ -131,6 +148,8 @@ const vendor = (over: Partial<VendorRow> = {}): VendorRow => ({
 
 const vendorListQuery = () =>
   h.calls.find((c) => /FROM vendors/.test(c.sql) && /assessment_count/.test(c.sql))!;
+const vendorCountQuery = () =>
+  h.calls.find((c) => /FROM vendors/.test(c.sql) && /COUNT\(\*\) AS total/.test(c.sql))!;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -265,6 +284,138 @@ describe("POST /api/ask — last_reviewed_at reaches neither the query nor the m
   });
 });
 
+/**
+ * The population itself.
+ *
+ * ask.ts filtered `status != 'inactive'` — a no-op, because vendors.status is
+ * NOT NULL with CHECK (status IN ('active','archived')). The predicate was an
+ * idiom borrowed from the USERS table, where member removal really does set
+ * status = 'inactive'. On vendors it excluded nothing, so every Ask metric
+ * silently included the archived half of the register while the code called it
+ * "Active vendor count".
+ *
+ * The sharpest harm is not the arithmetic: archived vendors were NAMED to the
+ * model in `list`, and the system prompt authorises it to use names present in
+ * the org context. Ask could introduce a decommissioned third party as live
+ * risk.
+ */
+describe("POST /api/ask — the vendor population is ACTIVE vendors only", () => {
+  const mixed = () => [
+    vendor({ id: "a", name: "Live Critical", status: "active",   criticality: "critical", assessment_count: 1 }),
+    vendor({ id: "b", name: "Live High",     status: "active",   criticality: "high",     assessment_count: 0 }),
+    vendor({ id: "c", name: "Retired Corp",  status: "archived", criticality: "critical", assessment_count: 1 }),
+    vendor({ id: "d", name: "Sunset Ltd",    status: "archived", criticality: "high",     assessment_count: 0 }),
+  ];
+
+  it("excludes archived vendors from every metric", async () => {
+    h.vendorRows = mixed();
+    await ask();
+
+    const v = vendorContext();
+    // Including archived gives 4 / 2 / 2 / 2 / 2 — every number doubled.
+    expect(v.active_total).toBe(2);
+    expect(v).toMatchObject({
+      critical_count: 1,
+      high_count: 1,
+      assessed_count: 1,
+      never_assessed_count: 1,
+    });
+  });
+
+  it("keeps active vendors included", async () => {
+    h.vendorRows = mixed();
+    await ask();
+
+    const names = vendorContext().list.map((r) => r.name);
+    expect(names).toContain("Live Critical");
+    expect(names).toContain("Live High");
+    expect(names).toHaveLength(2);
+  });
+
+  it("never names an archived vendor to the model", async () => {
+    // The whole prompt, not just the vendor block: a decommissioned third
+    // party must not appear anywhere the model can read and repeat it.
+    h.vendorRows = mixed();
+    await ask();
+
+    expect(h.userMessage).not.toContain("Retired Corp");
+    expect(h.userMessage).not.toContain("Sunset Ltd");
+    expect(h.userMessage).toContain("Live Critical");
+  });
+
+  it("an all-archived org reports genuine zeros, not the archived population", async () => {
+    h.vendorRows = [
+      vendor({ id: "x", name: "Gone One", status: "archived", criticality: "critical", assessment_count: 2 }),
+      vendor({ id: "y", name: "Gone Two", status: "archived", criticality: "high",     assessment_count: 0 }),
+    ];
+    const res = await ask();
+
+    const v = vendorContext();
+    expect(v.active_total).toBe(0);
+    expect(v).toMatchObject({
+      critical_count: 0, high_count: 0, assessed_count: 0, never_assessed_count: 0,
+    });
+    expect(v.list).toHaveLength(0);
+    // A real zero, served normally — not an error and not a stale total.
+    expect(res.status).toBe(200);
+    expect(res.body.context_used.vendors_count).toBe(0);
+  });
+
+  it("applies the active predicate to BOTH vendor queries", async () => {
+    await ask();
+    for (const q of [vendorListQuery(), vendorCountQuery()]) {
+      expect(q.sql).toContain("status = 'active'");
+      expect(q.sql).not.toContain("'inactive'");
+    }
+  });
+
+  it("keeps the count query and the list query on the SAME population", async () => {
+    // The total and the breakdown must not be able to disagree.
+    h.vendorRows = mixed();
+    await ask();
+
+    const v = vendorContext();
+    expect(v.active_total).toBe(v.list.length);
+    expect(v.assessed_count + v.never_assessed_count).toBe(v.active_total);
+  });
+
+  it("context_used.vendors_count follows the same active population", async () => {
+    h.vendorRows = mixed();
+    const res = await ask();
+    // The key name is unchanged (typed public API field); its VALUE is the
+    // correction.
+    expect(res.body.context_used.vendors_count).toBe(2);
+  });
+
+  it("stays index-friendly: an equality predicate on (organization_id, status)", async () => {
+    await ask();
+    // idx_vendors_org_status is (organization_id, status). An equality match on
+    // the second column uses it; the old negation could not.
+    expect(vendorCountQuery().sql).toMatch(/organization_id = \$1\s+AND status = 'active'/);
+    expect(vendorListQuery().sql).toMatch(/organization_id = \$1\s+AND status = 'active'/);
+  });
+
+  it("introduces no new row bound — the list stays unbounded as before", async () => {
+    // The prompt-serialization concern is RECORDED, not addressed here. Pinned
+    // so that adding a LIMIT later is a deliberate, visible change.
+    await ask();
+    expect(vendorListQuery().sql).not.toMatch(/LIMIT \$/);
+  });
+});
+
+describe("POST /api/ask — active_total naming is used consistently", () => {
+  it("the vendor block exposes active_total and no bare `total`", async () => {
+    h.vendorRows = [vendor()];
+    await ask();
+
+    const keys = Object.keys(vendorContext() as Record<string, unknown>);
+    expect(keys).toContain("active_total");
+    // A key called `total` beside an active-only number would just relocate the
+    // falsehood: the model would report it as the whole register.
+    expect(keys).not.toContain("total");
+  });
+});
+
 describe("POST /api/ask — tenant isolation", () => {
   it("scopes the vendor read to the caller's org and no other", async () => {
     await ask();
@@ -283,11 +434,13 @@ describe("POST /api/ask — tenant isolation", () => {
 });
 
 describe("POST /api/ask — unrelated behaviour is unchanged", () => {
-  it("still reads the same vendor population (status <> 'inactive'), unchanged", async () => {
+  it("reads the ACTIVE vendor population on both queries", async () => {
     await ask();
-    // Deliberately NOT redefined by this increment: correcting the assessment
-    // predicate must not quietly change WHICH vendors are in scope.
-    expect(vendorListQuery().sql).toContain("status != 'inactive'");
+    for (const q of [vendorListQuery(), vendorCountQuery()]) {
+      expect(q.sql).toContain("status = 'active'");
+      // The old predicate was a no-op borrowed from the users table.
+      expect(q.sql).not.toContain("'inactive'");
+    }
   });
 
   it("still orders by criticality then risk score", async () => {
@@ -305,7 +458,7 @@ describe("POST /api/ask — unrelated behaviour is unchanged", () => {
     await ask();
 
     const v = vendorContext();
-    expect(v.total).toBe(3);
+    expect(v.active_total).toBe(3);
     expect(v).toMatchObject({ critical_count: 1, high_count: 1 });
   });
 
