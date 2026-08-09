@@ -239,3 +239,145 @@ describe("GET /api/vendors — never_assessed_count is exact over the whole popu
     expect(res.body.total).toBe(0);
   });
 });
+
+/**
+ * ?assessed=never — the list filter behind the "Never assessed" pill.
+ *
+ * The pill prints never_assessed_count and links here. If the two were built
+ * from different SQL, the customer would read an authoritative number and land
+ * on a differently-defined list — worse than a capped count, because both
+ * halves look equally authoritative. They share one module-level literal, and
+ * these tests hold that seam.
+ */
+describe("GET /api/vendors?assessed=never — predicate equivalence with the aggregate", () => {
+  it("filters on zero assessment rows, correlated to the vendor and the org", async () => {
+    await request(makeApp()).get("/api/vendors?assessed=never");
+
+    const sql = listQuery().sql;
+    expect(sql).toMatch(/NOT EXISTS \(SELECT 1\s+FROM vendor_assessments va/);
+    expect(sql).toMatch(/va\.vendor_id = vendors\.id/);
+    expect(sql).toMatch(/va\.organization_id = vendors\.organization_id/);
+  });
+
+  it("the LIST predicate is character-identical to the one inside the AGGREGATE", async () => {
+    await request(makeApp()).get("/api/vendors?assessed=never");
+
+    // Both come from NEVER_ASSESSED_PREDICATE. Extracting the exact substring
+    // from each query and comparing them is the equivalence proof: any future
+    // edit that forks one from the other fails here rather than in production.
+    const grab = (sql: string) => {
+      const start = sql.indexOf("NOT EXISTS (SELECT 1");
+      expect(start).toBeGreaterThan(-1);
+      // Walk to the matching close paren of NOT EXISTS(.
+      let depth = 0;
+      for (let i = sql.indexOf("(", start); i < sql.length; i++) {
+        if (sql[i] === "(") depth++;
+        else if (sql[i] === ")") {
+          depth--;
+          if (depth === 0) return sql.slice(start, i + 1);
+        }
+      }
+      throw new Error("unbalanced predicate");
+    };
+
+    expect(grab(listQuery().sql)).toBe(grab(aggQuery().sql));
+  });
+
+  it("an assessed vendor is excluded — the predicate is NOT EXISTS, not a join that keeps rows", async () => {
+    await request(makeApp()).get("/api/vendors?assessed=never");
+    const sql = listQuery().sql;
+    // A LEFT JOIN + IS NULL would also "work" until a vendor had two
+    // assessments; NOT EXISTS cannot duplicate or leak a row.
+    expect(sql).not.toMatch(/LEFT JOIN vendor_assessments/);
+    expect(sql).toMatch(/NOT EXISTS/);
+  });
+
+  it("is applied BEFORE the cursor and limit, so paging cannot change the population", async () => {
+    await request(makeApp()).get(
+      "/api/vendors?assessed=never&limit=25&before_created_at=2026-01-01T00:00:00Z&before_id=" +
+        "33333333-3333-4333-8333-333333333333"
+    );
+
+    // The aggregate carries the filter (proving it was in preCursorConditions)
+    // but carries neither the cursor nor the limit.
+    expect(aggQuery().sql).toMatch(/NOT EXISTS/);
+    expect(aggQuery().sql).not.toMatch(/\(created_at, id\) </);
+    expect(aggQuery().sql).not.toMatch(/LIMIT \$/);
+    expect(listQuery().sql).toMatch(/NOT EXISTS/);
+  });
+
+  it("under assessed=never the aggregate equals the total — the filter and the count agree", async () => {
+    // The population IS the never-assessed one, so counting never-assessed
+    // vendors within it must return all of them. A mismatch here means the two
+    // predicates have drifted.
+    h.aggregateRow.total = "88";
+    h.aggregateRow.never_assessed = "88";
+
+    const res = await request(makeApp()).get("/api/vendors?assessed=never");
+    expect(res.body.total).toBe(88);
+    expect(res.body.never_assessed_count).toBe(88);
+  });
+
+  it("composes with status, criticality, and the legacy reviewed filter", async () => {
+    await request(makeApp()).get(
+      "/api/vendors?assessed=never&status=archived&criticality=high&reviewed=never"
+    );
+
+    const sql = listQuery().sql;
+    expect(sql).toContain("status = $2");
+    expect(sql).toContain("criticality = $3");
+    expect(sql).toContain("last_reviewed_at IS NULL");
+    expect(sql).toMatch(/NOT EXISTS/);
+    // Every axis reaches the aggregate too, so the counts describe the rows.
+    expect(aggQuery().sql).toContain("criticality = $3");
+    expect(aggQuery().sql).toMatch(/NOT EXISTS/);
+  });
+
+  it("composes with the shared asset search", async () => {
+    // q resolves to backing ids first, then both predicates apply together.
+    await request(makeApp()).get("/api/vendors?assessed=never&q=Acme");
+    // The resolver short-circuits on zero matches in this harness, so assert
+    // the honest empty envelope still carries a real zero rather than a gap.
+    const res = await request(makeApp()).get("/api/vendors?assessed=never&q=Acme");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("never_assessed_count", 0);
+  });
+
+  it("stays org-scoped", async () => {
+    await request(makeApp()).get("/api/vendors?assessed=never");
+    expect(listQuery().params[0]).toBe(ORG);
+    expect(aggQuery().params[0]).toBe(ORG);
+    expect(listQuery().sql).toContain("organization_id = $1");
+    expect(JSON.stringify(h.calls)).not.toContain(OTHER_ORG);
+  });
+
+  it("rejects unknown assessed values with the allowed list — no silent broadening", async () => {
+    for (const bad of ["ever", "true", "1", "recently", "never "]) {
+      h.calls = [];
+      const res = await request(makeApp()).get(
+        `/api/vendors?assessed=${encodeURIComponent(bad)}`
+      );
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "invalid_assessed_filter", allowed: ["never"] });
+      // The critical half: an unrecognised value must not fall through to an
+      // UNFILTERED list. Silently returning every vendor for ?assessed=ever
+      // would answer a question the caller did not ask.
+      expect(h.calls.some((c) => /FROM vendors/.test(c.sql))).toBe(false);
+    }
+  });
+
+  it("an absent assessed param leaves the list unfiltered on assessment state", async () => {
+    await request(makeApp()).get("/api/vendors");
+    expect(listQuery().sql).not.toMatch(/WHERE.*NOT EXISTS/s);
+    // The aggregate still counts never-assessed vendors — that is its job.
+    expect(aggQuery().sql).toMatch(/FILTER \(WHERE NOT EXISTS/);
+  });
+
+  it("does not use last_reviewed_at or current_risk_score for the assessment predicate", async () => {
+    await request(makeApp()).get("/api/vendors?assessed=never");
+    const sql = listQuery().sql;
+    expect(sql).not.toContain("last_reviewed_at IS NULL");
+    const clause = sql.slice(sql.indexOf("NOT EXISTS"));
+    expect(clause).not.toMatch(/current_risk_score/);
+  });
+});

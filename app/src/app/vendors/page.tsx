@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getVendors,
-  getVendorAssessments,
   type Vendor,
   type VendorsResponse,
   type VendorListOpts,
@@ -45,6 +44,23 @@ function sumTotals(responses: readonly (VendorsResponse | null)[]): ExactCount {
   for (const r of responses) {
     if (!r || typeof r.total !== "number") return null;
     sum += r.total;
+  }
+  return sum;
+}
+
+/**
+ * The same discipline for the never-assessed count: vendors with zero rows in
+ * vendor_assessments, summed across the status populations on screen.
+ *
+ * Unknown is contagious here for a sharper reason than usual — this number is
+ * printed on a pill that LINKS to ?assessed=never. A partial sum would send the
+ * customer to a list that disagrees with the number that sent them there.
+ */
+function sumNeverAssessed(responses: readonly (VendorsResponse | null)[]): ExactCount {
+  let sum = 0;
+  for (const r of responses) {
+    if (!r || typeof r.never_assessed_count !== "number") return null;
+    sum += r.never_assessed_count;
   }
   return sum;
 }
@@ -94,10 +110,18 @@ export default async function VendorsPage({
   const sp = await searchParams;
   const critFilter = sp.criticality ?? null;
   const showInactive = sp.show_inactive === "1";
-  // ?reviewed=never — vendors with no review on record (the factual TPRM
-  // audit slice). Client-side over the fetched set, like the criticality
-  // pills; the engine also accepts reviewed=never for API callers.
-  const neverReviewedOnly = sp.reviewed === "never";
+  // ?assessed=never — vendors with NO assessment on record: zero rows in
+  // vendor_assessments, applied in SQL by the engine.
+  //
+  // This axis used to be ?reviewed=never, which filters last_reviewed_at IS
+  // NULL. RULING (2026-08-09): that is not a valid customer-facing metric —
+  // nothing in the product ever writes last_reviewed_at, so the pill counted a
+  // column that is NULL for effectively every vendor and told the customer
+  // something false about their own TPRM programme. Exact, engine-computed,
+  // and still wrong: making a number exact cannot rescue a meaningless
+  // predicate. The engine keeps ?reviewed=never for API compatibility; no
+  // surface may use it.
+  const neverAssessedOnly = sp.assessed === "never";
   // Shared platform search (2–120 bounds, engine-resolved via the asset-search
   // capability: name, product alias, exact UUID). A URL param like the filters.
   const search =
@@ -117,7 +141,7 @@ export default async function VendorsPage({
   const read = (opts: VendorListOpts) =>
     Promise.all(statuses.map((s) => getVendors(token, s, opts)));
 
-  // The LIST filter set. criticality and reviewed now go to the ENGINE.
+  // The LIST filter set. criticality and assessed both go to the ENGINE.
   //
   // They used to be applied here, over the fetched page — and the engine caps a
   // page at 100, so under "Critical" an org past the cap simply did not see
@@ -127,7 +151,7 @@ export default async function VendorsPage({
   const listOpts: VendorListOpts = {
     ...(search ? { q: search } : {}),
     ...(critFilterLevel ? { criticality: critFilterLevel } : {}),
-    ...(neverReviewedOnly ? { reviewed: "never" as const } : {}),
+    ...(neverAssessedOnly ? { assessed: "never" as const } : {}),
   };
 
   // A pill's count must describe the population its own link navigates to:
@@ -135,57 +159,54 @@ export default async function VendorsPage({
   // on the pill is unreachable by clicking it.
   const critCountOpts: VendorListOpts = {
     ...(search ? { q: search } : {}),
-    ...(neverReviewedOnly ? { reviewed: "never" as const } : {}),
-    limit: 1,
-  };
-  const neverReviewedOpts: VendorListOpts = {
-    ...(search ? { q: search } : {}),
-    ...(critFilterLevel ? { criticality: critFilterLevel } : {}),
-    reviewed: "never" as const,
+    ...(neverAssessedOnly ? { assessed: "never" as const } : {}),
     limit: 1,
   };
 
-  // The extra reads are skipped whenever the list request is ALREADY that
-  // population, so the unfiltered register costs one additional tiny request
-  // and a fully filtered one costs two.
-  const [listRes, critRes, neverReviewedRes, assessmentsData] = await Promise.all([
+  // The never-assessed pill needs NO request of its own. `never_assessed_count`
+  // is already an exact count of the zero-assessment vendors WITHIN whatever
+  // filter set the response describes — so the list response answers the pill
+  // directly, in both states:
+  //   * pill inactive → the list set is {q, criticality}, and its
+  //     never_assessed_count is exactly the population ?assessed=never reaches;
+  //   * pill active   → the list set already has assessed=never applied, so
+  //     never_assessed_count equals its own total. Same number.
+  // The dedicated reviewed=never round-trip this replaces is therefore gone.
+  const [listRes, critRes] = await Promise.all([
     read(listOpts),
     critFilterLevel ? read(critCountOpts) : null,
-    neverReviewedOnly ? null : read(neverReviewedOpts),
-    getVendorAssessments(token, 100),
   ]);
 
   const critSource = critRes ?? listRes;
-  const neverReviewedSource = neverReviewedRes ?? listRes;
 
   const [activeData, archivedData] = [listRes[0] ?? null, listRes[1] ?? null];
 
   // Every navigation on this page preserves the OTHER axes — a pill click must
   // not silently drop an active search, and a search must not drop the filters.
-  const vendorsHref = (over: { crit?: string | null; inactive?: boolean; q?: string | null; reviewed?: string | null } = {}) => {
+  const vendorsHref = (over: { crit?: string | null; inactive?: boolean; q?: string | null; assessed?: string | null } = {}) => {
     const p = new URLSearchParams();
     const crit = over.crit === undefined ? critFilter : over.crit;
     const inactive = over.inactive === undefined ? showInactive : over.inactive;
     const term = over.q === undefined ? search : over.q;
-    const reviewed = over.reviewed === undefined ? (neverReviewedOnly ? "never" : null) : over.reviewed;
+    const assessed = over.assessed === undefined ? (neverAssessedOnly ? "never" : null) : over.assessed;
     if (crit) p.set("criticality", crit);
     if (inactive) p.set("show_inactive", "1");
     if (term) p.set("q", term);
-    if (reviewed) p.set("reviewed", reviewed);
+    if (assessed) p.set("assessed", assessed);
     const s = p.toString();
     return s ? `/vendors?${s}` : "/vendors";
   };
 
   const vendorsData = activeData;
 
-  // Build vendor_id → assessment count.
-  const assessmentCountByVendor = new Map<string, number>();
-  for (const a of assessmentsData?.assessments ?? []) {
-    assessmentCountByVendor.set(
-      a.vendor_id,
-      (assessmentCountByVendor.get(a.vendor_id) ?? 0) + 1
-    );
-  }
+  // The per-vendor assessment count arrives ON the vendor now, computed in the
+  // database by GET /api/vendors.
+  //
+  // It was grouped here from getVendorAssessments(limit:100) — the ORG's
+  // assessments, capped, answering a per-vendor question. Past 100 assessments
+  // in the org a vendor's rows fell off that page and its card printed "No
+  // assessments": a confident claim about the customer's records produced by a
+  // page boundary. Same defect, same fix, same predicate as the pill above.
 
   // The open-finding count now arrives ON the vendor, computed in the database.
   //
@@ -211,7 +232,7 @@ export default async function VendorsPage({
   // past it every pill quietly under-counted and "Showing N of M" printed a cap
   // in the position where the same idiom on /actions means a true total.
   const critCounts = sumCriticality(critSource);
-  const neverReviewedCount = sumTotals(neverReviewedSource);
+  const neverAssessedCount = sumNeverAssessed(listRes);
   /** The filtered population the rows belong to — the M in "Showing N of M". */
   const filteredTotal = sumTotals(listRes);
   /** Active-status size of the current filter set, for the header chip. */
@@ -221,13 +242,13 @@ export default async function VendorsPage({
   const registerTotal = sumTotals(critSource);
 
   const countsUnavailable =
-    critCounts === null || neverReviewedCount === null || filteredTotal === null;
+    critCounts === null || neverAssessedCount === null || filteredTotal === null;
 
   // The pills stay reachable whenever the register has anything in it, even when
   // the CURRENT filter matches nothing — a filter that empties the page must not
   // also remove the control that clears it.
   const hasRegister = (registerTotal ?? 0) > 0 || displayVendors.length > 0;
-  const isFiltered = Boolean(critFilter) || neverReviewedOnly;
+  const isFiltered = Boolean(critFilter) || neverAssessedOnly;
 
   const bannerStyle = critFilter ? BANNER_STYLES[critFilter] : null;
   const critLabel = critFilter
@@ -352,7 +373,7 @@ export default async function VendorsPage({
         hidden={{
           ...(critFilter ? { criticality: critFilter } : {}),
           ...(showInactive ? { show_inactive: "1" } : {}),
-          ...(neverReviewedOnly ? { reviewed: "never" } : {}),
+          ...(neverAssessedOnly ? { assessed: "never" } : {}),
         }}
       />
 
@@ -380,12 +401,17 @@ export default async function VendorsPage({
             );
           })}
           <span className="text-xs font-semibold uppercase tracking-wide ml-3 mr-1" style={{ color: "#64748b" }}>
-            Reviewed
+            Assessed
           </span>
+          {/* Label, count, and destination describe ONE population: vendors
+              with zero rows in vendor_assessments. The count comes from the
+              engine's never_assessed_count and the link from ?assessed=never,
+              and both are built from the same SQL literal — so clicking the
+              pill reproduces the number printed on it by construction. */}
           <FilterPill
-            label={`Never reviewed${neverReviewedCount !== null && neverReviewedCount > 0 ? ` (${neverReviewedCount})` : ""}`}
-            href={vendorsHref({ reviewed: neverReviewedOnly ? null : "never" })}
-            active={neverReviewedOnly}
+            label={`Never assessed${neverAssessedCount !== null && neverAssessedCount > 0 ? ` (${neverAssessedCount})` : ""}`}
+            href={vendorsHref({ assessed: neverAssessedOnly ? null : "never" })}
+            active={neverAssessedOnly}
           />
         </div>
       )}
@@ -422,9 +448,9 @@ export default async function VendorsPage({
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm" style={{ color: "#94a3b8" }}>
             No {critLabel ? `${critLabel} ` : ""}
-            {neverReviewedOnly ? "never-reviewed " : ""}vendors.{" "}
+            {neverAssessedOnly ? "never-assessed " : ""}vendors.{" "}
             <Link
-              href={vendorsHref({ crit: null, reviewed: null })}
+              href={vendorsHref({ crit: null, assessed: null })}
               className="font-medium hover:opacity-80"
               style={{ color: "#00c4b4" }}
             >
@@ -473,7 +499,6 @@ export default async function VendorsPage({
             <Link key={vendor.id} href={`/vendors/${vendor.id}`} className="block">
               <VendorRow
                 vendor={vendor}
-                assessmentCount={assessmentCountByVendor.get(vendor.id) ?? 0}
                 activeFindingCount={vendor.active_findings_count ?? 0}
               />
             </Link>
@@ -506,15 +531,20 @@ function FilterPill({ label, href, active }: { label: string; href: string; acti
 
 function VendorRow({
   vendor,
-  assessmentCount,
   activeFindingCount,
 }: {
   vendor: Vendor;
-  assessmentCount: number;
   activeFindingCount: number;
 }) {
-  const lastReviewed = vendor.last_reviewed_at
-    ? new Date(vendor.last_reviewed_at).toLocaleDateString("en-US", {
+  /**
+   * Assessment state, exact and per-vendor — or `null` when the engine build
+   * predates the field. The third state is load-bearing: unknown must not
+   * render as "Never assessed", which is a claim about the customer's records.
+   */
+  const assessmentCount =
+    typeof vendor.assessment_count === "number" ? vendor.assessment_count : null;
+  const lastAssessed = vendor.latest_assessment_at
+    ? new Date(vendor.latest_assessment_at).toLocaleDateString("en-US", {
         month: "short", day: "numeric", year: "numeric",
       })
     : null;
@@ -560,9 +590,13 @@ function VendorRow({
         <div className="flex-shrink-0 text-right space-y-1">
           <div>
             <span className="text-xs" style={{ color: "#94a3b8" }}>
-              {assessmentCount > 0
-                ? `${assessmentCount} assessment${assessmentCount !== 1 ? "s" : ""}`
-                : "No assessments"}
+              {assessmentCount === null ? (
+                <UnknownValue label="Assessment count" />
+              ) : assessmentCount > 0 ? (
+                `${assessmentCount} assessment${assessmentCount !== 1 ? "s" : ""}`
+              ) : (
+                "No assessments"
+              )}
             </span>
           </div>
           {activeFindingCount > 0 && (
@@ -573,16 +607,24 @@ function VendorRow({
             </div>
           )}
           <div>
-            {lastReviewed ? (
+            {assessmentCount === null ? (
+              // Unknown is not an accusation. It was never safe to print
+              // "Never assessed" for a vendor whose state failed to load.
+              <UnknownValue label="Assessment state" />
+            ) : assessmentCount === 0 ? (
+              // A vendor with no assessment on record says so — silence read
+              // as "fine" is how unassessed vendors stay unassessed.
+              <span className="text-xs font-medium" style={{ color: "#fcd34d" }}>
+                Never assessed
+              </span>
+            ) : lastAssessed ? (
               <span className="text-xs" style={{ color: "#475569" }}>
-                Reviewed {lastReviewed}
+                Assessed {lastAssessed}
               </span>
             ) : (
-              // A vendor with no review on record says so — silence read as
-              // "fine" is how never-reviewed vendors stay never-reviewed.
-              <span className="text-xs font-medium" style={{ color: "#fcd34d" }}>
-                Never reviewed
-              </span>
+              // Assessed, but no date came back: a dash beside "assessed"
+              // would read as "never".
+              <UnknownValue label="Last assessed" />
             )}
           </div>
         </div>

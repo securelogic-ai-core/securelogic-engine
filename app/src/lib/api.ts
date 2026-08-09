@@ -1585,8 +1585,21 @@ export type VendorListOpts = {
   /** Shared asset-search term (engine-resolved: name, alias, exact UUID). */
   q?: string;
   criticality?: "critical" | "high" | "medium" | "low";
-  /** The only value the engine accepts: vendors with NO review on record. */
+  /**
+   * LEGACY — `last_reviewed_at IS NULL`. Retained for API compatibility only.
+   *
+   * RULING (2026-08-09): "Never reviewed" is not a valid customer-facing metric.
+   * `vendors.last_reviewed_at` is written by nothing in the product, so any
+   * claim built on it is one the system cannot support. No SecureLogic surface
+   * may use this filter; use `assessed` instead.
+   */
   reviewed?: "never";
+  /**
+   * The RATIFIED definition: vendors with zero rows in `vendor_assessments`.
+   * Shares its SQL predicate with the `never_assessed_count` aggregate, so a
+   * count and the list it links to are the same population by construction.
+   */
+  assessed?: "never";
   /** Slice size. Use 1 when the response is wanted only for its aggregates. */
   limit?: number;
 };
@@ -1604,6 +1617,7 @@ export async function getVendors(
     if (opts.q) params.set("q", opts.q);
     if (opts.criticality) params.set("criticality", opts.criticality);
     if (opts.reviewed) params.set("reviewed", opts.reviewed);
+    if (opts.assessed) params.set("assessed", opts.assessed);
     const res = await engineFetch(`/api/vendors?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<VendorsResponse>;

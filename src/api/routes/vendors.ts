@@ -61,6 +61,39 @@ const MAX_LIMIT = 100;
 
 const VALID_STATUS_FILTERS = new Set(["active", "archived"]);
 const VALID_CRITICALITY_FILTERS = new Set(["critical", "high", "medium", "low"]);
+const VALID_ASSESSED_FILTERS = new Set(["never"]);
+
+/**
+ * The correlation that defines a vendor's assessments: every row in
+ * vendor_assessments for THIS vendor in THIS org. No status, type, or recency
+ * qualifier — GET /api/vendor-assessments applies none, so neither does this.
+ *
+ * Org scoping is inside the correlation, not merely on the outer query: the
+ * subquery would otherwise be free to see another tenant's assessments even
+ * though the vendor it hangs off is correctly scoped.
+ */
+const ASSESSMENT_SCOPE = `
+  FROM vendor_assessments va
+   WHERE va.vendor_id = vendors.id
+     AND va.organization_id = vendors.organization_id
+`;
+
+/**
+ * "Never assessed" — the RATIFIED definition: zero rows in vendor_assessments.
+ *
+ * Deliberately ONE string used in three places (the ?assessed=never list
+ * filter, the never_assessed_count aggregate, and — via ASSESSMENT_SCOPE — the
+ * per-row assessment_count). A pill that prints an authoritative count and then
+ * navigates to a differently-defined list is worse than a capped count, because
+ * both halves look equally authoritative. Sharing the literal is what makes
+ * drift between them impossible rather than merely unlikely.
+ *
+ * NOT vendors.last_reviewed_at: that column is written by nothing in the
+ * product, so a claim built on it is one the system cannot support. It survives
+ * only as the legacy ?reviewed=never filter below, kept for API compatibility.
+ * NOT current_risk_score either.
+ */
+const NEVER_ASSESSED_PREDICATE = `NOT EXISTS (SELECT 1 ${ASSESSMENT_SCOPE})`;
 
 const VENDOR_SELECT = `
   id,
@@ -311,6 +344,33 @@ router.get(
         conditions.push("last_reviewed_at IS NULL");
       }
 
+      // ?assessed=never — vendors with NO assessment on record. The ratified
+      // customer-facing definition, and the one the "Never assessed" pill on
+      // /vendors both counts and links to.
+      //
+      // It shares NEVER_ASSESSED_PREDICATE with the never_assessed_count
+      // aggregate below, so the count a customer reads and the list they reach
+      // by clicking it are the same population by construction.
+      //
+      // Additive: ?reviewed=never above is untouched and keeps its
+      // last_reviewed_at meaning for existing API callers. The two are
+      // different questions and are deliberately not merged.
+      const filterAssessed = isNonEmptyString(req.query.assessed)
+        ? req.query.assessed
+        : null;
+      if (filterAssessed !== null) {
+        if (!VALID_ASSESSED_FILTERS.has(filterAssessed)) {
+          res.status(400).json({
+            error: "invalid_assessed_filter",
+            allowed: [...VALID_ASSESSED_FILTERS]
+          });
+          return;
+        }
+        // Pushed into `conditions` BEFORE the pre-cursor snapshot, so the
+        // aggregates describe the same filtered population the rows come from.
+        conditions.push(NEVER_ASSESSED_PREDICATE);
+      }
+
       // Shared asset-search q — the platform capability (name, alias, exact
       // UUID, any registry identifier), narrowed to vendor-typed assets and
       // applied by BACKING id, so this list never re-implements matching.
@@ -417,23 +477,20 @@ router.get(
       // vendor in this org. No status, type, or recency qualifier is implied,
       // because GET /api/vendor-assessments applies none. `last_reviewed_at` is
       // a DIFFERENT metric and is not substituted here.
-      const assessmentScope = `
-        FROM vendor_assessments va
-         WHERE va.vendor_id = vendors.id
-           AND va.organization_id = vendors.organization_id
-      `;
-
+      //
+      // ASSESSMENT_SCOPE is the module-level constant the ?assessed=never
+      // filter and the never_assessed_count aggregate are also built from.
       const result = await pg.query(
         `
         SELECT ${VENDOR_SELECT},
                ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
                ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count,
-               (SELECT COUNT(*) ${assessmentScope})::int              AS assessment_count,
+               (SELECT COUNT(*) ${ASSESSMENT_SCOPE})::int              AS assessment_count,
                -- The date the surfaces print as "Last Assessment". Ordered the
                -- way the capped list it replaces was ordered (created_at DESC,
                -- id DESC) and reading the same column, so un-capping the value
                -- does not quietly redefine which assessment it refers to.
-               (SELECT va.performed_at ${assessmentScope}
+               (SELECT va.performed_at ${ASSESSMENT_SCOPE}
                  ORDER BY va.created_at DESC, va.id DESC
                  LIMIT 1)                                             AS latest_assessment_at
         FROM vendors
@@ -485,14 +542,11 @@ router.get(
           -- assessment page — two caps multiplied, presented as a total.
           -- Same predicate as assessment_count above, so the tile and the rows
           -- beneath it cannot disagree.
-          COUNT(*) FILTER (
-            WHERE NOT EXISTS (
-              SELECT 1
-                FROM vendor_assessments va
-               WHERE va.vendor_id = vendors.id
-                 AND va.organization_id = vendors.organization_id
-            )
-          )                                                            AS never_assessed
+          -- The SAME literal the ?assessed=never list filter uses. The pill on
+          -- /vendors prints this number and links to that filter; sharing the
+          -- string is what makes the two populations identical by construction
+          -- rather than by review.
+          COUNT(*) FILTER (WHERE ${NEVER_ASSESSED_PREDICATE})           AS never_assessed
         FROM vendors
         WHERE ${preCursorConditions.join(" AND ")}
         `,
