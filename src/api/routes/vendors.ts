@@ -51,7 +51,11 @@ import {
   parseHistoryLimit,
   parseHistoryOffset,
 } from "../lib/resourceHistory.js";
-import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import {
+  sqlFindingActive,
+  sqlVendorAssessmentScope,
+  sqlVendorNeverAssessed
+} from "../lib/metricDefinitions.js";
 import { recomputeAndPersistVendorRiskScore } from "../lib/vendorRiskScoreRecompute.js";
 
 const router = Router();
@@ -64,36 +68,22 @@ const VALID_CRITICALITY_FILTERS = new Set(["critical", "high", "medium", "low"])
 const VALID_ASSESSED_FILTERS = new Set(["never"]);
 
 /**
- * The correlation that defines a vendor's assessments: every row in
- * vendor_assessments for THIS vendor in THIS org. No status, type, or recency
- * qualifier — GET /api/vendor-assessments applies none, so neither does this.
+ * The RATIFIED vendor-assessment definitions, from the Metric Contract.
  *
- * Org scoping is inside the correlation, not merely on the outer query: the
- * subquery would otherwise be free to see another tenant's assessments even
- * though the vendor it hangs off is correctly scoped.
+ * They live in metricDefinitions.ts — not here — because "assessed" is a
+ * business word that had reached three different computations across the
+ * product, which is precisely the failure that module exists to prevent. Every
+ * use on this route (the ?assessed=never list filter, the never_assessed_count
+ * aggregate, and the per-row assessment_count) resolves to the SAME string, so
+ * a count and the list it links to cannot describe different populations.
+ *
+ * NOT vendors.last_reviewed_at — written by nothing in the product, so a claim
+ * built on it is one the system cannot support; it survives only as the legacy
+ * ?reviewed=never filter below, kept for API compatibility. NOT
+ * current_risk_score either.
  */
-const ASSESSMENT_SCOPE = `
-  FROM vendor_assessments va
-   WHERE va.vendor_id = vendors.id
-     AND va.organization_id = vendors.organization_id
-`;
-
-/**
- * "Never assessed" — the RATIFIED definition: zero rows in vendor_assessments.
- *
- * Deliberately ONE string used in three places (the ?assessed=never list
- * filter, the never_assessed_count aggregate, and — via ASSESSMENT_SCOPE — the
- * per-row assessment_count). A pill that prints an authoritative count and then
- * navigates to a differently-defined list is worse than a capped count, because
- * both halves look equally authoritative. Sharing the literal is what makes
- * drift between them impossible rather than merely unlikely.
- *
- * NOT vendors.last_reviewed_at: that column is written by nothing in the
- * product, so a claim built on it is one the system cannot support. It survives
- * only as the legacy ?reviewed=never filter below, kept for API compatibility.
- * NOT current_risk_score either.
- */
-const NEVER_ASSESSED_PREDICATE = `NOT EXISTS (SELECT 1 ${ASSESSMENT_SCOPE})`;
+const ASSESSMENT_SCOPE = sqlVendorAssessmentScope();
+const NEVER_ASSESSED_PREDICATE = sqlVendorNeverAssessed();
 
 const VENDOR_SELECT = `
   id,

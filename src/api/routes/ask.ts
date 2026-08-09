@@ -25,7 +25,11 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
-import { sqlFindingActive, sqlFindingClosed } from "../lib/metricDefinitions.js";
+import {
+  sqlFindingActive,
+  sqlFindingClosed,
+  sqlVendorAssessmentScope
+} from "../lib/metricDefinitions.js";
 import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
@@ -298,15 +302,31 @@ router.post(
           [organizationId]
         );
 
-        // 5b. All active vendors ordered by criticality then risk score
+        // 5b. All active vendors ordered by criticality then risk score.
+        //
+        // Assessment state is computed HERE, in the database, from the ratified
+        // definition (Metric Contract): a vendor is assessed when it has at
+        // least one row in vendor_assessments.
+        //
+        // It replaces last_reviewed_at, which used to be selected and handed to
+        // the model as `last_reviewed`. Nothing in the product writes that
+        // column, so it was NULL for effectively every vendor and the model was
+        // free to narrate that as a review history — the least controlled
+        // surface for a false claim in the whole product, because an LLM
+        // phrases it freshly each time and there is no string to grep for.
         const vendorsResult = await pg.query<{
           id: string;
           name: string;
           criticality: string | null;
           current_risk_score: number | null;
-          last_reviewed_at: string | null;
+          assessment_count: number;
+          latest_assessment_at: string | null;
         }>(
-          `SELECT id, name, criticality, current_risk_score, last_reviewed_at
+          `SELECT id, name, criticality, current_risk_score,
+                  (SELECT COUNT(*) ${sqlVendorAssessmentScope()})::int AS assessment_count,
+                  (SELECT va.performed_at ${sqlVendorAssessmentScope()}
+                    ORDER BY va.created_at DESC, va.id DESC
+                    LIMIT 1)                                           AS latest_assessment_at
            FROM vendors
            WHERE organization_id = $1
              AND status != 'inactive'
@@ -459,12 +479,25 @@ router.post(
           total:          parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
           critical_count: vendorsResult.rows.filter((v) => v.criticality === "critical").length,
           high_count:     vendorsResult.rows.filter((v) => v.criticality === "high").length,
-          assessed_count: vendorsResult.rows.filter((v) => v.current_risk_score !== null).length,
+          // ASSESSED = has at least one vendor_assessments row (Metric
+          // Contract), the same definition /vendors and /vendors/risk print.
+          //
+          // This counted `current_risk_score !== null`, which is a SCORE, not
+          // an assessment: GET /api/vendors/:id/risk-score computes and
+          // persists one on demand, so a vendor nobody had ever assessed
+          // acquired a score and began counting as assessed — and the model
+          // reported it to the customer as assessment coverage.
+          assessed_count: vendorsResult.rows.filter((v) => v.assessment_count > 0).length,
+          never_assessed_count: vendorsResult.rows.filter((v) => v.assessment_count === 0).length,
           list: vendorsResult.rows.map((v) => ({
             name:         v.name,
             criticality:  v.criticality,
+            // A real, maintained field: recomputed and persisted by the vendor
+            // risk-score pipeline. Kept because its meaning is supported —
+            // it just is not evidence that anyone assessed the vendor.
             risk_score:   v.current_risk_score,
-            last_reviewed: v.last_reviewed_at,
+            assessments:  v.assessment_count,
+            last_assessed: v.latest_assessment_at,
           })),
         },
         actions:   actionsSummary,
