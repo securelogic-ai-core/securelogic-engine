@@ -24,6 +24,7 @@ import adminRequeueNewsletterDeliveryRouter from "./adminRequeueNewsletterDelive
 import adminRequeueNewsletterDeliveriesByIssueRouter from "./adminRequeueNewsletterDeliveriesByIssue.js";
 import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminSuppressionsRouter from "./adminSuppressions.js";
+import adminEmailDeliverabilityRouter from "./adminEmailDeliverability.js";
 import adminBriefSubscribersRouter from "./adminBriefSubscribers.js";
 import adminIssuesRouter from "./adminIssues.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
@@ -306,6 +307,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminRequeueNewsletterDeliveriesByIssueRouter);
   router.use("/admin", adminEmailSuppressionsRouter);
   router.use("/admin", adminSuppressionsRouter);
+  // Joins the provider's suppression list, our mirror of it, and the account
+  // itself into the one answer a support ticket needs. Read-only: remediation
+  // would mutate the Resend account shared with production.
+  router.use("/admin", adminEmailDeliverabilityRouter);
   router.use("/admin", adminBriefSubscribersRouter);
   router.use("/admin", adminIssuesRouter);
   router.use("/admin", adminCreateEmailSuppressionRouter);
