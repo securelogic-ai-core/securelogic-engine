@@ -32,10 +32,13 @@ import { getProviderSuppression } from "../infra/providerSuppression.js";
  * This route diagnoses; it does not remediate. Clearing a provider suppression
  * mutates the mail account SHARED by staging and production (both environments
  * carry an identical RESEND_API_KEY), so a clear issued from staging would lift
- * a suppression production is relying on. That is a destructive
- * cross-environment write and is deliberately out of scope here — it needs
- * either environment-separated credentials or an explicit production-only
- * guard, as its own reviewed change.
+ * a suppression production is relying on.
+ *
+ * That remediation now exists as its own reviewed change, in
+ * `adminProviderSuppressionRecovery.ts`, behind the production-only guard in
+ * `lib/providerSuppressionRecoveryPolicy.ts`. It is a separate file so that
+ * this one stays read-only and cheaply provable as such — do not add the
+ * mutation here.
  *
  * NOT AN ENUMERATION ORACLE
  * -------------------------
