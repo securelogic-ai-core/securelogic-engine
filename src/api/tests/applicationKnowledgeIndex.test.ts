@@ -146,6 +146,22 @@ describe("Secondary-nav access metadata matches the real page guard", () => {
     );
     expect(secondaryByHref("/settings/sso")?.access).toBe("premium");
   });
+
+  it("/getting-started is platform-gated (page redirects unentitled orgs) and declared platform", () => {
+    // Every checklist step targets a platform-gated destination, so the page
+    // redirects orgs outside the platform entitlement triad. If that guard is
+    // ever removed, this must fail — an index that says "all" would have the
+    // Ask assistant sending free-tier customers to a checklist they cannot
+    // start, which is exactly the false claim the declaration exists to stop.
+    const src = pageSource("getting-started");
+    expect(src, "getting-started page no longer checks platform entitlement").toMatch(
+      /isPlatformEntitled\s*\(/
+    );
+    expect(src, "getting-started page no longer redirects unentitled orgs").toMatch(
+      /redirect\("\/dashboard"\)/
+    );
+    expect(secondaryByHref("/getting-started")?.access).toBe("platform");
+  });
 });
 
 describe("Ask navigation answers are grounded in the index", () => {

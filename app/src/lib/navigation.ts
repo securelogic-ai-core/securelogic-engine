@@ -432,5 +432,10 @@ export const SECONDARY_NAV_ITEMS: SecondaryNavItem[] = [
   { group: "Settings", label: "Risk rating scale",           href: "/settings/risk-scale" },
   { group: "Settings", label: "Risk policy",                 href: "/settings/risk-policy" },
   // Onboarding
-  { group: "Onboarding", label: "Getting started checklist", href: "/getting-started" },
+  // /getting-started redirects orgs without platform entitlement to /dashboard
+  // (every checklist step targets a platform-gated destination). The guard is
+  // in the page body, so declare it here or the index would tell the Ask
+  // assistant this page is open to everyone — and the assistant would send
+  // free-tier customers to a checklist they cannot start.
+  { group: "Onboarding", label: "Getting started checklist", href: "/getting-started", access: "platform" },
 ];

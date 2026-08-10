@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getDashboardSummary, getAssets } from "@/lib/api";
+import { getDashboardSummary, getAssets, getMe } from "@/lib/api";
+import { isPlatformEntitled } from "@/lib/entitlements";
 import { completeOnboardingAction } from "./actions";
 import { getOnboardingStepCompletion } from "./onboardingProgress";
 
@@ -73,6 +74,24 @@ export default async function GettingStartedPage() {
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
+
+  // Platform entitlement gate. Every step below targets a platform-gated
+  // destination — /frameworks and /controls/* sit behind the engine's
+  // `requireEntitlement("premium")`, /vendors/new and /assets/new behind
+  // `requirePremiumOrCorePlatform`, and the app pages for those redirect
+  // unentitled orgs to /dashboard. Without this guard a starter tenant could
+  // reach the checklist directly (the user-menu link is already gated) and be
+  // shown a five-step setup in which it cannot complete a single step: two
+  // steps bounce straight back to /dashboard, and the other two render but
+  // 403 on write. An onboarding checklist that cannot be started is a worse
+  // first impression than no checklist at all, so ineligible orgs go to
+  // /dashboard, where the free-tier experience (the Brief + UpgradeCard) is.
+  //
+  // This is the same predicate, and the same redirect target, that /findings,
+  // /actions and /approvals already use — see lib/entitlements.ts for why the
+  // triad is the engine's own equivalence class rather than an app invention.
+  const me = await getMe(token);
+  if (!isPlatformEntitled(me?.entitlementLevel)) redirect("/dashboard");
 
   // Deliberately NO completed-users redirect: "Skip setup" used to make this
   // page permanently unreachable (the user-menu link now returns here). The
