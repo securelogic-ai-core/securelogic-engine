@@ -9,6 +9,7 @@ import {
   AuthSuccess,
   AuthLink,
 } from "@/components/AuthCard";
+import { isPlatformEntitled } from "@/lib/entitlements";
 
 type PaidTier = "professional" | "teams" | "platform" | "platform_annual";
 
@@ -134,7 +135,18 @@ function VerifyEmailContent() {
         return;
       }
 
-      const isPlatform = data.entitlementLevel === "premium";
+      // The platform-entitled family is `premium | platform | team`, not
+      // `premium` alone — this check tested only the first value, so a
+      // `platform` or `team` org finishing verification was sent to
+      // /dashboard instead of the setup checklist it is entitled to. Those
+      // two values reach the column through seeds, manual provisioning and
+      // legacy rows rather than Stripe (which writes only starter /
+      // professional / premium), so the miss was invisible to a
+      // Stripe-driven walkthrough. `isPlatformEntitled` is the same predicate
+      // /getting-started itself now enforces, so this routing can no longer
+      // disagree with the destination's own gate — send someone there and
+      // they get the checklist, not a redirect straight back.
+      const isPlatform = isPlatformEntitled(data.entitlementLevel);
       router.push(
         data.onboardingCompleted || !isPlatform
           ? "/dashboard"
