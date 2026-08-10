@@ -108,6 +108,151 @@ describe("getProviderSuppression", () => {
   });
 });
 
+/**
+ * The RECOVERY transport. Note the inverted failure posture: the lookup above
+ * fails OPEN because the cost of being wrong is a wasted send; these fail
+ * CLOSED because the cost of being wrong is deleting shared provider state on
+ * a guess. Every "we could not tell" below must resolve to `unavailable`.
+ */
+describe("lookupProviderSuppressionRecord", () => {
+  const jsonRes = (status: number, body?: unknown) =>
+    ({ status, json: async () => body }) as unknown as Response;
+
+  it("returns the record INCLUDING the id that DELETE is addressed to", async () => {
+    mockFetch(() =>
+      jsonRes(200, {
+        id: "sup-abc",
+        origin: "bounce",
+        created_at: "2026-08-10T15:47:35.000Z"
+      })
+    );
+    const { lookupProviderSuppressionRecord } = await load();
+
+    expect(await lookupProviderSuppressionRecord("blocked@example.com")).toEqual({
+      outcome: "suppressed",
+      record: { id: "sup-abc", origin: "bounce", createdAt: "2026-08-10T15:47:35.000Z" }
+    });
+  });
+
+  it("404 is a definite 'clear'", async () => {
+    mockFetch(() => jsonRes(404));
+    const { lookupProviderSuppressionRecord } = await load();
+    expect(await lookupProviderSuppressionRecord("fine@example.com")).toEqual({
+      outcome: "clear"
+    });
+  });
+
+  it("FAILS CLOSED on a 200 whose body carries no id — not 'clear', not actionable", async () => {
+    mockFetch(() => jsonRes(200, { origin: "bounce" }));
+    const { lookupProviderSuppressionRecord } = await load();
+
+    const result = await lookupProviderSuppressionRecord("x@example.com");
+    expect(result.outcome).toBe("unavailable");
+  });
+
+  it("FAILS CLOSED on an unparseable body", async () => {
+    mockFetch(
+      () =>
+        ({
+          status: 200,
+          json: async () => {
+            throw new Error("not json");
+          }
+        }) as unknown as Response
+    );
+    const { lookupProviderSuppressionRecord } = await load();
+    expect((await lookupProviderSuppressionRecord("x@example.com")).outcome).toBe(
+      "unavailable"
+    );
+  });
+
+  it("FAILS CLOSED on provider error statuses", async () => {
+    for (const status of [401, 403, 429, 500, 502]) {
+      mockFetch(() => jsonRes(status));
+      const { lookupProviderSuppressionRecord } = await load();
+      expect((await lookupProviderSuppressionRecord("x@example.com")).outcome).toBe(
+        "unavailable"
+      );
+    }
+  });
+
+  it("FAILS CLOSED with no key configured, without calling the provider", async () => {
+    delete process.env.RESEND_API_KEY;
+    const spy = vi.fn(() => Promise.resolve(jsonRes(200, { id: "x" })));
+    vi.stubGlobal("fetch", spy);
+    const { lookupProviderSuppressionRecord } = await load();
+
+    expect((await lookupProviderSuppressionRecord("x@example.com")).outcome).toBe(
+      "unavailable"
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteProviderSuppression", () => {
+  const res2 = (status: number) => ({ status }) as Response;
+
+  it("addresses the DELETE to the record id, url-encoded", async () => {
+    const seen: Array<{ url: string; method?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: unknown, init: unknown) => {
+        seen.push({ url: String(url), method: (init as RequestInit)?.method });
+        return Promise.resolve(res2(200));
+      })
+    );
+    const { deleteProviderSuppression } = await load();
+
+    await deleteProviderSuppression("sup/abc");
+
+    expect(seen[0].url).toBe("https://api.resend.com/suppressions/sup%2Fabc");
+    expect(seen[0].method).toBe("DELETE");
+  });
+
+  it("treats 200/202/204 as deleted", async () => {
+    for (const status of [200, 202, 204]) {
+      mockFetch(() => res2(status));
+      const { deleteProviderSuppression } = await load();
+      expect(await deleteProviderSuppression("sup-1")).toEqual({ outcome: "deleted" });
+    }
+  });
+
+  it("treats 404 as already absent rather than a failure", async () => {
+    mockFetch(() => res2(404));
+    const { deleteProviderSuppression } = await load();
+    expect(await deleteProviderSuppression("sup-1")).toEqual({
+      outcome: "already_absent"
+    });
+  });
+
+  it("reports a rejection as failed, never as deleted", async () => {
+    for (const status of [401, 403, 429, 500]) {
+      mockFetch(() => res2(status));
+      const { deleteProviderSuppression } = await load();
+      expect((await deleteProviderSuppression("sup-1")).outcome).toBe("failed");
+    }
+  });
+
+  it("admits the outcome is UNKNOWN when the request itself fails mid-flight", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("network down"))));
+    const { deleteProviderSuppression } = await load();
+
+    const result = await deleteProviderSuppression("sup-1");
+    expect(result.outcome).toBe("failed");
+    // The delete may or may not have landed; the operator must be told that.
+    expect((result as { detail: string }).detail).toMatch(/not known whether/i);
+  });
+
+  it("refuses an empty id without calling the provider", async () => {
+    const spy = vi.fn(() => Promise.resolve(res2(200)));
+    vi.stubGlobal("fetch", spy);
+    const { deleteProviderSuppression } = await load();
+
+    expect((await deleteProviderSuppression("  ")).outcome).toBe("failed");
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 // ── Source-shape guards on the call sites ────────────────────────────────
 // getProviderSuppression is consumed inside route handlers that need a live
 // Express app + DB to exercise; these assert the wiring contract that the
