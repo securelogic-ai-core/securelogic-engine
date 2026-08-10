@@ -145,7 +145,26 @@ describe("/getting-started — the five steps and their destinations (registry D
     expect(hrefOf(container, "Add Vendor →")).toBe("/vendors/new");
     expect(hrefOf(container, "Add Control →")).toBe("/controls/new");
     expect(hrefOf(container, "Go to Controls →")).toBe("/controls");
-    expect(hrefOf(container, "View Dashboard →")).toBe("/dashboard");
+    // Step 5 is state-dependent. The default org here has no score, so it is the
+    // "pending" step pointing at the work that produces one — NOT the dashboard,
+    // which would be sending the customer to look at a score that isn't there.
+    expect(hrefOf(container, "Assess Controls →")).toBe("/controls");
+  });
+
+  it("once a score exists step 5 is complete, so it shows 'Done ✓' rather than any CTA", async () => {
+    // Worth pinning: a completed step renders "Done ✓" INSTEAD of its link, so the
+    // step-5 CTA is only ever visible while no score exists. That is precisely why
+    // the old constant "View Dashboard →" was wrong — the one state it rendered in
+    // was the state where the dashboard had no score to show.
+    api.getDashboardSummary.mockResolvedValue(
+      orgWith({ frameworks: 1, vendors: 1, controls: 1, control_assessments: 1 }, POSTURE_EXISTS),
+    );
+    const { container } = await render();
+
+    expect(screen.getByText(/Your security posture score is now available/)).toBeInTheDocument();
+    expect(hrefOf(container, "View Dashboard →")).toBeNull();
+    expect(hrefOf(container, "Assess Controls →")).toBeNull();
+    expect(screen.getAllByText("Done ✓")).toHaveLength(5);
   });
 
   it("has no dead links — every CTA is a real route", async () => {
@@ -331,7 +350,9 @@ describe("/getting-started — progress and resume", () => {
     // …and the work that remains is still one click away, starting where they left off.
     expect(hrefOf(container, "Add Control →")).toBe("/controls/new");
     expect(hrefOf(container, "Go to Controls →")).toBe("/controls");
-    expect(hrefOf(container, "View Dashboard →")).toBe("/dashboard");
+    // This org has no posture score, so step 5 is the "pending" variant — it points
+    // at the work that produces a score rather than at a dashboard that has none.
+    expect(hrefOf(container, "Assess Controls →")).toBe("/controls");
   });
 
   it("running the first assessment does NOT flip the wizard to 'All done!' — posture must exist", async () => {
@@ -346,7 +367,10 @@ describe("/getting-started — progress and resume", () => {
     // "All done!" appeared before any posture had been computed, let alone reviewed.
     expect(screen.getByText("4 of 5 steps complete")).toBeInTheDocument();
     expect(screen.queryByText("All done!")).toBeNull();
-    expect(hrefOf(container, "View Dashboard →")).toBe("/dashboard");
+    // Step 5 stays open AND stays honest: no score exists yet, so it must not
+    // send the customer to the dashboard promising one.
+    expect(hrefOf(container, "Assess Controls →")).toBe("/controls");
+    expect(hrefOf(container, "View Dashboard →")).toBeNull();
   });
 
   it("a fully-complete org gets the real completion state, not another checklist to click", async () => {
@@ -506,5 +530,88 @@ describe("/getting-started — authorization", () => {
     apiKeyOnly();
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
     expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Step 5 must never promise a posture score the product hasn't produced
+// ─────────────────────────────────────────────────────────────────────
+
+describe("/getting-started — step 5 tells the truth about posture", () => {
+  beforeEach(() => vi.stubEnv("SECURELOGIC_ASSET_REGISTRY_ENABLED", "false"));
+
+  const UNSCORED_SNAPSHOT: DashboardSummary["posture"] = {
+    overall_score: null,
+    overall_severity: null,
+    snapshot_date: "2026-08-10T00:00:00.000Z",
+  };
+
+  it("a brand-new org sees 0 of 5 — step 5 is not pre-ticked", async () => {
+    const { container } = await render();
+    expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("All done!");
+  });
+
+  it("an unscored snapshot does NOT complete step 5 (a date is not a score)", async () => {
+    // The exact payload a new tenant gets once the posture worker has written a
+    // row it had nothing to score. This is the state that used to show "1 of 5".
+    api.getDashboardSummary.mockResolvedValue(orgWith({}, UNSCORED_SNAPSHOT));
+    const { container } = await render();
+
+    expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
+    expect(container.textContent).not.toContain("Your security posture score is now available");
+  });
+
+  it("pending: says what still has to happen, and does not claim a score", async () => {
+    api.getDashboardSummary.mockResolvedValue(orgWith({}, UNSCORED_SNAPSHOT));
+    const { container } = await render();
+
+    expect(screen.getByText(/No posture score yet/)).toBeInTheDocument();
+    expect(screen.getByText(/generated from your assessed controls/)).toBeInTheDocument();
+    expect(hrefOf(container, "Assess Controls →")).toBe("/controls");
+  });
+
+  it("available: renders the real 'score is available' copy and completes the step", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      orgWith({ frameworks: 1, vendors: 1, controls: 1, control_assessments: 1 }, POSTURE_EXISTS),
+    );
+    const { container } = await render();
+
+    expect(screen.getByText(/Your security posture score is now available/)).toBeInTheDocument();
+    expect(screen.getByText("5 of 5 steps complete")).toBeInTheDocument();
+    expect(container.textContent).toContain("All done!");
+  });
+
+  it("a zero score is available — 0 is a real score, not 'missing'", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      orgWith(
+        { frameworks: 1, vendors: 1, controls: 1, control_assessments: 1 },
+        { overall_score: 0, overall_severity: "Critical", snapshot_date: "2026-08-10T00:00:00.000Z" },
+      ),
+    );
+    await render();
+
+    expect(screen.getByText(/Your security posture score is now available/)).toBeInTheDocument();
+    expect(screen.getByText("5 of 5 steps complete")).toBeInTheDocument();
+  });
+
+  it("unavailable: a failed posture read says so — it does not claim 'no posture yet'", async () => {
+    api.getDashboardSummary.mockResolvedValue(null);
+    const { container } = await render();
+
+    expect(screen.getByText(/couldn't load your posture/)).toBeInTheDocument();
+    expect(container.textContent).not.toContain("Your security posture score is now available");
+    expect(container.textContent).not.toContain("No posture score yet");
+    // Unknown is not success: the step stays open.
+    expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
+  });
+
+  it("steps 1-4 still complete off inventory, unaffected by posture state", async () => {
+    api.getDashboardSummary.mockResolvedValue(
+      orgWith({ frameworks: 1, vendors: 1, controls: 1, control_assessments: 1 }, UNSCORED_SNAPSHOT),
+    );
+    await render();
+    // The "4 of 5" the earlier fix made reachable must remain reachable.
+    expect(screen.getByText("4 of 5 steps complete")).toBeInTheDocument();
   });
 });
