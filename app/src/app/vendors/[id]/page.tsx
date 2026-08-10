@@ -597,7 +597,14 @@ function VendorDetailsCard({ vendor }: { vendor: Vendor }) {
             </a>
           </DetailRow>
         )}
-        <DetailRow label="Last reviewed">{fmt(vendor.last_reviewed_at)}</DetailRow>
+        {/* NO "Last reviewed" ROW. It rendered unconditionally from
+            `vendor.last_reviewed_at`, which nothing in the product writes —
+            so it was an em dash on every vendor in every org, directly
+            above an Assessment History section listing real dates. Retired
+            under the ratified ruling that "reviewed" is not a valid
+            customer-facing vendor metric; assessment recency belongs to the
+            Assessment History section and the sidebar Assessments count,
+            both of which read `vendor_assessments`. Do not reinstate. */}
         <DetailRow label="Added">{fmt(vendor.created_at)}</DetailRow>
       </div>
     </div>

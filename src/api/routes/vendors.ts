@@ -694,6 +694,15 @@ router.get(
 /* =========================================================
    GET /api/vendors/export.csv
    CSV export of all org vendors with optional filters.
+
+   NO "Last Reviewed" COLUMN. `vendors.last_reviewed_at` is written by
+   nothing in the product, so the column was permanently blank for every
+   vendor in every org — a blank cell under that header reads as "this
+   vendor has never been reviewed", which is a claim the data cannot
+   support. Retired here under the ratified ruling that "reviewed" is not
+   a valid customer-facing vendor metric; the canonical concept is
+   "assessed" (>= 1 row in vendor_assessments). Do not reinstate the
+   column, and do not substitute an assessment date under the old header.
    ========================================================= */
 
 // CSV serialization migrated to the shared lib (src/api/lib/csvExport.ts) so
@@ -750,10 +759,9 @@ router.get(
         website: string | null;
         service_description: string | null;
         created_at: string;
-        last_reviewed_at: string | null;
       }>(
         `SELECT id, name, category, criticality, status, data_sensitivity,
-                access_level, website, service_description, created_at, last_reviewed_at
+                access_level, website, service_description, created_at
          FROM vendors
          WHERE ${where}
          ORDER BY created_at DESC, id DESC
@@ -778,7 +786,7 @@ router.get(
       const header = csvRow([
         "ID", "Name", "Category", "Criticality", "Status",
         "Data Sensitivity", "Access Level", "Website",
-        "Description", "Last Reviewed", "Created At"
+        "Description", "Created At"
       ]);
       res.write(header + "\r\n");
 
@@ -793,7 +801,6 @@ router.get(
           row.access_level,
           row.website,
           row.service_description,
-          row.last_reviewed_at ? new Date(row.last_reviewed_at).toISOString().slice(0, 10) : null,
           new Date(row.created_at).toISOString().slice(0, 10),
         ]);
         res.write(line + "\r\n");

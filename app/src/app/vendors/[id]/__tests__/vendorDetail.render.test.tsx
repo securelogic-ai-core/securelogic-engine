@@ -541,6 +541,73 @@ describe("/vendors/[id] — history sections", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// 6a. The retired "Last reviewed" row
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * PRODUCT RULING: "reviewed" is not a valid customer-facing vendor metric.
+ * `vendors.last_reviewed_at` is written by nothing in the product, so the row
+ * rendered an em dash on every vendor in every org — directly above an
+ * Assessment History section listing real dates. Not a stale value: a claim
+ * the data can never support, sitting next to evidence that contradicts it.
+ *
+ * The engine still RETURNS the field (API compatibility, same as the legacy
+ * ?reviewed=never filter). So these tests feed it a value deliberately: the
+ * contract is that the page ignores it, not that it never arrives.
+ */
+describe('/vendors/[id] — "Last reviewed" is retired, not merely blank', () => {
+  const REVIEWED_SENTINEL = "2019-03-07T00:00:00.000Z";
+
+  it("renders no Last reviewed row even when the engine returns a date", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: REVIEWED_SENTINEL }));
+
+    const { container } = await renderPage(VendorDetailPage, props());
+
+    expect(screen.queryByText("Last reviewed")).not.toBeInTheDocument();
+    // The formatted date must not appear anywhere either — relabelling the row
+    // would keep the unsupported claim while passing a label-only assertion.
+    expect(container.textContent).not.toContain("Mar 7, 2019");
+    expect(container.textContent).not.toContain("2019");
+  });
+
+  it("does not fall back to an em dash under some other review label", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: null }));
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.queryByText(/last review/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/never reviewed/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the Added row that sat beside it", async () => {
+    api.getVendor.mockResolvedValue(
+      aVendor({ created_at: "2026-01-15T00:00:00.000Z", last_reviewed_at: REVIEWED_SENTINEL })
+    );
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.getByText("Added")).toBeInTheDocument();
+    expect(screen.getByText("Jan 15, 2026")).toBeInTheDocument();
+  });
+
+  it("still tells the customer when this vendor was last assessed — from vendor_assessments", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: null }));
+    api.getVendorAssessmentsForVendor.mockResolvedValue(
+      aVendorAssessmentsResponse([
+        aVendorAssessment({ id: "va-1", performed_at: "2026-06-11T00:00:00.000Z" }),
+      ])
+    );
+
+    await renderPage(VendorDetailPage, props());
+
+    // Removing the dead field must not leave the page silent about recency:
+    // Assessment History is the maintained source, and it is still rendering.
+    expect(screen.getByText("Assessment History")).toBeInTheDocument();
+    expect(screen.queryByText("No assessments recorded")).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
 // 6b. Walkthrough remediation: empty-state CTA + risk-score explainability
 // ─────────────────────────────────────────────────────────────────────
 
