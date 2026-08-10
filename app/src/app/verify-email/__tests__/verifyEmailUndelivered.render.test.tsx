@@ -206,3 +206,51 @@ describe("/verify-email — resend never overstates what happened", () => {
     expect(screen.queryByText(/couldn't send your verification email/i)).toBeNull();
   });
 });
+
+describe("/verify-email — a SUPPRESSED address is not a retryable outage", () => {
+  // A hard bounce puts the address on the provider's own suppression list.
+  // Every later send is accepted and silently discarded, so "try again" — the
+  // right advice for `failed` — is advice we already know cannot work. This
+  // branch exists so the product stops handing it out.
+  it("says the address itself is blocked, not that a send merely failed", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=suppressed`);
+
+    expect(screen.getByText(/couldn't send your verification email/i)).toBeTruthy();
+    expect(screen.getByText(/blocked by our email provider/i)).toBeTruthy();
+    expect(screen.queryByText(DELIVERY_CLAIM)).toBeNull();
+  });
+
+  it("does NOT offer the resend button — the one action that cannot work", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=suppressed`);
+
+    expect(screen.queryByRole("button", { name: /resend verification email/i })).toBeNull();
+    expect(screen.getByText(/will not help/i)).toBeTruthy();
+  });
+
+  it("still gives the two real exits: support, and a different address", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=suppressed`);
+
+    const support = screen.getByText("hello@securelogicai.com");
+    expect(support.getAttribute("href")).toBe("mailto:hello@securelogicai.com");
+    expect(screen.getByText(/start over/i)).toBeTruthy();
+  });
+
+  it("keeps the account-is-real reassurance", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=suppressed`);
+    expect(screen.getByText(/nothing needs signing up for again/i)).toBeTruthy();
+  });
+
+  it("does not promise checkout as though enrolment were under way", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=suppressed&plan=platform_annual`);
+
+    expect(screen.queryByText(/after verifying, you.+continue to/i)).toBeNull();
+    expect(screen.getByText(/have not been charged/i)).toBeTruthy();
+  });
+
+  it("a retryable failure still DOES offer resend — the branches stay distinct", async () => {
+    renderAt(`email=${encodeURIComponent(EMAIL)}&mail=failed`);
+
+    expect(screen.getByRole("button", { name: /resend verification email/i })).toBeTruthy();
+    expect(screen.queryByText(/blocked by our email provider/i)).toBeNull();
+  });
+});
