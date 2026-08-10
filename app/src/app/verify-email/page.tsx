@@ -35,10 +35,17 @@ function parsePlanParam(raw: string | null): PaidTier | null {
  * are kept apart because the operator's response differs, and because the value
  * rides through in the URL where a collapsed one would be unrecoverable.
  */
-type UndeliveredMail = "unavailable" | "failed";
+/**
+ * `suppressed` is deliberately separate from `failed`. Both mean "no mail
+ * arrived", but only `failed` is worth retrying: a suppressed address is one
+ * the provider has blocked outright (after an earlier hard bounce), so every
+ * resend is accepted, discarded, and costs more sender reputation. Offering the
+ * resend button there would be advice we know cannot work.
+ */
+type UndeliveredMail = "unavailable" | "failed" | "suppressed";
 
 function parseMailParam(raw: string | null): UndeliveredMail | null {
-  return raw === "unavailable" || raw === "failed" ? raw : null;
+  return raw === "unavailable" || raw === "failed" || raw === "suppressed" ? raw : null;
 }
 
 function planLabel(tier: PaidTier): string {
@@ -293,7 +300,26 @@ function VerifyEmailContent() {
           </p>
         )}
 
-        {undelivered ? (
+        {undelivered === "suppressed" ? (
+          <>
+            {/* Retrying is the one thing that cannot work here, so this branch
+                says why and points at the only two real exits: support lifting
+                the block, or a different address. */}
+            <p style={{ margin: 0, fontSize: "14px", color: "#94a3b8" }}>
+              Your account and organisation exist and nothing needs signing up for
+              again — but this address is blocked by our email provider after an
+              earlier delivery failure, so our messages cannot reach it.
+            </p>
+            <p style={{ margin: "12px 0 0", fontSize: "14px", color: "#64748b" }}>
+              Requesting another link will not help. Email{" "}
+              <a href="mailto:hello@securelogicai.com" style={{ color: "#00c4b4" }}>
+                hello@securelogicai.com
+              </a>{" "}
+              and we&apos;ll verify your address for you, or move you to a
+              different one.
+            </p>
+          </>
+        ) : undelivered ? (
           <>
             {/* Say the two things the customer cannot act without: the account
                 is real and theirs, and they are locked out of it until an email
@@ -345,14 +371,21 @@ function VerifyEmailContent() {
         <AuthSuccess message="New verification link requested. If it hasn't arrived in a few minutes, check your spam folder." />
       )}
 
-      <AuthButton
-        loading={resending}
-        onClick={handleResend}
-        type="button"
-        variant={resent && !resendUnavailable ? "secondary" : "primary"}
-      >
-        {resent && !resendUnavailable ? "Link Requested" : "Resend Verification Email"}
-      </AuthButton>
+      {/* No resend button for a suppressed address. The provider blocks the
+          address itself, so the button could only ever produce another silent
+          discard — offering it would be the product telling the customer to do
+          something it already knows cannot work. "Start over" below remains,
+          and is the honest self-service exit: a different address. */}
+      {undelivered !== "suppressed" && (
+        <AuthButton
+          loading={resending}
+          onClick={handleResend}
+          type="button"
+          variant={resent && !resendUnavailable ? "secondary" : "primary"}
+        >
+          {resent && !resendUnavailable ? "Link Requested" : "Resend Verification Email"}
+        </AuthButton>
+      )}
 
       <p
         style={{

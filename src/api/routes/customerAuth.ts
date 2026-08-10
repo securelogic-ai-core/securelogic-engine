@@ -31,6 +31,7 @@ import { recordAccountLockout } from "../lib/authAnomaly.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
+import { getProviderSuppression } from "../infra/providerSuppression.js";
 import {
   recordConsent,
   recordAllCurrentConsents,
@@ -214,9 +215,27 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
 </html>`;
 }
 
+/**
+ * Send one transactional email, THROWING when the provider refuses it.
+ *
+ * The Resend SDK does not throw on an API-level rejection: `emails.send()`
+ * RESOLVES with `{ data, error }` and only throws on a transport failure. This
+ * function used to `await` that and return `void`, so an unverified sending
+ * domain, a revoked key, a rate limit or a validation error all looked exactly
+ * like success — and `sendVerificationEmail` below reported `"sent"` to a
+ * customer whose mail had been refused outright. Surfacing the error as a throw
+ * is what makes every caller's existing try/catch mean what it says.
+ */
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const resend = getResend();
-  await resend.emails.send({ from: getFromAddress(), to: [to], subject, html });
+  const res = await resend.emails.send({ from: getFromAddress(), to: [to], subject, html });
+
+  const error = (res as { error?: { message?: string; name?: string } | null })?.error;
+  if (error) {
+    throw new Error(
+      `Resend rejected the send: ${error.name ?? "error"}: ${error.message ?? "unknown"}`
+    );
+  }
 }
 
 /**
@@ -225,8 +244,16 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
  * `unavailable` (no provider configured) and `failed` (provider rejected or
  * errored) are kept apart because they need different operator responses: one
  * is a deployment gap, the other is a delivery problem.
+ *
+ * `suppressed` is a third, worse case: the provider holds a standing
+ * suppression for the address (almost always an earlier hard bounce), so the
+ * send would be accepted and then silently discarded. Resending cannot fix it
+ * and each attempt costs more sender reputation — the address itself has to
+ * change or the suppression has to be lifted. It is kept distinct from `failed`
+ * precisely because the customer's next action is different: not "try again",
+ * but "this address cannot receive our mail".
  */
-type VerificationEmailOutcome = "sent" | "unavailable" | "failed";
+type VerificationEmailOutcome = "sent" | "unavailable" | "failed" | "suppressed";
 
 /**
  * Is there a mail provider at all?
@@ -267,6 +294,20 @@ async function sendVerificationEmail(
     );
     return "unavailable";
   }
+
+  // A suppressed address is not a send that might work — the provider accepts
+  // it and drops it. Checking first turns a silent permanent lockout into a
+  // stated fact, and avoids spending more sender reputation on a bounce we can
+  // already predict. `unknown` (lookup failed / not configured) falls through
+  // and sends, because a provider blip must never block a real signup.
+  if ((await getProviderSuppression(to)) === "suppressed") {
+    logger.warn(
+      { event: "verification_email_suppressed" },
+      "Verification email not sent — address is on the provider suppression list"
+    );
+    return "suppressed";
+  }
+
   try {
     await sendEmail(to, "Verify your SecureLogic AI account", verificationEmailHtml(name, verificationUrl));
     return "sent";
@@ -494,18 +535,31 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       "Signup completed but the verification email was not delivered"
     );
 
+    // A suppressed address needs different words and a different next action.
+    // "Try again" is the correct advice for a transient failure and actively
+    // wrong here: every retry is accepted by the provider, discarded, and costs
+    // more sender reputation. Only a different address, or an operator lifting
+    // the suppression, can move this customer forward — so the resend hints are
+    // deliberately withheld in that case rather than offered and useless.
+    const suppressed = emailOutcome === "suppressed";
+
     res.status(201).json({
       ok: true,
       message: "verification_email_not_sent",
       verification_email: emailOutcome,
-      detail:
-        "Your account and organization were created, but we could not send your verification email. " +
-        "You cannot sign in until your address is verified.",
-      recovery: {
-        resend_path: "/verify-email",
-        resend_endpoint: "/api/auth/resend-verification",
-        support_email: "hello@securelogicai.com"
-      }
+      detail: suppressed
+        ? "Your account and organization were created, but this email address cannot receive our messages — " +
+          "it was blocked by our email provider after a previous delivery failure. Resending will not help. " +
+          "Contact support to verify your address or to switch to a different one."
+        : "Your account and organization were created, but we could not send your verification email. " +
+          "You cannot sign in until your address is verified.",
+      recovery: suppressed
+        ? { support_email: "hello@securelogicai.com" }
+        : {
+            resend_path: "/verify-email",
+            resend_endpoint: "/api/auth/resend-verification",
+            support_email: "hello@securelogicai.com"
+          }
     });
   } catch (err) {
     logger.error({ event: "customer_signup_failed", err }, "POST /api/auth/signup failed");
