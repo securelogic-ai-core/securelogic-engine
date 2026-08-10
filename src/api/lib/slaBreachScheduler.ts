@@ -40,6 +40,7 @@ import {
   recordSend,
 } from "./alerting/alertPrimitives.js";
 import { sqlFindingActive, sqlActionActive } from "./metricDefinitions.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const ALERT_TYPE = "sla_breach_daily";
 /** Cap per email — a mass-breach day must not produce a 400-row email. */
@@ -160,6 +161,7 @@ export async function runDailySlaBreachSweep(): Promise<SlaBreachSweepSummary> {
               to: row.email,
               subject: `SLA breached: ${fresh.length} item${fresh.length !== 1 ? "s" : ""} you own went overdue`,
               html: renderSlaBreachEmail(org.name, shown, overflow),
+              tags: withEnvironmentTag(),
             });
             for (const item of shown) {
               await recordSend(ownerId, ALERT_TYPE, `${item.kind}:${item.id}:${item.due_date}`);

@@ -2,6 +2,11 @@ import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { verifyWebhookSignature } from "../infra/verifyWebhookSignature.js";
+import {
+  readEventEnvironment,
+  classifyEventEnvironment,
+  currentEmailEnvironment
+} from "../infra/emailEnvironment.js";
 
 const router = Router();
 
@@ -62,6 +67,55 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
 
     if (!providerEventId) {
       return res.status(400).json({ error: "provider_event_id_required" });
+    }
+
+    /* ─────────────────────────────────────────────────────────────────────
+       ENVIRONMENT ISOLATION — DARK MODE (P1-2)
+       ─────────────────────────────────────────────────────────────────────
+       Staging, demo and production share one Resend account and one webhook
+       endpoint, which points at production. So a staging bounce is delivered
+       to production, passes signature verification (the secret is identical),
+       and suppresses the address in PRODUCTION. The reverse hole exists too:
+       staging's mirror never sees any event at all.
+
+       Sends now carry an `environment` tag and Resend echoes it back on the
+       event, so the receiver can tell whose event this is.
+
+       THIS IS OBSERVATION ONLY. The classification is recorded and then
+       IGNORED: processing continues exactly as before for every case,
+       including `mismatch`. Enforcement must not be switched on until the
+       telemetry below proves no legitimate production event would be dropped
+       — the failure mode of getting that wrong is production silently
+       ceasing to record bounces and complaints, which is worse than the leak
+       it fixes. What is NOT acceptable is a mismatch passing unnoticed, which
+       is why every non-match is logged at warn with both identities.
+       ───────────────────────────────────────────────────────────────────── */
+    const receiverEnvironment = currentEmailEnvironment();
+    const senderEnvironment = readEventEnvironment(payload);
+    const environmentMatch = classifyEventEnvironment(senderEnvironment, receiverEnvironment);
+
+    const environmentTelemetry = {
+      event: "email_webhook_environment",
+      mode: "dark",
+      // Both sides of the comparison, so a mismatch is actionable from the log
+      // line alone rather than needing the payload.
+      senderEnvironment: senderEnvironment ?? "absent",
+      receiverEnvironment,
+      classification: environmentMatch,
+      eventType,
+      providerEventId,
+      // Deliberately NO recipient address, subject or body: this line exists to
+      // prove routing, not to duplicate the message into the log.
+      wouldRejectUnderEnforcement: environmentMatch !== "match"
+    };
+
+    if (environmentMatch === "match") {
+      logger.debug(environmentTelemetry, "Email webhook environment matched");
+    } else {
+      logger.warn(
+        environmentTelemetry,
+        "Email webhook environment did NOT match — processed anyway (dark mode)"
+      );
     }
 
     await client.query("BEGIN");
@@ -133,7 +187,16 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
     return res.status(200).json({
       ok: true,
       duplicate: false,
-      providerEventId
+      providerEventId,
+      // Surfaced so dark-mode evidence can be gathered from responses as well
+      // as logs. Under enforcement this same field reports the decision.
+      environment: {
+        mode: "dark",
+        sender: senderEnvironment ?? "absent",
+        receiver: receiverEnvironment,
+        classification: environmentMatch,
+        processed: true
+      }
     });
   } catch (err) {
     try {

@@ -41,6 +41,7 @@ import {
   type ConsentMethod,
 } from "../lib/legalConsent.js";
 import { Resend } from "resend";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const router = Router();
 
@@ -228,7 +229,13 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
  */
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const resend = getResend();
-  const res = await resend.emails.send({ from: getFromAddress(), to: [to], subject, html });
+  const res = await resend.emails.send({
+    from: getFromAddress(),
+    to: [to],
+    subject,
+    html,
+    tags: withEnvironmentTag()
+  });
 
   const error = (res as { error?: { message?: string; name?: string } | null })?.error;
   if (error) {

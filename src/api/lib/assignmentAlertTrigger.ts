@@ -20,6 +20,7 @@
  */
 import { withTenant, pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 import {
   getResend,
   getFromAddress,
@@ -136,6 +137,7 @@ async function doTrigger(input: AssignmentAlertInput): Promise<void> {
       to: row.email,
       subject: `Assigned to you: ${item.title}`,
       html,
+      tags: withEnvironmentTag(),
     });
     await recordSend(assigneeUserId, ALERT_TYPE, dedupeKey);
     logger.info(

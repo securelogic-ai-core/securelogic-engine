@@ -45,6 +45,7 @@ import { logger } from "../infra/logger.js";
 import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 import { getAppBaseUrl } from "./alerting/alertPrimitives.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
@@ -261,7 +262,19 @@ async function sendViaResend(
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ from, to: [to], subject, html, text })
+      // Briefs are the highest-volume outbound path and therefore the biggest
+      // source of bounce events. This sender talks to the REST API directly
+      // rather than through the SDK, so it needs the environment tag applied
+      // explicitly — a tag added only at the SDK sites would leave the noisiest
+      // producer of webhook events unattributable.
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        html,
+        text,
+        tags: withEnvironmentTag()
+      })
     });
 
     if (!response.ok) {
