@@ -21,6 +21,7 @@
 import { Resend } from "resend";
 import { pg } from "./postgres.js";
 import { logger } from "./logger.js";
+import { withEnvironmentTag } from "./emailEnvironment.js";
 
 function getResend(): Resend | null {
   const key = process.env.RESEND_API_KEY?.trim();
@@ -83,7 +84,8 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
       to,
       subject: args.subject,
       html: args.html,
-      ...(args.text ? { text: args.text } : {})
+      ...(args.text ? { text: args.text } : {}),
+      tags: withEnvironmentTag()
     });
     const id = (res as { data?: { id?: string } | null })?.data?.id ?? null;
     logger.info({ event: "send_email_sent", subject: args.subject, id }, "Email sent");

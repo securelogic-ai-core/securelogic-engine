@@ -26,6 +26,7 @@ import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAllCurrentConsents } from "../lib/legalConsent.js";
 import { enforceSeatLimit } from "../lib/seatLimit.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const router = Router();
 
@@ -134,7 +135,8 @@ async function sendInviteEmail(params: {
     from: getFromAddress(),
     to: [params.to],
     subject: `${params.inviterName} invited you to ${params.orgName} on SecureLogic AI`,
-    html: inviteEmailHtml(params)
+    html: inviteEmailHtml(params),
+    tags: withEnvironmentTag()
   });
 }
 
