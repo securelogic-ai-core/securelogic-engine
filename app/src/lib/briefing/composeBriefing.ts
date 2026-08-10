@@ -26,6 +26,7 @@ import type {
 } from "@/lib/api";
 import { activeActionsCount } from "@/lib/actionsMetrics";
 import { postureDelta, type PostureDelta, type PostureSnapshotLike } from "@/lib/postureTrend";
+import { postureScoreOf } from "@/lib/postureAvailability";
 
 export type BriefingInputs = {
   summary: DashboardSummary | null;
@@ -413,7 +414,11 @@ export function composeBriefing(inputs: BriefingInputs): BriefingViewModel {
  */
 function composePostureScore(inputs: BriefingInputs): PostureScoreModel {
   const { summary } = inputs;
-  const score = summary?.posture?.overall_score ?? null;
+  // Read through the shared definition so /getting-started's step 5 and this
+  // module can never disagree about whether a score exists (they did: the
+  // checklist counted a bare snapshot_date as a score). Behaviour here is
+  // unchanged — `postureScoreOf` IS `posture?.overall_score ?? null`.
+  const score = postureScoreOf(summary?.posture);
   const asOf = summary?.posture?.snapshot_date ?? null;
 
   let driver: PostureDriverModel | null = null;

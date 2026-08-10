@@ -56,11 +56,34 @@ describe("getOnboardingStepCompletion", () => {
     expect(completion).toEqual([true, true, true, true, true]);
   });
 
-  it("completes step 5 when only a snapshot_date is present (score still computing)", () => {
+  // This case previously asserted the OPPOSITE ("score still computing" counted
+  // as complete). That rule was the defect: an unscored snapshot row has a date
+  // and no score, which is exactly the state a brand-new org is in, so step 5
+  // was ticked — and claimed a score was available — on an org that had done
+  // nothing, while the dashboard it links to said "Insufficient data".
+  it("does NOT complete step 5 on a snapshot_date alone — a date is not a score", () => {
     expect(
       getOnboardingStepCompletion(EMPTY_INVENTORY, {
         overall_score: null,
         snapshot_date: "2026-06-30",
+      })[4],
+    ).toBe(false);
+  });
+
+  it("does NOT complete step 5 for a brand-new org carrying an unscored snapshot", () => {
+    const completion = getOnboardingStepCompletion(EMPTY_INVENTORY, {
+      overall_score: null,
+      snapshot_date: "2026-08-10",
+    });
+    expect(completion).toEqual([false, false, false, false, false]);
+    expect(completion.filter(Boolean).length).toBe(0); // was "1 of 5" on day one
+  });
+
+  it("completes step 5 on a score even when snapshot_date is absent", () => {
+    expect(
+      getOnboardingStepCompletion(EMPTY_INVENTORY, {
+        overall_score: 41,
+        snapshot_date: null,
       })[4],
     ).toBe(true);
   });
