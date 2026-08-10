@@ -976,7 +976,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Getting started checklist",
       "href": "/getting-started",
       "group": "Onboarding",
-      "access": "all"
+      "access": "platform"
     }
   ]
 };

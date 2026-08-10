@@ -27,12 +27,13 @@ import {
   hrefs,
   hrefOf,
 } from "@/test/harness";
-import { aDashboardSummary } from "@/test/fixtures";
+import { aDashboardSummary, aMe } from "@/test/fixtures";
 import type { DashboardSummary } from "@/lib/api";
 
 const api = vi.hoisted(() => ({
   getDashboardSummary: vi.fn(),
   getAssets: vi.fn(),
+  getMe: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -99,6 +100,9 @@ beforeEach(() => {
   });
   api.getDashboardSummary.mockResolvedValue(emptyOrg());
   api.getAssets.mockResolvedValue(assetsRead(0));
+  // The wizard is platform-gated, so the default caller must be entitled or every
+  // render test below would assert against a redirect instead of the checklist.
+  api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform" }));
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -446,17 +450,61 @@ describe("/getting-started — authorization", () => {
     expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
   });
 
-  it("the wizard itself is NOT entitlement-gated — a free-tier org sees the same checklist", async () => {
-    vi.stubEnv("SECURELOGIC_ASSET_REGISTRY_ENABLED", "false");
-    signedIn({ entitlementLevel: "free" });
+  // ── The wizard's own entitlement gate ────────────────────────────────
+  // This block REPLACES a test that asserted the opposite ("the wizard itself is
+  // NOT entitlement-gated — a free-tier org sees the same checklist"). That test
+  // was an accurate description of the code and an accurate description of a
+  // defect: every step targets a platform-gated destination, so an unentitled
+  // caller was shown a five-step setup in which it could not complete a single
+  // step — two CTAs bounce back to /dashboard, the other two 403 on write. The
+  // page now applies the same predicate its destinations do.
 
-    const { container } = await render();
+  it("sends an unentitled (starter) caller to /dashboard, not into a dead-end checklist", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
+    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
+  });
 
-    // Asserting what the code ACTUALLY does. Note the consequence, which is the same on
-    // both sides of the registry flag: the step-2 CTA (/vendors/new dark, /assets/new
-    // lit) is platform-gated at its destination, so a free-tier caller who clicks it is
-    // redirected to /dashboard. The wizard shows no gated state for that.
-    expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
-    expect(hrefs(container)).toContain("/vendors/new");
+  it("'professional' (Brief Pro) is not a platform tier — it gets the redirect too", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "professional" }));
+    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
+  });
+
+  it.each(["premium", "platform", "team"])(
+    "admits '%s' — the whole platform-entitled family keeps the checklist",
+    async (entitlementLevel) => {
+      vi.stubEnv("SECURELOGIC_ASSET_REGISTRY_ENABLED", "false");
+      api.getMe.mockResolvedValue(aMe({ entitlementLevel }));
+
+      const { container } = await render();
+
+      expect(screen.getByText("0 of 5 steps complete")).toBeInTheDocument();
+      expect(hrefs(container)).toContain("/vendors/new");
+    }
+  );
+
+  it("a getMe() failure is treated as unentitled, not as platform access", async () => {
+    api.getMe.mockResolvedValue(null);
+    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
+  });
+
+  it("entitlement comes from getMe, never from the session cookie", async () => {
+    // The cookie claims platform; the authority (getMe) says free. Trusting the
+    // cookie would put the customer back in the dead end the gate exists to stop.
+    signedIn({ entitlementLevel: "platform" });
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "free" }));
+    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
+  });
+
+  it("does not read checklist data for an unentitled org", async () => {
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
+    await expectRedirect(GettingStartedPage, {});
+    expect(api.getDashboardSummary).not.toHaveBeenCalled();
+    expect(api.getAssets).not.toHaveBeenCalled();
+  });
+
+  it("the gate is checked on the API-key path too, not just the jwt path", async () => {
+    apiKeyOnly();
+    api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
+    expect(await expectRedirect(GettingStartedPage, {})).toBe("/dashboard");
   });
 });
