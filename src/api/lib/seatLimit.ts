@@ -62,3 +62,109 @@ export async function enforceSeatLimit(
 
   return { exceeded: used >= cap, used, cap };
 }
+
+// ---------------------------------------------------------------------------
+// Per-class seat metering (enterprise seat program — Phase 1)
+//
+// Seats now have a CLASS: 'full' (paid governance), 'contributor' (included,
+// scoped) and 'viewer' (included, read-only). Each class has its own cap.
+//
+// This block is ADDITIVE. The whole-org enforceSeatLimit above is unchanged and
+// still counts every active member against organizations.max_members — which is
+// correct today because every existing user is 'full'. Per-class ENFORCEMENT at
+// the creation paths lands in Phase 4; these helpers are the machinery it uses.
+// ---------------------------------------------------------------------------
+
+export type SeatClass = "full" | "contributor" | "viewer";
+
+/**
+ * Default cap multipliers over purchased Full seats, with floors (approved
+ * commercial defaults). Consulted only when an org has no explicit per-class
+ * cap set — the value is computed, never hard-coded per call site.
+ */
+export const CONTRIBUTOR_SEAT_MULTIPLIER = 10;
+export const CONTRIBUTOR_SEAT_FLOOR = 50;
+export const VIEWER_SEAT_MULTIPLIER = 5;
+export const VIEWER_SEAT_FLOOR = 25;
+
+/**
+ * The default cap for a seat class, derived from the org's Full-seat cap.
+ * Pure and total — unit-testable with no I/O.
+ *   full        → the Full cap itself (the purchased number)
+ *   contributor → max(floor, multiplier × full)
+ *   viewer      → max(floor, multiplier × full)
+ */
+export function computeDefaultSeatCap(seatClass: SeatClass, fullSeatCap: number): number {
+  switch (seatClass) {
+    case "full":
+      return fullSeatCap;
+    case "contributor":
+      return Math.max(CONTRIBUTOR_SEAT_FLOOR, CONTRIBUTOR_SEAT_MULTIPLIER * fullSeatCap);
+    case "viewer":
+      return Math.max(VIEWER_SEAT_FLOOR, VIEWER_SEAT_MULTIPLIER * fullSeatCap);
+  }
+}
+
+/**
+ * Resolve the effective cap for a class from the org's stored values.
+ * An explicit per-class column wins; NULL falls back to the computed default.
+ * Pure — the caller supplies the three stored numbers.
+ */
+export function resolveSeatCap(
+  seatClass: SeatClass,
+  org: {
+    maxMembers: number | null;
+    maxContributorSeats: number | null;
+    maxViewerSeats: number | null;
+  }
+): number {
+  const fullCap = org.maxMembers ?? DEFAULT_MAX_SEATS;
+  if (seatClass === "full") return fullCap;
+  const explicit =
+    seatClass === "contributor" ? org.maxContributorSeats : org.maxViewerSeats;
+  return explicit ?? computeDefaultSeatCap(seatClass, fullCap);
+}
+
+export interface SeatClassLimitResult extends SeatLimitResult {
+  seatClass: SeatClass;
+}
+
+/**
+ * Count active members of ONE seat class against that class's effective cap.
+ * Single round-trip. Mirrors enforceSeatLimit's contract per class; callers map
+ * exceeded===true to a class-specific rejection (Phase 4).
+ */
+export async function enforceSeatLimitForClass(
+  organizationId: string,
+  seatClass: SeatClass
+): Promise<SeatClassLimitResult> {
+  const result = await pg.query<{
+    used: string;
+    max_members: number | null;
+    max_contributor_seats: number | null;
+    max_viewer_seats: number | null;
+  }>(
+    `
+    SELECT
+      (SELECT COUNT(*) FROM users
+        WHERE organization_id = o.id AND status = 'active' AND seat_type = $2)::text AS used,
+      o.max_members,
+      o.max_contributor_seats,
+      o.max_viewer_seats
+    FROM organizations o
+    WHERE o.id = $1
+    LIMIT 1
+    `,
+    [organizationId, seatClass]
+  );
+
+  const row = result.rows[0];
+  const used = parseInt(row?.used ?? "0", 10);
+  const cap = resolveSeatCap(seatClass, {
+    maxMembers: row?.max_members ?? null,
+    maxContributorSeats: row?.max_contributor_seats ?? null,
+    maxViewerSeats: row?.max_viewer_seats ?? null,
+  });
+
+  return { exceeded: used >= cap, used, cap, seatClass };
+}
