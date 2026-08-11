@@ -9,6 +9,17 @@ services:
     autoDeploy: true
     healthCheckPath: /health
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -283,10 +294,12 @@ services:
   # enforcement, audit/retention assertions, validateEnv
   # required-env list).
   #
-  # APP_ENV=staging is the labeling-only differentiator used
-  # by the logger pino base to tell staging from prod in log
-  # output. Every other env var must be set to staging
-  # credentials in the dashboard.
+  # APP_ENV=staging is this service's ENVIRONMENT IDENTITY. It began as a
+  # logger label, but P1-2 gave it behaviour: outbound mail is tagged with
+  # it, inbound provider events are classified against it, and the
+  # destructive provider-suppression clear is refused unless it reads
+  # "production". Every other env var must be set to staging credentials in
+  # the dashboard.
   #
   # Keep this block in lockstep with securelogic-engine above.
   # =========================================================
@@ -305,8 +318,10 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Labeling-only — distinguishes staging from prod in logs.
-      # Prod leaves this unset (appEnv: null in pino base).
+      # Environment identity. NO LONGER labeling-only: P1-2 made this
+      # load-bearing (outbound send tagging, inbound event classification, and
+      # the production-only guard on provider-suppression recovery). Prod does
+      # NOT leave it unset — every service now declares it explicitly above.
       - key: APP_ENV
         value: staging
 
@@ -571,6 +586,17 @@ services:
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -697,6 +723,17 @@ services:
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -821,6 +858,17 @@ services:
     startCommand: node dist-posture-worker/services/posture-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -855,6 +903,17 @@ services:
     startCommand: node dist-posture-worker/services/posture-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -900,6 +959,17 @@ services:
     startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -952,6 +1022,17 @@ services:
     startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -1014,6 +1095,17 @@ services:
     startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -1082,6 +1174,17 @@ services:
     startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -1138,6 +1241,17 @@ services:
     # outage. See app/src/app/api/health/route.ts.
     healthCheckPath: /api/health
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -1424,6 +1538,17 @@ services:
       - securelogicai.com
       - www.securelogicai.com
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -1461,6 +1586,17 @@ services:
     startCommand: cd website && npx serve@latest out -l $PORT
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: production
 
