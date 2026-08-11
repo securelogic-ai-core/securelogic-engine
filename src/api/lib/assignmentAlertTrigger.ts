@@ -17,6 +17,14 @@
  *                work; called AFTER the assigning transaction commits
  *                (setImmediate + own withTenant scope — A04-G1 γ.3, same
  *                pattern as the vendor-score recompute scheduler)
+ *
+ * Dark behind SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED (default off), matching its
+ * EG2 notification siblings SECURELOGIC_MATCHER_ALERTS_ENABLED (s1) and
+ * SECURELOGIC_SLA_ALERTS_ENABLED (s11). This slice shipped without a gate while
+ * both siblings had one, so an assignment in production would have emailed a
+ * customer on promotion with no operator switch to hold it back; the
+ * develop→main release review caught that. Enabling is an operator action after
+ * a staging check, same as the siblings.
  */
 import { withTenant, pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
@@ -50,8 +58,28 @@ export type AssignmentAlertInput = {
 
 const ALERT_TYPE = "assignment_immediate";
 
+/**
+ * Feature gate for the assignment notification. Strict `=== "true"`, exactly as
+ * slaAlertsEnabled and the matcher-alerts flag read theirs, so the flag fails
+ * CLOSED: absent, empty, "TRUE", "1", "yes" and every other value are OFF. The
+ * only way a customer email leaves this module is the literal string "true".
+ *
+ * Read from `env` at call time rather than captured at import so a process that
+ * has its environment adjusted (tests, and any future runtime reload) sees the
+ * current value instead of the value at module load.
+ */
+export function assignmentAlertsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env["SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED"] === "true";
+}
+
 /** Fire-and-forget entry point. Safe to call from any route post-commit. */
 export function triggerAssignmentAlert(input: AssignmentAlertInput): void {
+  // Gate FIRST: when off, do no work at all — no scheduling, no tenant scope,
+  // no eligibility read, no send. The four call sites (findings.ts ×2,
+  // actions.ts ×2) all funnel through here, so this is the single choke point
+  // and assignment business logic upstream is untouched either way.
+  if (!assignmentAlertsEnabled()) return;
+
   if (input.actorUserId !== null && input.actorUserId === input.assigneeUserId) return;
 
   setImmediate(() => {

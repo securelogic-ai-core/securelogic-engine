@@ -247,6 +247,8 @@ services:
         value: "false"
       - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped); off = zero-DB no-op, cron inert
         value: "false"
+      - key: SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED    # EG2 s7 — "assigned to you" email on finding/action assignment; off = trigger returns before any query or send. Shipped ungated; gated at the develop→main release review
+        value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_AUTONOMOUS_OPERATIONS_ENABLED # ERIP E6 (approval-gated orchestration) — DARK (default off); human approval required
@@ -527,6 +529,8 @@ services:
       - key: SECURELOGIC_MATCHER_ALERTS_ENABLED       # EG2 s1 — coalesced Critical/High finding alerts from the automated signal→finding path
         value: "false"
       - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped)
+        value: "false"
+      - key: SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED    # EG2 s7 — "assigned to you" email on finding/action assignment; flip here first to validate on staging
         value: "false"
 
       # Finding risk-acceptance lifecycle (ruling 2026-07-12, PR #646) — STAGING
