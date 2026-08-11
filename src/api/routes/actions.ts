@@ -15,6 +15,8 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -181,6 +183,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -370,6 +373,10 @@ router.get(
       const conditions = filters.conditions;
       const params = filters.params;
 
+      // Contributor seats see only actions they own. Inert for others / flag off.
+      const contribClause = ownerCondition(req, "owner_user_id", params);
+      if (contribClause) conditions.push(contribClause);
+
       // Snapshot the filter set BEFORE the cursor + limit params so the total
       // COUNT reflects the SAME filters (cursor excluded) — pagination truth,
       // mirroring GET /api/findings so a capped page can honestly disclose
@@ -470,6 +477,8 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  // Org-wide action counts are a governance view; Contributors use the scoped list.
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -620,6 +629,12 @@ router.get(
         return;
       }
 
+      // Contributor seats may read only actions they own; else 404.
+      if (!mayAccessOwned(req, result.rows[0].owner_user_id)) {
+        res.status(404).json({ error: "action_not_found" });
+        return;
+      }
+
       res.status(200).json({ action: result.rows[0] });
     } catch (err) {
       logger.error(
@@ -657,6 +672,18 @@ router.patch(
       if (!actionId) {
         res.status(400).json({ error: "action_id_required" });
         return;
+      }
+
+      // Contributor seats may mutate only actions they own; else 404.
+      if (isAssignedScope(req)) {
+        const own = await pg.query(
+          `SELECT owner_user_id FROM actions WHERE id = $1 AND organization_id = $2`,
+          [actionId, organizationId]
+        );
+        if ((own.rowCount ?? 0) === 0 || !mayAccessOwned(req, own.rows[0].owner_user_id)) {
+          res.status(404).json({ error: "action_not_found" });
+          return;
+        }
       }
 
       const body =
@@ -1018,10 +1045,11 @@ router.post(
 
       // Load + row-lock inside the tenant transaction so a concurrent unblock
       // cannot double-fire the transition. Distinguishes 404 (absent / other
-      // org) from 409 (present but not blocked).
+      // org) from 409 (present but not blocked). owner_user_id is fetched so a
+      // Contributor can unblock only their own action.
       const existing = await pg.query(
         `
-        SELECT id, status, source_type, source_id,
+        SELECT id, status, source_type, source_id, owner_user_id,
                blocked_reason, blocked_dependency, blocked_owner_user_id,
                blocked_expected_unblock_date
           FROM actions
@@ -1031,6 +1059,10 @@ router.post(
         `,
         [actionId, organizationId]
       );
+      if ((existing.rowCount ?? 0) > 0 && !mayAccessOwned(req, existing.rows[0].owner_user_id)) {
+        res.status(404).json({ error: "action_not_found" });
+        return;
+      }
 
       if ((existing.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "action_not_found" });

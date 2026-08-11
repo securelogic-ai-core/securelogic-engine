@@ -32,6 +32,8 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned } from "../lib/contributorScope.js";
 import {
   validateEvidenceCreate,
   validateEvidenceListQuery
@@ -153,6 +155,8 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Org-wide evidence roll-up is a governance view.
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -203,6 +207,8 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Org-wide "recent evidence" is a governance view.
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -421,6 +427,11 @@ router.get(
     const { input } = validated;
 
     try {
+      // Contributor seats see only evidence they uploaded, regardless of which
+      // source object is queried — so an arbitrary source_id cannot enumerate
+      // other people's evidence. Inert for others / flag off.
+      const params: unknown[] = [organizationId, input.source_type, input.source_id];
+      const oc = ownerCondition(req, "uploaded_by_user_id", params);
       const result = await pg.query(
         `
         SELECT ${EVIDENCE_SELECT}
@@ -428,9 +439,10 @@ router.get(
         WHERE organization_id = $1
           AND source_type = $2
           AND source_id = $3::uuid
+          ${oc ? `AND ${oc}` : ""}
         ORDER BY created_at DESC, id DESC
         `,
-        [organizationId, input.source_type, input.source_id]
+        params
       );
 
       const evidenceList = result.rows;
@@ -494,6 +506,12 @@ router.get(
       );
 
       if ((result.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "evidence_not_found" });
+        return;
+      }
+
+      // Contributor seats may read only evidence they uploaded; else 404.
+      if (!mayAccessOwned(req, result.rows[0].uploaded_by_user_id)) {
         res.status(404).json({ error: "evidence_not_found" });
         return;
       }
@@ -827,11 +845,16 @@ router.get(
       }
 
       const row = await withTenant(organizationId, () =>
-        pg.query<{ storage_key: string | null }>(
-          `SELECT storage_key FROM evidence WHERE id = $1 AND organization_id = $2`,
+        pg.query<{ storage_key: string | null; uploaded_by_user_id: string | null }>(
+          `SELECT storage_key, uploaded_by_user_id FROM evidence WHERE id = $1 AND organization_id = $2`,
           [evidenceId, organizationId]
         )
       );
+      // Contributor seats may download only files they uploaded; else 404.
+      if ((row.rowCount ?? 0) > 0 && !mayAccessOwned(req, row.rows[0]?.uploaded_by_user_id)) {
+        res.status(404).json({ error: "evidence_not_found" });
+        return;
+      }
       if ((row.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "evidence_not_found" });
         return;
