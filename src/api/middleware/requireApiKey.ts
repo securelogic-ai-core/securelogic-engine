@@ -13,6 +13,12 @@ declare global {
       /** Role of the authenticated user (JWT path only) */
       userRole?: string;
       /**
+       * Seat class of the authenticated user (JWT path only): full |
+       * contributor | viewer. Absent on API-key auth, which is admin-level and
+       * treated as a full seat by the seat resolver.
+       */
+      userSeatType?: string;
+      /**
        * When a JWT user is authenticated, this is their user UUID.
        * Routes can use it as a fallback for owner_user_id when the
        * caller doesn't provide one explicitly.
@@ -72,13 +78,18 @@ export async function requireApiKey(
       // api_keys lookup below has no fallback either, so failing JWT-bridge
       // auth here doesn't widen the outage envelope.
       let effectiveRole: string;
+      // Seat class (enterprise seat program). Read live from the users row, like
+      // the role, so a seat change takes effect immediately. Legacy/null rows
+      // resolve to 'full' — the pre-seat-model default.
+      let effectiveSeatType = "full";
       try {
         const pwResult = await pg.query<{
           password_changed_at: Date | null;
           status: string;
           role: string;
+          seat_type: string | null;
         }>(
-          `SELECT password_changed_at, status, role FROM users WHERE id = $1 LIMIT 1`,
+          `SELECT password_changed_at, status, role, seat_type FROM users WHERE id = $1 LIMIT 1`,
           [payload.sub]
         );
         const userRow = pwResult.rows[0] ?? null;
@@ -111,6 +122,7 @@ export async function requireApiKey(
         // Role changes take effect immediately: authz below uses the
         // current DB role, not the claim baked into the token at issue.
         effectiveRole = userRow.role;
+        effectiveSeatType = userRow.seat_type ?? "full";
       } catch (err) {
         logger.error(
           { event: "jwt_bridge_pw_check_db_error", err, userId: payload.sub },
@@ -167,6 +179,7 @@ export async function requireApiKey(
       (req as any).jwtPayload = { ...payload, role: effectiveRole };
       req.userId              = payload.sub;
       req.userRole            = effectiveRole;
+      req.userSeatType        = effectiveSeatType;
       req.autoUserId          = payload.sub;
       next();
       return;
