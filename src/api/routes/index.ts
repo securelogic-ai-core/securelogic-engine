@@ -26,6 +26,7 @@ import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminSuppressionsRouter from "./adminSuppressions.js";
 import adminEmailDeliverabilityRouter from "./adminEmailDeliverability.js";
 import adminProviderSuppressionRecoveryRouter from "./adminProviderSuppressionRecovery.js";
+import adminEmailEnvironmentEvidenceRouter from "./adminEmailEnvironmentEvidence.js";
 import adminBriefSubscribersRouter from "./adminBriefSubscribers.js";
 import adminIssuesRouter from "./adminIssues.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
@@ -315,6 +316,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // demo, so the clear is gated on APP_ENV=production AND an explicit flag —
   // see lib/providerSuppressionRecoveryPolicy.ts. Must stay inside adminChain.
   router.use("/admin", adminProviderSuppressionRecoveryRouter);
+  // P1-2 "prove" step: what enforcement WOULD have dropped on this receiver,
+  // computed with the same classifier the webhook uses. Read-only; enables
+  // nothing.
+  router.use("/admin", adminEmailEnvironmentEvidenceRouter);
   router.use("/admin", adminBriefSubscribersRouter);
   router.use("/admin", adminIssuesRouter);
   router.use("/admin", adminCreateEmailSuppressionRouter);

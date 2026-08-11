@@ -341,7 +341,9 @@ router.get("/", (_req, res) => {
       <div class="btn-group" id="evtTypeGroup">
         <button class="btn btn-ghost btn-sm active" data-type="all">All</button>
         <button class="btn btn-ghost btn-sm" data-type="bounce">Bounce</button>
-        <button class="btn btn-ghost btn-sm" data-type="complaint">Complaint</button>
+        <!-- "complain", not "complaint": the provider sends email.complained,
+             which does not contain the substring "complaint". -->
+        <button class="btn btn-ghost btn-sm" data-type="complain">Complaint</button>
         <button class="btn btn-ghost btn-sm" data-type="delivered">Delivered</button>
         <button class="btn btn-ghost btn-sm" data-type="opened">Opened</button>
       </div>
@@ -461,7 +463,7 @@ function statusBadge(s) {
 function evtTypeBadge(t) {
   var ev = String(t || '').toLowerCase();
   if (ev.includes('bounce')) return '<span class="badge badge-red">' + esc(t) + '</span>';
-  if (ev.includes('complaint')) return '<span class="badge badge-red">' + esc(t) + '</span>';
+  if (ev.includes('complain')) return '<span class="badge badge-red">' + esc(t) + '</span>';
   if (ev.includes('deliver')) return '<span class="badge badge-green">' + esc(t) + '</span>';
   if (ev.includes('open')) return '<span class="badge badge-teal">' + esc(t) + '</span>';
   return '<span class="badge badge-gray">' + esc(t) + '</span>';
