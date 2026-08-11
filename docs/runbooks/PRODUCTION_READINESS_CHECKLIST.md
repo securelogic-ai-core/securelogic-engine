@@ -55,7 +55,9 @@ Each unchecked box is an open item; nothing here is aspirational boilerplate —
 - [ ] **[OPERATOR]** Promotion flow develop → main → prod deploy confirmed (staging soak period decided)
 
 ## Required environment variables (dashboard-managed, per `render.yaml`)
-Core: DATABASE_URL · REDIS_URL · JWT_SECRET · SESSION_SECRET · FIELD_ENCRYPTION_KEY · MFA_SECRET_KEY · SECURELOGIC_ADMIN_KEY · SECURELOGIC_ADMIN_ALLOWED_IPS · SECURELOGIC_SIGNING_SECRET · SCHEDULER_SECRET
+Core: DATABASE_URL · REDIS_URL · JWT_SECRET · SESSION_SECRET · FIELD_ENCRYPTION_KEY · MFA_SECRET_KEY · SECURELOGIC_ADMIN_KEY · SECURELOGIC_SIGNING_SECRET · SCHEDULER_SECRET
+
+Observational (NOT an active control): `SECURELOGIC_ADMIN_ALLOWED_IPS` — still asserted non-empty at startup by `selfTest.ts`, so it must be *set*, but `requireAdminNetwork` runs dark and enforces nothing. Do not treat it as satisfying an admin network-restriction requirement, and do not set `SECURELOGIC_ADMIN_NETWORK_ENFORCED`. Rationale and the egress-stability evidence: `TENANT_ISOLATION_STANDARD.md` → "NOT a required control".
 Integrations: RESEND_API_KEY(+WEBHOOK_SECRET) · ANTHROPIC_API_KEY · OPENAI_API_KEY · LEMON_WEBHOOK_SECRET · R2_{ACCOUNT_ID,ACCESS_KEY_ID,SECRET_ACCESS_KEY,BUCKET,ENDPOINT} · SENTRY_DSN_{ENGINE,APP}
 URLs: APP_BASE_URL · ENGINE_URL_BASE · ENGINE_API_URL · NEXT_PUBLIC_{APP_URL,API_URL,ENGINE_URL,SITE_URL} · NEWSLETTER/BRIEF from-addresses
 Sessions: SESSION_IDLE_SECONDS · SESSION_ABSOLUTE_SECONDS · LOG_LEVEL

@@ -35,9 +35,15 @@ services:
       - key: SECURELOGIC_ADMIN_KEY
         sync: false
 
-      # IP allowlist for /admin routes (CIDR, comma-separated; 0.0.0.0/0 is forbidden)
-      # On Render internal network, 10.0.0.0/8 covers private traffic.
-      # Set this to match your actual ingress range before deploying.
+      # OBSERVATIONAL ONLY — this does NOT restrict /admin.
+      # requireAdminNetwork runs dark: it logs `admin_network_evaluated` and always
+      # continues unless SECURELOGIC_ADMIN_NETWORK_ENFORCED === "true" (set nowhere).
+      # Startup (selfTest.ts) still asserts this is non-empty, so it must be SET,
+      # but its value is not currently load-bearing for access control.
+      # Do NOT enable enforcement: staff egress is Codespaces/Azure NAT and rotates
+      # per session, so a /32 list locks operators out of /admin — including the
+      # /admin/ops/* endpoints used to diagnose the lockout.
+      # See TENANT_ISOLATION_STANDARD.md → "NOT a required control".
       - key: SECURELOGIC_ADMIN_ALLOWED_IPS
         sync: false
 
@@ -336,6 +342,9 @@ services:
       - key: SECURELOGIC_ADMIN_KEY
         sync: false
 
+      # OBSERVATIONAL ONLY — does NOT restrict /admin. Must be set (selfTest asserts
+      # non-empty) but requireAdminNetwork runs dark. Do not enable enforcement.
+      # See TENANT_ISOLATION_STANDARD.md → "NOT a required control".
       - key: SECURELOGIC_ADMIN_ALLOWED_IPS
         sync: false
 
