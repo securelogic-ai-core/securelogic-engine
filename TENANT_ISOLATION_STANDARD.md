@@ -172,8 +172,34 @@ Staff (SecureLogic AI employees) access customer data only via the `/admin/*` su
 
 ### Required controls (in series)
 1. `SECURELOGIC_ADMIN_KEY` — rotatable, min 16 chars, set in environment, never in code. Authenticates every `/admin/*` request via the `X-Admin-Key` header (timing-safe compare in `requireAdminKey.ts`).
-2. IP allowlist — `SECURELOGIC_ADMIN_ALLOWED_IPS` (CIDR, comma-separated). `0.0.0.0/0` is forbidden.
-3. Per-request middleware chain — `[adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
+2. Per-request middleware chain — `[requireAdminNetwork, adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
+
+### NOT a required control: the admin IP allowlist (observational only)
+
+`SECURELOGIC_ADMIN_ALLOWED_IPS` / `requireAdminNetwork` is **observational (dark) in every
+environment and enforces nothing.** It classifies the caller, logs `admin_network_evaluated`,
+and always continues. It rejects a request only when `SECURELOGIC_ADMIN_NETWORK_ENFORCED` is
+exactly `"true"`, which is set nowhere.
+
+It must not be listed as a required active control, and admin access restriction must not be
+credited to it, because the operational precondition it needs does not exist:
+
+- Staff admin egress is **not stable**. Four distinct SecureLogic egress addresses were
+  attributable within roughly one day from a *single* operator (`20.42.11.16`,
+  `172.210.53.230`, `172.191.151.49`, `172.210.53.228`) — all Azure, spanning three `/24`s.
+  Admin access originates from GitHub Codespaces, which draws a fresh NAT address per session.
+- Neither address configured in the allowlist has **ever** been observed in admin traffic.
+- `render.yaml` still carries the placeholder instruction to "set this to match your actual
+  ingress range before deploying". That range was never determined.
+
+Enforcing it would lock operators out of `/admin`, including the `/admin/ops/*` endpoints used
+to diagnose the lockout. **Do not enable `SECURELOGIC_ADMIN_NETWORK_ENFORCED` without first
+establishing a stable, SecureLogic-controlled egress path.** The middleware stays wired and dark
+because its telemetry is what would prove such a path exists; it costs one log line per request
+and changes no response.
+
+Actual admin restriction today rests on items 1 and 2 above: the timing-safe key compare,
+Redis-backed lockout, rate limit, and audit log.
 
 ### Rules
 - Every admin route that reads customer data MUST audit-log the request `ipAddress` AND the affected `organizationId`.
