@@ -64,10 +64,14 @@ function isValidApiKeyId(value: unknown): value is string {
  *   - Current checkout tiers:  professional, teams, platform, platform_annual
  *   - Legacy (pre-overhaul):   team, paid, admin
  *
- * Anything outside this set is logged as stripe_unknown_tier. The function
- * still returns a sensible default ("paid") so webhook delivery is never
- * blocked by a bad metadata value, but the warning ensures silent drift
- * between the product catalog and this whitelist is loud in logs.
+ * Anything outside this set is logged as stripe_unresolved_tier and resolves
+ * to null — NO entitlement is granted. It used to default to "paid" (full
+ * platform) so that webhook delivery was never blocked by a bad metadata
+ * value; that traded a delivery concern for an over-entitlement, since the
+ * least trustworthy input produced the most privileged output. Delivery is
+ * still never blocked — the event is acknowledged and ignored — but access is
+ * no longer invented. Drift between the product catalog and this whitelist is
+ * now an error-level log, not a warning.
  */
 const KNOWN_TIERS = new Set([
   "professional", "teams", "platform", "platform_annual",
@@ -127,10 +131,28 @@ function resolveTierFromPriceId(subscription: Stripe.Subscription): string | nul
  * Non-subscription events (checkout.session.completed, etc.) read metadata
  * directly, preserving prior behavior.
  *
- * Unknown raw values are logged as stripe_unknown_tier and default to "paid"
- * for forward compatibility with legacy events that predate tier metadata.
+ * RETURNS null WHEN THE TIER CANNOT BE DETERMINED — it does NOT guess.
+ * ---------------------------------------------------------------------
+ * This previously defaulted to "paid" — the FULL PLATFORM tier — whenever the
+ * price was unmapped and metadata was absent or unrecognised, justified as
+ * "forward compatibility with legacy events". The effect was that the least
+ * trustworthy input produced the most privileged output: any subscription
+ * created outside our own Checkout (Stripe Dashboard, comped, migrated,
+ * internal) carries no tier metadata, and so was granted premium access on the
+ * strength of being unrecognised.
+ *
+ * Returning null instead lets the caller decline to act. Note what that is NOT:
+ * it is not a downgrade. An unresolvable GRANT is ignored, so an existing
+ * entitlement is left exactly as it was rather than being lowered on a guess —
+ * important because the same unresolvable input could belong to a legitimate
+ * customer whose metadata we simply cannot read. Revocation is unaffected and
+ * must stay that way: cancellations and past_due transitions do not consult the
+ * tier at all, so a subscription can always still LOSE access.
+ *
+ * The unresolved case is logged at error level with the price ID, because it
+ * now means a real event was not applied and someone has to look at it.
  */
-function resolveTier(event: Stripe.Event): "professional" | "paid" {
+function resolveTier(event: Stripe.Event): "professional" | "paid" | null {
   if (event.type.startsWith("customer.subscription.")) {
     const subscription = event.data.object as Stripe.Subscription;
     const priceTier = resolveTierFromPriceId(subscription);
@@ -149,12 +171,25 @@ function resolveTier(event: Stripe.Event): "professional" | "paid" {
     obj?.subscription_details?.metadata?.tier ??
     null;
 
-  if (!rawTier || !KNOWN_TIERS.has(rawTier)) {
-    logger.warn(
-      { event: "stripe_unknown_tier", rawTier, stripeEventType: event.type },
-      "stripeWebhook: unknown or missing tier in metadata — defaulting to 'paid'"
+  if (typeof rawTier !== "string" || !KNOWN_TIERS.has(rawTier)) {
+    const priceId =
+      event.type.startsWith("customer.subscription.")
+        ? (event.data.object as Stripe.Subscription).items?.data?.[0]?.price?.id ?? null
+        : null;
+    logger.error(
+      {
+        event: "stripe_unresolved_tier",
+        // `typeof` as well as the value: distinguishes absent from a non-string
+        // (object/array) metadata value, which is what "malformed" looks like.
+        rawTier: typeof rawTier === "string" ? rawTier : null,
+        rawTierType: typeof rawTier,
+        priceId,
+        stripeEventType: event.type
+      },
+      "stripeWebhook: tier could not be resolved from price ID or metadata — " +
+        "NO entitlement granted (previously defaulted to 'paid')"
     );
-    return "paid";
+    return null;
   }
 
   if (rawTier === "professional" || rawTier === "teams") {
@@ -172,7 +207,12 @@ function resolveTier(event: Stripe.Event): "professional" | "paid" {
 function classifySubscriptionEvent(
   eventType: string,
   subscription: Stripe.Subscription | null,
-  metadataTier: "professional" | "paid"
+  /**
+   * null means "the tier could not be determined". Only the GRANT branches
+   * consult it; revocation deliberately does not, so access can always be
+   * withdrawn even when the tier is unresolvable.
+   */
+  metadataTier: "professional" | "paid" | null
 ): EntitlementRecord | null {
   if (REVOKE_EVENTS.has(eventType)) {
     return { tier: "free", activeSubscription: false };
@@ -181,6 +221,10 @@ function classifySubscriptionEvent(
   if (eventType === "customer.subscription.updated" && subscription) {
     const status = subscription.status;
     if (status === "active" || status === "trialing") {
+      // Decline rather than guess. Returning null leaves the existing
+      // entitlement untouched — it neither grants premium to an unrecognised
+      // subscription nor downgrades a legitimate one.
+      if (metadataTier === null) return null;
       return { tier: metadataTier, activeSubscription: true };
     }
     if (
@@ -196,6 +240,7 @@ function classifySubscriptionEvent(
   }
 
   if (GRANT_EVENTS.has(eventType)) {
+    if (metadataTier === null) return null;
     return { tier: metadataTier, activeSubscription: true };
   }
 
