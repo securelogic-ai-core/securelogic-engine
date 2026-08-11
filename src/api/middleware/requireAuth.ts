@@ -9,7 +9,7 @@
  */
 
 import type { Request, Response, NextFunction } from "express";
-import { verifyJwt, type JwtPayload } from "../lib/jwt.js";
+import { verifyJwt, SESSION_BLOCKED_STATUSES, type JwtPayload } from "../lib/jwt.js";
 import { pg } from "../infra/postgres.js";
 
 declare global {
@@ -40,18 +40,40 @@ export async function requireAuth(
     return;
   }
 
-  // Reject tokens issued before the user's most recent password change.
-  // Fail open on DB error — a transient failure must not lock out all users.
+  // Live-session enforcement against the users row. Fail open on DB
+  // error — a transient failure must not lock out all users — but a
+  // SUCCESSFUL read is authoritative: removed members, deletion-lifecycle
+  // statuses, hard-deleted rows, and pre-password-change tokens all
+  // terminate here rather than at natural JWT expiry.
   try {
-    const result = await pg.query<{ password_changed_at: Date | null }>(
-      `SELECT password_changed_at FROM users WHERE id = $1 LIMIT 1`,
+    const result = await pg.query<{
+      password_changed_at: Date | null;
+      status: string;
+      role: string;
+    }>(
+      `SELECT password_changed_at, status, role FROM users WHERE id = $1 LIMIT 1`,
       [payload.sub]
     );
-    const changedAt = result.rows[0]?.password_changed_at ?? null;
-    if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
+    const row = result.rows[0] ?? null;
+
+    if (row === null || SESSION_BLOCKED_STATUSES.has(row.status)) {
+      res.status(401).json({
+        error: "account_inactive",
+        detail: "This account no longer has access. Contact your administrator."
+      });
+      return;
+    }
+
+    if (row.password_changed_at !== null && payload.iat < Math.floor(new Date(row.password_changed_at).getTime() / 1000)) {
       res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
       return;
     }
+
+    // Role changes take effect immediately: downstream reads the current
+    // DB role, not the up-to-7-day-old claim baked into the token.
+    req.jwtPayload = { ...payload, role: row.role };
+    next();
+    return;
   } catch {
     // fail open
   }

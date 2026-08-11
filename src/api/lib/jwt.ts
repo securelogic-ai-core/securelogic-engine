@@ -114,6 +114,19 @@ export function verifyMfaChallenge(token: string): MfaChallengePayload | null {
 }
 
 /**
+ * User statuses that terminate a session immediately, regardless of the
+ * token's remaining lifetime: member removal ('inactive') and the GDPR
+ * deletion lifecycle. Both JWT verification paths (requireAuth and the
+ * requireApiKey bridge) consult this on every request — a status flip or
+ * a hard-deleted row must not keep working until natural JWT expiry.
+ */
+export const SESSION_BLOCKED_STATUSES: ReadonlySet<string> = new Set([
+  "inactive",
+  "pending_deletion",
+  "deleted",
+]);
+
+/**
  * Verify a JWT and return its payload, or null if invalid/expired.
  * Returns null (never throws) on any validation failure.
  */

@@ -18,7 +18,10 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { validateActionCreate } from "../lib/actionValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { recomputeFindingOperationalStatus } from "../lib/findingLifecycle.js";
+import { scheduleVendorScoreRecomputeForFinding } from "../lib/vendorRiskScoreRecompute.js";
+import { triggerAssignmentAlert } from "../lib/assignmentAlertTrigger.js";
 import { sqlActionActive, sqlActionOverdue } from "../lib/metricDefinitions.js";
 import { resolveOwnerMeFilter } from "../lib/findingListFilters.js";
 
@@ -53,6 +56,119 @@ function isUuid(v: unknown): boolean {
 
 function isIsoDate(v: unknown): boolean {
   return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/**
+ * The action list's filter set, built ONCE and shared by GET /api/actions and
+ * GET /api/actions/summary.
+ *
+ * This exists because the summary is now filter-scoped: a tile that sits above
+ * a filtered list must count the filtered population, not the org. The only
+ * safe way to promise that is for both routes to derive their WHERE clause
+ * from the same code — a second copy of these predicates would agree on the
+ * day it was written and drift on the first day either side changed. The
+ * predicates that have a contract definition (`active`, `overdue`) keep coming
+ * from metricDefinitions; this helper composes them, it does not redefine them.
+ *
+ * Returns the org condition already in place as $1, so callers append their own
+ * params (cursor, limit, viewer identity) after the filter params.
+ *
+ * Validation is part of the shared contract too: an unknown status or a
+ * malformed source_id is rejected identically on both routes, so a filter the
+ * list refuses can never silently widen the summary to the whole org.
+ */
+type ActionFilters =
+  | { kind: "error"; body: Record<string, unknown> }
+  | { kind: "ok"; conditions: string[]; params: unknown[] };
+
+function buildActionFilters(
+  query: Record<string, unknown>,
+  organizationId: string,
+  viewerUserId: string | null
+): ActionFilters {
+  const conditions: string[] = ["organization_id = $1"];
+  const params: unknown[] = [organizationId];
+
+  // owner=me — the caller's own remediation ("My Actions").
+  //
+  // Same security contract as the Findings list (resolveOwnerMeFilter, shared):
+  // the ONLY accepted value is the literal "me", and the user id resolves from
+  // the SESSION — a client can never pass a user id, so assignments cannot be
+  // enumerated. An API-key caller has no user identity and is rejected, never
+  // defaulted to unfiltered.
+  const ownerFilter = resolveOwnerMeFilter(query.owner, viewerUserId);
+  if (ownerFilter.kind === "error") {
+    return { kind: "error", body: { error: ownerFilter.error } };
+  }
+  if (ownerFilter.kind === "me") {
+    params.push(ownerFilter.userId);
+    conditions.push(`owner_user_id = $${params.length}`);
+  }
+
+  const filterStatus = isNonEmptyString(query.status) ? query.status : null;
+  if (filterStatus !== null) {
+    if (!VALID_STATUSES.has(filterStatus)) {
+      return {
+        kind: "error",
+        body: { error: "invalid_status_filter", allowed: [...VALID_STATUSES] }
+      };
+    }
+    params.push(filterStatus);
+    conditions.push(`status = $${params.length}`);
+  }
+
+  const filterPriority = isNonEmptyString(query.priority) ? query.priority : null;
+  if (filterPriority !== null) {
+    if (!VALID_PRIORITIES.has(filterPriority)) {
+      return {
+        kind: "error",
+        body: { error: "invalid_priority_filter", allowed: [...VALID_PRIORITIES] }
+      };
+    }
+    params.push(filterPriority);
+    conditions.push(`priority = $${params.length}`);
+  }
+
+  // `active=true` — the destination for every ACTIVE actions count.
+  //
+  // Without it, the dashboard's "N active actions" tile had no URL that could
+  // reproduce it: the only status filter was a single exact `status=`, so the
+  // tile's link fell back to the org-wide list and showed closed and accepted
+  // actions alongside the N it promised. The count and its destination could
+  // not agree BY CONSTRUCTION. Built from the contract, so they now do.
+  if (query.active === "true") {
+    conditions.push(sqlActionActive());
+  }
+
+  // Overdue comes from the contract too. The hand-rolled predicate this
+  // replaces (`status NOT IN ('closed','accepted')`) matched the contract only
+  // because a CHECK constraint happens to permit exactly five statuses — add a
+  // sixth (`deferred`, `cancelled`) and the list would have silently diverged
+  // from the count with no test failing.
+  if (query.overdue === "true") {
+    conditions.push(sqlActionOverdue());
+  }
+
+  // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
+  const filterSourceType = isNonEmptyString(query.source_type)
+    ? query.source_type.trim()
+    : null;
+  const filterSourceId = isNonEmptyString(query.source_id)
+    ? query.source_id.trim()
+    : null;
+  if (filterSourceType !== null) {
+    params.push(filterSourceType);
+    conditions.push(`source_type = $${params.length}`);
+  }
+  if (filterSourceId !== null) {
+    if (!isUuid(filterSourceId)) {
+      return { kind: "error", body: { error: "source_id_must_be_uuid" } };
+    }
+    params.push(filterSourceId);
+    conditions.push(`source_id = $${params.length}::uuid`);
+  }
+
+  return { kind: "ok", conditions, params };
 }
 
 /* =========================================================
@@ -127,6 +243,44 @@ router.post(
         ipAddress: req.ip ?? null,
       });
 
+      // Assignment at creation notifies the owner (post-commit via asTenant;
+      // self-assignment and preference-off are handled inside the trigger).
+      if (input.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: input.owner_user_id,
+          actorUserId: ((req as any).userId as string | undefined) ?? null,
+          item: {
+            kind: "action",
+            id: result.rows[0].id as string,
+            title: input.title,
+            dueDate: input.due_date ?? null,
+            parentFindingId:
+              input.source_type === "finding" ? (input.source_id ?? null) : null,
+          },
+        });
+      }
+
+      // action.created has been in the webhook allowlist since the surface
+      // shipped but never fired. Canonical fields only (same discipline as
+      // finding.created / risk.created): no description, no free-text notes.
+      dispatchWebhookEvent({
+        event_type: "action.created",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          title: result.rows[0].title,
+          status: result.rows[0].status,
+          priority: result.rows[0].priority,
+          action_type: result.rows[0].action_type ?? null,
+          source_type: result.rows[0].source_type,
+          source_id: result.rows[0].source_id ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+          created_at: result.rows[0].created_at,
+        },
+      }).catch(() => {});
+
       // Child→parent cascade (finding-lifecycle-spec §5): a new remediation
       // Action recomputes the parent Finding's derived operational_status in
       // THIS same tenant transaction (e.g. a remediated finding regresses to
@@ -151,6 +305,12 @@ router.post(
             payload: { from: recompute.fromState ?? null, to: recompute.toState ?? null, trigger: "action.created" },
             ipAddress: req.ip ?? null,
           });
+        }
+        // A derived-status change on a vendor-workflow finding changes the
+        // vendor's risk picture — refresh the score post-commit (no-op for
+        // non-vendor findings; best-effort by contract).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, input.source_id);
         }
       }
 
@@ -195,101 +355,20 @@ router.get(
         : null;
       const useCursor = Boolean(beforeCreatedAt && beforeId);
 
-      const conditions: string[] = ["organization_id = $1"];
-      const params: unknown[] = [organizationId];
-
-      // owner=me — the caller's own remediation ("My Actions").
-      //
-      // This filter has to exist SERVER-SIDE. Before it did, /actions?view=mine fetched
-      // the org's actions and filtered them in the app — over a page the engine silently
-      // capped at MAX_LIMIT (100). In any org with more than 100 actions a user's own
-      // assigned work could fall outside that page and simply not be shown, with no
-      // truncation disclosed. Silent loss of a person's work queue.
-      //
-      // Same security contract as the Findings list (resolveOwnerMeFilter, shared): the
-      // ONLY accepted value is the literal "me", and the user id resolves from the SESSION
-      // — a client can never pass a user id, so assignments cannot be enumerated. An
-      // API-key caller has no user identity and is rejected, never defaulted to unfiltered.
-      const ownerFilter = resolveOwnerMeFilter(req.query.owner, (req.userId as string | undefined) ?? null);
-      if (ownerFilter.kind === "error") {
-        res.status(400).json({ error: ownerFilter.error });
+      // The filter set, from the ONE definition GET /api/actions/summary also
+      // uses — so a filtered list and a filtered count cannot describe
+      // different populations.
+      const filters = buildActionFilters(
+        req.query as Record<string, unknown>,
+        organizationId,
+        (req.userId as string | undefined) ?? null
+      );
+      if (filters.kind === "error") {
+        res.status(400).json(filters.body);
         return;
       }
-      if (ownerFilter.kind === "me") {
-        params.push(ownerFilter.userId);
-        conditions.push(`owner_user_id = $${params.length}`);
-      }
-
-      const filterStatus = isNonEmptyString(req.query.status)
-        ? req.query.status
-        : null;
-      if (filterStatus !== null) {
-        if (!VALID_STATUSES.has(filterStatus)) {
-          res.status(400).json({
-            error: "invalid_status_filter",
-            allowed: [...VALID_STATUSES]
-          });
-          return;
-        }
-        params.push(filterStatus);
-        conditions.push(`status = $${params.length}`);
-      }
-
-      const filterPriority = isNonEmptyString(req.query.priority)
-        ? req.query.priority
-        : null;
-      if (filterPriority !== null) {
-        if (!VALID_PRIORITIES.has(filterPriority)) {
-          res.status(400).json({
-            error: "invalid_priority_filter",
-            allowed: [...VALID_PRIORITIES]
-          });
-          return;
-        }
-        params.push(filterPriority);
-        conditions.push(`priority = $${params.length}`);
-      }
-
-      // `active=true` — the destination for every ACTIVE actions count.
-      //
-      // Without it, the dashboard's "N active actions" tile had no URL that could
-      // reproduce it: the only status filter was a single exact `status=`, so the
-      // tile's link fell back to the org-wide list and showed closed and accepted
-      // actions alongside the N it promised. The count and its destination could
-      // not agree BY CONSTRUCTION. Built from the contract, so they now do.
-      if (req.query.active === "true") {
-        conditions.push(sqlActionActive());
-      }
-
-      // Overdue comes from the contract too. The hand-rolled predicate this
-      // replaces (`status NOT IN ('closed','accepted')`) matched the contract only
-      // because a CHECK constraint happens to permit exactly five statuses — add a
-      // sixth (`deferred`, `cancelled`) and the list would have silently diverged
-      // from the count with no test failing.
-      const overdue = req.query.overdue === "true";
-      if (overdue) {
-        conditions.push(sqlActionOverdue());
-      }
-
-      // source_type + source_id: filter by linked source record (e.g. all actions for a finding)
-      const filterSourceType = isNonEmptyString(req.query.source_type)
-        ? (req.query.source_type as string).trim()
-        : null;
-      const filterSourceId = isNonEmptyString(req.query.source_id)
-        ? (req.query.source_id as string).trim()
-        : null;
-      if (filterSourceType !== null) {
-        params.push(filterSourceType);
-        conditions.push(`source_type = $${params.length}`);
-      }
-      if (filterSourceId !== null) {
-        if (!isUuid(filterSourceId)) {
-          res.status(400).json({ error: "source_id_must_be_uuid" });
-          return;
-        }
-        params.push(filterSourceId);
-        conditions.push(`source_id = $${params.length}::uuid`);
-      }
+      const conditions = filters.conditions;
+      const params = filters.params;
 
       // Snapshot the filter set BEFORE the cursor + limit params so the total
       // COUNT reflects the SAME filters (cursor excluded) — pagination truth,
@@ -375,6 +454,15 @@ router.get(
 /* =========================================================
    GET /api/actions/summary
    Aggregate counts for actions scoped to the org.
+
+   Accepts the SAME filter params as GET /api/actions (status, priority,
+   active, overdue, owner, source_type, source_id) and applies them through
+   the same builder, so the counts describe the same population as the list
+   under the same query string. Unfiltered calls are unchanged.
+
+   Pagination params (limit, before_created_at, before_id) are not accepted
+   here and could not matter if they were: an aggregate over a page is the
+   defect this route exists to avoid.
    ========================================================= */
 
 router.get(
@@ -401,6 +489,34 @@ router.get(
       // must never quietly widen to everyone's.
       const viewerUserId = (req as { userId?: string }).userId ?? null;
 
+      // FILTER-SCOPED (product ruling): these counts describe the same
+      // population as GET /api/actions under the same query string, because
+      // both build their WHERE from buildActionFilters.
+      //
+      // The tiles this serves sit directly above a filtered list. Feeding them
+      // org-wide numbers would have been a different lie from the capped-slice
+      // arithmetic they replace, not a fix: a view filtered to `blocked` would
+      // have shown the org's open count above a list of blocked work. An
+      // aggregate has to describe the population its label implies.
+      //
+      // Backward compatible by construction: with no filter params the
+      // conditions reduce to `organization_id = $1`, which is exactly the query
+      // this route ran before, so existing callers see identical numbers.
+      const filters = buildActionFilters(
+        req.query as Record<string, unknown>,
+        organizationId,
+        viewerUserId
+      );
+      if (filters.kind === "error") {
+        res.status(400).json(filters.body);
+        return;
+      }
+      // The viewer param goes AFTER the filter params — the my_* counters
+      // reference it by position, which is no longer fixed at $2.
+      const summaryParams = [...filters.params, viewerUserId];
+      const viewerParam = summaryParams.length;
+      const whereClause = filters.conditions.join(" AND ");
+
       const result = await pg.query<{
         open_count: string;
         open_only_count: string;
@@ -425,15 +541,15 @@ router.get(
           -- tiles must read: computing them by filtering a fetched page is how a user's
           -- work went missing in the first place.
           COUNT(*) FILTER (WHERE ${sqlActionActive()}
-                             AND $2::uuid IS NOT NULL
-                             AND owner_user_id = $2::uuid)                      AS my_open_count,
+                             AND $${viewerParam}::uuid IS NOT NULL
+                             AND owner_user_id = $${viewerParam}::uuid)         AS my_open_count,
           COUNT(*) FILTER (WHERE ${sqlActionOverdue()}
-                             AND $2::uuid IS NOT NULL
-                             AND owner_user_id = $2::uuid)                      AS my_overdue_count
+                             AND $${viewerParam}::uuid IS NOT NULL
+                             AND owner_user_id = $${viewerParam}::uuid)         AS my_overdue_count
         FROM actions
-        WHERE organization_id = $1
+        WHERE ${whereClause}
         `,
-        [organizationId, viewerUserId]
+        summaryParams
       );
 
       const row = result.rows[0];
@@ -719,6 +835,24 @@ router.patch(
       const statusChanged = "status" in body;
       const eventType = statusChanged ? "action.status_changed" : "action.updated";
 
+      // Assignment notifies the new owner (post-commit; ledger-deduped inside
+      // the trigger; self-assignment is a no-op).
+      if ("owner_user_id" in body && row.owner_user_id) {
+        triggerAssignmentAlert({
+          organizationId,
+          assigneeUserId: row.owner_user_id as string,
+          actorUserId: ((req as any).userId as string | undefined) ?? null,
+          item: {
+            kind: "action",
+            id: row.id as string,
+            title: (row.title as string) ?? "Remediation action",
+            dueDate: (row.due_date as string | null) ?? null,
+            parentFindingId:
+              row.source_type === "finding" ? ((row.source_id as string | null) ?? null) : null,
+          },
+        });
+      }
+
       // Audit-grade payload: WHAT (the action's title, snapshotted so the trail
       // stays readable even after a rename/delete), the resulting state, and —
       // for a status change — the real prior → new transition.
@@ -792,7 +926,34 @@ router.patch(
             ipAddress: req.ip ?? null,
           });
         }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
+        }
       }
+
+      // Webhook vocabulary stays `action.updated` for every successful PATCH
+      // (the allowlist never advertised a status_changed event); a status flip
+      // travels as the status_change from→to instead. blocked_reason and the
+      // completion note are audit-only free text — never in the payload.
+      dispatchWebhookEvent({
+        event_type: "action.updated",
+        organization_id: organizationId,
+        data: {
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          priority: row.priority,
+          source_type: row.source_type,
+          source_id: row.source_id ?? null,
+          owner_user_id: row.owner_user_id ?? null,
+          due_date: row.due_date ?? null,
+          updated_at: row.updated_at,
+          status_change: statusChanged
+            ? { from: (row.old_status as string | null) ?? null, to: row.status }
+            : null,
+        },
+      }).catch(() => {});
 
       // `old_status` is an audit-only detail from the CTE — never part of the
       // Action resource contract. Strip it so the response shape is unchanged.
@@ -962,7 +1123,30 @@ router.post(
             ipAddress: req.ip ?? null,
           });
         }
+        // Vendor score refresh on derived-status change (see action-create path).
+        if (recompute.changed) {
+          scheduleVendorScoreRecomputeForFinding(organizationId, parentFindingId);
+        }
       }
+
+      // An unblock is a status write, so it emits the same `action.updated`
+      // vocabulary as the PATCH path. The blocker snapshot stays audit-only.
+      dispatchWebhookEvent({
+        event_type: "action.updated",
+        organization_id: organizationId,
+        data: {
+          id: result.rows[0].id,
+          title: result.rows[0].title,
+          status: result.rows[0].status,
+          priority: result.rows[0].priority,
+          source_type: result.rows[0].source_type,
+          source_id: result.rows[0].source_id ?? null,
+          owner_user_id: result.rows[0].owner_user_id ?? null,
+          due_date: result.rows[0].due_date ?? null,
+          updated_at: result.rows[0].updated_at,
+          status_change: { from: "blocked", to: result.rows[0].status },
+        },
+      }).catch(() => {});
 
       res.status(200).json({ action: result.rows[0] });
     } catch (err) {

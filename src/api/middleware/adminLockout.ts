@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { ensureRedisConnected, redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
+import { resolveThrottleIdentity } from "../infra/clientIp.js";
 
 /**
  * adminLockout (Enterprise-grade)
@@ -23,9 +24,23 @@ const MAX_FAILURES = 5;
 const FAILURE_WINDOW_SECONDS = 10 * 60; // 10 minutes
 const LOCKOUT_SECONDS = 15 * 60; // 15 minutes
 
+/**
+ * The identity this lockout counts against.
+ *
+ * This used to be `req.ip || "unknown"`. Behind Render's Cloudflare edge `req.ip`
+ * is a CDN node, NOT the caller (`trust proxy` is 1, so Express resolves it to
+ * the rightmost X-Forwarded-For hop). Counting brute-force failures against a
+ * shared edge meant one abuser could lock out every legitimate admin behind the
+ * same PoP, while an attacker who rotated PoPs kept earning a fresh allowance —
+ * the control was simultaneously too broad and too weak.
+ *
+ * `resolveThrottleIdentity` returns the true client address (CF-Connecting-IP,
+ * which Cloudflare overwrites at the edge and rejects if a caller supplies it),
+ * falling back to `req.ip` off-Cloudflare and to a single SHARED bucket when
+ * nothing is parseable. Thresholds and windows below are untouched.
+ */
 function getClientIp(req: Request): string {
-  // Express will use X-Forwarded-For correctly because server.ts sets trust proxy = 1
-  return req.ip || "unknown";
+  return resolveThrottleIdentity(req).key;
 }
 
 function fail(res: Response, status: number, body: Record<string, unknown>) {
@@ -49,7 +64,8 @@ export async function adminLockout(
 
     const redis = await ensureRedisConnected();
 
-    const ip = getClientIp(req);
+    const identity = resolveThrottleIdentity(req);
+    const ip = identity.key;
     const lockKey = `admin:lockout:${ip}`;
     const failKey = `admin:failures:${ip}`;
 
@@ -60,6 +76,10 @@ export async function adminLockout(
         {
           event: "admin_lockout_blocked",
           ip,
+          // Which source produced the identity being counted. "express" behind
+          // Cloudflare would mean the trusted header was absent and this is a
+          // CDN node — worth seeing before trusting a lockout decision.
+          ipSource: identity.source,
           path: req.originalUrl
         },
         "Blocked admin request (IP locked out)"

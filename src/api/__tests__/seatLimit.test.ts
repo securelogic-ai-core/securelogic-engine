@@ -123,8 +123,17 @@ describe("adminOrganizations — operator can set max_members", () => {
     expect(ADMIN_SRC).toMatch(/RETURNING[\s\S]{0,200}max_members/);
   });
 
-  it("does NOT auto-raise max_members in the Stripe webhook (no self-serve tier exceeds 6 seats)", () => {
+  it("webhook raises max_members to the advertised 10 for platform tiers only (#692 A8)", () => {
+    // The earlier pin here asserted the webhook NEVER touches max_members —
+    // that reflected a pricing model with no self-serve tier above 6 seats.
+    // Both pricing surfaces now sell Platform as "Up to 10 seats", so the
+    // webhook honors it: premium grants raise to >= 10 (GREATEST, never
+    // lowers an operator-elevated cap); brief tiers keep the default 6.
     const WEBHOOK_SRC = readFileSync(resolve(__dirname, "../webhooks/stripeWebhook.ts"), "utf8");
-    expect(WEBHOOK_SRC).not.toMatch(/max_members\s*=/);
+    expect(WEBHOOK_SRC).toMatch(
+      /max_members\s+= CASE\s*\n\s*WHEN \$1 = 'premium' THEN GREATEST\(COALESCE\(max_members, 6\), 10\)/
+    );
+    const caseIdx = WEBHOOK_SRC.indexOf("max_members                = CASE");
+    expect(WEBHOOK_SRC.slice(caseIdx, caseIdx + 400)).not.toMatch(/'professional'/);
   });
 });

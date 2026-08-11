@@ -24,6 +24,9 @@ import adminRequeueNewsletterDeliveryRouter from "./adminRequeueNewsletterDelive
 import adminRequeueNewsletterDeliveriesByIssueRouter from "./adminRequeueNewsletterDeliveriesByIssue.js";
 import adminEmailSuppressionsRouter from "./adminEmailSuppressions.js";
 import adminSuppressionsRouter from "./adminSuppressions.js";
+import adminEmailDeliverabilityRouter from "./adminEmailDeliverability.js";
+import adminProviderSuppressionRecoveryRouter from "./adminProviderSuppressionRecovery.js";
+import adminEmailEnvironmentEvidenceRouter from "./adminEmailEnvironmentEvidence.js";
 import adminBriefSubscribersRouter from "./adminBriefSubscribers.js";
 import adminIssuesRouter from "./adminIssues.js";
 import adminCreateEmailSuppressionRouter from "./adminCreateEmailSuppression.js";
@@ -46,6 +49,7 @@ import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
 import aiSystemsRouter from "./aiSystems.js";
+import aiSystemsExportRouter from "./aiSystemsExport.js";
 import governanceReviewsRouter from "./governanceReviews.js";
 import aiGovernanceAssessmentsRouter from "./aiGovernanceAssessments.js";
 import frameworksRouter from "./frameworks.js";
@@ -53,9 +57,11 @@ import frameworkReadinessRouter from "./frameworkReadiness.js";
 import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
 import controlsRouter from "./controls.js";
+import controlsExportRouter from "./controlsExport.js";
 import controlMappingsRouter from "./controlMappings.js";
 import controlAssessmentsRouter from "./controlAssessments.js";
 import obligationsRouter from "./obligations.js";
+import obligationsExportRouter from "./obligationsExport.js";
 import obligationMappingsRouter from "./obligationMappings.js";
 import obligationAssessmentsRouter from "./obligationAssessments.js";
 import evidenceRouter from "./evidence.js";
@@ -69,6 +75,8 @@ import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
 import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
 import risksRouter from "./risks.js";
+import risksExportRouter from "./risksExport.js";
+import searchRouter from "./search.js";
 import riskTreatmentsRouter from "./riskTreatments.js";
 import riskControlLinksRouter from "./riskControlLinks.js";
 import riskObligationLinksRouter from "./riskObligationLinks.js";
@@ -123,6 +131,7 @@ import alertPreferencesRouter from "./alertPreferences.js";
 import dashboardPreferencesRouter from "./dashboardPreferences.js";
 import findingSavedViewsRouter from "./findingSavedViews.js";
 import briefingLayoutsRouter from "./briefingLayouts.js";
+import briefingChangesRouter from "./briefingChanges.js";
 import policiesRouter from "./policies.js";
 import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
@@ -146,6 +155,7 @@ import {
 } from "../middleware/apiRateLimiter.js";
 
 import { pg } from "../infra/postgres.js";
+import { requireAdminNetwork } from "../middleware/requireAdminNetwork.js";
 import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
 import { adminRateLimit } from "../middleware/adminRateLimit.js";
@@ -275,6 +285,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // =========================================================
 
   const adminChain = [
+    // FIRST, deliberately. An off-network caller is turned away before it can
+    // burn a lockout counter that legitimate admins share, before any
+    // timing-safe key comparison runs, and before it consumes rate-limit
+    // budget. DARK until SECURELOGIC_ADMIN_NETWORK_ENFORCED="true" — see
+    // middleware/requireAdminNetwork.ts for why enabling it blind would lock
+    // every operator out of production.
+    requireAdminNetwork,
     adminLockout,      // pre-checks IP lockout, attaches lockout context; fails closed if Redis down
     requireAdminKey,   // timing-safe comparison, rotation support, records failures for lockout
     adminRateLimit,
@@ -300,6 +317,17 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminRequeueNewsletterDeliveriesByIssueRouter);
   router.use("/admin", adminEmailSuppressionsRouter);
   router.use("/admin", adminSuppressionsRouter);
+  // Joins the provider's suppression list, our mirror of it, and the account
+  // itself into the one answer a support ticket needs. Read-only.
+  router.use("/admin", adminEmailDeliverabilityRouter);
+  // The remediation half. Mutates the Resend account shared by prod/staging/
+  // demo, so the clear is gated on APP_ENV=production AND an explicit flag —
+  // see lib/providerSuppressionRecoveryPolicy.ts. Must stay inside adminChain.
+  router.use("/admin", adminProviderSuppressionRecoveryRouter);
+  // P1-2 "prove" step: what enforcement WOULD have dropped on this receiver,
+  // computed with the same classifier the webhook uses. Read-only; enables
+  // nothing.
+  router.use("/admin", adminEmailEnvironmentEvidenceRouter);
   router.use("/admin", adminBriefSubscribersRouter);
   router.use("/admin", adminIssuesRouter);
   router.use("/admin", adminCreateEmailSuppressionRouter);
@@ -451,6 +479,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);
   router.use("/api", aiSystemGovernanceContextRouter);
+  // Export before register — GET /ai-systems/:id captures export.csv otherwise.
+  router.use("/api", aiSystemsExportRouter);
   router.use("/api", aiSystemsRouter);
   router.use("/api", governanceReviewsRouter);
   router.use("/api", aiGovernanceAssessmentsRouter);
@@ -458,16 +488,25 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
+  // Export routers MUST mount before their register routers: GET /:id would
+  // otherwise capture the literal /export.csv path (the findingsExport trap).
+  router.use("/api", controlsExportRouter);
   router.use("/api", controlsRouter);
   router.use("/api", controlMappingsRouter);
   router.use("/api", controlAssessmentsRouter);
+  router.use("/api", obligationsExportRouter);
   router.use("/api", obligationsRouter);
   router.use("/api", obligationMappingsRouter);
   router.use("/api", obligationAssessmentsRouter);
   router.use("/api", evidenceRouter);
   router.use("/api", dependenciesRouter);
   router.use("/api", dependencyAssessmentsRouter);
+  // risksExportRouter MUST mount before risksRouter: its literal path
+  // /risks/export.csv is otherwise captured by GET /risks/:id (same trap
+  // findingsExport documents above).
+  router.use("/api", risksExportRouter);
   router.use("/api", risksRouter);
+  router.use("/api", searchRouter);
   router.use("/api", riskTreatmentsRouter);
   router.use("/api", riskControlLinksRouter);
   router.use("/api", riskObligationLinksRouter);
@@ -530,6 +569,7 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", dashboardPreferencesRouter);
   router.use("/api", findingSavedViewsRouter);
   router.use("/api", briefingLayoutsRouter);
+  router.use("/api", briefingChangesRouter);
   router.use("/api", policiesRouter);
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);

@@ -1,7 +1,16 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getMe, getActions, getActionsSummary, type Action } from "@/lib/api";
+import {
+  getMe,
+  getActions,
+  getActionsSummary,
+  type Action,
+  type ActionsSummaryParams,
+} from "@/lib/api";
+import { UnknownValue, UnknownValueNote } from "@/components/edx/UnknownValue";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 import { myActionsRedirect, actionScope, showingOfTotal } from "./myActions";
 import MyActionsView from "./MyActionsView";
 
@@ -41,6 +50,65 @@ const STAT_CARD_STYLE: React.CSSProperties = {
   borderRadius: "12px",
   padding: "16px 20px",
 };
+
+/**
+ * The two priorities the "High Priority" tile counts. Split into the high and
+ * the not-high sets rather than one list, because a priority-filtered view can
+ * answer the tile WITHOUT another count: a population filtered to `planned`
+ * contains exactly zero high-priority actions, and a population filtered to
+ * `immediate` is entirely high-priority, so its own total is the answer.
+ */
+const HIGH_PRIORITIES = new Set(["immediate", "near_term"]);
+const NON_HIGH_PRIORITIES = new Set(["planned", "watch"]);
+
+/**
+ * An exact count, or `null` when the number is not known.
+ *
+ * `null` is the whole point: every tile on this page used to derive its number
+ * from the returned page, so a failed or missing count became a confident 0.
+ * A count we do not have must stay unrepresentable as a number — see
+ * <UnknownValue>.
+ */
+type ExactCount = number | null;
+
+function exact(value: number | undefined): ExactCount {
+  return typeof value === "number" ? value : null;
+}
+
+/** The sum of two exact counts — unknown if EITHER part is unknown. */
+function exactSum(a: number | undefined, b: number | undefined): ExactCount {
+  return typeof a === "number" && typeof b === "number" ? a + b : null;
+}
+
+/**
+ * A stat tile whose value is a server count. Renders the number, or the shared
+ * unknown-value marker when the count could not be loaded — never a 0 standing
+ * in for "we don't know", and never a figure scanned out of the capped page.
+ */
+function StatTile({
+  label,
+  value,
+  warnColor,
+}: {
+  label: string;
+  value: ExactCount;
+  /** Colour applied only when the count is known AND non-zero. */
+  warnColor?: string;
+}) {
+  return (
+    <div style={STAT_CARD_STYLE}>
+      <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+        {label}
+      </p>
+      <p
+        className="text-3xl font-bold"
+        style={{ color: warnColor && value !== null && value > 0 ? warnColor : "#f1f5f9" }}
+      >
+        {value === null ? <UnknownValue label={label} /> : value}
+      </p>
+    </div>
+  );
+}
 
 type Params = Record<string, string | undefined>;
 
@@ -263,15 +331,38 @@ export default async function ActionsPage({
   const activeOverdue  = sp.overdue  === "true";
   const activeOnly     = sp.active   === "true";
 
-  const actionsData = await getActions(token, {
+  // ONE filter set, handed to the list and to every count on this page. The
+  // engine builds the WHERE for GET /api/actions and GET /api/actions/summary
+  // from a single shared buildActionFilters(), so passing the identical object
+  // makes "the tiles describe the list" a property of the system rather than a
+  // claim this page makes about itself.
+  const actionFilters: ActionsSummaryParams = {
     status:   activeStatus   || undefined,
     priority: activePriority || undefined,
     overdue:  activeOverdue  || undefined,
     // Honoured with the workspace flag OFF too, so the dashboard tile reconciles
     // with its destination in BOTH flag states rather than only the new one.
     active:   activeOnly     || undefined,
-    limit: 100,
-  });
+  };
+
+  // "High priority" is immediate|near_term at ANY status, and the summary has no
+  // field for that population (`immediate_count` covers one of the two and
+  // additionally AND-s ACTIVE). The list route's `total` IS an exact,
+  // filter-scoped count, so each part is counted with a deliberately tiny
+  // request rather than by scanning rows. Skipped entirely when the view is
+  // already priority-filtered — see HIGH_PRIORITIES.
+  const needsPriorityTotals = activePriority === "";
+
+  const [actionsData, summary, immediateData, nearTermData] = await Promise.all([
+    getActions(token, { ...actionFilters, limit: 100 }),
+    getActionsSummary(token, actionFilters),
+    needsPriorityTotals
+      ? getActions(token, { ...actionFilters, priority: "immediate", limit: 1 })
+      : null,
+    needsPriorityTotals
+      ? getActions(token, { ...actionFilters, priority: "near_term", limit: 1 })
+      : null,
+  ]);
 
   // Legacy list (workspace flag off): the org-wide remediation list, unchanged.
   const actions = actionsData?.actions ?? [];
@@ -279,9 +370,39 @@ export default async function ActionsPage({
   // whenever the true filtered total exceeds the rendered slice.
   const truncationNote = showingOfTotal(actions.length, actionsData?.total);
 
-  const openCount      = actions.filter((a) => a.status === "open" || a.status === "in_progress").length;
-  const overdueCount   = actions.filter((a) => a.is_overdue).length;
-  const highPrioCount  = actions.filter((a) => a.priority === "immediate" || a.priority === "near_term").length;
+  // EXACT server counts for the current filter set.
+  //
+  // These three numbers were each `actions.filter(…).length` — a scan of the
+  // page the engine had just capped at 100. Below the cap that arithmetic is
+  // right, which is precisely why it survived: the tiles only start lying once
+  // an org has more than a page of matching work, and then they lie silently
+  // and permanently, with the "Showing N of M" line beneath them disclosing the
+  // truncation of the LIST while the tiles above kept presenting a slice as a
+  // total. No page length is read for any count below.
+  //
+  // Open = status open|in_progress, exactly as before: `open_only_count +
+  // in_progress_count` are the summary's own exact parts. (Deliberately NOT
+  // `open_count`, which is ACTIVE and includes `blocked` — un-capping a number
+  // must not quietly redefine it.)
+  const openCount = exactSum(summary?.open_only_count, summary?.in_progress_count);
+  // Overdue = `overdue_count`, computed from sqlActionOverdue() — literally the
+  // same SQL expression that produces each row's `is_overdue` field.
+  const overdueCount = exact(summary?.overdue_count);
+  const highPrioCount: ExactCount = needsPriorityTotals
+    ? exactSum(immediateData?.total, nearTermData?.total)
+    : HIGH_PRIORITIES.has(activePriority)
+      ? // The filtered population is entirely high-priority: its own total is the count.
+        exact(actionsData?.total)
+      : NON_HIGH_PRIORITIES.has(activePriority)
+        ? // A `planned`/`watch` population contains zero high-priority actions.
+          // A provable zero, not an assumed one.
+          0
+        : // An unrecognised priority: the engine rejects the filter, so there is
+          // no population to describe and nothing may be asserted about it.
+          null;
+
+  const countsUnavailable =
+    openCount === null || overdueCount === null || highPrioCount === null;
 
   const currentSp: Params = {
     ...(sp.status   ? { status:   sp.status }   : {}),
@@ -305,31 +426,15 @@ export default async function ActionsPage({
         </div>
       </div>
 
-      {/* Stat cards */}
+      {/* Stat cards — exact server counts over the SAME filters as the list. */}
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Open
-          </p>
-          <p className="text-3xl font-bold" style={{ color: "#f1f5f9" }}>{openCount}</p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            Overdue
-          </p>
-          <p className="text-3xl font-bold" style={{ color: overdueCount > 0 ? "#fca5a5" : "#f1f5f9" }}>
-            {overdueCount}
-          </p>
-        </div>
-        <div style={STAT_CARD_STYLE}>
-          <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
-            High Priority
-          </p>
-          <p className="text-3xl font-bold" style={{ color: highPrioCount > 0 ? "#fcd34d" : "#f1f5f9" }}>
-            {highPrioCount}
-          </p>
-        </div>
+        <StatTile label="Open" value={openCount} />
+        <StatTile label="Overdue" value={overdueCount} warnColor="#fca5a5" />
+        <StatTile label="High Priority" value={highPrioCount} warnColor="#fcd34d" />
       </div>
+
+      {/* A count that failed to load is disclosed, never rendered as a zero. */}
+      {countsUnavailable && <UnknownValueNote />}
 
       {/* Filter bar */}
       <div className="mb-6 space-y-3">
@@ -364,8 +469,21 @@ export default async function ActionsPage({
         </p>
       )}
 
-      {/* Action list */}
-      {actions.length === 0 ? (
+      {/* Action list.
+
+          EDX-1: a failed read is not "all clear". `actionsData?.actions ?? []`
+          made an outage render the most reassuring sentence on the page —
+          "All clear — no open actions." — to a customer whose remediation
+          queue could not be reached. Of every empty state in the app this is
+          the one most likely to end a check on outstanding work. */}
+      {isUnavailable(actionsData) ? (
+        <UnavailableNotice
+          subject="Your remediation actions"
+          denial="not an all-clear, and not an empty queue"
+          reassurance="Your actions are unchanged."
+          retryHref={filterHref(currentSp, "__none__", null)}
+        />
+      ) : actions.length === 0 ? (
         <div
           className="rounded-xl border p-10 text-center"
           style={{

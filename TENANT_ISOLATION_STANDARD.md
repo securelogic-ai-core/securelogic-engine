@@ -118,8 +118,8 @@ When a column references another customer-data row (`vendor_id`, `control_id`, e
 - `JOIN` chains that lose org scoping at any join (every join into customer data must carry org context)
 - `req.body.organization_id` — never trust client-supplied tenant identity
 
-### Defense-in-depth (out of scope, recommended next)
-Postgres Row-Level Security on customer-data tables, gated by a `app.current_org_id` session variable set per request. This is **not** part of the current standard — it is the next-step recommendation that future packages should plan toward. Until RLS is in place, the discipline above is the only protection.
+### Defense-in-depth (amended 2026-07-28 via §14 — RLS rollout is IN FLIGHT, still inert)
+Postgres Row-Level Security on customer-data tables, gated by a `app.current_org_id` session variable set per request. **Amendment (2026-07-28, doc-sync package):** the A04-G1 program has since rolled RLS policies onto ~22 tables (`ENABLE ROW LEVEL SECURITY`, NOT FORCE, `app_request` grants; see `dataClassification.ts` for per-table `rlsStatus`). The policies remain **inert** — the request path still connects as the table owner — so §§1–4's route-level discipline remains the **only live protection**, exactly as before. The `app_request` credential flip (with its preconditions: D-13 grant verification, completion of `rlsStatus:"pending"` Tier-A tables, elevated-channel audit) is tracked as issue #695. This amendment records reality; it does not relax any rule (§14.3: no compensating control needed — nothing is weakened). Risk register: R8 remains open until the flip.
 
 ---
 
@@ -172,8 +172,34 @@ Staff (SecureLogic AI employees) access customer data only via the `/admin/*` su
 
 ### Required controls (in series)
 1. `SECURELOGIC_ADMIN_KEY` — rotatable, min 16 chars, set in environment, never in code. Authenticates every `/admin/*` request via the `X-Admin-Key` header (timing-safe compare in `requireAdminKey.ts`).
-2. IP allowlist — `SECURELOGIC_ADMIN_ALLOWED_IPS` (CIDR, comma-separated). `0.0.0.0/0` is forbidden.
-3. Per-request middleware chain — `[adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
+2. Per-request middleware chain — `[requireAdminNetwork, adminLockout, requireAdminKey, adminRateLimit, adminAudit]`. Brute-force gate (Redis-backed lockout), header-based auth, rate limit, audit-log. **No session cookie and no per-admin-user identity** — `SECURELOGIC_ADMIN_KEY` is a service-level secret, not a per-staff credential.
+
+### NOT a required control: the admin IP allowlist (observational only)
+
+`SECURELOGIC_ADMIN_ALLOWED_IPS` / `requireAdminNetwork` is **observational (dark) in every
+environment and enforces nothing.** It classifies the caller, logs `admin_network_evaluated`,
+and always continues. It rejects a request only when `SECURELOGIC_ADMIN_NETWORK_ENFORCED` is
+exactly `"true"`, which is set nowhere.
+
+It must not be listed as a required active control, and admin access restriction must not be
+credited to it, because the operational precondition it needs does not exist:
+
+- Staff admin egress is **not stable**. Four distinct SecureLogic egress addresses were
+  attributable within roughly one day from a *single* operator (`20.42.11.16`,
+  `172.210.53.230`, `172.191.151.49`, `172.210.53.228`) — all Azure, spanning three `/24`s.
+  Admin access originates from GitHub Codespaces, which draws a fresh NAT address per session.
+- Neither address configured in the allowlist has **ever** been observed in admin traffic.
+- `render.yaml` still carries the placeholder instruction to "set this to match your actual
+  ingress range before deploying". That range was never determined.
+
+Enforcing it would lock operators out of `/admin`, including the `/admin/ops/*` endpoints used
+to diagnose the lockout. **Do not enable `SECURELOGIC_ADMIN_NETWORK_ENFORCED` without first
+establishing a stable, SecureLogic-controlled egress path.** The middleware stays wired and dark
+because its telemetry is what would prove such a path exists; it costs one log line per request
+and changes no response.
+
+Actual admin restriction today rests on items 1 and 2 above: the timing-safe key compare,
+Redis-backed lockout, rate limit, and audit log.
 
 ### Rules
 - Every admin route that reads customer data MUST audit-log the request `ipAddress` AND the affected `organizationId`.

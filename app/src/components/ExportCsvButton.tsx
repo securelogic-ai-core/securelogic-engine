@@ -4,11 +4,20 @@ import { useState } from "react";
 import { downloadFile } from "@/lib/downloadFile";
 
 interface Props {
+  /** App proxy path, e.g. "/api/export/findings" or "/api/export/risks". */
+  endpoint: string;
+  /** Downloaded file name becomes `${filenamePrefix}-YYYY-MM-DD.csv`. */
+  filenamePrefix: string;
   /** Pre-built query string ("" or "status=open&severity=High") carrying the current filters. */
   queryString: string;
 }
 
-export function ExportCsvButton({ queryString }: Props) {
+/**
+ * Shared register-export button (findings, risks, …). One component so every
+ * export surface behaves identically: same busy state, same error surface,
+ * same filter passthrough via queryString.
+ */
+export function ExportCsvButton({ endpoint, filenamePrefix, queryString }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -18,8 +27,8 @@ export function ExportCsvButton({ queryString }: Props) {
     setError(null);
     const dateStamp = new Date().toISOString().slice(0, 10);
     const failure = await downloadFile(
-      `/api/export/findings${queryString ? `?${queryString}` : ""}`,
-      `findings-${dateStamp}.csv`
+      `${endpoint}${queryString ? `?${queryString}` : ""}`,
+      `${filenamePrefix}-${dateStamp}.csv`
     );
     setBusy(false);
     if (failure) setError(failure);

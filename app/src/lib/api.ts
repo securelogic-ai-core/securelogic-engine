@@ -233,11 +233,31 @@ export type IntelligenceBriefItem = {
   severity: string | null;
   cyber_signal_id: string | null;
   ingestion_timestamp: string | null;
+  /**
+   * Source-authoritative event date (IQP Q2): the date the source itself
+   * asserts — KEV dateAdded, NVD published, RSS pubDate. Optional because
+   * older engine deploys omit it; null when the source asserted no date.
+   * Display renders nothing in that case — a date is never inferred.
+   */
+  signal_published_at?: string | null;
   sort_order: number;
   why_it_matters: string | null;
   recommended_actions: string | null;
   analyst_notes: string | null;
   urgency: IntelligenceBriefUrgency | null;
+  /**
+   * Personalization (computed at generation since 20260511, returned since EG2
+   * slice 6): whether this item matched the org's own platform entities, and
+   * exactly which ones — the visible proof the Brief is connected to the
+   * tenant's context. Optional: older engine deploys omit both fields.
+   */
+  is_personalized?: boolean;
+  platform_context?: {
+    matched_vendors?: Array<{ id: string; name: string }>;
+    matched_risks?: Array<{ id: string; title: string }>;
+    matched_ai_systems?: Array<{ id: string; name: string }>;
+    matched_obligations?: Array<{ id: string; title: string }>;
+  } | null;
 };
 
 /**
@@ -444,11 +464,61 @@ export type Vendor = {
    */
   open_findings_count?: number;
   active_findings_count?: number;
+  /**
+   * Assessment rows on record for this vendor, counted in the DATABASE by
+   * GET /api/vendors — the exact, uncapped answer to "has this vendor ever been
+   * assessed?".
+   *
+   * The surfaces used to answer that by fetching the ORG's assessments with
+   * limit:100 and checking whether the vendor appeared. Past 100 assessments an
+   * assessed vendor dropped out of that page and rendered as "Never assessed" —
+   * on /vendors/risk that also drew a red border and pushed it into Requires
+   * Attention. Absence from a capped page is not absence from the table.
+   *
+   * Predicate: ANY row in vendor_assessments for this vendor in this org — the
+   * definition the app already used and customers already understand. This is
+   * NOT `last_reviewed_at`, which is a different (and effectively unmaintained)
+   * field. Optional because the single-vendor GET does not return it, and a
+   * caller MUST read its absence as "unknown", never as "never assessed".
+   */
+  assessment_count?: number;
+  /**
+   * `performed_at` of the most recently created assessment, or null when there
+   * is none. Same ordering the capped client-side lookup used (created_at DESC,
+   * id DESC), so un-capping the value does not redefine which assessment the
+   * "Last Assessment" column refers to. Optional on the same terms as above.
+   */
+  latest_assessment_at?: string | null;
+};
+
+/** Exact per-band counts over the applied filter set. Parts always sum to `total`. */
+export type VendorCriticalityCounts = {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  /** NULL or outside the four known bands — so nothing vanishes from the breakdown. */
+  uncategorized: number;
 };
 
 export type VendorsResponse = {
+  /** Length of the returned SLICE. Never a population size — that is `total`. */
   count: number;
   limit: number;
+  /**
+   * Exact count of the whole matching population for the applied filters
+   * (cursor and limit excluded). Optional: absent on older engine builds, and a
+   * caller must treat its absence as "unknown", never as zero.
+   */
+  total?: number;
+  /** Exact criticality breakdown over the same population as `total`. */
+  by_criticality?: VendorCriticalityCounts;
+  /**
+   * Exact count of vendors in that same population with NO assessment on
+   * record. Optional on the same terms as `total`: absent on older engine
+   * builds, and absence means unknown — never zero.
+   */
+  never_assessed_count?: number;
   organizationId: string;
   statusFilter: string;
   nextCursor: { created_at: string; id: string } | null;
@@ -1044,8 +1114,25 @@ export type BillingSessionResult = { url: string } | { error: string };
 
 // ─── Customer auth types ────────────────────────────────────────────────────
 
+/**
+ * What the engine says happened to the verification email.
+ *
+ * `sent` is the only value that licenses "check your inbox" copy. The other two
+ * mean the account exists but nothing was delivered, so the customer is locked
+ * out until they recover — login answers 403 `email_not_verified` and the token
+ * lives only in the database.
+ */
+export type VerificationEmailStatus = "sent" | "unavailable" | "failed";
+
 export type AuthSignupResponse =
-  | { ok: true; message: string }
+  | {
+      ok: true;
+      message: string;
+      /** Absent on engines predating the truthful-signup fix; treat as unknown. */
+      verification_email?: VerificationEmailStatus;
+      detail?: string;
+      recovery?: { resend_path: string; resend_endpoint: string; support_email: string };
+    }
   | { error: string; detail?: string };
 
 export type AuthLoginResponse =
@@ -1328,6 +1415,29 @@ export async function getIntelligenceBrief(
 }
 
 /**
+ * List the org's canonical intelligence briefs (metadata only — no items).
+ * The /briefs archive reads this; it previously listed the legacy
+ * newsletter-issues table, whose generation pipeline is off by default, so
+ * paying readers could not browse brief history at all.
+ */
+export async function getIntelligenceBriefs(
+  apiKey: string,
+  opts: { limit?: number; status?: string } = {}
+): Promise<IntelligenceBriefListResponse | null> {
+  try {
+    const p = new URLSearchParams();
+    if (opts.limit) p.set("limit", String(opts.limit));
+    if (opts.status) p.set("status", opts.status);
+    const qs = p.toString();
+    const res = await engineFetch(`/api/intelligence-briefs${qs ? `?${qs}` : ""}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as IntelligenceBriefListResponse;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch the most recent intelligence brief for the org with all items embedded.
  *
  * Two-step: GET /api/intelligence-briefs?limit=1 to find the latest brief id,
@@ -1336,20 +1446,39 @@ export async function getIntelligenceBrief(
  *
  * Returns null when no briefs exist or any request fails.
  */
+/**
+ * The three answers "what is the latest brief?" can have (EDX-1).
+ *
+ * This reader is the one place in lib/api that MUST discriminate, because its
+ * consumer prints a sentence about publication history — "No briefs published
+ * yet" — which is a claim about the customer's data, not about the request. A
+ * bare `T | null` cannot support that claim: `null` covered a failed list read,
+ * an empty list, and a failed detail read alike, so an outage told a subscriber
+ * nothing had ever been published.
+ */
+export type LatestBriefResult =
+  | { state: "unavailable" }
+  | { state: "none" }
+  | { state: "brief"; brief: IntelligenceBriefDetailResponse };
+
 export async function getLatestBrief(
   apiKey: string
-): Promise<IntelligenceBriefDetailResponse | null> {
+): Promise<LatestBriefResult> {
   try {
     const listRes = await engineFetch("/api/intelligence-briefs?limit=1", apiKey);
-    if (!listRes.ok) return null;
+    if (!listRes.ok) return { state: "unavailable" };
 
     const list = (await listRes.json()) as IntelligenceBriefListResponse;
     const latest = list.briefs?.[0];
-    if (!latest) return null;
+    // The list read SUCCEEDED and holds nothing. That is an answer.
+    if (!latest) return { state: "none" };
 
-    return await getIntelligenceBrief(apiKey, latest.id);
+    const brief = await getIntelligenceBrief(apiKey, latest.id);
+    // A brief exists but its detail could not be fetched. Emphatically not
+    // "none": the list just said otherwise.
+    return brief ? { state: "brief", brief } : { state: "unavailable" };
   } catch {
-    return null;
+    return { state: "unavailable" };
   }
 }
 
@@ -1460,15 +1589,53 @@ export async function getPostureHistory(
   }
 }
 
+/**
+ * The register filters GET /api/vendors applies in SQL.
+ *
+ * `criticality` and `reviewed` live here rather than in the page because
+ * filtering a fetched page can only ever narrow the ≤100 rows the engine chose
+ * to return: past the cap a matching vendor is simply absent from the filtered
+ * view, with nothing disclosing the loss. The same rule the Actions and
+ * Findings queues already follow.
+ */
+export type VendorListOpts = {
+  /** Shared asset-search term (engine-resolved: name, alias, exact UUID). */
+  q?: string;
+  criticality?: "critical" | "high" | "medium" | "low";
+  /**
+   * LEGACY — `last_reviewed_at IS NULL`. Retained for API compatibility only.
+   *
+   * RULING (2026-08-09): "Never reviewed" is not a valid customer-facing metric.
+   * `vendors.last_reviewed_at` is written by nothing in the product, so any
+   * claim built on it is one the system cannot support. No SecureLogic surface
+   * may use this filter; use `assessed` instead.
+   */
+  reviewed?: "never";
+  /**
+   * The RATIFIED definition: vendors with zero rows in `vendor_assessments`.
+   * Shares its SQL predicate with the `never_assessed_count` aggregate, so a
+   * count and the list it links to are the same population by construction.
+   */
+  assessed?: "never";
+  /** Slice size. Use 1 when the response is wanted only for its aggregates. */
+  limit?: number;
+};
+
 export async function getVendors(
   apiKey: string,
-  status: "active" | "archived" = "active"
+  status: "active" | "archived" = "active",
+  opts: VendorListOpts = {}
 ): Promise<VendorsResponse | null> {
   try {
-    const res = await engineFetch(
-      `/api/vendors?status=${status}&limit=100`,
-      apiKey
-    );
+    const params = new URLSearchParams({
+      status,
+      limit: String(opts.limit ?? 100),
+    });
+    if (opts.q) params.set("q", opts.q);
+    if (opts.criticality) params.set("criticality", opts.criticality);
+    if (opts.reviewed) params.set("reviewed", opts.reviewed);
+    if (opts.assessed) params.set("assessed", opts.assessed);
+    const res = await engineFetch(`/api/vendors?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<VendorsResponse>;
   } catch {
@@ -1493,10 +1660,14 @@ export async function getVendorAssessments(
 }
 
 export async function getAiSystems(
-  apiKey: string
+  apiKey: string,
+  opts: { q?: string } = {}
 ): Promise<AiSystemsResponse | null> {
   try {
-    const res = await engineFetch("/api/ai-systems?limit=100", apiKey);
+    const params = new URLSearchParams({ limit: "100" });
+    // Shared asset-search term (engine-resolved: name, alias, exact UUID).
+    if (opts.q) params.set("q", opts.q);
+    const res = await engineFetch(`/api/ai-systems?${params.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<AiSystemsResponse>;
   } catch {
@@ -1642,10 +1813,15 @@ export async function getFrameworkReadiness(
 }
 
 export async function getControls(
-  apiKey: string
+  apiKey: string,
+  params?: { q?: string }
 ): Promise<ControlsResponse | null> {
   try {
-    const res = await engineFetch("/api/controls?limit=100", apiKey);
+    const qs = new URLSearchParams({ limit: "100" });
+    // Engine search mode: name/description ILIKE, alphabetical, no cursor
+    // (the CUEC ControlPicker contract — reused, not duplicated).
+    if (params?.q) qs.set("q", params.q);
+    const res = await engineFetch(`/api/controls?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
     return res.json() as Promise<ControlsResponse>;
   } catch {
@@ -1829,17 +2005,32 @@ export async function authVerifyEmail(
   return res.json() as Promise<{ ok: true; token: string } | { error: string }>;
 }
 
+/**
+ * Ask the engine to resend a verification email.
+ *
+ * The engine answers identically for every address on purpose — a per-address
+ * outcome here would be an account-existence oracle — so `attempted` is as
+ * specific as this can get, and it means exactly that: handed to the mail
+ * provider, result unobserved. `unavailable` is the one honest exception: no
+ * provider is configured at all, which is true of every address equally and so
+ * gives nothing away.
+ */
 export async function authResendVerification(
   email: string
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; verificationEmail: "attempted" | "unavailable" }> {
   const res = await fetch(`${ENGINE_URL}/api/auth/resend-verification`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
     cache: "no-store",
   });
-  if (!res.ok) return { ok: false };
-  return { ok: true };
+  if (!res.ok) return { ok: false, verificationEmail: "attempted" };
+
+  const body = (await res.json().catch(() => ({}))) as { verification_email?: unknown };
+  return {
+    ok: true,
+    verificationEmail: body.verification_email === "unavailable" ? "unavailable" : "attempted",
+  };
 }
 
 export async function authForgotPassword(
@@ -1912,6 +2103,14 @@ export async function getTeamMembers(token: string): Promise<TeamResponse | null
 
 export type OrgSettings = {
   require_mfa: boolean;
+  // Organization profile (customer-writable since the org-profile settings
+  // surface). The risk-context fields drive context-weighted scoring, finding
+  // enterprise context, and posture computation.
+  name: string;
+  regulated: boolean;
+  handles_pii: boolean;
+  safety_critical: boolean;
+  scale: "Small" | "Medium" | "Enterprise";
 };
 
 export async function getOrgSettings(token: string): Promise<OrgSettings | null> {
@@ -2250,6 +2449,10 @@ export type FindingContext = {
     ai_systems: FindingAffectedEntity[];
     controls: FindingAffectedEntity[];
     obligations: FindingAffectedEntity[];
+    // ERG convergence C5 — canonical Enterprise Assets the applicability
+    // decision reached, resolved through asset_registry_v. Absent (not empty)
+    // whenever the engine convergence is dark, so the dark surface is unchanged.
+    assets?: FindingAffectedEntity[];
     // Context Contract: per-bucket resolution outcome — distinguishes an
     // honest zero ('none_found') from a bucket the resolver has no path for
     // on this source type ('not_applicable'). Optional on older payloads.
@@ -2258,6 +2461,7 @@ export type FindingContext = {
       ai_systems: AffectedResolution;
       controls: AffectedResolution;
       obligations: AffectedResolution;
+      assets?: AffectedResolution;
     };
     // Matcher suggestions pending human review — candidate links, never
     // merged into the buckets above. Optional on older payloads.
@@ -2500,7 +2704,7 @@ export async function getFindingSavedViews(apiKey: string): Promise<FindingSaved
 // while SECURELOGIC_DECISION_WORKSPACE_ENABLED is off → null (search UI not shown).
 export type EntityFindingsResponse = {
   query: string;
-  entities: Array<{ type: "vendor" | "ai_system" | "control" | "obligation"; id: string; name: string }>;
+  entities: Array<{ type: MatchTargetType; id: string; name: string }>;
   count: number;
   findings: Finding[];
 };
@@ -2614,16 +2818,43 @@ export async function getActions(
 }
 
 /**
- * Org-wide action counts from GET /api/actions/summary. These are authoritative
- * (server COUNT(*), org-scoped, uncapped) — the workspace attention tiles read
- * these instead of scanning a paginated slice, so tile numbers reconcile with
- * the dashboard Actions ring rather than drifting at >100 actions.
+ * The filter set GET /api/actions/summary accepts — deliberately ActionsParams
+ * minus `limit`.
+ *
+ * Pagination has no meaning for an aggregate, and an aggregate computed over a
+ * page is the exact defect this route exists to avoid, so the type refuses to
+ * carry `limit` rather than relying on a caller to remember not to send it.
+ */
+export type ActionsSummaryParams = Omit<ActionsParams, "limit">;
+
+/**
+ * Exact action counts from GET /api/actions/summary — server COUNT(*) FILTER,
+ * org-scoped, uncapped — for the SAME filter set passed to getActions.
+ *
+ * Pass the identical filter object to both readers. The engine builds the WHERE
+ * for the list and for this summary from one shared `buildActionFilters()`, so
+ * an identical query string is a guarantee (not a convention) that the counts
+ * describe the population the list is showing.
+ *
+ * Called with no params the URL is byte-identical to the org-wide form this
+ * reader has always sent, so existing callers are unaffected.
  */
 export async function getActionsSummary(
-  apiKey: string
+  apiKey: string,
+  params?: ActionsSummaryParams
 ): Promise<ActionsSummary | null> {
   try {
-    const res = await engineFetch(`/api/actions/summary`, apiKey);
+    const qs = new URLSearchParams();
+    if (params?.status)   qs.set("status",   params.status);
+    if (params?.priority) qs.set("priority", params.priority);
+    if (params?.overdue)  qs.set("overdue",  "true");
+    if (params?.active)   qs.set("active",   "true");
+    if (params?.owner)    qs.set("owner",    params.owner);
+    const query = qs.toString();
+    const res = await engineFetch(
+      `/api/actions/summary${query ? `?${query}` : ""}`,
+      apiKey
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as { summary?: ActionsSummary };
     return body?.summary ?? null;
@@ -2642,6 +2873,8 @@ export async function getRisks(
     archived?:      boolean;
     /** Metric Contract: only risks still on the register — what an "open risks" count links to. */
     active?:        boolean;
+    /** Register search term (2–120): title / description. */
+    q?:             string;
     limit?:         number;
   }
 ): Promise<RisksResponse | null> {
@@ -2653,6 +2886,7 @@ export async function getRisks(
     if (params?.review_status)  qs.set("review_status", params.review_status);
     if (params?.archived)       qs.set("archived",      "true");
     if (params?.active)         qs.set("active",        "true");
+    if (params?.q)              qs.set("q",             params.q);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/risks?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -2934,6 +3168,33 @@ export async function getAiSystemSignals(
   }
 }
 
+/**
+ * Deterministic linked signals for a VENDOR (signal_vendor_links) — the same
+ * projection as the AI-system read (shared engine LINK/SIGNAL_SELECT). This
+ * client is what the vendor page's intelligence section reads (EG2 Tier 2
+ * slice 9); before it existed, accepted vendor↔signal links were written to a
+ * table no UI displayed and the vendor page showed a per-pageload LLM guess.
+ */
+export async function getVendorSignals(
+  apiKey: string,
+  vendorId: string,
+  limit = 10
+): Promise<AiSystemLinkedSignal[] | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/signals?limit=${limit}`,
+      apiKey
+    );
+    // null on failure, [] only on a genuine empty read — an outage must never
+    // render as "no intelligence on this vendor" (the clean-vendor lie).
+    if (!res.ok) return null;
+    const body = (await res.json()) as { signals?: AiSystemLinkedSignal[] };
+    return body.signals ?? [];
+  } catch {
+    return null;
+  }
+}
+
 // AI system → vendor dependency (ai_system_vendor_dependencies).
 export type AiVendorDependency = {
   dependency_id: string;
@@ -3026,6 +3287,9 @@ export async function getObligationComplianceContext(
 
 export type ObligationSummary = {
   total: number;
+  /** Metric Contract: ACTIVE with due_date strictly before today. Optional so
+   *  an older engine build degrades to 0 rather than a wrong render. */
+  overdue?: number;
   by_status: {
     active: number;
     waived: number;
@@ -3054,6 +3318,10 @@ export type Obligation = {
 export type ObligationsParams = {
   status?: string;
   domain?: string;
+  /** true = only overdue obligations (active + due before today). */
+  overdue?: boolean;
+  /** Register search term (2–120): title / source_regulation / description. */
+  q?: string;
   limit?: number;
 };
 
@@ -3120,6 +3388,36 @@ export type EvidenceResponse = {
   evidence: Evidence[];
 };
 
+export type EvidenceSummary = {
+  total: number;
+  by_source_type: Record<string, number>;
+};
+
+/** Org-wide evidence counts by workflow — the /evidence page's headline read. */
+export async function getEvidenceSummary(apiKey: string): Promise<EvidenceSummary | null> {
+  try {
+    const res = await engineFetch("/api/evidence/summary", apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as EvidenceSummary;
+  } catch {
+    return null;
+  }
+}
+
+/** Latest evidence records across the whole org (EG2 Tier 2 slice 8). */
+export async function getRecentEvidence(
+  apiKey: string,
+  limit = 50
+): Promise<{ count: number; evidence: Evidence[] } | null> {
+  try {
+    const res = await engineFetch(`/api/evidence/recent?limit=${limit}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as { count: number; evidence: Evidence[] };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Obligation API functions ─────────────────────────────────────────────────
 
 export async function getObligationSummary(
@@ -3142,6 +3440,8 @@ export async function getObligations(
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
     if (params?.domain) qs.set("domain", params.domain);
+    if (params?.overdue) qs.set("overdue", "true");
+    if (params?.q) qs.set("q", params.q);
     qs.set("limit", String(params?.limit ?? 50));
     const res = await engineFetch(`/api/obligations?${qs.toString()}`, apiKey);
     if (!res.ok) return null;
@@ -3319,14 +3619,41 @@ export function uploadFindingEvidence(
   },
   onProgress?: (pct: number) => void
 ): Promise<ActionResult<{ evidence: Evidence }>> {
+  return uploadEvidenceFile("finding", findingId, file, meta, onProgress);
+}
+
+/**
+ * Upload a FILE as evidence against ANY canonical evidence source (multipart).
+ * The engine upload lane has always accepted every source_type in its table
+ * (control_test, obligation_review, ai_review, ai_governance_review, …) — only
+ * this client was finding-only, which is why the control/obligation/AI
+ * evidence forms could record a ticket reference but never attach the actual
+ * artifact an auditor asks for (EG2 Tier 2 slice 8).
+ */
+export function uploadEvidenceFile(
+  sourceType: string,
+  sourceId: string,
+  file: File,
+  meta: {
+    title: string;
+    evidence_type: string;
+    description?: string | null;
+    external_ref?: string | null;
+    collected_at?: string | null;
+    collected_by?: string | null;
+  },
+  onProgress?: (pct: number) => void
+): Promise<ActionResult<{ evidence: Evidence }>> {
   return new Promise((resolve) => {
     const form = new FormData();
-    form.append("source_type", "finding");
-    form.append("source_id", findingId);
+    form.append("source_type", sourceType);
+    form.append("source_id", sourceId);
     form.append("title", meta.title);
     form.append("evidence_type", meta.evidence_type);
     if (meta.description) form.append("description", meta.description);
     if (meta.external_ref) form.append("external_ref", meta.external_ref);
+    if (meta.collected_at) form.append("collected_at", meta.collected_at);
+    if (meta.collected_by) form.append("collected_by", meta.collected_by);
     // `file` last so the text fields are parsed first server-side.
     form.append("file", file, file.name);
 
@@ -3627,11 +3954,46 @@ export async function getAiSystemGovernanceContext(
 // Alert Preferences
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** GET /api/briefing/changes — the since-last-visit delta (EG2 slice 10). */
+export type BriefingChangesResponse = {
+  since: string;
+  clamped: boolean;
+  window_days_max: number;
+  changes: {
+    new_active_findings: number;
+    new_critical_high: number;
+    remediation_completed: number;
+    resolved: number;
+    newly_overdue_actions: number;
+    briefs_published: number;
+  };
+};
+
+export async function getBriefingChanges(
+  apiKey: string,
+  sinceIso: string
+): Promise<BriefingChangesResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/briefing/changes?since=${encodeURIComponent(sinceIso)}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as BriefingChangesResponse;
+  } catch {
+    return null;
+  }
+}
+
 export type AlertPreferences = {
   critical_finding_immediate: boolean;
   high_finding_immediate: boolean;
   daily_digest: boolean;
   weekly_summary: boolean;
+  /** "Assigned to you" emails (EG2 Tier 2 slice 7). Optional: older engines omit it. */
+  assignment_immediate?: boolean;
+  /** Daily "work you own went overdue" email (EG2 Tier 2 slice 11). */
+  sla_breach_daily?: boolean;
 };
 
 export async function getAlertPreferences(apiKey: string): Promise<AlertPreferences | null> {
@@ -3771,18 +4133,22 @@ export async function getAuditLog(
     limit?: number;
     event_type?: string;
     user_id?: string;
+    resource_type?: string;
+    resource_id?: string;
     date_from?: string;
     date_to?: string;
   } = {}
 ): Promise<AuditLogResponse | null> {
   try {
     const qs = new URLSearchParams();
-    if (params.page)       qs.set("page",       String(params.page));
-    if (params.limit)      qs.set("limit",      String(params.limit));
-    if (params.event_type) qs.set("event_type", params.event_type);
-    if (params.user_id)    qs.set("user_id",    params.user_id);
-    if (params.date_from)  qs.set("date_from",  params.date_from);
-    if (params.date_to)    qs.set("date_to",    params.date_to);
+    if (params.page)          qs.set("page",          String(params.page));
+    if (params.limit)         qs.set("limit",         String(params.limit));
+    if (params.event_type)    qs.set("event_type",    params.event_type);
+    if (params.user_id)       qs.set("user_id",       params.user_id);
+    if (params.resource_type) qs.set("resource_type", params.resource_type);
+    if (params.resource_id)   qs.set("resource_id",   params.resource_id);
+    if (params.date_from)     qs.set("date_from",     params.date_from);
+    if (params.date_to)       qs.set("date_to",       params.date_to);
     const path = `/api/audit-log${qs.toString() ? `?${qs.toString()}` : ""}`;
     const res = await engineFetch(path, token);
     if (!res.ok) return null;
@@ -3803,16 +4169,48 @@ export async function getAuditLogEventTypes(token: string): Promise<string[] | n
   }
 }
 
-// Per-risk history (RR-3). Mirrors the AuditLogEvent shape so the
-// existing label/badge utilities can render rows verbatim. total_count
-// rather than total_pages because the RiskHistorySection uses
+// Per-object history (RR-3, generalized). Mirrors the AuditLogEvent
+// shape so the existing label/badge utilities can render rows verbatim.
+// total_count rather than total_pages because the HistorySection uses
 // limit/offset "Load more" paging instead of page-number navigation.
-export type RiskHistoryResponse = {
+export type ResourceHistoryResponse = {
   events:      AuditLogEvent[];
   total_count: number;
   limit:       number;
   offset:      number;
 };
+
+export type RiskHistoryResponse = ResourceHistoryResponse;
+
+// Register objects with an engine /:id/history endpoint. Kept as a
+// closed union so a typo'd path fails the build, not the request.
+export type HistoryResource =
+  | "risks"
+  | "findings"
+  | "vendors"
+  | "controls"
+  | "obligations"
+  | "ai-systems";
+
+export async function getResourceHistory(
+  resource: HistoryResource,
+  resourceId: string,
+  params: { limit?: number; offset?: number } = {}
+): Promise<ResourceHistoryResponse | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (params.limit  !== undefined) qs.set("limit",  String(params.limit));
+    if (params.offset !== undefined) qs.set("offset", String(params.offset));
+    const path = `/api/${resource}/${encodeURIComponent(resourceId)}/history${qs.toString() ? `?${qs.toString()}` : ""}`;
+    // Browser-side fetch goes through the Next.js proxy, which attaches
+    // the JWT from the session cookie. No bearer token in the client.
+    const res = await fetch(path, { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.json() as Promise<ResourceHistoryResponse>;
+  } catch {
+    return null;
+  }
+}
 
 // Risk-control linkage (RR-4) — forward direction (controls mitigating a risk)
 export type RiskControlLink = {
@@ -3908,19 +4306,7 @@ export async function getRiskHistory(
   riskId: string,
   params: { limit?: number; offset?: number } = {}
 ): Promise<RiskHistoryResponse | null> {
-  try {
-    const qs = new URLSearchParams();
-    if (params.limit  !== undefined) qs.set("limit",  String(params.limit));
-    if (params.offset !== undefined) qs.set("offset", String(params.offset));
-    const path = `/api/risks/${encodeURIComponent(riskId)}/history${qs.toString() ? `?${qs.toString()}` : ""}`;
-    // Browser-side fetch goes through the Next.js proxy, which attaches
-    // the JWT from the session cookie. No bearer token in the client.
-    const res = await fetch(path, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json() as Promise<RiskHistoryResponse>;
-  } catch {
-    return null;
-  }
+  return getResourceHistory("risks", riskId, params);
 }
 
 // =========================================================
@@ -4693,6 +5079,29 @@ export async function getWebhooks(
   }
 }
 
+export interface WebhookEventDefinition {
+  event_type: string;
+  description: string;
+}
+
+/**
+ * The event catalog this deployment accepts. The engine owns the vocabulary
+ * (and gates wave-1 entries on its own feature flag), so the settings UI must
+ * render from this rather than a hardcoded copy that silently goes stale.
+ */
+export async function getWebhookEventTypes(
+  token: string
+): Promise<WebhookEventDefinition[] | null> {
+  try {
+    const res = await engineFetch("/api/webhooks/event-types", token);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { event_types?: WebhookEventDefinition[] };
+    return body.event_types ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createWebhook(
   token: string,
   data: { url: string; description?: string; event_types?: string[] }
@@ -4732,6 +5141,26 @@ export async function deleteWebhook(token: string, id: string): Promise<boolean>
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Rotate the endpoint's signing secret in place (identity and delivery
+ * history survive). The response carries the full new secret ONCE — the
+ * same show-once contract as create.
+ */
+export async function rotateWebhookSecret(
+  token: string,
+  id: string
+): Promise<{ endpoint: WebhookEndpointWithSecret } | null> {
+  try {
+    const res = await engineFetch(`/api/webhooks/${id}/rotate-secret`, token, {
+      method: "POST",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ endpoint: WebhookEndpointWithSecret }>;
+  } catch {
+    return null;
   }
 }
 
@@ -4986,7 +5415,11 @@ export type SignalMatchTargetType =
   | "vendor"
   | "ai_system"
   | "control"
-  | "obligation";
+  | "obligation"
+  // EAR Phase 2: registry-target suggestions. Listable/dismissable today;
+  // accept is engine-refused (409 asset_target_accept_unsupported) until the
+  // registry link store ships (Phase 3), and the UI must not offer it.
+  | "asset";
 
 export type SignalMatchSuggestionStatus = "pending" | "accepted" | "dismissed";
 
@@ -5020,7 +5453,11 @@ export type SignalMatchSuggestionsResponse = {
 export type SignalMatchSuggestionCounts = {
   organizationId: string;
   total: number;
-  by_target_type: Record<SignalMatchTargetType, number>;
+  // `asset` is present only while the engine's asset registry is enabled —
+  // its presence is the signal that the Assets queue chip should render.
+  by_target_type: Record<Exclude<SignalMatchTargetType, "asset">, number> & {
+    asset?: number;
+  };
   // lifetime_total counts ALL states (pending, accepted, dismissed). The
   // queue UI uses it to distinguish a filtered-empty state from a
   // first-time-empty state without a separate query — the alternative was
@@ -5685,13 +6122,16 @@ export async function uploadVendorAssuranceDocument(
 /** GET /api/assets — the unified cross-type list over asset_registry_v. */
 export async function getAssets(
   token: string,
-  params: { asset_type?: AssetType; at_risk?: boolean; limit?: number; offset?: number } = {},
+  params: { asset_type?: AssetType; at_risk?: boolean; q?: string; limit?: number; offset?: number } = {},
 ): Promise<ReadResult<{ assets: CanonicalAsset[]; total: number; limit: number; offset: number }>> {
   const q = new URLSearchParams();
   if (params.asset_type) q.set("asset_type", params.asset_type);
   // The population the executive "Assets at risk" tile counts (own_risk > 0 on the
   // current applicability decision) — so that tile has a destination that reproduces it.
   if (params.at_risk) q.set("at_risk", "true");
+  // Free-text search (Phase 1): substring match over the fields the registry view
+  // exposes (name, asset ID). Composes with the filters and survives pagination.
+  if (params.q) q.set("q", params.q);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   if (params.offset !== undefined) q.set("offset", String(params.offset));
   try {
@@ -5730,7 +6170,7 @@ export async function getAsset(
 
 export async function getEnterpriseEntities(
   token: string,
-  params: { entity_type?: EntityType; limit?: number; offset?: number } = {},
+  params: { entity_type?: EntityType; q?: string; limit?: number; offset?: number } = {},
 ): Promise<ReadResult<{ enterprise_entities: EnterpriseEntity[]; limit: number; offset: number }>> {
   try {
     const res = await engineFetch(`/api/enterprise-entities?${entitiesQuery(params)}`, token);
@@ -6387,6 +6827,43 @@ export async function getIntelligenceEvent(
     const res = await engineFetch(`/api/intelligence/events/${encodeURIComponent(id)}`, apiKey);
     if (!res.ok) return null;
     return (await res.json()) as IntelligenceEventDetail;
+  } catch {
+    return null;
+  }
+}
+
+// =========================================================
+// GLOBAL SEARCH (GET /api/search)
+// =========================================================
+
+export type GlobalSearchHit = {
+  type: "finding" | "risk" | "vendor" | "ai_system" | "control" | "obligation" | "asset";
+  id: string;
+  title: string;
+  subtitle: string | null;
+  /** App route for this object — the engine owns routing, the UI just links. */
+  href: string;
+};
+
+export type GlobalSearchResponse = {
+  query: string;
+  total: number;
+  hits: GlobalSearchHit[];
+};
+
+/**
+ * Federated search across the canonical domain objects. Returns null on any
+ * failure (bad query, entitlement denial, engine error) — the search page
+ * degrades to an empty state and never throws.
+ */
+export async function searchGlobal(
+  apiKey: string,
+  q: string,
+): Promise<GlobalSearchResponse | null> {
+  try {
+    const res = await engineFetch(`/api/search?q=${encodeURIComponent(q)}`, apiKey);
+    if (!res.ok) return null;
+    return (await res.json()) as GlobalSearchResponse;
   } catch {
     return null;
   }

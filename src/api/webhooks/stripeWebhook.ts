@@ -10,6 +10,7 @@ import {
 } from "../infra/entitlementStore.js";
 import { claimWebhookEvent } from "./webhookIdempotency.js";
 import { applyBriefToPlatformCredit } from "../lib/briefPlatformCredit.js";
+import { sendEmail } from "../infra/email.js";
 
 /* =========================================================
    CONSTANTS
@@ -63,10 +64,14 @@ function isValidApiKeyId(value: unknown): value is string {
  *   - Current checkout tiers:  professional, teams, platform, platform_annual
  *   - Legacy (pre-overhaul):   team, paid, admin
  *
- * Anything outside this set is logged as stripe_unknown_tier. The function
- * still returns a sensible default ("paid") so webhook delivery is never
- * blocked by a bad metadata value, but the warning ensures silent drift
- * between the product catalog and this whitelist is loud in logs.
+ * Anything outside this set is logged as stripe_unresolved_tier and resolves
+ * to null — NO entitlement is granted. It used to default to "paid" (full
+ * platform) so that webhook delivery was never blocked by a bad metadata
+ * value; that traded a delivery concern for an over-entitlement, since the
+ * least trustworthy input produced the most privileged output. Delivery is
+ * still never blocked — the event is acknowledged and ignored — but access is
+ * no longer invented. Drift between the product catalog and this whitelist is
+ * now an error-level log, not a warning.
  */
 const KNOWN_TIERS = new Set([
   "professional", "teams", "platform", "platform_annual",
@@ -126,10 +131,28 @@ function resolveTierFromPriceId(subscription: Stripe.Subscription): string | nul
  * Non-subscription events (checkout.session.completed, etc.) read metadata
  * directly, preserving prior behavior.
  *
- * Unknown raw values are logged as stripe_unknown_tier and default to "paid"
- * for forward compatibility with legacy events that predate tier metadata.
+ * RETURNS null WHEN THE TIER CANNOT BE DETERMINED — it does NOT guess.
+ * ---------------------------------------------------------------------
+ * This previously defaulted to "paid" — the FULL PLATFORM tier — whenever the
+ * price was unmapped and metadata was absent or unrecognised, justified as
+ * "forward compatibility with legacy events". The effect was that the least
+ * trustworthy input produced the most privileged output: any subscription
+ * created outside our own Checkout (Stripe Dashboard, comped, migrated,
+ * internal) carries no tier metadata, and so was granted premium access on the
+ * strength of being unrecognised.
+ *
+ * Returning null instead lets the caller decline to act. Note what that is NOT:
+ * it is not a downgrade. An unresolvable GRANT is ignored, so an existing
+ * entitlement is left exactly as it was rather than being lowered on a guess —
+ * important because the same unresolvable input could belong to a legitimate
+ * customer whose metadata we simply cannot read. Revocation is unaffected and
+ * must stay that way: cancellations and past_due transitions do not consult the
+ * tier at all, so a subscription can always still LOSE access.
+ *
+ * The unresolved case is logged at error level with the price ID, because it
+ * now means a real event was not applied and someone has to look at it.
  */
-function resolveTier(event: Stripe.Event): "professional" | "paid" {
+function resolveTier(event: Stripe.Event): "professional" | "paid" | null {
   if (event.type.startsWith("customer.subscription.")) {
     const subscription = event.data.object as Stripe.Subscription;
     const priceTier = resolveTierFromPriceId(subscription);
@@ -148,12 +171,25 @@ function resolveTier(event: Stripe.Event): "professional" | "paid" {
     obj?.subscription_details?.metadata?.tier ??
     null;
 
-  if (!rawTier || !KNOWN_TIERS.has(rawTier)) {
-    logger.warn(
-      { event: "stripe_unknown_tier", rawTier, stripeEventType: event.type },
-      "stripeWebhook: unknown or missing tier in metadata — defaulting to 'paid'"
+  if (typeof rawTier !== "string" || !KNOWN_TIERS.has(rawTier)) {
+    const priceId =
+      event.type.startsWith("customer.subscription.")
+        ? (event.data.object as Stripe.Subscription).items?.data?.[0]?.price?.id ?? null
+        : null;
+    logger.error(
+      {
+        event: "stripe_unresolved_tier",
+        // `typeof` as well as the value: distinguishes absent from a non-string
+        // (object/array) metadata value, which is what "malformed" looks like.
+        rawTier: typeof rawTier === "string" ? rawTier : null,
+        rawTierType: typeof rawTier,
+        priceId,
+        stripeEventType: event.type
+      },
+      "stripeWebhook: tier could not be resolved from price ID or metadata — " +
+        "NO entitlement granted (previously defaulted to 'paid')"
     );
-    return "paid";
+    return null;
   }
 
   if (rawTier === "professional" || rawTier === "teams") {
@@ -171,7 +207,12 @@ function resolveTier(event: Stripe.Event): "professional" | "paid" {
 function classifySubscriptionEvent(
   eventType: string,
   subscription: Stripe.Subscription | null,
-  metadataTier: "professional" | "paid"
+  /**
+   * null means "the tier could not be determined". Only the GRANT branches
+   * consult it; revocation deliberately does not, so access can always be
+   * withdrawn even when the tier is unresolvable.
+   */
+  metadataTier: "professional" | "paid" | null
 ): EntitlementRecord | null {
   if (REVOKE_EVENTS.has(eventType)) {
     return { tier: "free", activeSubscription: false };
@@ -180,6 +221,10 @@ function classifySubscriptionEvent(
   if (eventType === "customer.subscription.updated" && subscription) {
     const status = subscription.status;
     if (status === "active" || status === "trialing") {
+      // Decline rather than guess. Returning null leaves the existing
+      // entitlement untouched — it neither grants premium to an unrecognised
+      // subscription nor downgrades a legitimate one.
+      if (metadataTier === null) return null;
       return { tier: metadataTier, activeSubscription: true };
     }
     if (
@@ -195,6 +240,7 @@ function classifySubscriptionEvent(
   }
 
   if (GRANT_EVENTS.has(eventType)) {
+    if (metadataTier === null) return null;
     return { tier: metadataTier, activeSubscription: true };
   }
 
@@ -290,6 +336,113 @@ function tierToDbLevel(tier: string): string {
 }
 
 /**
+ * customer.subscription.trial_will_end → heads-up email to the org's admins
+ * (#692 A7). Stripe fires this once, ~3 days before the trial converts and the
+ * card is charged; before this email existed the webhook logged and the
+ * conversion charge (up to $7,200 for Platform Annual) landed unannounced.
+ *
+ * Recipients: verified admin users of the org resolved via stripe_customer_id.
+ * Content is built only from the event (plan via price ID, amount from the
+ * subscription item, end date from trial_end) — no extra Stripe API calls.
+ */
+async function sendTrialWillEndEmails(
+  sub: Stripe.Subscription,
+  customerId: string
+): Promise<void> {
+  const orgResult = await pg.query<{ id: string; name: string }>(
+    `SELECT id, name FROM organizations WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId]
+  );
+  const org = orgResult.rows[0];
+  if (!org) {
+    logger.warn(
+      { event: "stripe_trial_will_end_org_missing", customerId },
+      "stripeWebhook: trial_will_end — no org for customer, skipping email"
+    );
+    return;
+  }
+
+  const admins = await pg.query<{ email: string; name: string | null }>(
+    `SELECT email, name FROM users
+      WHERE organization_id = $1 AND role = 'admin' AND email_verified = TRUE
+      ORDER BY created_at ASC`,
+    [org.id]
+  );
+  if (admins.rows.length === 0) {
+    logger.warn(
+      { event: "stripe_trial_will_end_no_admins", orgId: org.id },
+      "stripeWebhook: trial_will_end — org has no verified admins, skipping email"
+    );
+    return;
+  }
+
+  // Display labels mirror the canonical app map (app/src/lib/api.ts
+  // planDisplayName). Trial tiers are Platform-only by construction
+  // (PLATFORM_TRIAL_TIERS in billing.ts).
+  const tier = resolveTierFromPriceId(sub);
+  const planLabel =
+    tier === "platform_annual" ? "Platform Annual" : "Platform Professional";
+
+  const endDate = sub.trial_end
+    ? new Date(sub.trial_end * 1000).toLocaleDateString("en-US", {
+        month: "long", day: "numeric", year: "numeric",
+      })
+    : null;
+
+  const item = sub.items?.data?.[0];
+  const unitAmount = item?.price?.unit_amount ?? null;
+  const currency = (item?.price?.currency ?? "usd").toUpperCase();
+  const interval = item?.price?.recurring?.interval ?? null;
+  const amountLabel =
+    unitAmount !== null
+      ? `${currency === "USD" ? "$" : `${currency} `}${(unitAmount / 100).toLocaleString("en-US")}${interval ? ` / ${interval}` : ""}`
+      : null;
+
+  const appBase = (process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "");
+  const whenLine = endDate ? ` on <strong>${endDate}</strong>` : " in about 3 days";
+  const chargeLine = amountLabel
+    ? `Your subscription will start at <strong>${amountLabel}</strong> using the card on file.`
+    : "Your subscription will start using the card on file.";
+
+  const subject = `Your SecureLogic ${planLabel} trial ends soon`;
+  const html = `
+    <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; color: #0f172a;">
+      <h2 style="margin-bottom: 8px;">Your ${planLabel} trial ends${endDate ? ` ${endDate}` : " soon"}</h2>
+      <p style="color: #334155; line-height: 1.6;">
+        The free trial for <strong>${org.name}</strong> converts${whenLine}.
+        ${chargeLine}
+      </p>
+      <p style="color: #334155; line-height: 1.6;">
+        To review your plan, update the payment method, or cancel before
+        conversion, open your billing settings:
+      </p>
+      <p>
+        <a href="${appBase}/account"
+           style="display: inline-block; background: #0d9488; color: #ffffff; text-decoration: none; font-weight: 600; padding: 10px 24px; border-radius: 8px;">
+          Manage Billing
+        </a>
+      </p>
+      <p style="color: #64748b; font-size: 13px;">
+        Nothing to do if you want to keep ${planLabel} — access continues uninterrupted.
+      </p>
+    </div>`;
+
+  for (const admin of admins.rows) {
+    const result = await sendEmail({ to: admin.email, subject, html });
+    logger.info(
+      {
+        event: "stripe_trial_will_end_email",
+        orgId: org.id,
+        to: admin.email,
+        ok: result.ok,
+        reason: result.ok ? null : result.reason,
+      },
+      "stripeWebhook: trial_will_end heads-up email attempted"
+    );
+  }
+}
+
+/**
  * Resolve the SecureLogic organization_id for a Stripe event.
  *
  * Two paths, tried in order:
@@ -381,6 +534,17 @@ async function syncOrgEntitlement(
              max_monitored_entities     = CASE
                                             WHEN $1 IN ('premium','professional') THEN GREATEST(max_monitored_entities, 50)
                                             ELSE max_monitored_entities
+                                          END,
+             -- Seat cap (#692 A8): both pricing surfaces sell Platform as
+             -- "Up to 10 seats"; the DB default is 6. A platform-tier grant
+             -- ('premium' comes only from platform/platform_annual/legacy)
+             -- raises the cap to the advertised 10 — GREATEST + same
+             -- never-lower/downgrade-dip semantics as the entity cap above.
+             -- Brief tiers ('professional', incl. Brief Team) stay at the
+             -- default 6, matching their advertised seats.
+             max_members                = CASE
+                                            WHEN $1 = 'premium' THEN GREATEST(COALESCE(max_members, 6), 10)
+                                            ELSE max_members
                                           END,
              stripe_customer_id         = COALESCE(stripe_customer_id, $3),
              stripe_subscription_id     = COALESCE($4, stripe_subscription_id),
@@ -688,21 +852,33 @@ export async function stripeWebhook(
     }
 
     // Trial ending soon (fires ~3 days before a trial converts). No
-    // entitlement change — access continues through conversion. Handle
-    // explicitly (rather than falling into the generic ignored path) so it
-    // is logged as a heads-up and never errors. A dunning/heads-up email can
-    // hang off this event later; for now it is a graceful, logged 200.
+    // entitlement change — access continues through conversion. Emails the
+    // org's admins so the conversion charge never lands unannounced; email
+    // failure is non-fatal (never block the 200 — Stripe would retry the
+    // whole event and we'd re-email on an unrelated failure).
     if (eventType === "customer.subscription.trial_will_end") {
       const sub = event.data.object as Stripe.Subscription;
+      const trialCustomerId =
+        typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null;
       logger.info(
         {
           event: "stripe_trial_will_end",
           subscriptionId: sub.id,
           trialEnd: sub.trial_end,
-          customerId: typeof sub.customer === "string" ? sub.customer : sub.customer?.id ?? null,
+          customerId: trialCustomerId,
         },
-        "stripeWebhook: Platform trial ending soon — heads-up only, no entitlement change"
+        "stripeWebhook: Platform trial ending soon — notifying org admins, no entitlement change"
       );
+      if (trialCustomerId) {
+        try {
+          await sendTrialWillEndEmails(sub, trialCustomerId);
+        } catch (err) {
+          logger.warn(
+            { event: "stripe_trial_will_end_email_failed", customerId: trialCustomerId, err },
+            "stripeWebhook: trial_will_end email failed (non-fatal)"
+          );
+        }
+      }
       respond({ received: true, trial_will_end: true });
       return;
     }

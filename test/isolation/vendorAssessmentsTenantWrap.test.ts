@@ -253,6 +253,32 @@ describe("A04-G1 PR γ.3 — vendorAssessments wrap: functional under app_reques
     expect(res.body?.assessment?.id).toBe(id);
     expect(res.body?.finding?.source_id).toBe(id);
   });
+
+  it("POST with overall_severity 'Low' → 201, assessment persists, NO summary finding is minted (EG2 trust ruling: a satisfactory review must not create open work or a score penalty)", async () => {
+    const res = await request(app)
+      .post("/api/vendor-assessments")
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ ...VALID_BODY(vendorA), overall_severity: "Low" });
+
+    expect(res.status).toBe(201);
+    const assessmentId = res.body?.assessment?.id as string;
+    expect(assessmentId).toBeTruthy();
+    expect(res.body?.finding).toBeNull();
+
+    const assessmentPersisted = await waitForCount(
+      ownerPool,
+      "SELECT count(*)::int AS n FROM vendor_assessments WHERE id = $1 AND organization_id = $2",
+      [assessmentId, seed.orgA.id],
+      1,
+    );
+    expect(assessmentPersisted).toBeGreaterThanOrEqual(1);
+
+    const findingRows = await ownerPool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM findings WHERE source_type = 'vendor_review' AND source_id = $1::uuid AND organization_id = $2",
+      [assessmentId, seed.orgA.id],
+    );
+    expect(findingRows.rows[0]!.n).toBe(0);
+  });
 });
 
 // ===========================================================================

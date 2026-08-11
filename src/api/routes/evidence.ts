@@ -187,6 +187,62 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/evidence/recent
+   The org-wide recent-evidence read (EG2 Tier 2 slice 8).
+
+   The plain list route requires (source_type, source_id) — correct for the
+   per-record sections, but it meant no surface could answer "what evidence
+   does the organization have?". This is the additive org-wide read behind
+   the /evidence page: latest N records, same projection as the list route
+   (never the raw storage key). Registered BEFORE /evidence/:id so the
+   literal path is not captured as an id.
+   ========================================================= */
+
+router.get(
+  "/evidence/recent",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const rawLimit = parseInt(String(req.query["limit"] ?? "50"), 10);
+    const limit = isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 100);
+
+    try {
+      const result = await pg.query(
+        `
+        SELECT ${EVIDENCE_SELECT}
+        FROM evidence
+        WHERE organization_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2
+        `,
+        [organizationId, limit]
+      );
+
+      res.status(200).json({
+        organizationId,
+        count: result.rowCount ?? 0,
+        evidence: result.rows,
+      });
+    } catch (err) {
+      logger.error(
+        { event: "evidence_recent_failed", err },
+        "GET /api/evidence/recent failed"
+      );
+      res.status(500).json({ error: "evidence_recent_failed" });
+    }
+  })
+);
+
+/* =========================================================
    POST /api/evidence
    Create an evidence record.
    Verifies that the linked source record exists and belongs to this org.

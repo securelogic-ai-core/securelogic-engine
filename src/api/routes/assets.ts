@@ -39,6 +39,7 @@ import {
   HUMAN_PROVENANCE
 } from "../lib/assetProductIdentityValidation.js";
 import { isAssetType } from "../lib/assetRegistry.js";
+import { normalizeAssetSearchTerm, resolveAssetSearch } from "../lib/assetSearchResolver.js";
 import {
   validateAssetDetailCreate,
   validateAssetDetailUpdate,
@@ -115,6 +116,7 @@ function parseBoundedInt(raw: unknown, fallback: number, max: number): number | 
   return n;
 }
 
+
 export async function listAssets(req: Request, res: Response): Promise<void> {
   const orgId = getOrgId(req);
   if (!orgId) {
@@ -139,6 +141,22 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
     typeFilter = rawType;
   }
 
+  // Free-text search: resolved by the SHARED asset-search resolver (names,
+  // hostnames, cloud accounts, native refs, exact UUIDs — one platform-wide
+  // semantics), then applied as an id predicate so the type / at_risk filters
+  // and the existing sort + pagination compose unchanged. A blank q is a no-op
+  // (an empty search box submit must not 400 the page); an out-of-bounds one
+  // is a 400 (same 2–120 bounds as every other search surface).
+  let searchTerm: string | null = null;
+  const rawSearch = req.query.q;
+  if (rawSearch !== undefined && !(typeof rawSearch === "string" && rawSearch.trim().length === 0)) {
+    searchTerm = normalizeAssetSearchTerm(rawSearch);
+    if (searchTerm === null) {
+      res.status(400).json({ error: "invalid_search" });
+      return;
+    }
+  }
+
   // at_risk=true — the assets the executive "Assets at risk" tile counts (own_risk > 0
   // on the CURRENT applicability decision). It exists so that tile has a destination
   // that reproduces its number: without it, the only place the tile could send a
@@ -153,6 +171,28 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
   const atRiskWhere = atRisk ? `AND ${sqlAssetAtRisk()}` : ``;
   const withCte = atRisk ? `WITH current_decisions AS (${sqlCurrentDecisionsCte("$1")})` : ``;
 
+  // Resolve the term to canonical asset ids FIRST (type-narrowed, so a filtered
+  // page never loses its own type's matches to the resolver cap), then filter
+  // the list by id. Zero matches short-circuits to an honest empty envelope —
+  // no point running the list queries against an empty id set.
+  let searchAssetIds: string[] | null = null;
+  if (searchTerm !== null) {
+    const resolved = await resolveAssetSearch(pg, orgId, searchTerm, {
+      ...(typeFilter ? { assetTypes: [typeFilter] } : {})
+    });
+    if (resolved.matches.length === 0) {
+      res.status(200).json({ assets: [], total: 0, limit, offset });
+      return;
+    }
+    searchAssetIds = resolved.matches.map((m) => m.asset_id);
+  }
+
+  // The id list is appended AFTER the fixed params, so its placeholder index
+  // differs between the two queries: $5 in the rows query (after limit/offset),
+  // $3 in the count query.
+  const searchRowsWhere = searchAssetIds ? `AND v.asset_id = ANY($5::uuid[])` : ``;
+  const searchCountWhere = searchAssetIds ? `AND v.asset_id = ANY($3::uuid[])` : ``;
+
   const rows = await pg.query(
     `${withCte}
      SELECT ${ASSET_COLS_V}
@@ -161,9 +201,12 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
       WHERE v.organization_id = $1
         AND ($2::text IS NULL OR v.asset_type = $2)
         ${atRiskWhere}
+        ${searchRowsWhere}
       ORDER BY v.name ASC, v.asset_id ASC
       LIMIT $3 OFFSET $4`,
-    [orgId, typeFilter, limit, offset]
+    searchAssetIds !== null
+      ? [orgId, typeFilter, limit, offset, searchAssetIds]
+      : [orgId, typeFilter, limit, offset]
   );
 
   const total = await pg.query(
@@ -173,8 +216,9 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
        ${atRiskJoin}
       WHERE v.organization_id = $1
         AND ($2::text IS NULL OR v.asset_type = $2)
-        ${atRiskWhere}`,
-    [orgId, typeFilter]
+        ${atRiskWhere}
+        ${searchCountWhere}`,
+    searchAssetIds !== null ? [orgId, typeFilter, searchAssetIds] : [orgId, typeFilter]
   );
 
   res.status(200).json({

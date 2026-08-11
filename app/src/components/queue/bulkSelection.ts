@@ -29,14 +29,38 @@ export function pruneSelection(selected: string[], visibleIds: string[]): string
 
 export type BulkDecision = "accept" | "dismiss";
 
+/**
+ * Split a selection for a bulk ACCEPT into accept-eligible ids and skipped
+ * ids. Asset-target suggestions are not acceptable yet (the engine refuses
+ * with 409 asset_target_accept_unsupported until the registry link store
+ * ships) — sending them would just convert the whole selection into partial
+ * failures. Dismiss has no such split; every selected row is dismissable.
+ */
+export function partitionAcceptEligible(
+  selected: string[],
+  targetTypeById: ReadonlyMap<string, string>,
+): { eligible: string[]; skipped: string[] } {
+  const eligible: string[] = [];
+  const skipped: string[] = [];
+  for (const id of selected) {
+    (targetTypeById.get(id) === "asset" ? skipped : eligible).push(id);
+  }
+  return { eligible, skipped };
+}
+
 /** Human summary of a bulk outcome for the result notice. */
 export function summarizeBulkResult(
   decision: BulkDecision,
   succeeded: number,
   failed: number,
+  skippedAssets = 0,
 ): string {
   const verb = decision === "accept" ? "accepted" : "dismissed";
-  if (failed === 0) return `${succeeded} ${verb}.`;
-  if (succeeded === 0) return `Could not ${decision} ${failed} — please retry.`;
-  return `${succeeded} ${verb}, ${failed} failed — please retry those.`;
+  const skippedSuffix =
+    skippedAssets > 0
+      ? ` ${skippedAssets} asset suggestion${skippedAssets === 1 ? "" : "s"} skipped — accept for assets is coming soon.`
+      : "";
+  if (failed === 0) return `${succeeded} ${verb}.${skippedSuffix}`;
+  if (succeeded === 0) return `Could not ${decision} ${failed} — please retry.${skippedSuffix}`;
+  return `${succeeded} ${verb}, ${failed} failed — please retry those.${skippedSuffix}`;
 }

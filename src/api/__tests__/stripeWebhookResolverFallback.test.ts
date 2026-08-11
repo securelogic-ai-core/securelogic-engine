@@ -174,7 +174,9 @@ beforeEach(() => {
 describe("PR-D1: api_key_id is a fallback, not a fatal gate", () => {
   it("subscription.updated with NO api_key_id but a known stripe_customer_id → resolves + grants", async () => {
     constructEventMock.mockReturnValue(
-      subEvent({ type: "customer.subscription.updated", status: "active", metadata: {} })
+      // tier metadata is what our own Checkout always stamps; without it the
+      // event is unresolvable and is now ignored, which is a different test.
+      subEvent({ type: "customer.subscription.updated", status: "active", metadata: { tier: "platform" } })
     );
     configurePg({ customerHit: true, apiKeyHit: false });
 
@@ -239,7 +241,7 @@ describe("PR-D1: api_key_id is a fallback, not a fatal gate", () => {
         type: "customer.subscription.updated",
         status: "active",
         customer: "cus_unknown",
-        metadata: {},
+        metadata: { tier: "platform" },
       })
     );
     configurePg({ customerHit: false, apiKeyHit: false });
@@ -258,7 +260,9 @@ describe("PR-D1: api_key_id is a fallback, not a fatal gate", () => {
 
   it("idempotent replay unchanged: duplicate event (no metadata) still short-circuits with idempotent_replay", async () => {
     constructEventMock.mockReturnValue(
-      subEvent({ type: "customer.subscription.updated", status: "active", metadata: {} })
+      // tier metadata is what our own Checkout always stamps; without it the
+      // event is unresolvable and is now ignored, which is a different test.
+      subEvent({ type: "customer.subscription.updated", status: "active", metadata: { tier: "platform" } })
     );
     configurePg({ claimFirstSeen: false, customerHit: true });
 
@@ -279,7 +283,7 @@ describe("PR-D1: api_key_id is a fallback, not a fatal gate", () => {
       subEvent({
         type: "customer.subscription.updated",
         status: "active",
-        metadata: { api_key_id: "not-a-uuid" },
+        metadata: { api_key_id: "not-a-uuid", tier: "platform" },
       })
     );
     configurePg({ customerHit: true, apiKeyHit: false });

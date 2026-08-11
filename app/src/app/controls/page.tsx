@@ -8,6 +8,10 @@ import {
   type ControlAssessment,
 } from "@/lib/api";
 import { ControlsList } from "./ControlsList";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 export default async function ControlsPage({
   searchParams,
@@ -23,9 +27,24 @@ export default async function ControlsPage({
 
   const sp = await searchParams;
   const filterOverdue = sp.filter === "overdue";
+  // Register search — platform 2–120 bounds; rides the engine's existing
+  // controls search mode (name/description ILIKE, the CUEC picker contract).
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
+
+  // A retry must land back on the view the customer was looking at, not reset
+  // their filter and search (EDX-1: recovery preserves context).
+  const controlsRetryParams = new URLSearchParams();
+  if (filterOverdue) controlsRetryParams.set("filter", "overdue");
+  if (search) controlsRetryParams.set("q", search);
+  const controlsRetryHref = `/controls${
+    controlsRetryParams.toString() ? `?${controlsRetryParams.toString()}` : ""
+  }`;
 
   const [controlsData, assessmentsData] = await Promise.all([
-    getControls(token),
+    getControls(token, { q: search }),
     getControlAssessments(token),
   ]);
 
@@ -104,6 +123,11 @@ export default async function ControlsPage({
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/controls"
+            filenamePrefix="controls"
+            queryString=""
+          />
           <Link
             href="/controls/new"
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
@@ -114,15 +138,46 @@ export default async function ControlsPage({
         </div>
       </div>
 
-      {controlsData === null && (
+      {/* Search — the register list-page pattern; preserves the overdue filter. */}
+      <ListSearchForm
+        action="/controls"
+        inputId="control-search"
+        placeholder="Name or description..."
+        defaultValue={search}
+        hidden={filterOverdue ? { filter: "overdue" } : {}}
+      />
+
+      {/* EDX-1: getControls returns null for ANY non-OK response or thrown
+          request. Same shape as /ai-systems — this page has no platform
+          redirect while GET /api/controls is entitlement-gated, so a 403 is
+          reachable and the denial refuses only what the data rules out (an
+          empty library), never attributing a cause we cannot see. */}
+      {isUnavailable(controlsData) && (
+        <UnavailableNotice
+          subject="Controls"
+          denial="not an empty library"
+          reassurance="Your controls are unchanged."
+          retryHref={controlsRetryHref}
+        />
+      )}
+
+      {/* Search-empty: honest "no match" over a populated org, with the way out. */}
+      {controlsData !== null && allControls.length === 0 && search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: "#94a3b8" }}>
-            Controls data is not available for your current plan.
+          <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
+            No controls match your search.
           </p>
+          <Link
+            href="/controls"
+            className="text-sm font-medium hover:opacity-80"
+            style={{ color: "#00c4b4" }}
+          >
+            Clear search →
+          </Link>
         </div>
       )}
 
-      {controlsData !== null && allControls.length === 0 && (
+      {controlsData !== null && allControls.length === 0 && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
             No controls defined yet. Controls are the security measures your organization has in place.

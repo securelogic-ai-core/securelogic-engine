@@ -1,4 +1,5 @@
 import { logger } from "../infra/logger.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 import {
   getResend,
   getFromAddress,
@@ -37,7 +38,9 @@ export async function sendCriticalFindingAlert(payload: CriticalFindingAlertPayl
   const duplicate = await isDuplicate(userId, "critical_finding_immediate", dedupeKey);
   if (duplicate) return;
 
-  const findingUrl = `${getAppBaseUrl()}/findings`;
+  // Deep-link to THE finding the alert is about — landing an operator on the
+  // generic list and making them hunt for the row defeats an immediate alert.
+  const findingUrl = `${getAppBaseUrl()}/findings/${encodeURIComponent(findingId)}`;
   const domainLabel = domain ? ` · ${htmlEscape(domain)}` : "";
   const severityColor = severity === "Critical" ? "#ef4444" : "#f97316";
 
@@ -75,6 +78,7 @@ export async function sendCriticalFindingAlert(payload: CriticalFindingAlertPayl
       to: email,
       subject: `[${severity}] New finding: ${findingTitle}`,
       html,
+      tags: withEnvironmentTag(),
     });
     await recordSend(userId, "critical_finding_immediate", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "critical_finding_immediate", userId, findingId }, "Critical finding alert sent");
@@ -170,6 +174,7 @@ export async function sendDailyDigest(payload: DailyDigestPayload): Promise<void
       to: email,
       subject: `SecureLogic AI — Daily Digest (${newFindings.length} new finding${newFindings.length !== 1 ? "s" : ""})`,
       html,
+      tags: withEnvironmentTag(),
     });
     await recordSend(userId, "daily_digest", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "daily_digest", userId }, "Daily digest sent");
@@ -265,6 +270,7 @@ export async function sendWeeklySummary(payload: WeeklySummaryPayload): Promise<
       to: email,
       subject: `SecureLogic AI — Weekly Posture Summary`,
       html,
+      tags: withEnvironmentTag(),
     });
     await recordSend(userId, "weekly_summary", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "weekly_summary", userId }, "Weekly summary sent");

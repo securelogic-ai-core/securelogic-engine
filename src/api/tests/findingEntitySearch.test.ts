@@ -79,8 +79,42 @@ describe("searchFindingsByEntity", () => {
     const { client, calls } = fakeClient([]);
     const out = await searchFindingsByEntity(client, ORG, "NoSuchCorp");
     expect(out).toEqual({ entities: [], finding_ids: [] });
-    // only the 4 entity-name lookups ran
-    expect(calls.length).toBe(4);
+    // Only the 4 entity-name lookups + the shared asset-search pass ran — no
+    // finding queries.
+    expect(calls.length).toBe(5);
+    expect(calls[4].sql).toContain("asset_search_index_v");
+    expect(calls.every((c) => !/FROM findings/i.test(c.sql))).toBe(true);
+  });
+
+  it("folds a vendor-backed asset match (e.g. a product alias) into the vendor path", async () => {
+    const { client, calls } = fakeClient([
+      // No entity-name match anywhere…
+      // …but the shared asset-search pass finds a vendor-backed asset.
+      {
+        match: /FROM asset_search_index_v/i,
+        rows: [{ asset_id: "a1", asset_type: "vendor", backing_kind: "vendors", backing_id: "v9", term_kind: "alias" }],
+      },
+      // Hydration of the extra vendor's name (id = ANY path).
+      { match: /FROM vendors\s+WHERE organization_id = \$1 AND id = ANY/i, rows: [{ id: "v9", name: "Aliased Corp" }] },
+      { match: /FROM signal_vendor_links/i, rows: [{ signal_id: "s1" }] },
+      { match: /source_type IN \('cyber_signal', 'signal'\)/i, rows: [{ id: "f-alias" }] },
+    ]);
+    const out = await searchFindingsByEntity(client, ORG, "WdgtSuite");
+    expect(out.entities).toEqual([{ type: "vendor", id: "v9", name: "Aliased Corp" }]);
+    expect(out.finding_ids).toContain("f-alias");
+    // Detail-backed matches (no finding path) must not create entity lookups.
+    expect(calls.filter((c) => /FROM endpoints/i.test(c.sql))).toHaveLength(0);
+  });
+
+  it("ignores detail-backed asset matches (endpoints etc.) — no finding path exists yet", async () => {
+    const { client } = fakeClient([
+      {
+        match: /FROM asset_search_index_v/i,
+        rows: [{ asset_id: "ep1", asset_type: "endpoint", backing_kind: "endpoints", backing_id: "ep1", term_kind: "hostname" }],
+      },
+    ]);
+    const out = await searchFindingsByEntity(client, ORG, "web-01");
+    expect(out).toEqual({ entities: [], finding_ids: [] });
   });
 
   it("searches obligations by title and resolves obligation_review findings", async () => {

@@ -110,3 +110,91 @@ describe("ECL Slice 1 handlers — tenant negative paths", () => {
     expect(q.mock.calls[0][1][0]).toBe(ORG_A);
   });
 });
+
+// ── q search — the shared asset-search capability, narrowed to this list's
+//    own rows by backing id (enterprise_entities-backed assets only). ────────
+
+function reqWithQuery(query: Record<string, unknown>, orgId: string | null = ORG_A): Request {
+  return {
+    organizationContext: orgId ? { organizationId: orgId } : undefined,
+    params: {},
+    query,
+    body: {},
+    apiKey: { id: "key-1" },
+    userId: "user-1",
+    ip: "203.0.113.1"
+  } as unknown as Request;
+}
+
+describe("listEnterpriseEntities — the q search", () => {
+  it("resolves via the SHARED search index, then filters by entity (backing) id", async () => {
+    // 1st query: the resolver; 2nd: the org-scoped list narrowed to backing ids.
+    q.mockResolvedValueOnce({
+      rowCount: 2,
+      rows: [
+        { asset_id: "as-1", asset_type: "application", backing_kind: "enterprise_entities", backing_id: "e-1", term_kind: "name" },
+        // A vendor match must NOT leak into an entities list — wrong backing kind.
+        { asset_id: "as-2", asset_type: "vendor", backing_kind: "vendors", backing_id: "v-1", term_kind: "alias" }
+      ]
+    });
+    q.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = mockRes();
+    await listEnterpriseEntities(reqWithQuery({ q: "billing" }), res);
+
+    expect(res._status).toBe(200);
+    const [resolverSql, resolverParams] = q.mock.calls[0] as [string, unknown[]];
+    expect(resolverSql).toContain("FROM asset_search_index_v");
+    expect(resolverParams[0]).toBe(ORG_A);
+    expect(resolverParams[1]).toBe("%billing%");
+
+    const [listSql, listParams] = q.mock.calls[1] as [string, unknown[]];
+    expect(listSql).toContain("id = ANY($5::uuid[])");
+    expect(listParams).toEqual([ORG_A, null, 25, 0, ["e-1"]]);
+  });
+
+  it("no entity-backed matches → honest empty envelope, no list query", async () => {
+    q.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ asset_id: "as-2", asset_type: "vendor", backing_kind: "vendors", backing_id: "v-1", term_kind: "name" }]
+    });
+
+    const res = mockRes();
+    await listEnterpriseEntities(reqWithQuery({ q: "acme" }), res);
+
+    expect(res._status).toBe(200);
+    expect(res._json).toEqual({ enterprise_entities: [], limit: 25, offset: 0 });
+    expect(q).toHaveBeenCalledTimes(1);
+  });
+
+  it("blank q is a no-op; out-of-bounds q is 400 invalid_search (platform 2–120)", async () => {
+    q.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const okRes = mockRes();
+    await listEnterpriseEntities(reqWithQuery({ q: "  " }), okRes);
+    expect(okRes._status).toBe(200);
+    expect((q.mock.calls[0] as [string, unknown[]])[0]).not.toContain("asset_search_index_v");
+
+    q.mockReset();
+    for (const bad of ["a", "a".repeat(121), ["a", "b"]]) {
+      const res = mockRes();
+      await listEnterpriseEntities(reqWithQuery({ q: bad }), res);
+      expect(res._status, JSON.stringify(bad).slice(0, 20)).toBe(400);
+      expect(res._json).toEqual({ error: "invalid_search" });
+    }
+    expect(q).not.toHaveBeenCalled();
+  });
+
+  it("q composes with the entity_type filter (both applied to the list query)", async () => {
+    q.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ asset_id: "as-1", asset_type: "application", backing_kind: "enterprise_entities", backing_id: "e-1", term_kind: "name" }]
+    });
+    q.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = mockRes();
+    await listEnterpriseEntities(reqWithQuery({ q: "billing", entity_type: "application" }), res);
+
+    expect(res._status).toBe(200);
+    expect((q.mock.calls[1] as [string, unknown[]])[1]).toEqual([ORG_A, "application", 25, 0, ["e-1"]]);
+  });
+});

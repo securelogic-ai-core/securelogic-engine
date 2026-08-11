@@ -50,6 +50,8 @@ It is a point-in-time record. When new routes land, the classification table her
 | `adminIssueDeliveryMetrics.ts` | tenant-irrelevant | Global newsletter delivery metrics. |
 | `adminOpsDashboard.ts` | tenant-irrelevant | Static admin dashboard HTML (CSP-restricted). |
 | `adminOpsOverview.ts` | tenant-irrelevant | Reads platform-internal counts (worker runs, queue depths). No customer-row reads. |
+| `adminEmailEnvironmentEvidence.ts` | tenant-irrelevant | Aggregates `email_provider_events` — a global, no-`organization_id` operational table. Read-only; returns counts and environment identities only, never a recipient address. |
+| `adminProviderSuppressionRecovery.ts` | tenant-irrelevant | Reads and clears suppressions on the mail PROVIDER's account-level list, which is email-keyed and has no `organization_id` (same model as `email_suppressions`). Touches no database table at all. The clear is additionally gated on `APP_ENV=production` AND `SECURELOGIC_EMAIL_SUPPRESSION_RECOVERY_ENABLED` because the provider account is shared by prod/staging/demo — see `lib/providerSuppressionRecoveryPolicy.ts`. |
 | `adminRequeueNewsletterDeliveriesByIssue.ts` | tenant-irrelevant | Global `newsletter_deliveries`. |
 | `adminRequeueNewsletterDelivery.ts` | tenant-irrelevant | Global `newsletter_deliveries`. |
 | `adminSuppressions.ts` | tenant-irrelevant | Global `email_suppressions`. |

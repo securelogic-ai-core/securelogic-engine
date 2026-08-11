@@ -8,6 +8,7 @@
  */
 import { render, type RenderResult } from "@testing-library/react";
 import type { ReactElement } from "react";
+import { vi } from "vitest";
 
 // ── Session boundary ────────────────────────────────────────────────
 // getSession() reads cookies via next/headers, which has no request scope in a test
@@ -118,6 +119,34 @@ export function setClientPathname(path: string): void {
 
 export function resetClientPathname(): void {
   clientPathname.current = "/";
+}
+
+// ── Client router boundary ──────────────────────────────────────────
+// setup.ts used to hand every useRouter() call a freshly-built object, so a
+// test could never see where a client component navigated — the spy it would
+// have asserted on was discarded the moment the component rendered. A page
+// whose whole job is to route the customer somewhere (verify-email decides
+// between /dashboard and /getting-started) had no observable contract at all.
+// One stable router per test makes the destination assertable, which is the
+// customer-visible outcome; beforeEach resets it via resetClientRouter().
+
+export const clientRouter = {
+  push: vi.fn(),
+  replace: vi.fn(),
+  refresh: vi.fn(),
+  back: vi.fn(),
+  forward: vi.fn(),
+  prefetch: vi.fn(),
+};
+
+export function resetClientRouter(): void {
+  for (const fn of Object.values(clientRouter)) fn.mockReset();
+}
+
+/** Where the client component navigated, or null if it never did. */
+export function pushedTo(): string | null {
+  const call = clientRouter.push.mock.calls.at(-1);
+  return call ? (call[0] as string) : null;
 }
 
 // ── Link assertions ─────────────────────────────────────────────────

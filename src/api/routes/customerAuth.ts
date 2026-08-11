@@ -31,6 +31,7 @@ import { recordAccountLockout } from "../lib/authAnomaly.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
+import { getProviderSuppression } from "../infra/providerSuppression.js";
 import {
   recordConsent,
   recordAllCurrentConsents,
@@ -40,6 +41,7 @@ import {
   type ConsentMethod,
 } from "../lib/legalConsent.js";
 import { Resend } from "resend";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const router = Router();
 
@@ -214,9 +216,112 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
 </html>`;
 }
 
+/**
+ * Send one transactional email, THROWING when the provider refuses it.
+ *
+ * The Resend SDK does not throw on an API-level rejection: `emails.send()`
+ * RESOLVES with `{ data, error }` and only throws on a transport failure. This
+ * function used to `await` that and return `void`, so an unverified sending
+ * domain, a revoked key, a rate limit or a validation error all looked exactly
+ * like success — and `sendVerificationEmail` below reported `"sent"` to a
+ * customer whose mail had been refused outright. Surfacing the error as a throw
+ * is what makes every caller's existing try/catch mean what it says.
+ */
 async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const resend = getResend();
-  await resend.emails.send({ from: getFromAddress(), to: [to], subject, html });
+  const res = await resend.emails.send({
+    from: getFromAddress(),
+    to: [to],
+    subject,
+    html,
+    tags: withEnvironmentTag()
+  });
+
+  const error = (res as { error?: { message?: string; name?: string } | null })?.error;
+  if (error) {
+    throw new Error(
+      `Resend rejected the send: ${error.name ?? "error"}: ${error.message ?? "unknown"}`
+    );
+  }
+}
+
+/**
+ * What actually happened to a verification email.
+ *
+ * `unavailable` (no provider configured) and `failed` (provider rejected or
+ * errored) are kept apart because they need different operator responses: one
+ * is a deployment gap, the other is a delivery problem.
+ *
+ * `suppressed` is a third, worse case: the provider holds a standing
+ * suppression for the address (almost always an earlier hard bounce), so the
+ * send would be accepted and then silently discarded. Resending cannot fix it
+ * and each attempt costs more sender reputation — the address itself has to
+ * change or the suppression has to be lifted. It is kept distinct from `failed`
+ * precisely because the customer's next action is different: not "try again",
+ * but "this address cannot receive our mail".
+ */
+type VerificationEmailOutcome = "sent" | "unavailable" | "failed" | "suppressed";
+
+/**
+ * Is there a mail provider at all?
+ *
+ * A synchronous env read, deliberately: it is the one thing about mail that is
+ * identical for every address, so it can be answered before any lookup without
+ * revealing anything about the account being asked after.
+ */
+function mailProviderConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY?.trim());
+}
+
+/**
+ * Send the verification email and REPORT WHAT HAPPENED.
+ *
+ * Signup used to fire this and forget it: `sendEmail(...).catch(log)`, then
+ * return 201 `verification_email_sent` unconditionally. getResend() throws when
+ * RESEND_API_KEY is unset, so on an environment missing that key every new
+ * tenant was created, told its verification email was on the way, and locked
+ * out permanently — login returns 403 `email_not_verified` and the token only
+ * exists in the database. A confident false statement about the system's own
+ * action, with no error the customer could see.
+ *
+ * The account is NOT rolled back on failure. It is a valid, fully provisioned
+ * tenant — org, active API key, admin user, and consent rows are all committed
+ * before this runs. Discarding it would destroy real customer state to punish a
+ * mail outage, and the address is still verifiable later.
+ */
+async function sendVerificationEmail(
+  to: string,
+  name: string,
+  verificationUrl: string
+): Promise<VerificationEmailOutcome> {
+  if (!mailProviderConfigured()) {
+    logger.warn(
+      { event: "verification_email_unavailable" },
+      "Verification email not sent — RESEND_API_KEY is not configured"
+    );
+    return "unavailable";
+  }
+
+  // A suppressed address is not a send that might work — the provider accepts
+  // it and drops it. Checking first turns a silent permanent lockout into a
+  // stated fact, and avoids spending more sender reputation on a bounce we can
+  // already predict. `unknown` (lookup failed / not configured) falls through
+  // and sends, because a provider blip must never block a real signup.
+  if ((await getProviderSuppression(to)) === "suppressed") {
+    logger.warn(
+      { event: "verification_email_suppressed" },
+      "Verification email not sent — address is on the provider suppression list"
+    );
+    return "suppressed";
+  }
+
+  try {
+    await sendEmail(to, "Verify your SecureLogic AI account", verificationEmailHtml(name, verificationUrl));
+    return "sent";
+  } catch (err) {
+    logger.warn({ event: "verification_email_failed", err }, "Verification email send failed");
+    return "failed";
+  }
 }
 
 function lockoutEmailHtml(lockedUntil: Date): string {
@@ -409,14 +514,60 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       ipAddress: req.ip ?? null
     });
 
-    // Send verification email (non-blocking; failure doesn't abort the signup)
+    // Send the verification email and AWAIT the outcome. The signup is already
+    // committed above, so this cannot corrupt tenant state — but its result is
+    // the difference between "check your inbox" and "you are locked out", and
+    // the customer is entitled to know which one they are in.
     const verificationUrl = `${getAppBaseUrl()}/verify-email?token=${verificationToken}`;
-    sendEmail(email, "Verify your SecureLogic AI account", verificationEmailHtml(name, verificationUrl))
-      .catch((err) => {
-        logger.warn({ event: "signup_verification_email_failed", userId, err }, "Verification email not sent");
-      });
+    const emailOutcome = await sendVerificationEmail(email, name, verificationUrl);
 
-    res.status(201).json({ ok: true, message: "verification_email_sent" });
+    // 201 either way: the account and organization exist and are fully
+    // provisioned. Only the CLAIM about the email changes.
+    //
+    // Being specific here leaks nothing. Unlike /auth/resend-verification —
+    // which must answer identically for every address or become an
+    // account-existence oracle — this caller just created the account and is
+    // its owner, so there is no enumeration surface to protect.
+    if (emailOutcome === "sent") {
+      res.status(201).json({
+        ok: true,
+        message: "verification_email_sent",
+        verification_email: "sent"
+      });
+      return;
+    }
+
+    logger.warn(
+      { event: "signup_verification_email_undelivered", userId, orgId, outcome: emailOutcome },
+      "Signup completed but the verification email was not delivered"
+    );
+
+    // A suppressed address needs different words and a different next action.
+    // "Try again" is the correct advice for a transient failure and actively
+    // wrong here: every retry is accepted by the provider, discarded, and costs
+    // more sender reputation. Only a different address, or an operator lifting
+    // the suppression, can move this customer forward — so the resend hints are
+    // deliberately withheld in that case rather than offered and useless.
+    const suppressed = emailOutcome === "suppressed";
+
+    res.status(201).json({
+      ok: true,
+      message: "verification_email_not_sent",
+      verification_email: emailOutcome,
+      detail: suppressed
+        ? "Your account and organization were created, but this email address cannot receive our messages — " +
+          "it was blocked by our email provider after a previous delivery failure. Resending will not help. " +
+          "Contact support to verify your address or to switch to a different one."
+        : "Your account and organization were created, but we could not send your verification email. " +
+          "You cannot sign in until your address is verified.",
+      recovery: suppressed
+        ? { support_email: "hello@securelogicai.com" }
+        : {
+            resend_path: "/verify-email",
+            resend_endpoint: "/api/auth/resend-verification",
+            support_email: "hello@securelogicai.com"
+          }
+    });
   } catch (err) {
     logger.error({ event: "customer_signup_failed", err }, "POST /api/auth/signup failed");
     captureException(err, { event: "customer_signup_failed" });
@@ -502,9 +653,42 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
    ========================================================= */
 
 router.post("/auth/resend-verification", forgotPasswordLimiter, async (req, res) => {
-  const respond = () => res.status(200).json({ ok: true });
+  /**
+   * The deliberately uninformative answer. It is identical for a real
+   * unverified user, an already-verified user, an address with no account, and
+   * a malformed one — that constancy is the whole enumeration defence, and it
+   * is why this endpoint (unlike signup, whose caller owns the account it just
+   * created) cannot report a per-address send outcome.
+   *
+   * `attempted`, not `sent`: this hands the request to a fire-and-forget send,
+   * so the only honest claim available is that we tried.
+   */
+  const respond = () => res.status(200).json({ ok: true, verification_email: "attempted" });
 
   try {
+    // No provider, no email — for EVERY caller, before any lookup happens.
+    //
+    // This is the outage that silently locks out every new tenant, and it is
+    // safe to be honest about precisely because it has nothing to do with the
+    // address: the answer, and its timing, are the same whether or not the
+    // account exists. It short-circuits ahead of the token rotation below on
+    // purpose — minting a replacement token nobody can receive would only
+    // invalidate the one already sitting in the database, which is the last way
+    // an operator could still rescue the account.
+    //
+    // The send itself stays fire-and-forget. Awaiting it would make a real
+    // unverified user measurably slower to answer than a stranger, trading the
+    // enumeration oracle this endpoint is built to avoid for a per-address
+    // delivery report it is not allowed to give anyway.
+    if (!mailProviderConfigured()) {
+      logger.warn(
+        { event: "resend_verification_email_unavailable" },
+        "Verification email not resent — RESEND_API_KEY is not configured"
+      );
+      res.status(200).json({ ok: true, verification_email: "unavailable" });
+      return;
+    }
+
     const emailRaw = req.body?.email;
     if (!isValidEmail(emailRaw)) { respond(); return; }
 
@@ -641,6 +825,26 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       res.status(403).json({
         error: "account_pending_deletion",
         detail: "This account is scheduled for deletion. Contact your administrator to cancel."
+      });
+      return;
+    }
+
+    // Removed members must not log back in with their old password —
+    // member removal only flips users.status to 'inactive'. Same
+    // known-user-only shape as the deletion gate: unknown emails still
+    // fall through to the generic 401, so no enumeration oracle.
+    if (user && user.status === "inactive") {
+      writeAuditEvent({
+        actorUserId: null,
+        eventType: "auth.login_blocked",
+        resourceType: "user",
+        resourceId: user.id,
+        payload: { reason: "inactive", email: email.slice(0, 4) + "***" },
+        ipAddress: req.ip ?? null
+      });
+      res.status(403).json({
+        error: "account_inactive",
+        detail: "This account no longer has access. Contact your organization administrator."
       });
       return;
     }
@@ -987,8 +1191,12 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       res.status(400).json({ error: "current_password_required" });
       return;
     }
-    if (typeof newRaw !== "string" || newRaw.length < 12) {
-      res.status(400).json({ error: "password_too_short", detail: "12 characters minimum" });
+    // Same policy as signup/reset — change-password used to check length
+    // only, silently letting rotations downgrade to complexity-free
+    // passwords.
+    const pwErrChange = validatePassword(newRaw);
+    if (pwErrChange) {
+      res.status(400).json(pwErrChange);
       return;
     }
     if (currentRaw === newRaw) {

@@ -580,3 +580,64 @@ describe("bucket queue controls — every findings bucket gets the shared toolba
     });
   });
 });
+
+describe("ops center — fresh-org truthfulness (EG2 slice 2)", () => {
+  /** Every bucket field present and zero → unknownCounts empty, due work zero. */
+  const ZERO_BUCKET_FIELDS = {
+    my_work_open: 0,
+    my_pending_reviews_open: 0,
+    overdue_open: 0,
+    unassigned_open: 0,
+    needs_review_open: 0,
+    ready_for_decision_open: 0,
+    pending_risk_approvals: 0,
+    exploited_open: 0,
+    regulatory_open: 0,
+    ai_governance_open: 0,
+    vendor_risk_open: 0,
+    mitigating_open: 0,
+    accepted_risk_total: 0,
+  };
+
+  beforeEach(() => {
+    api.getSignalMatchSuggestionCounts.mockResolvedValue({
+      organizationId: "org-1",
+      total: 0,
+      by_target_type: {},
+    });
+  });
+
+  it("an org with NO findings on record gets 'nothing assessed yet', never a green all-clear", async () => {
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({
+        ...ZERO_BUCKET_FIELDS,
+        active_total: 0,
+        closed_count: 0,
+      }),
+    });
+
+    await home();
+
+    expect(screen.queryByText(/All clear/)).toBeNull();
+    expect(screen.getByText(/Nothing assessed yet/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Start setup/ })).toHaveAttribute(
+      "href",
+      "/getting-started"
+    );
+  });
+
+  it("an org with a findings HISTORY and zero due work keeps the earned all-clear", async () => {
+    api.getFindingsSummary.mockResolvedValue({
+      summary: aFindingsSummary({
+        ...ZERO_BUCKET_FIELDS,
+        active_total: 0,
+        closed_count: 4, // work existed and was closed — the clear is earned
+      }),
+    });
+
+    await home();
+
+    expect(screen.getByText(/All clear/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing assessed yet/)).toBeNull();
+  });
+});

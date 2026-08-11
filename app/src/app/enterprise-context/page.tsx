@@ -44,11 +44,18 @@ export default async function EnterpriseContextPage({
 
   const sp = await searchParams;
   const typeFilter = isEntityType(sp.entity_type) ? sp.entity_type : undefined;
+  // Shared platform search (2–120 bounds, engine-resolved) — a URL param, like
+  // every list surface, so it composes with the type filter and pagination.
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
   const offset = parseOffsetParam(sp.offset);
   const limit = ENTITY_PAGE.defaultLimit;
 
   const result = await getEnterpriseEntities(token, {
     entity_type: typeFilter,
+    ...(search ? { q: search } : {}),
     limit,
     offset,
   });
@@ -56,12 +63,14 @@ export default async function EnterpriseContextPage({
   const filterHref = (t?: EntityType) => {
     const q = new URLSearchParams();
     if (t) q.set("entity_type", t);
+    if (search) q.set("q", search);
     const s = q.toString();
     return s ? `/enterprise-context?${s}` : "/enterprise-context";
   };
   const pageHref = (o: number) => {
     const q = new URLSearchParams();
     if (typeFilter) q.set("entity_type", typeFilter);
+    if (search) q.set("q", search);
     if (o > 0) q.set("offset", String(o));
     const s = q.toString();
     return s ? `/enterprise-context?${s}` : "/enterprise-context";
@@ -117,6 +126,41 @@ export default async function EnterpriseContextPage({
         <ReadFailurePanel {...readFailure(result)} />
       ) : (
         <>
+          {/* Search — the platform list-page pattern (as on /assets): the term is a
+              URL param resolved by the shared asset-search capability, so it composes
+              with the type chips below and survives page turns. The hidden input
+              carries the active filter; omitting offset resets to page 1. */}
+          <form action="/enterprise-context" method="get" className="mb-5">
+            <label
+              htmlFor="entity-search"
+              className="block text-xs font-semibold uppercase tracking-wide mb-2"
+              style={{ color: "#64748b" }}
+            >
+              Search
+            </label>
+            {typeFilter && <input type="hidden" name="entity_type" value={typeFilter} />}
+            <div className="flex items-center gap-2 w-full max-w-xl">
+              <input
+                id="entity-search"
+                type="search"
+                name="q"
+                defaultValue={search ?? ""}
+                minLength={2}
+                maxLength={120}
+                placeholder="Name, entity ID, external ref, alias..."
+                className="flex-1 px-3 py-2 rounded-lg text-sm"
+                style={{ background: "#0b1220", border: "1px solid #1e293b", color: "#e2e8f0" }}
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: "rgba(0,196,180,0.15)", color: "#00c4b4", border: "1px solid rgba(0,196,180,0.4)" }}
+              >
+                Search
+              </button>
+            </div>
+          </form>
+
           {/* Type filter chips */}
           <div className="mb-5 flex flex-wrap gap-2">
             <FilterChip href={filterHref(undefined)} active={!typeFilter} label="All" />
@@ -133,7 +177,9 @@ export default async function EnterpriseContextPage({
           {result.enterprise_entities.length === 0 ? (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
               <p className="text-sm mb-3" style={{ color: "#94a3b8" }}>
-                {offset > 0
+                {search
+                  ? "No entities match your search."
+                  : offset > 0
                   ? "No more entities."
                   : typeFilter
                   ? `No ${entityTypeLabel(typeFilter).toLowerCase()} entities yet.`

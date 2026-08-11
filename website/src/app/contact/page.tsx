@@ -92,7 +92,7 @@ export default function ContactPage() {
           <div className="grid lg:grid-cols-[1.4fr_0.6fr] gap-8 items-center">
             <div>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-text leading-tight mb-3">
-                Need SSO, white-labeling, or multi-org support?
+                Need SSO or white-labeling?
               </h2>
               <p className="text-text-body leading-relaxed max-w-2xl">
                 We support enterprise requirements including SSO / SAML, custom signal

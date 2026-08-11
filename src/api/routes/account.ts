@@ -40,6 +40,7 @@ router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, nex
         o.status                     AS organization_status,
         o.entitlement_level          AS entitlement_level,
         o.stripe_subscription_tier   AS stripe_subscription_tier,
+        o.payment_failed_at          AS payment_failed_at,
         k.id                         AS api_key_id,
         k.label                      AS api_key_label,
         k.status                     AS api_key_status,
@@ -61,7 +62,12 @@ router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, nex
     }
 
     const entitlementLevel = String(row.entitlement_level ?? "starter");
-    const billingActive = entitlementLevel === "premium" || entitlementLevel === "professional";
+    // Same semantics as GET /api/auth/me (customerAuth.ts): a paying org with a
+    // failed payment is NOT billing-active. The /account "Payment failed" banner
+    // keys off billingActive === false && entitlement !== starter — with the old
+    // paid-tier-only definition here that condition was unsatisfiable, so the
+    // banner could never render during Stripe's retry/grace window.
+    const billingActive = entitlementLevel !== "starter" && !row.payment_failed_at;
 
     res.json({
       organizationId:     row.organization_id,

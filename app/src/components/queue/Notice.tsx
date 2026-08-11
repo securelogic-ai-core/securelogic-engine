@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { TimedNotice } from "@/hooks/useTimedNotice";
 
 /**
@@ -49,6 +50,14 @@ export function Notice({
       }}
     >
       <span>{notice.message}</span>
+      {notice.href && notice.hrefLabel ? (
+        <Link
+          href={notice.href}
+          style={{ color: "#00c4b4", fontWeight: 500, textDecoration: "none" }}
+        >
+          {notice.hrefLabel}
+        </Link>
+      ) : null}
       {notice.actionLabel && notice.onAction ? (
         <button
           type="button"

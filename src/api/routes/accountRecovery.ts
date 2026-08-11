@@ -5,6 +5,7 @@ import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { ensureRedisConnected } from "../infra/redis.js";
+import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const router = Router();
 
@@ -178,6 +179,7 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
     This link will expire at ${new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toUTCString()}.
   </p>
 </div>`,
+        tags: withEnvironmentTag(),
       });
 
       logger.info(

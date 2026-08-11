@@ -32,12 +32,47 @@ import {
   type AffectedResolution,
   type AffectedResolutions,
 } from "./findingRiskScore.js";
+import { type TargetType } from "./signalMatchSuggestionValidation.js";
+import { type MatchTargetType } from "../../engine/applicability/v1/types.js";
+import {
+  signalApplicabilityEnabled,
+  signalApplicabilityMode,
+} from "./signalApplicabilityFeatureFlag.js";
 
 export interface Queryable {
   query(text: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
 
-export type AffectedEntityType = "vendor" | "ai_system" | "control" | "obligation";
+/**
+ * The canonical applicability match taxonomy (ERG convergence C5) — the quartet
+ * PLUS `asset`. Widened from the suggestion-validation quartet (`TargetType`) so
+ * the workspace can name a canonical Enterprise Asset at all: before C5 an asset
+ * could not be REPRESENTED here, which made the surface structurally
+ * vendor/AI-primary regardless of what the applicability engine concluded.
+ *
+ * `TargetType` is deliberately left alone — it validates suggestion WRITES
+ * (/queue accept), whose convergence is C7. Two names, one model: this is the
+ * canonical read taxonomy, that is the still-quartet write validation.
+ */
+export type AffectedEntityType = MatchTargetType;
+
+/**
+ * The four TYPED affected buckets that predate C5. Assets are NOT one of them —
+ * they are federated through `asset_registry_v` and carried separately, so no
+ * per-type bucket is ever added again (EAR-AD-3: the quartet stops growing).
+ */
+type QuartetEntityType = TargetType;
+
+/**
+ * ERG convergence C5 gate. The applicability read is live only when the engine
+ * convergence flag is on AND its sub-mode is `surface`; in `shadow` (the default
+ * whenever the flag is on) the applicability path stays measurement-only and the
+ * legacy signal-link read remains solely authoritative. No new flag — the
+ * convergence roadmap §7 forbids fragmenting the gate.
+ */
+export function applicabilitySurfaceEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return signalApplicabilityEnabled(env) && signalApplicabilityMode(env) === "surface";
+}
 
 export interface FindingAffectedEntity {
   type: AffectedEntityType;
@@ -90,6 +125,13 @@ export interface FindingContext {
     ai_systems: FindingAffectedEntity[];
     controls: FindingAffectedEntity[];
     obligations: FindingAffectedEntity[];
+    /**
+     * ERG convergence C5 — canonical Enterprise Assets the applicability decision
+     * reached, resolved through `asset_registry_v`. PRESENT ONLY in surface mode;
+     * absent (not empty) when the convergence is dark, so the flag-off payload is
+     * byte-identical to pre-C5.
+     */
+    assets?: FindingAffectedEntity[];
     /**
      * Context Contract: per-bucket resolution outcome so the UI can distinguish
      * an honest zero (`none_found`) from a dimension the resolver has no path
@@ -167,7 +209,7 @@ export interface AssessmentAffectedSpec {
   entityFk: string;
   entityTable: string;
   nameCol: string;
-  type: AffectedEntityType;
+  type: QuartetEntityType;
 }
 
 /**
@@ -188,7 +230,7 @@ export const ASSESSMENT_AFFECTED_MAP: Record<string, AssessmentAffectedSpec> = {
 };
 
 /** PURE: per-affected-type name lookup, used to resolve applicability via_target ids. */
-const ENTITY_NAME_SOURCE: Record<AffectedEntityType, { table: string; nameCol: string }> = {
+const ENTITY_NAME_SOURCE: Record<QuartetEntityType, { table: string; nameCol: string }> = {
   vendor: { table: "vendors", nameCol: "name" },
   ai_system: { table: "ai_systems", nameCol: "name" },
   control: { table: "controls", nameCol: "name" },
@@ -200,16 +242,28 @@ interface AffectedBuckets {
   ai_systems: FindingAffectedEntity[];
   controls: FindingAffectedEntity[];
   obligations: FindingAffectedEntity[];
+  /**
+   * C5 canonical Enterprise Assets. OPTIONAL and absent unless the caller opted
+   * in — an absent key keeps the flag-off payload byte-identical to pre-C5.
+   */
+  assets?: FindingAffectedEntity[];
 }
+
+type QuartetBucket = "vendors" | "ai_systems" | "controls" | "obligations";
 
 const EMPTY_AFFECTED: () => AffectedBuckets = () => ({ vendors: [], ai_systems: [], controls: [], obligations: [] });
 
-const BUCKET_OF: Record<AffectedEntityType, keyof AffectedBuckets> = {
+const BUCKET_OF: Record<QuartetEntityType, QuartetBucket> = {
   vendor: "vendors",
   ai_system: "ai_systems",
   control: "controls",
   obligation: "obligations",
 };
+
+/** PURE: the typed bucket for a canonical match target, or null for `asset`. */
+function quartetBucketOf(t: AffectedEntityType): QuartetBucket | null {
+  return t === "asset" ? null : BUCKET_OF[t];
+}
 
 /**
  * PURE (Context Contract): which affected buckets have a resolution path that
@@ -231,8 +285,8 @@ export function affectedPathsRan(
   sourceType: string,
   hasSignals: boolean,
   hasEvents: boolean
-): Record<keyof AffectedBuckets, boolean> {
-  const ran: Record<keyof AffectedBuckets, boolean> = {
+): Record<QuartetBucket, boolean> {
+  const ran: Record<QuartetBucket, boolean> = {
     vendors: hasSignals,
     ai_systems: hasSignals,
     controls: hasSignals,
@@ -286,12 +340,128 @@ export function mergeAffected(a: AffectedBuckets, b: AffectedBuckets): AffectedB
     }
     return out;
   };
-  return {
+  const merged: AffectedBuckets = {
     vendors: dedup([...a.vendors, ...b.vendors]),
     ai_systems: dedup([...a.ai_systems, ...b.ai_systems]),
     controls: dedup([...a.controls, ...b.controls]),
     obligations: dedup([...a.obligations, ...b.obligations]),
   };
+  // The assets key stays ABSENT unless a side carries it — an absent key is what
+  // keeps the pre-C5 (dark) shape byte-identical.
+  if (a.assets || b.assets) merged.assets = dedup([...(a.assets ?? []), ...(b.assets ?? [])]);
+  return merged;
+}
+
+/**
+ * Resolve canonical Enterprise Asset identities to display rows through
+ * `asset_registry_v` — the ratified read-only registry projection (EAR Phase 0,
+ * migration 20260802) federating vendors ∪ ai_systems ∪ enterprise_entities.
+ *
+ * The registry is the ONLY asset name source used here: no second resolver, no
+ * per-backing-table branch, no vendor-primary shortcut. `asset_id` is the
+ * canonical identifier stored by the applicability layer, so the join is
+ * identity-to-identity. Org-scoped on the explicit predicate the registry's
+ * security model requires (organization_id always from the caller).
+ */
+export async function resolveAssetNames(
+  client: Queryable,
+  organizationId: string,
+  assetIds: string[]
+): Promise<FindingAffectedEntity[]> {
+  const ids = uniq(assetIds);
+  if (ids.length === 0) return [];
+  const r = await client.query(
+    `SELECT asset_id AS id, name AS name
+       FROM asset_registry_v
+      WHERE organization_id = $1 AND asset_id = ANY($2::uuid[])
+      ORDER BY name`,
+    [organizationId, ids]
+  );
+  return r.rows.map((x) => ({ type: "asset" as const, id: x.id, name: x.name }));
+}
+
+/**
+ * ERG convergence C5 — read affected entities from the APPLICABILITY DECISION
+ * LEDGER instead of inferring them from accepted signal links.
+ *
+ * For the signals this finding resolves to, take the CURRENT assessment per
+ * (target_type, target_id) — "current" is derived from `created_at DESC`, since
+ * the WORM store forbids an `is_current` flag (CANONICAL_DOMAIN_MODEL) — and
+ * return the blast radius of the ones that concluded `affected`.
+ *
+ * Evidence gate (ERG R2): ONLY `decision = 'affected'` populates affected
+ * context. `potentially_affected` / `needs_review` / `unknown` are explicitly
+ * NOT affected — a vendor-identity-only match caps below the threshold and must
+ * never be promoted into displayed certainty.
+ *
+ * Read-only. Writes nothing, and never mutates finding state (ERG R3).
+ */
+export async function resolveApplicabilityAffected(
+  client: Queryable,
+  organizationId: string,
+  signalIds: string[]
+): Promise<AffectedBuckets> {
+  const out = EMPTY_AFFECTED();
+  out.assets = [];
+  const signals = uniq(signalIds);
+  if (signals.length === 0) return out;
+
+  const r = await client.query(
+    `WITH current_assessment AS (
+       SELECT DISTINCT ON (a.target_type, a.target_id) a.id, a.decision
+         FROM applicability_assessments a
+        WHERE a.organization_id = $1
+          AND a.signal_id = ANY($2::uuid[])
+        ORDER BY a.target_type, a.target_id, a.created_at DESC, a.id DESC
+     )
+     SELECT DISTINCT e.via_target_type AS ttype, e.via_target_id AS tid
+       FROM current_assessment ca
+       JOIN applicability_affected_entities e
+         ON e.assessment_id = ca.id AND e.organization_id = $1
+      WHERE ca.decision = 'affected'`,
+    [organizationId, signals]
+  );
+
+  await fillFromTargets(client, organizationId, r.rows, out);
+  return out;
+}
+
+/**
+ * Shared expansion of `(via_target_type, via_target_id)` rows into named entities.
+ * Assets go through `asset_registry_v`; the quartet through their canonical tables.
+ */
+async function fillFromTargets(
+  client: Queryable,
+  organizationId: string,
+  rows: Array<{ ttype: string; tid: string }>,
+  out: AffectedBuckets
+): Promise<void> {
+  const idsByType = new Map<AffectedEntityType, string[]>();
+  for (const x of rows) {
+    const t = x.ttype as AffectedEntityType;
+    if (t !== "asset" && !BUCKET_OF[t]) continue;
+    idsByType.set(t, [...(idsByType.get(t) ?? []), x.tid]);
+  }
+  await Promise.all(
+    Array.from(idsByType.entries()).map(async ([type, ids]) => {
+      if (type === "asset") {
+        const assets = await resolveAssetNames(client, organizationId, ids);
+        out.assets = [...(out.assets ?? []), ...assets];
+        return;
+      }
+      const bucket = quartetBucketOf(type);
+      if (!bucket) return;
+      const src = ENTITY_NAME_SOURCE[type as QuartetEntityType];
+      const named = (
+        await client.query(
+          `SELECT id, ${src.nameCol} AS name FROM ${src.table}
+            WHERE organization_id = $1 AND id = ANY($2::uuid[]) ORDER BY ${src.nameCol}`,
+          [organizationId, uniq(ids)]
+        )
+      ).rows;
+      for (const x of named) out[bucket].push({ type: type as QuartetEntityType, id: x.id, name: x.name });
+    })
+  );
 }
 
 /**
@@ -304,7 +474,8 @@ export async function resolveAssessmentAffected(
   client: Queryable,
   organizationId: string,
   sourceType: string,
-  sourceId: string | null
+  sourceId: string | null,
+  opts: { includeAssets?: boolean } = {}
 ): Promise<AffectedBuckets> {
   const out = EMPTY_AFFECTED();
   if (!sourceId) return out;
@@ -370,25 +541,15 @@ export async function resolveAssessmentAffected(
         WHERE organization_id = $1 AND assessment_id = $2`,
       [organizationId, sourceId]
     );
-    const idsByType = new Map<AffectedEntityType, string[]>();
-    for (const x of r.rows) {
-      const t = x.ttype as AffectedEntityType;
-      if (!BUCKET_OF[t]) continue;
-      idsByType.set(t, [...(idsByType.get(t) ?? []), x.tid]);
-    }
-    await Promise.all(
-      Array.from(idsByType.entries()).map(async ([type, ids]) => {
-        const src = ENTITY_NAME_SOURCE[type];
-        const rows = (
-          await client.query(
-            `SELECT id, ${src.nameCol} AS name FROM ${src.table}
-              WHERE organization_id = $1 AND id = ANY($2::uuid[]) ORDER BY ${src.nameCol}`,
-            [organizationId, uniq(ids)]
-          )
-        ).rows;
-        for (const x of rows) out[BUCKET_OF[type]].push({ type, id: x.id, name: x.name });
-      })
-    );
+    // Pre-C5 this dropped every `asset` row on the floor (the bucket map had no
+    // asset key), so an applicability decision that reached a canonical asset
+    // rendered as no affected context at all. Assets are now expanded — but only
+    // when the caller opted in, so the dark payload is unchanged.
+    if (opts.includeAssets) out.assets = [];
+    const rows = opts.includeAssets
+      ? r.rows
+      : r.rows.filter((x: { ttype: string }) => x.ttype !== "asset");
+    await fillFromTargets(client, organizationId, rows, out);
     return out;
   }
 
@@ -511,10 +672,10 @@ export async function resolveFindingContext(
   // the legacy detail view, so the failure reached the user as a MISSING FEATURE
   // rather than as an error. Failing soft, per bucket, is what makes the four-state
   // empty-state contract reachable at all.
-  const failed = { vendors: false, ai_systems: false, controls: false, obligations: false };
+  const failed = { vendors: false, ai_systems: false, controls: false, obligations: false, assets: false };
 
   async function affectedSafe(
-    bucket: keyof typeof failed,
+    bucket: QuartetBucket,
     table: string,
     fk: string,
     entityTable: string,
@@ -582,12 +743,14 @@ export async function resolveFindingContext(
     controls: [],
     obligations: [],
   };
+  const c5Surface = applicabilitySurfaceEnabled();
   try {
     assessmentAffected = await resolveAssessmentAffected(
       client,
       organizationId,
       finding.source_type,
-      finding.source_id
+      finding.source_id,
+      { includeAssets: c5Surface }
     );
   } catch (err) {
     failed.vendors = failed.ai_systems = failed.controls = failed.obligations = true;
@@ -596,13 +759,45 @@ export async function resolveFindingContext(
       "Source-record affected resolution failed — every bucket reports resolver_error, not a zero"
     );
   }
+  // ERG convergence C5 — the applicability decision ledger as an ADDITIONAL
+  // affected-entity source for signal-sourced findings. The legacy signal-link
+  // read above always runs and is never replaced: applicability is merged on top
+  // (dedup by type+id), so convergence can only ADD recall, never silently drop
+  // an entity the legacy path already surfaced. Flag off / shadow mode → this
+  // block never runs and the payload is byte-identical to pre-C5.
+  let applicabilityAffected: AffectedBuckets = EMPTY_AFFECTED();
+  const assetsPathRan = c5Surface && (signalIds.length > 0 || finding.source_type === "applicability_assessment");
+  if (c5Surface && signalIds.length > 0) {
+    try {
+      applicabilityAffected = await resolveApplicabilityAffected(client, organizationId, signalIds);
+    } catch (err) {
+      failed.assets = true;
+      logger.error(
+        { event: "finding_context_bucket_failed", organizationId, findingId, bucket: "assets", err },
+        "Applicability affected-entity resolution failed — reporting resolver_error, not a zero"
+      );
+    }
+  }
+
   const { vendors, ai_systems, controls, obligations } = mergeAffected(
     mergeAffected(
-      { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
-      { vendors: eventVendors, ai_systems: [], controls: [], obligations: [] }
+      mergeAffected(
+        { vendors: sv, ai_systems: sa, controls: sc, obligations: so },
+        { vendors: eventVendors, ai_systems: [], controls: [], obligations: [] }
+      ),
+      applicabilityAffected
     ),
     assessmentAffected
   );
+
+  // Canonical Enterprise Assets, deduped by canonical asset id across both
+  // applicability read paths (signal-sourced and applicability-sourced).
+  const assets: FindingAffectedEntity[] = c5Surface
+    ? mergeAffected(
+        { ...EMPTY_AFFECTED(), assets: applicabilityAffected.assets ?? [] },
+        { ...EMPTY_AFFECTED(), assets: assessmentAffected.assets ?? [] }
+      ).assets ?? []
+    : [];
 
   // Per-bucket resolution status: which paths ran vs. what they found — the UI
   // can now distinguish an honest zero from "not resolvable from this source".
@@ -612,6 +807,9 @@ export async function resolveFindingContext(
     ai_systems: bucketResolution(ran.ai_systems, ai_systems.length, failed.ai_systems),
     controls: bucketResolution(ran.controls, controls.length, failed.controls),
     obligations: bucketResolution(ran.obligations, obligations.length, failed.obligations),
+    // Same four-state contract for assets — and only present under C5, so the
+    // dark payload keeps exactly the four keys it had before.
+    ...(c5Surface ? { assets: bucketResolution(assetsPathRan, assets.length, failed.assets) } : {}),
   };
 
   // Matcher suggestions pending human review (candidate links). Shown as
@@ -1073,7 +1271,15 @@ export async function resolveFindingContext(
         : null,
       remediator_user_id,
     },
-    affected: { vendors, ai_systems, controls, obligations, resolution, candidates },
+    affected: {
+      vendors,
+      ai_systems,
+      controls,
+      obligations,
+      ...(c5Surface ? { assets } : {}),
+      resolution,
+      candidates,
+    },
     intelligence: { events, sources, timeline, signal_ids: signalIds },
     evidence,
     related_findings,

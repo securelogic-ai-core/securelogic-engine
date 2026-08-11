@@ -129,9 +129,22 @@ describe("stripeWebhook.ts: stale-revoke guard", () => {
 describe("stripeWebhook.ts: Platform free trial (PR-C2)", () => {
   it("status 'trialing' grants full entitlement identically to 'active'", () => {
     // Both statuses land on the same grant branch (activeSubscription: true).
+    // Window widened when the unresolved-tier guard was added inside this
+    // branch; the property under test — one shared branch for both statuses —
+    // is unchanged.
     expect(SOURCE).toMatch(
-      /status === "active" \|\| status === "trialing"[\s\S]{0,120}activeSubscription:\s*true/
+      /status === "active" \|\| status === "trialing"[\s\S]{0,400}activeSubscription:\s*true/
     );
+  });
+
+  it("that same grant branch declines rather than guessing when the tier is unresolved", () => {
+    // The guard must sit INSIDE the active/trialing branch and BEFORE the
+    // grant, or an unresolvable subscription is entitled on a default.
+    const branch = SOURCE.slice(
+      SOURCE.indexOf('status === "active" || status === "trialing"'),
+      SOURCE.indexOf('activeSubscription: true')
+    );
+    expect(branch).toMatch(/metadataTier === null\s*\)\s*return null/);
   });
 
   it("records trial_started_at only for a Platform tier at status 'trialing', guarded IS NULL", () => {

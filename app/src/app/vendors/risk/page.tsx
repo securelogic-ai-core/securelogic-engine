@@ -3,10 +3,12 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getVendors,
-  getVendorAssessments,
   type Vendor,
-  type VendorAssessment,
+  type VendorCriticalityCounts,
 } from "@/lib/api";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { UnknownValue, UnknownValueNote } from "@/components/edx/UnknownValue";
+import { isUnavailable } from "@/lib/edx/loadState";
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -23,6 +25,21 @@ const CRIT_COLORS: Record<string, { bar: string; badge: string; text: string }> 
   low:          { bar: "#22c55e", badge: "rgba(34,197,94,0.15)",  text: "#86efac" },
   uncategorized:{ bar: "#334155", badge: "rgba(100,116,139,0.1)", text: "#64748b" },
 };
+
+/** An exact count, or `null` when the number is not known. Never collapse the two. */
+type ExactCount = number | null;
+
+/**
+ * Whether a vendor has ever been assessed — or `null` when that is not known.
+ *
+ * The third state is the point. This used to be a boolean derived from the org's
+ * assessments fetched with limit:100: a vendor missing from that page was
+ * indistinguishable from a vendor with no assessments, so "we couldn't see it"
+ * rendered as the confident claim "Never assessed". It now comes from
+ * `assessment_count`, computed per vendor in the database over the whole table,
+ * and is unknown only when the engine build predates that field.
+ */
+type AssessedState = boolean | null;
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -47,6 +64,19 @@ function fmtDate(dateStr: string | null | undefined): string {
   });
 }
 
+/**
+ * The assessment-based definition, preserved exactly: a vendor is assessed when
+ * it has AT LEAST ONE row in vendor_assessments. Not `last_reviewed_at`, which
+ * is a different metric on a field nothing in the product maintains.
+ */
+function assessedOf(v: Vendor): AssessedState {
+  return typeof v.assessment_count === "number" ? v.assessment_count > 0 : null;
+}
+
+function isHighRiskVendor(v: Vendor): boolean {
+  return v.criticality === "critical" || v.criticality === "high";
+}
+
 // ─────────────────────────────────────────────────────────────
 // Stat tile
 // ─────────────────────────────────────────────────────────────
@@ -58,7 +88,8 @@ function StatTile({
   href,
 }: {
   label: string;
-  count: number;
+  /** `null` renders the shared unknown marker — a dash is not a zero. */
+  count: ExactCount;
   color: string;
   href: string;
 }) {
@@ -71,7 +102,9 @@ function StatTile({
       <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
         {label}
       </p>
-      <p className="text-3xl font-bold" style={{ color }}>{count}</p>
+      <p className="text-3xl font-bold" style={{ color }}>
+        {count === null ? <UnknownValue label={label} style={{ color: "#475569" }} /> : count}
+      </p>
     </Link>
   );
 }
@@ -80,18 +113,33 @@ function StatTile({
 // Criticality distribution stacked bar
 // ─────────────────────────────────────────────────────────────
 
-function CriticalityBar({ vendors }: { vendors: Vendor[] }) {
-  const total = vendors.length;
+/**
+ * The distribution of the whole active register.
+ *
+ * It used to take the returned rows and tally them — so an org past the 100-row
+ * cap saw the shape of its first page drawn as the shape of its portfolio, with
+ * every proportion wrong and the total silently equal to the cap.
+ */
+function CriticalityBar({ counts }: { counts: VendorCriticalityCounts | null }) {
+  if (counts === null) {
+    return (
+      <p className="text-sm" style={{ color: "#64748b" }}>
+        The criticality distribution couldn&rsquo;t be loaded. That is a loading
+        problem, not an empty portfolio &mdash; your vendors are unchanged.
+      </p>
+    );
+  }
+
+  const total =
+    counts.critical + counts.high + counts.medium + counts.low + counts.uncategorized;
+
   const segments = [
-    { key: "critical",      label: "Critical",      color: "#ef4444" },
-    { key: "high",          label: "High",          color: "#f97316" },
-    { key: "medium",        label: "Medium",        color: "#f59e0b" },
-    { key: "low",           label: "Low",           color: "#22c55e" },
-    { key: "uncategorized", label: "None set",      color: "#334155" },
-  ].map((s) => ({
-    ...s,
-    count: vendors.filter((v) => (v.criticality ?? "uncategorized") === s.key).length,
-  })).filter((s) => s.count > 0);
+    { key: "critical",      label: "Critical",      color: "#ef4444", count: counts.critical },
+    { key: "high",          label: "High",          color: "#f97316", count: counts.high },
+    { key: "medium",        label: "Medium",        color: "#f59e0b", count: counts.medium },
+    { key: "low",           label: "Low",           color: "#22c55e", count: counts.low },
+    { key: "uncategorized", label: "None set",      color: "#334155", count: counts.uncategorized },
+  ].filter((s) => s.count > 0);
 
   if (total === 0) {
     return (
@@ -144,33 +192,29 @@ function CriticalityBar({ vendors }: { vendors: Vendor[] }) {
 
 function VendorRiskRow({
   vendor,
-  latestAssessment,
   activeFindingCount,
 }: {
   vendor: Vendor;
-  latestAssessment: VendorAssessment | null;
   activeFindingCount: number;
 }) {
   const key = critKey(vendor);
   const colors = CRIT_COLORS[key] ?? CRIT_COLORS.uncategorized!;
-  const isHighRisk = vendor.criticality === "critical" || vendor.criticality === "high";
-  const neverAssessed = latestAssessment === null;
+  const isHighRisk = isHighRiskVendor(vendor);
+  const assessed = assessedOf(vendor);
 
-  const showRedBorder = (isHighRisk && neverAssessed) || (isHighRisk && activeFindingCount > 0);
-  const showOrangeBorder = vendor.criticality === "high" && activeFindingCount > 0 && !showRedBorder;
+  // Unknown draws NO border. The red border is an accusation — "high-risk and
+  // never assessed" — and it must not be made on the strength of a value the
+  // page failed to load.
+  const showRedBorder =
+    (isHighRisk && assessed === false) || (isHighRisk && activeFindingCount > 0);
+  const showOrangeBorder =
+    vendor.criticality === "high" && activeFindingCount > 0 && !showRedBorder;
 
   const borderLeft = showRedBorder
     ? "3px solid rgba(239,68,68,0.5)"
     : showOrangeBorder
     ? "3px solid rgba(249,115,22,0.3)"
     : undefined;
-
-  const lastAssessmentDisplay = latestAssessment
-    ? fmtDate(latestAssessment.performed_at)
-    : isHighRisk
-    ? "Never assessed"
-    : "—";
-  const lastAssessmentColor = !latestAssessment && isHighRisk ? "#fca5a5" : "#475569";
 
   return (
     <tr
@@ -216,9 +260,7 @@ function VendorRiskRow({
         )}
       </td>
       <td className="px-5 py-3">
-        <span className="text-xs" style={{ color: lastAssessmentColor }}>
-          {lastAssessmentDisplay}
-        </span>
+        <LastAssessmentCell vendor={vendor} assessed={assessed} isHighRisk={isHighRisk} />
       </td>
       <td className="px-5 py-3">
         {activeFindingCount > 0 ? (
@@ -241,6 +283,44 @@ function VendorRiskRow({
         </span>
       </td>
     </tr>
+  );
+}
+
+/**
+ * "Last Assessment" has three answers, and only two of them are a date or a
+ * dash. Assessed-but-date-unknown and never-assessed are different sentences.
+ */
+function LastAssessmentCell({
+  vendor,
+  assessed,
+  isHighRisk,
+}: {
+  vendor: Vendor;
+  assessed: AssessedState;
+  isHighRisk: boolean;
+}) {
+  if (assessed === null) {
+    return <UnknownValue label="Last assessment" style={{ fontSize: "0.75rem" }} />;
+  }
+  if (assessed === false) {
+    return (
+      <span
+        className="text-xs"
+        style={{ color: isHighRisk ? "#fca5a5" : "#475569" }}
+      >
+        {isHighRisk ? "Never assessed" : "—"}
+      </span>
+    );
+  }
+  // Assessed, but the engine returned no date for it: still not a dash, because
+  // a dash beside "assessed" reads as "never".
+  if (!vendor.latest_assessment_at) {
+    return <UnknownValue label="Last assessment" style={{ fontSize: "0.75rem" }} />;
+  }
+  return (
+    <span className="text-xs" style={{ color: "#475569" }}>
+      {fmtDate(vendor.latest_assessment_at)}
+    </span>
   );
 }
 
@@ -310,39 +390,30 @@ export default async function VendorRiskPage() {
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendorsData, assessmentsData] = await Promise.all([
-    getVendors(token, "active"),
-    getVendorAssessments(token, 100),
-  ]);
+  // One read. The org's assessments are no longer fetched here at all: the
+  // page used to pull GET /api/vendor-assessments?limit=100 to answer "has this
+  // vendor been assessed?", which is an ORG-wide cap answering a PER-VENDOR
+  // question. Both the count and the per-row state now ride on the vendor row.
+  const vendorsData = await getVendors(token, "active");
 
-  if (vendorsData === null) {
+  // EDX-1: the whole page depends on the vendor register, so a failed fetch
+  // fails the page — but it fails HONESTLY. This branch previously blamed the
+  // customer's plan for what is any non-OK response from getVendors, on a
+  // route that already redirected non-platform callers above.
+  if (isUnavailable(vendorsData)) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12">
         <Link href="/vendors" className="text-xs font-medium mb-6 inline-block transition-colors hover:opacity-80" style={{ color: "#64748b" }}>
           ← Vendors
         </Link>
-        <div className="rounded-xl border p-10 text-center" style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}>
-          <p className="text-sm" style={{ color: "#94a3b8" }}>Vendor data is not available for your current plan.</p>
-        </div>
+        <UnavailableNotice
+          subject="Vendor risk"
+          denial="not a limit of your plan, and not an empty register"
+          reassurance="Your vendors are unchanged."
+          retryHref="/vendors/risk"
+        />
       </div>
     );
-  }
-
-  // Build cross-reference maps.
-  const assessmentCountByVendor = new Map<string, number>();
-  const latestAssessmentByVendor = new Map<string, VendorAssessment>();
-  const assessmentVendorMap = new Map<string, string>();
-
-  for (const a of assessmentsData?.assessments ?? []) {
-    assessmentCountByVendor.set(
-      a.vendor_id,
-      (assessmentCountByVendor.get(a.vendor_id) ?? 0) + 1
-    );
-    assessmentVendorMap.set(a.id, a.vendor_id);
-    // Keep the most recent per vendor (assume sorted by created_at DESC from API).
-    if (!latestAssessmentByVendor.has(a.vendor_id)) {
-      latestAssessmentByVendor.set(a.vendor_id, a);
-    }
   }
 
   // Open-finding counts arrive ON the vendor now, computed in the database by
@@ -358,24 +429,62 @@ export default async function VendorRiskPage() {
   // REMEDIATION render as clean — the board went green precisely because the team
   // had started working. Active is the enterprise definition; the engine already
   // serves it as active_findings_count alongside the strictly-open twin.
-  const activeFindingsByVendor = new Map<string, number>(
-    (vendorsData?.vendors ?? []).map((v) => [v.id, v.active_findings_count ?? 0])
-  );
+  const activeFindingsOf = (v: Vendor): number => v.active_findings_count ?? 0;
 
   const allVendors = vendorsData.vendors;
   const sortedVendors = sortVendors(allVendors);
 
-  const criticalCount      = allVendors.filter((v) => v.criticality === "critical").length;
-  const highCount          = allVendors.filter((v) => v.criticality === "high").length;
-  const needAssessmentCount = allVendors.filter((v) => (assessmentCountByVendor.get(v.id) ?? 0) === 0).length;
+  // EXACT counts, over the population each label promises.
+  //
+  // These were `allVendors.filter(…).length` and a scan of a capped assessment
+  // page. Below the 100-row cap that arithmetic is correct, which is exactly why
+  // it survived review; past it every tile under-reported and "Total Active"
+  // printed the cap itself. A cap counted as a population is not a stale number,
+  // it is a confident wrong one.
+  const critCounts: VendorCriticalityCounts | null = vendorsData.by_criticality ?? null;
+  const criticalCount: ExactCount = critCounts?.critical ?? null;
+  const highCount: ExactCount = critCounts?.high ?? null;
+  const totalActive: ExactCount =
+    typeof vendorsData.total === "number" ? vendorsData.total : null;
+  const needAssessmentCount: ExactCount =
+    typeof vendorsData.never_assessed_count === "number"
+      ? vendorsData.never_assessed_count
+      : null;
 
+  const countsUnavailable =
+    criticalCount === null ||
+    highCount === null ||
+    totalActive === null ||
+    needAssessmentCount === null;
+
+  // Requires Attention is an ENUMERATION, so exact aggregates cannot rescue it —
+  // it can only be honest about the rows it actually holds. Two conditions have
+  // to hold for the list to be provably complete:
+  //
+  //  1. Every high-risk vendor is on this page. The engine orders by criticality
+  //     rank (critical, then high, then the rest), so if the register holds no
+  //     more critical+high vendors than the slice has rows, the slice provably
+  //     contains all of them.
+  //  2. The assessed state is known for the high-risk rows we hold — otherwise a
+  //     vendor could belong here and be silently omitted.
+  const highRiskPopulation =
+    critCounts === null ? null : critCounts.critical + critCounts.high;
+  const highRiskFullyLoaded =
+    highRiskPopulation !== null && highRiskPopulation <= allVendors.length;
+  const assessedStateKnown = sortedVendors
+    .filter(isHighRiskVendor)
+    .every((v) => assessedOf(v) !== null);
+  const attentionComplete = highRiskFullyLoaded && assessedStateKnown;
+
+  // Unknown never qualifies a vendor for this list. "Never assessed" here is a
+  // claim about the customer's own records; it is made only from a known false.
   const needsAttention = sortedVendors.filter((v) => {
-    const isHighRisk = v.criticality === "critical" || v.criticality === "high";
-    if (!isHighRisk) return false;
-    const hasAssessment = (assessmentCountByVendor.get(v.id) ?? 0) > 0;
-    const hasActiveFindings = (activeFindingsByVendor.get(v.id) ?? 0) > 0;
-    return !hasAssessment || hasActiveFindings;
+    if (!isHighRiskVendor(v)) return false;
+    return assessedOf(v) === false || activeFindingsOf(v) > 0;
   });
+
+  /** The rows shown are still a page. Say so when the register is larger. */
+  const rowsAreComplete = totalActive === null || totalActive <= allVendors.length;
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -415,16 +524,18 @@ export default async function VendorRiskPage() {
         <StatTile
           label="Need Assessment"
           count={needAssessmentCount}
-          color={needAssessmentCount > 0 ? "#fcd34d" : "#f1f5f9"}
+          color={needAssessmentCount !== null && needAssessmentCount > 0 ? "#fcd34d" : "#f1f5f9"}
           href="/vendors"
         />
         <StatTile
           label="Total Active"
-          count={allVendors.length}
+          count={totalActive}
           color="#00c4b4"
           href="/vendors"
         />
       </div>
+
+      {countsUnavailable && <UnknownValueNote subject="Some vendor counts" />}
 
       {/* Criticality Distribution */}
       <div
@@ -434,7 +545,7 @@ export default async function VendorRiskPage() {
         <p className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#64748b" }}>
           Criticality Distribution
         </p>
-        <CriticalityBar vendors={allVendors} />
+        <CriticalityBar counts={critCounts} />
       </div>
 
       {/* Vendor Risk Table */}
@@ -445,8 +556,14 @@ export default async function VendorRiskPage() {
         >
           <div className="px-5 py-4" style={{ borderBottom: "1px solid #1e293b" }}>
             <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#64748b" }}>
-              All Vendors
+              {rowsAreComplete ? "All Vendors" : "Vendors"}
             </h2>
+            {!rowsAreComplete && (
+              <p className="text-xs mt-1" style={{ color: "#64748b" }}>
+                Showing {allVendors.length} of {totalActive}. The counts above
+                describe all {totalActive} &mdash; this table is one page of them.
+              </p>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -468,8 +585,7 @@ export default async function VendorRiskPage() {
                   <VendorRiskRow
                     key={vendor.id}
                     vendor={vendor}
-                    latestAssessment={latestAssessmentByVendor.get(vendor.id) ?? null}
-                    activeFindingCount={activeFindingsByVendor.get(vendor.id) ?? 0}
+                    activeFindingCount={activeFindingsOf(vendor)}
                   />
                 ))}
               </tbody>
@@ -501,7 +617,19 @@ export default async function VendorRiskPage() {
         <h2 className="text-sm font-semibold uppercase tracking-wide mb-4" style={{ color: "#64748b" }}>
           Requires Attention
         </h2>
-        {needsAttention.length === 0 ? (
+        {needsAttention.length > 0 ? (
+          <div className="space-y-3">
+            {needsAttention.map((vendor) => (
+              <AttentionCard
+                key={vendor.id}
+                vendor={vendor}
+                neverAssessed={assessedOf(vendor) === false}
+                activeFindingCount={activeFindingsOf(vendor)}
+              />
+            ))}
+            {!attentionComplete && <AttentionIncompleteNote />}
+          </div>
+        ) : attentionComplete ? (
           <div
             className="rounded-xl border p-8 text-center"
             style={{ background: "var(--color-brand-surface, #111827)", borderColor: "rgba(34,197,94,0.2)" }}
@@ -511,18 +639,29 @@ export default async function VendorRiskPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {needsAttention.map((vendor) => (
-              <AttentionCard
-                key={vendor.id}
-                vendor={vendor}
-                neverAssessed={(assessmentCountByVendor.get(vendor.id) ?? 0) === 0}
-                activeFindingCount={activeFindingsByVendor.get(vendor.id) ?? 0}
-              />
-            ))}
+          // The all-clear is a CLAIM. It is only made when every high-risk
+          // vendor was loaded and every one of them had a known assessed state.
+          <div
+            className="rounded-xl border p-8 text-center"
+            style={{ background: "var(--color-brand-surface, #111827)", borderColor: "#1e293b" }}
+          >
+            <p className="text-sm" style={{ color: "#94a3b8" }}>
+              This list couldn&rsquo;t be completed, so it isn&rsquo;t an
+              all-clear. Nothing needing attention was found in what loaded.
+            </p>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/** Shown beneath a populated list that could not be proven complete. */
+function AttentionIncompleteNote() {
+  return (
+    <p className="text-xs pt-1" role="note" style={{ color: "#64748b" }}>
+      More vendors may need attention than are listed here &mdash; not all of
+      them could be checked.
+    </p>
   );
 }

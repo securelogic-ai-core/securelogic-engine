@@ -1,7 +1,7 @@
 # Known Issues & Limitations at Launch
 
 > **Purpose:** An honest, verified catalogue of limitations, technical debt, and intentionally-inert paths at launch. Per `FINAL_PRODUCT_STANDARD.md`, stale or dishonest docs are treated as defects — this list is deliberately candid.
-> **Last reconciled:** 2026-07-21 (`develop` `cb934b05`; `main` `512cfa5a` — archived 2026-07-02 historical baseline per Sprint-1 ruling D-A; 266 commits / 65 staged migrations ahead).
+> **Last reconciled:** 2026-07-21 **post-launch** (`main` = `develop` = `dd79330c` — Sprint-1 composite promotion merged via PR #688; prior baseline `512cfa5a` superseded).
 > **Severity key:** 🔴 launch-blocking · 🟠 ship-with-mitigation · 🟡 known-debt (post-launch) · 🟢 cosmetic/orientation.
 
 This file does **not** track CI bugs or transient failures. It tracks structural limitations a customer, auditor, or future engineer must know about.
@@ -10,7 +10,7 @@ This file does **not** track CI bugs or transient failures. It tracks structural
 
 ## 🔴 Launch-blocking (tracked in Sprint 1)
 
-These are the only items that hold the **NO-GO**. All are operator-only gates; none is a code defect. Full detail in `SPRINT_1.md`.
+**ALL CLEARED 2026-07-21 — the NO-GO is lifted; production is LIVE** (PR #688, merge `dd79330c`). Each item below was closed by a PASS row in the `OPERATOR_RUNBOOK.md` §0.4 evidence log (Gates 1–6). The table is retained as the historical record. Full detail in `SPRINT_1.md`.
 
 | ID | Issue | Owner |
 |---|---|---|
@@ -21,7 +21,7 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 | L-5′ | **65-migration pre-flight** (Gate 5′): F-1 filename-key check (0 in prod / 65 in staging), PF-1 staging-grant verification, batch-application rehearse-or-accept ruling (`PART_B_PREFLIGHT.md` §1) | Operator |
 | L-6 | **Authenticated staging walkthrough** (formal Gate 6 per ruling D-D): Briefing + Posture Dashboard + nav + Executive Report export, usability pass with evidence | Operator |
 
-*(Re-baselined 2026-07-21: the original L-5 — the `20260706`–`20260712` set + seat-cap pre-flight — is retired; that set is already applied to production via the archived 2026-07-02 promote (`main` = `512cfa5a`, Sprint-1 ruling D-A). The `OPERATOR_RUNBOOK.md` §0.4 evidence log is empty — no gate has recorded evidence against the current baseline. Full gate detail: `SPRINT_1.md` + `PART_B_PREFLIGHT.md`.)*
+*(Re-baselined 2026-07-21: the original L-5 — the `20260706`–`20260712` set + seat-cap pre-flight — is retired; that set is already applied to production via the archived 2026-07-02 promote (`main` = `512cfa5a`, Sprint-1 ruling D-A). Post-launch: all six gates carry PASS rows in the §0.4 evidence log at promotion-candidate `a8898368`; attested-but-unfiled artifact paths (screenshots/query outputs, PF-1 outcome → D-13, batch-ruling disposition) remain flagged inside the rows for append when filed. Full gate detail: `SPRINT_1.md` + `PART_B_PREFLIGHT.md`.)*
 
 ---
 
@@ -90,10 +90,16 @@ These are the only items that hold the **NO-GO**. All are operator-only gates; n
 - **Consequence:** erasing a tenant is not merely unbuilt (D-3) — it is currently **impossible** for any real org. D-3 cannot be delivered by writing a reaper; the trigger/FK design must be resolved first (e.g. a session-var escape hatch honoured by the WORM triggers, or an explicit erasure path that suspends them under audit).
 - **Verified:** against a real database, not inferred. Reproduced by the validation teardown in `scripts/validation/seed-walkthrough-org.ts`, which can only delete its own seeded org by `ALTER TABLE … DISABLE TRIGGER` inside its transaction.
 - **NOT a workaround:** that teardown is an explicitly-invoked, org-scoped **validation** path for a `[SEED]` org on a non-prod database. It is not an offboarding mechanism and must not be generalised into one. Production FKs, WORM constraints, triggers and runtime deletion behaviour are unchanged.
-- **Resolution:** unowned. Must be settled before D-3 (Art. 17 erasure) can be built. → **architecture backlog**.
+- **Resolution:** owner assigned 2026-07-28 — mechanism proposed as **ADR-0005** (session-variable escape hatch honored by the WORM triggers, audited erasure transaction + certificate); implementation tracked in **#695 (Trust Infrastructure)**. Must land before D-3 (Art. 17 erasure) can be built.
 
 ### D-13 — PF-1: possible skipped `app_request` grants on staging (reshaped migration)
-- `20260719_enterprise_entities_rls.sql` was reshaped 59 minutes after first commit to add `app_request` DML grants on `enterprise_entities` + `data_stores`; the filename-keyed runner may have applied v1 and silently skipped v2 on staging (push/deploy timing UNKNOWN from repo). Prod is unaffected (applies v2 at promotion). Inert today; **would fail the staging A04-G1 RLS flip closed** on those tables. Verification SQL + remediation: `PART_B_PREFLIGHT.md` §1.3. → verify at Gate 5′; must be resolved before the staging RLS flip.
+- `20260719_enterprise_entities_rls.sql` was reshaped 59 minutes after first commit to add `app_request` DML grants on `enterprise_entities` + `data_stores`; the filename-keyed runner may have applied v1 and silently skipped v2 on staging (push/deploy timing UNKNOWN from repo). Prod is unaffected (applies v2 at promotion). Inert today; **would fail the staging A04-G1 RLS flip closed** on those tables. Verification SQL + remediation: `PART_B_PREFLIGHT.md` §1.3. → verify at Gate 5′; must be resolved before the staging RLS flip (now a precondition inside **#695**).
+
+### D-14 — Matcher re-fire duplicates findings (no ON CONFLICT on the findings INSERT)
+- The legacy signal path's findings INSERT (`cyberSignalProcessingService.ts`, `source_type='cyber_signal'`) has no idempotency guard — acknowledged in-code. Re-firing the matcher on the same signal produces duplicate findings rows in **production** (the path is live). Only `cyber_signals.dedup_hash` limits repeats today. Fix + prod duplicate-volume measurement → **#693 (Canonical Path Truth)**.
+
+### D-15 — Findings API validator accepts 11 of the DB's 15 `source_type` values
+- `findingValidation.ts` (and the `GET /findings?source_type=` filter) omits `cyber_signal`, `applicability_assessment`, `asset_assessment`, `intelligence_event` — the four types the engine's own automated writers create. Automated findings cannot be filtered by source through the public API. Align with the `20260823` CHECK → **#693**.
 
 ---
 

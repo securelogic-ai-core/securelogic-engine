@@ -69,7 +69,7 @@ beforeEach(() => {
   api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
   api.getAuthMe.mockResolvedValue(anAuthMe());
   api.getIssues.mockResolvedValue(null);
-  api.getLatestBrief.mockResolvedValue(null);
+  api.getLatestBrief.mockResolvedValue({ state: "none" });
   api.getDashboardSummary.mockResolvedValue(SUMMARY);
   api.getPostureHistory.mockResolvedValue({ snapshots: [aPostureSnapshot()] });
   api.getFindings.mockResolvedValue(
@@ -170,14 +170,26 @@ describe("/dashboard — an enterprise-wide tile never routes to My Work", () =>
 
 describe("/dashboard — flag branches", () => {
   it("the tile destinations are identical whether the risk workspace is ON or OFF", async () => {
-    // The dashboard reads no workspace flag itself, and that is the contract: the
-    // links it emits must reconcile with their destinations in BOTH flag states, so
+    // The dashboard's TILES read no workspace flag, and that is the contract: the
+    // links they emit must reconcile with their destinations in BOTH flag states, so
     // a flag flip can never produce a half-migrated dashboard.
+    //
+    // NARROWED (EG3 Wave 1): the orientation panel (WhatsNewPanel) is the one
+    // deliberately flag-conditional element on this page — it exists ONLY in the ON
+    // state because it explains the navigation change that the ON state IS. It is
+    // therefore excluded here rather than weakening the tile contract. Its links
+    // cannot half-migrate: they render only when the flag is on, and every one is
+    // pinned to a Wave-1-reachable destination in whatsNew.test.ts.
+    const tileHrefs = (container: HTMLElement) => {
+      container.querySelector('[aria-labelledby="whats-new-heading"]')?.remove();
+      return hrefs(container);
+    };
+
     vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "false");
-    const off = hrefs((await renderDashboard()).container);
+    const off = tileHrefs((await renderDashboard()).container);
 
     vi.stubEnv("SECURELOGIC_RISK_WORKSPACE_ENABLED", "true");
-    const on = hrefs((await renderDashboard()).container);
+    const on = tileHrefs((await renderDashboard()).container);
 
     expect(on).toEqual(off);
     expect(on).toContain("/findings?active=true");
@@ -348,7 +360,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
     // The staging defect verbatim: entitlement 'platform', no intelligence
     // brief, engine returned the newsletter issue locked.
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: true, audience_tier: "premium", publish_date: staleDate, created_at: staleDate }),
@@ -368,7 +380,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
 
   it("a stale latest issue carries the amber age warning (platform tenant, unlocked)", async () => {
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "platform", organizationName: "Acme" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: false, publish_date: staleDate, created_at: staleDate }),
@@ -383,7 +395,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
   });
 
   it("a current latest issue shows NO staleness warning", async () => {
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: false, publish_date: freshDate, created_at: freshDate }),
@@ -397,7 +409,7 @@ describe("dashboard — Latest Brief fallback: entitlement + staleness", () => {
 
   it("a free-tier tenant keeps the locked teaser + Brief Pro upsell", async () => {
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter" }));
-    api.getLatestBrief.mockResolvedValue(null);
+    api.getLatestBrief.mockResolvedValue({ state: "none" });
     api.getIssues.mockResolvedValue(
       anIssuesResponse([
         aNewsletterIssue({ locked: true, audience_tier: "standard", publish_date: freshDate, created_at: freshDate }),

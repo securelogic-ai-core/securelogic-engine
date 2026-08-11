@@ -5,10 +5,19 @@ import { resolve } from "path";
 // Mocks must be hoisted above the SUT import. vitest hoists vi.mock to the
 // top of the module, but the mock factories below must capture symbols
 // declared via vi.hoisted so they're initialized before the SUT runs.
-const { mockClientQuery, mockClientRelease, mockPgQuery } = vi.hoisted(() => ({
+const { mockClientQuery, mockClientRelease, mockPgQuery, mockCreateAlertBatcher, mockAlertAdd, mockAlertFlush } = vi.hoisted(() => ({
   mockClientQuery: vi.fn(),
   mockClientRelease: vi.fn(),
-  mockPgQuery: vi.fn()
+  mockPgQuery: vi.fn(),
+  mockCreateAlertBatcher: vi.fn(),
+  mockAlertAdd: vi.fn(),
+  mockAlertFlush: vi.fn()
+}));
+
+// The coalescing alert batcher does its own tenant-scoped recipient work and
+// email I/O; spy it so wiring tests can assert calls with zero side effects.
+vi.mock("../lib/alerting/alertService.js", () => ({
+  createAlertBatcher: mockCreateAlertBatcher
 }));
 
 vi.mock("../infra/postgres.js", () => {
@@ -121,11 +130,114 @@ beforeEach(() => {
   mockClientQuery.mockReset();
   mockClientRelease.mockReset();
   mockPgQuery.mockReset();
+  mockCreateAlertBatcher.mockReset();
+  mockAlertAdd.mockReset();
+  mockAlertFlush.mockReset();
 });
 
 // =====================================================================
 // runMatcherForSignal — vendor match path
 // =====================================================================
+
+// =====================================================================
+// CVE-grain duplicate guard (SECURELOGIC_SIGNAL_FINDING_CVE_DEDUP_ENABLED)
+// =====================================================================
+
+describe("runMatcherForSignal — CVE-grain dedup (flag ON)", () => {
+  const REUSED_FINDING_ID = "99999999-9999-4999-8999-999999999999";
+  function reusedFindingRow() {
+    // A DIFFERENT signal's finding — same CVE + vendor, older row.
+    return {
+      id: REUSED_FINDING_ID,
+      organization_id: ORG_A,
+      source_type: "cyber_signal",
+      source_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("SECURELOGIC_SIGNAL_FINDING_CVE_DEDUP_ENABLED", "true");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("active finding for the same (org, CVE, vendor) exists → REUSED, no findings INSERT, no SLA read", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [reusedFindingRow()] })        // CVE-grain dup SELECT — HIT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    // The finding surfaced is the OTHER signal's original row, never a fresh insert.
+    expect(result.finding).toEqual(reusedFindingRow());
+    expect(result.finding_was_created).toBe(false);
+
+    const sqls = mockClientQuery.mock.calls.map((c) => String(c[0]));
+    // The dup probe joins the signals table on the Active predicate…
+    expect(sqls[2]).toMatch(/JOIN cyber_signals s ON s\.id = f\.source_id/);
+    expect(sqls[2]).toMatch(/operational_status/);
+    // …carries the CVE + matched-entity params…
+    const dupParams = mockClientQuery.mock.calls[2]![1] as unknown[];
+    expect(dupParams).toEqual([ORG_A, "CVE-2026-0001", VENDOR_ID, "Microsoft"]);
+    // …and on a hit, neither the SLA read nor the findings INSERT is issued.
+    expect(sqls.some((s) => /INSERT INTO findings/.test(s))).toBe(false);
+    expect(sqls.some((s) => /sla_policies|resolveSla|sla/i.test(s))).toBe(false);
+  });
+
+  it("no active finding for the CVE → probe misses, normal INSERT path runs", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // CVE-grain dup SELECT — MISS
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    expect(result.finding).toEqual(findingRow());
+    expect(result.finding_was_created).toBe(true);
+    const sqls = mockClientQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.filter((s) => /INSERT INTO findings/.test(s)).length).toBe(1);
+  });
+
+  it("CVE-less signal → NO dup probe; per-signal grain untouched even with the flag ON", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase 5: risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(
+      makeSignal({ affected_cve: null }),
+      ORG_A
+    );
+
+    expect(result.finding).toEqual(findingRow());
+    const sqls = mockClientQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((s) => /JOIN cyber_signals/.test(s))).toBe(false);
+    expect(sqls.filter((s) => /INSERT INTO findings/.test(s)).length).toBe(1);
+  });
+});
 
 describe("runMatcherForSignal — vendor match", () => {
   it("happy path: vendor matches → finding INSERT + suggestion INSERT, returns score from computeRiskScore", async () => {
@@ -165,6 +277,34 @@ describe("runMatcherForSignal — vendor match", () => {
     // (3c: link INSERT + suggestion UPDATE) + phase-5 risks UPDATE + COMMIT = 10.
     expect(mockClientQuery).toHaveBeenCalledTimes(10);
     expect(mockClientRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("D-14: re-fire on the same signal reuses the existing finding — no duplicate row", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce(EMPTY)                                              // findings INSERT — NOT EXISTS hit, 0 rows
+      .mockResolvedValueOnce({ rowCount: 1, rows: [findingRow()] })              // existing-finding SELECT (reuse)
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    // The finding surfaced is the ORIGINAL row, not a fresh insert.
+    expect(result.finding).toEqual(findingRow());
+
+    // The INSERT the service issued carries the NOT EXISTS guard, and the
+    // follow-up query is a SELECT of the existing row — never a second INSERT.
+    const sqls = mockClientQuery.mock.calls.map((c) => String(c[0]));
+    const insertSql = sqls.find((s) => /INSERT INTO findings/.test(s))!;
+    expect(insertSql).toMatch(/WHERE NOT EXISTS/);
+    expect(insertSql).toMatch(/source_type = 'cyber_signal'/);
+    expect(sqls.filter((s) => /INSERT INTO findings/.test(s)).length).toBe(1);
+    expect(sqls[4]).toMatch(/SELECT[\s\S]*FROM findings/);
   });
 
   it("uses external client when provided — does NOT issue its own BEGIN/COMMIT/release", async () => {
@@ -1311,5 +1451,150 @@ describe("runMatcherForSignal — risk-exposure flagging + risk→action (phase 
     // no-op; the ON CONFLICT index is the second line of defense for the
     // cross-path (worker + API both processing the same signal/org) case.
     expect(riskActionCalls()).toHaveLength(1);
+  });
+});
+
+// =====================================================================
+// Post-commit finding alert wiring (EG2 slice 1)
+//
+// The worker fan-out paths (runPipeline, kevPoller) own per-cycle coalescing
+// alert batchers. processSignal (API ingest + briefScheduler) is the remaining
+// matcher path; it now runs a flag-gated batch-of-one through the SAME
+// createAlertBatcher seam, post-commit, keyed off finding_was_created.
+// =====================================================================
+
+describe("processSignal — post-commit finding alert wiring", () => {
+  const FLAG = "SECURELOGIC_MATCHER_ALERTS_ENABLED";
+  let savedFlag: string | undefined;
+
+  function alertFindingRow() {
+    return {
+      ...findingRow(),
+      title: "CVE Alert (High): CVE-2026-0001 — Microsoft",
+      severity: "High",
+      domain: "Vendor Risk"
+    };
+  }
+
+  beforeEach(() => {
+    savedFlag = process.env[FLAG];
+    mockCreateAlertBatcher.mockReturnValue({
+      add: mockAlertAdd,
+      size: vi.fn().mockReturnValue(1),
+      flush: mockAlertFlush
+    });
+    mockAlertFlush.mockResolvedValue({
+      orgsProcessed: 1,
+      emailsSent: 1,
+      recipientsSuppressed: 0,
+      itemsAdded: 1,
+      orgsSkippedNoRecipients: 0
+    });
+  });
+
+  afterEach(() => {
+    if (savedFlag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = savedFlag;
+  });
+
+  function mockProcessSignalHappyPath(findingInsertResult: { rowCount: number; rows: unknown[] }, reuseRow?: unknown) {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce(findingInsertResult);                               // findings INSERT
+    if (reuseRow !== undefined) {
+      mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [reuseRow] });  // existing-finding SELECT (reuse)
+    }
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase-5 risks UPDATE
+      .mockResolvedValueOnce(EMPTY)                                              // phase 4: signal UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+    // Posture-snapshot follow-up queries (non-fatal path) just see empty results.
+    mockClientQuery.mockResolvedValue(EMPTY);
+    mockPgQuery.mockResolvedValue(EMPTY);
+  }
+
+  it("flag ON + NEW Critical/High finding → one batch-of-one add + flush through the shared batcher", async () => {
+    process.env[FLAG] = "true";
+    mockProcessSignalHappyPath({ rowCount: 1, rows: [alertFindingRow()] });
+
+    await processSignal(makeSignal({ organization_id: ORG_A }));
+
+    expect(mockCreateAlertBatcher).toHaveBeenCalledTimes(1);
+    expect(mockCreateAlertBatcher).toHaveBeenCalledWith("critical_finding", "signal_processing");
+    expect(mockAlertAdd).toHaveBeenCalledTimes(1);
+    expect(mockAlertAdd).toHaveBeenCalledWith(ORG_A, {
+      findingId: FINDING_ID,
+      title: "CVE Alert (High): CVE-2026-0001 — Microsoft",
+      severity: "High",
+      domain: "Vendor Risk"
+    });
+    expect(mockAlertFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it("flag ON + D-14 re-fire (existing finding reused) → NO alert", async () => {
+    process.env[FLAG] = "true";
+    mockProcessSignalHappyPath({ rowCount: 0, rows: [] }, alertFindingRow());
+
+    const result = await processSignal(makeSignal({ organization_id: ORG_A }));
+
+    expect(result.finding).toEqual(alertFindingRow());
+    expect(mockCreateAlertBatcher).not.toHaveBeenCalled();
+    expect(mockAlertAdd).not.toHaveBeenCalled();
+  });
+
+  it("flag OFF (default) → NO batcher, behavior exactly as before", async () => {
+    delete process.env[FLAG];
+    mockProcessSignalHappyPath({ rowCount: 1, rows: [alertFindingRow()] });
+
+    await processSignal(makeSignal({ organization_id: ORG_A }));
+
+    expect(mockCreateAlertBatcher).not.toHaveBeenCalled();
+    expect(mockAlertAdd).not.toHaveBeenCalled();
+  });
+
+  it("runMatcherForSignal alone never alerts (worker fan-out callers own their batchers) but reports finding_was_created", async () => {
+    process.env[FLAG] = "true";
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [alertFindingRow()] })         // findings INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase-5 risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    expect(result.finding_was_created).toBe(true);
+    expect(mockCreateAlertBatcher).not.toHaveBeenCalled();
+  });
+
+  it("D-14 re-fire reports finding_was_created=false so no caller can re-alert", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce(EMPTY)                                              // BEGIN
+      .mockResolvedValueOnce({ rowCount: 1, rows: [vendorRow("high")] })         // vendor SELECT
+      .mockResolvedValueOnce(EMPTY)                                              // SLA policy SELECT (no policy)
+      .mockResolvedValueOnce(EMPTY)                                              // findings INSERT — NOT EXISTS hit
+      .mockResolvedValueOnce({ rowCount: 1, rows: [alertFindingRow()] })         // existing-finding SELECT (reuse)
+      .mockResolvedValueOnce(EMPTY)                                              // weights SELECT (defaults)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [suggestionInsertReturn()] })  // suggestion INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: auto-confirm link INSERT
+      .mockResolvedValueOnce(EMPTY)                                              // 3c: suggestion UPDATE -> accepted
+      .mockResolvedValueOnce(EMPTY)                                              // phase-5 risks UPDATE
+      .mockResolvedValueOnce(EMPTY);                                             // COMMIT
+
+    const result = await runMatcherForSignal(makeSignal(), ORG_A);
+
+    expect(result.finding_was_created).toBe(false);
+    expect(result.finding).toEqual(alertFindingRow());
   });
 });

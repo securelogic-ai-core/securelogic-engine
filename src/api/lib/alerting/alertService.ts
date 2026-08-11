@@ -31,6 +31,7 @@ import {
   getFromAddress,
 } from "./alertPrimitives.js";
 import { renderCriticalBatchEmail } from "./criticalBatchEmail.js";
+import { withEnvironmentTag } from "../../infra/emailEnvironment.js";
 
 export type AlertSeverity = "Critical" | "High";
 export type AlertKind = "critical_finding";
@@ -192,6 +193,7 @@ export function createAlertBatcher(
             to: recipient.email,
             subject,
             html,
+      tags: withEnvironmentTag(),
           });
 
           for (const item of fresh) {

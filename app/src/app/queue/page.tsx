@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 import {
   buildQueueHref,
   isUuid,
@@ -26,6 +28,11 @@ const TARGET_TYPES: readonly SignalMatchTargetType[] = [
   "ai_system",
   "control",
   "obligation",
+  // EAR Phase 2: valid as a URL filter whenever the engine has the registry
+  // enabled; the chip itself renders only when the counts response carries
+  // the `asset` key (the engine's own registry-enabled signal), so flag-off
+  // the queue is byte-identical to pre-registry.
+  "asset",
 ];
 
 const TARGET_LABEL: Record<SignalMatchTargetType, string> = {
@@ -33,6 +40,7 @@ const TARGET_LABEL: Record<SignalMatchTargetType, string> = {
   ai_system:  "AI Systems",
   control:    "Controls",
   obligation: "Obligations",
+  asset:      "Assets",
 };
 
 const SORT_LABEL: Record<"created-desc" | "score-desc", string> = {
@@ -135,7 +143,13 @@ export default async function QueuePage({
 
   // First-time-empty: this org has never seen a suggestion. Distinguish
   // from filtered-empty using lifetime_total from /counts.
-  const isFirstTimeEmpty = lifetimeTotal === 0;
+  //
+  // EDX-1: `counts?.lifetime_total ?? 0` turned a FAILED counts read into the
+  // strongest possible claim about the org's history — "SecureLogic hasn't
+  // found any links ... yet". `counts !== null` is the evidence that claim
+  // needs; without it the page falls back to the filtered-empty state, which
+  // asserts nothing about lifetime history.
+  const isFirstTimeEmpty = counts !== null && lifetimeTotal === 0;
 
   const emptyState = isFirstTimeEmpty ? (
     <div
@@ -256,7 +270,7 @@ export default async function QueuePage({
           type="search"
           name="q"
           defaultValue={nameQuery ?? ""}
-          placeholder="Search by vendor, AI system, control or obligation…"
+          placeholder="Search by name, hostname, cloud account, or alias…"
           minLength={2}
           maxLength={120}
           className="px-3 py-1.5 rounded-lg text-sm"
@@ -334,7 +348,16 @@ export default async function QueuePage({
           >
             All ({totalPending})
           </Link>
-          {TARGET_TYPES.map((t) => {
+          {TARGET_TYPES.filter(
+            // The Assets chip exists only when the engine advertises the type
+            // (registry enabled → counts carry the asset key), or when the
+            // user is already on an ?target_type=asset URL and needs the
+            // active chip to navigate away from it.
+            (t) =>
+              t !== "asset" ||
+              breakdown.asset !== undefined ||
+              targetFilter === "asset"
+          ).map((t) => {
             const active = targetFilter === t;
             return (
               <Link
@@ -350,7 +373,7 @@ export default async function QueuePage({
                   textDecoration: "none",
                 }}
               >
-                {TARGET_LABEL[t]} ({breakdown[t]})
+                {TARGET_LABEL[t]} ({breakdown[t] ?? 0})
               </Link>
             );
           })}
@@ -388,11 +411,21 @@ export default async function QueuePage({
         </div>
       )}
 
-      <SuggestionList
-        initialSuggestions={suggestions}
-        emptyState={emptyState}
-        workspace={workspace}
-      />
+      {/* EDX-1: a failed list read is not an empty review queue. */}
+      {isUnavailable(listData) ? (
+        <UnavailableNotice
+          subject="Suggested links"
+          denial="not an empty review queue, and not a sign the matcher found nothing"
+          reassurance="Any pending suggestions are unchanged."
+          retryHref="/queue"
+        />
+      ) : (
+        <SuggestionList
+          initialSuggestions={suggestions}
+          emptyState={emptyState}
+          workspace={workspace}
+        />
+      )}
 
       {totalPending > PAGE_SIZE && (
         <div

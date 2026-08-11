@@ -1,7 +1,12 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getDashboardSummary, getAssets } from "@/lib/api";
+import { getDashboardSummary, getAssets, getMe } from "@/lib/api";
+import { isPlatformEntitled } from "@/lib/entitlements";
+import {
+  getPostureAvailability,
+  type PostureAvailability,
+} from "@/lib/postureAvailability";
 import { completeOnboardingAction } from "./actions";
 import { getOnboardingStepCompletion } from "./onboardingProgress";
 
@@ -51,10 +56,20 @@ const STEPS: Step[] = [
   },
   {
     title: "Run an assessment",
-    description: "Assess the effectiveness of your controls and generate your first findings.",
+    // Findings are CONDITIONAL, not an outcome of assessing: the engine creates
+    // one only on the first transition into `failed` or `remediation_required`
+    // (src/api/routes/controlAssessments.ts). `passed`, `not_started` and
+    // `in_progress` — three of the five statuses this form offers — correctly
+    // produce none. The old copy ("…and generate your first findings") promised
+    // the outcome unconditionally, so a customer whose first control passed had
+    // done the step correctly and been told to expect something that never came.
+    description:
+      "Assess the effectiveness of your controls. Any that fail become findings you can track and remediate.",
     cta: "Go to Controls →",
     href: "/controls",
   },
+  // Step 5 is STATE-DEPENDENT — see postureStep(). This entry is the shape
+  // placeholder and the `available` copy; it is replaced per-render.
   {
     title: "Review your security posture",
     description: "Your security posture score is now available. See how your organization measures up.",
@@ -62,6 +77,54 @@ const STEPS: Step[] = [
     href: "/dashboard",
   },
 ];
+
+/**
+ * Step 5's copy, chosen by what is actually true about posture.
+ *
+ * The old copy was a constant that asserted "Your security posture score is now
+ * available" to every org, including one that had never produced a snapshot —
+ * and the step completed on a bare `snapshot_date`, so a brand-new tenant saw it
+ * ticked. Onboarding must not imply an output the product has not produced, so
+ * each state gets its own honest sentence and its own next action:
+ *
+ *   available   — the score exists; point at the dashboard that renders it.
+ *   pending     — no score yet; say what still has to happen to produce one.
+ *   unavailable — the posture read failed; say we don't know, and don't guess.
+ *
+ * `pending` sends the customer to /controls because posture is derived from
+ * assessed controls; it is the action that actually moves this step forward.
+ */
+function postureStep(availability: PostureAvailability): Step {
+  switch (availability) {
+    case "available":
+      return {
+        title: "Review your security posture",
+        description:
+          "Your security posture score is now available. See how your organization measures up.",
+        cta: "View Dashboard →",
+        href: "/dashboard",
+      };
+    case "pending":
+      return {
+        title: "Review your security posture",
+        description:
+          "No posture score yet. Your score is generated from your assessed controls — assess more controls and it will appear on your dashboard.",
+        // Deliberately NOT "Go to Controls →": that is step 4's label, and on a
+        // brand-new org both steps render a CTA at once. Two identical buttons
+        // pointing at the same place read as a duplicate, not a next action.
+        cta: "Assess Controls →",
+        href: "/controls",
+      };
+    case "unavailable":
+      return {
+        title: "Review your security posture",
+        description:
+          "We couldn't load your posture just now, so we can't tell you whether a score is ready. Refresh to try again.",
+        cta: "Open Dashboard →",
+        href: "/dashboard",
+      };
+  }
+}
 
 // Step-completion logic lives in ./onboardingProgress (pure + unit-tested).
 
@@ -74,8 +137,28 @@ export default async function GettingStartedPage() {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  // If onboarding already completed, skip to dashboard
-  if (session.onboardingCompleted === true) redirect("/dashboard");
+  // Platform entitlement gate. Every step below targets a platform-gated
+  // destination — /frameworks and /controls/* sit behind the engine's
+  // `requireEntitlement("premium")`, /vendors/new and /assets/new behind
+  // `requirePremiumOrCorePlatform`, and the app pages for those redirect
+  // unentitled orgs to /dashboard. Without this guard a starter tenant could
+  // reach the checklist directly (the user-menu link is already gated) and be
+  // shown a five-step setup in which it cannot complete a single step: two
+  // steps bounce straight back to /dashboard, and the other two render but
+  // 403 on write. An onboarding checklist that cannot be started is a worse
+  // first impression than no checklist at all, so ineligible orgs go to
+  // /dashboard, where the free-tier experience (the Brief + UpgradeCard) is.
+  //
+  // This is the same predicate, and the same redirect target, that /findings,
+  // /actions and /approvals already use — see lib/entitlements.ts for why the
+  // triad is the engine's own equivalence class rather than an app invention.
+  const me = await getMe(token);
+  if (!isPlatformEntitled(me?.entitlementLevel)) redirect("/dashboard");
+
+  // Deliberately NO completed-users redirect: "Skip setup" used to make this
+  // page permanently unreachable (the user-menu link now returns here). The
+  // checklist derives completion from live inventory counts, so a finished org
+  // simply sees every step checked — a progress record, not a nag.
 
   const orgName = session.organizationName ?? "Your organization";
 
@@ -101,9 +184,16 @@ export default async function GettingStartedPage() {
   const assetsRead = registryEnabled ? await getAssets(token, { limit: 1 }) : null;
   const assetsTotal = assetsRead && assetsRead.ok ? assetsRead.total : 0;
 
-  const steps: Step[] = registryEnabled
-    ? STEPS.map((s, i) => (i === 1 ? ASSET_INVENTORY_STEP : s))
-    : STEPS;
+  // Step 5's promise must match what posture actually is. `summary === null` is
+  // a FAILED engine read, not "no posture yet", so it is read off the raw
+  // summary before the `?? {}` default above flattens the two into one shape.
+  const postureAvailability = getPostureAvailability(summary);
+
+  const steps: Step[] = STEPS.map((s, i) => {
+    if (i === 1 && registryEnabled) return ASSET_INVENTORY_STEP;
+    if (i === 4) return postureStep(postureAvailability);
+    return s;
+  });
 
   const completed = getOnboardingStepCompletion(inventory, posture, {
     assetRegistryEnabled: registryEnabled,

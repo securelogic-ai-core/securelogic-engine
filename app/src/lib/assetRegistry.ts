@@ -71,6 +71,7 @@ export const ASSET_PAGE = { defaultLimit: 25, maxLimit: 100 } as const;
  */
 export function assetDetailHref(
   asset: Pick<CanonicalAsset, "backing_kind" | "backing_id" | "asset_id">,
+  opts: { enterpriseContextEnabled?: boolean } = {},
 ): string | null {
   switch (asset.backing_kind) {
     case "vendors":
@@ -78,7 +79,12 @@ export function assetDetailHref(
     case "ai_systems":
       return `/ai-systems/${asset.backing_id}`;
     case "enterprise_entities":
-      return `/enterprise-context/entities/${asset.backing_id}`;
+      // The registry must never link into a dark surface: when this deployment
+      // has Enterprise Context off (app half of the two-switch model), the
+      // canonical read-only asset page is the destination instead.
+      return opts.enterpriseContextEnabled === false
+        ? `/assets/${asset.asset_id}`
+        : `/enterprise-context/entities/${asset.backing_id}`;
     case "cloud_resources":
     case "endpoints":
     case "apis":

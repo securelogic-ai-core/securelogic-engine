@@ -25,6 +25,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { sqlRiskActive } from "../lib/metricDefinitions.js";
+import { searchLikePattern } from "../lib/findingQuerySearch.js";
 import {
   validateRiskCreate,
   validateRiskUpdate,
@@ -37,6 +38,12 @@ import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { resolveOwnerUserSameOrg } from "../lib/ownerUserResolver.js";
 import { resolveCadenceDays } from "../lib/riskCadence.js";
 import { computeRiskScore } from "../lib/riskScore.js";
+import {
+  RISK_HISTORY_SPEC,
+  fetchResourceHistory,
+  parseHistoryLimit,
+  parseHistoryOffset
+} from "../lib/resourceHistory.js";
 
 const router = Router();
 
@@ -494,6 +501,15 @@ router.get(
         conditions.push(`risk_rating = $${params.length}`);
       }
 
+      // Register search — the ratified ILIKE escaping (searchLikePattern), a
+      // plain predicate so it composes with every filter and the cursor.
+      if (input.q !== null) {
+        params.push(searchLikePattern(input.q));
+        conditions.push(
+          `(title ILIKE $${params.length} OR COALESCE(description, '') ILIKE $${params.length})`
+        );
+      }
+
       // Archived filter (Epic R4, §4.6) — archived is a lifecycle_state, so this
       // is ONLY applied when the risk-lifecycle flag is on. When the flag is off
       // no predicate is added and the list is byte-for-byte identical to before.
@@ -886,30 +902,16 @@ router.get(
 
 /* =========================================================
    GET /api/risks/:id/history
-   Per-risk audit trail (RR-3). Returns security_audit_log
-   events scoped to this risk plus its treatments, ordered
-   newest first. Mirrors the field shape of GET /api/audit-log
-   so the frontend can reuse the existing event renderer.
+   Per-risk audit trail (RR-3) — the pattern this route
+   originated, now read through the shared resourceHistory
+   lib like the other four registers. Events on the risk plus
+   its treatments and control/obligation links (RR-4/RR-6),
+   newest first, mirroring the GET /api/audit-log field shape.
 
    Auth: same chain as the rest of the risk register
    (standard entitlement, no admin gate) — anyone who can
    read the risk can read its history.
    ========================================================= */
-
-const HISTORY_DEFAULT_LIMIT = 20;
-const HISTORY_MAX_LIMIT     = 100;
-
-function parseHistoryLimit(v: unknown): number {
-  const n = Number(String(v ?? "").trim());
-  if (!Number.isFinite(n) || n <= 0) return HISTORY_DEFAULT_LIMIT;
-  return Math.min(Math.floor(n), HISTORY_MAX_LIMIT);
-}
-
-function parseHistoryOffset(v: unknown): number {
-  const n = Number(String(v ?? "").trim());
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
-}
 
 router.get(
   "/risks/:id/history",
@@ -952,94 +954,20 @@ router.get(
         return;
       }
 
-      // Four-resource scope: events on the risk itself, plus events on
-      // any of its treatments, risk-control links (RR-4), and risk-
-      // obligation links (RR-6). Link subqueries do NOT filter on
-      // deleted_at — without that, .deleted events become invisible the
-      // moment the link is soft-deleted, defeating the audit trail. The
-      // treatment + link subqueries are org-scoped so a stale resource_id
-      // from a different org cannot bleed in.
-      // ORDER BY (created_at DESC, id DESC) matches GET /api/audit-log.
-      // A04-G1 γ.1 — serialized (was eager `eventsPromise`/`countPromise` +
-      // Promise.all). Under the asTenant wrap both queries share the SINGLE
-      // per-request tenant client, which cannot run concurrent queries. The
-      // eager promise variables are removed so the events query is issued and
-      // settled before the count query starts. Query text unchanged. See §2.1(ii).
-      const eventsResult = await pg.query(
-        `
-        SELECT
-          sal.id,
-          sal.event_type,
-          sal.actor_user_id,
-          u.email        AS actor_email,
-          u.name         AS actor_name,
-          sal.resource_type,
-          sal.resource_id,
-          sal.ip_address,
-          sal.payload    AS metadata,
-          sal.created_at
-        FROM security_audit_log sal
-        LEFT JOIN users u ON u.id = sal.actor_user_id
-        WHERE sal.organization_id = $1
-          AND (
-            (sal.resource_type = 'risk' AND sal.resource_id = $2::uuid)
-            OR
-            (sal.resource_type = 'risk_treatment' AND sal.resource_id IN (
-              SELECT id FROM risk_treatments
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-            OR
-            (sal.resource_type = 'risk_control_link' AND sal.resource_id IN (
-              SELECT id FROM risk_control_links
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-            OR
-            (sal.resource_type = 'risk_obligation_link' AND sal.resource_id IN (
-              SELECT id FROM risk_obligation_links
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-          )
-        ORDER BY sal.created_at DESC, sal.id DESC
-        LIMIT $3 OFFSET $4
-        `,
-        [organizationId, riskId, limit, offset]
-      );
-
-      const countResult = await pg.query<{ total: string }>(
-        `
-        SELECT COUNT(*)::text AS total
-        FROM security_audit_log sal
-        WHERE sal.organization_id = $1
-          AND (
-            (sal.resource_type = 'risk' AND sal.resource_id = $2::uuid)
-            OR
-            (sal.resource_type = 'risk_treatment' AND sal.resource_id IN (
-              SELECT id FROM risk_treatments
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-            OR
-            (sal.resource_type = 'risk_control_link' AND sal.resource_id IN (
-              SELECT id FROM risk_control_links
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-            OR
-            (sal.resource_type = 'risk_obligation_link' AND sal.resource_id IN (
-              SELECT id FROM risk_obligation_links
-              WHERE risk_id = $2::uuid AND organization_id = $1
-            ))
-          )
-        `,
-        [organizationId, riskId]
-      );
-
-      const total_count = parseInt(countResult.rows[0]?.total ?? "0", 10);
-
-      res.status(200).json({
-        events:      eventsResult.rows,
-        total_count,
+      // Shared reader: root + treatments + control/obligation links
+      // (RR-4/RR-6), org-scoped on every branch, link subqueries never
+      // filter deleted_at, events-then-count strictly sequential under
+      // the asTenant single-client wrap (A04-G1 γ.1). The SQL shape is
+      // pinned by resourceHistory.test.ts against RISK_HISTORY_SPEC.
+      const page = await fetchResourceHistory(
+        RISK_HISTORY_SPEC,
+        organizationId,
+        riskId,
         limit,
         offset
-      });
+      );
+
+      res.status(200).json(page);
     } catch (err) {
       logger.error(
         { event: "risk_history_failed", err, riskId },

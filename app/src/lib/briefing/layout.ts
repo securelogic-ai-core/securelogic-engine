@@ -49,6 +49,7 @@ export function defaultBriefingModulesForRole(
   switch (normalizeBriefingRole(role)) {
     case "analyst":
       return [
+        "whats_changed",
         "my_work",
         "my_pending_reviews",
         "needs_attention",
@@ -59,7 +60,7 @@ export function defaultBriefingModulesForRole(
         "latest_brief",
       ];
     case "viewer":
-      return ["posture_score", "needs_attention", "recent_findings", "latest_brief"];
+      return ["whats_changed", "posture_score", "needs_attention", "recent_findings", "latest_brief"];
     case "admin":
     default:
       return [...CANONICAL_MODULE_ORDER];

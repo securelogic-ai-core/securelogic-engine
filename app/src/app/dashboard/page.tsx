@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActionsSummary, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
+import { getIssues, getLatestBrief, getMe, getDashboardSummary, getAuthMe, getPostureHistory, getFindings, getFindingsSummary, getFrameworks, getFrameworkReadiness, getActions, getActionsSummary, getBriefingChanges, getBriefingLayout, getDashboardPreferences, planDisplayName, type Framework, type FrameworkReadiness } from "@/lib/api";
 import { BriefCard } from "@/components/BriefCard";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
 import { IntelligenceBriefDashboardCard } from "@/components/IntelligenceBriefDashboardCard";
 import { UpgradeCard } from "@/components/UpgradeCard";
 import { BillingPortalForm } from "@/components/BillingPortalForm";
@@ -10,6 +11,7 @@ import { PostureDashboard } from "./PostureDashboard";
 import { CoverageBar } from "@/lib/frameworkCoverage";
 import { LastLoginBanner } from "./LastLoginBanner";
 import { IndustryTemplatesBanner } from "./IndustryTemplatesBanner";
+import { WhatsNewPanel } from "./WhatsNewPanel";
 import { CompactEmptyState } from "./DashboardCharts";
 import { dashboardPanel, pendingReviewTile } from "./dashboardState";
 import { RecentFindings } from "./RecentFindings";
@@ -46,7 +48,7 @@ export default async function DashboardPage({
   // getMe() is the source of truth for entitlement — never rely on the
   // session cookie alone, which may be stale after a Stripe upgrade.
   // getAuthMe() provides user-level data (including suppression status) for JWT sessions.
-  const [me, issuesData, latestBrief, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
+  const [me, issuesData, latestBriefResult, dashboardSummary, authMe, postureHistory, findingsSummaryData] = await Promise.all([
     getMe(token),
     getIssues(token),
     getLatestBrief(token),
@@ -72,13 +74,25 @@ export default async function DashboardPage({
   // caller's saved layout. Never fetched on the legacy path, so flag-off
   // behavior is unchanged.
   const briefingIdentity = Boolean(session.jwtToken && session.userId);
-  const [actionsSummary, briefingLayoutRes] =
+  // EX1 PR-2 — the two owner=me lists behind My Work's NEXT UP items. The
+  // "me" is the literal accepted by the engine's resolveOwnerMeFilter and is
+  // resolved server-side from the session — never a client-supplied user id.
+  // Identity-gated like the layout fetch (owner=me requires a user identity);
+  // undefined = not fetched, null = fetch failed (composeBriefing keeps the
+  // two distinguishable). Fetched in the SAME parallel block — no waterfall.
+  const [actionsSummary, briefingLayoutRes, myFindingsRes, myActionsRes] =
     briefingEnabled && isPlatformEarly
       ? await Promise.all([
           getActionsSummary(token),
           briefingIdentity ? getBriefingLayout(token) : Promise.resolve(null),
+          briefingIdentity
+            ? getFindings(token, { owner: "me", active: true, limit: 25 })
+            : Promise.resolve(undefined),
+          briefingIdentity
+            ? getActions(token, { owner: "me", active: true, limit: 25 })
+            : Promise.resolve(undefined),
         ])
-      : [null, null];
+      : [null, null, undefined, undefined];
   const savedBriefingIds =
     briefingLayoutRes?.layout != null
       ? moduleIdsFromEnvelope(briefingLayoutRes.layout)
@@ -90,10 +104,16 @@ export default async function DashboardPage({
     briefingEnabled && isPlatformEarly && briefingIdentity && !savedBriefingIds
       ? await getDashboardPreferences(token)
       : null;
+  // Framework readiness feeds ONLY the legacy composition (FrameworkReadinessWidget
+  // and the PostureDashboard framework pairs) — The Briefing never renders it and
+  // links to /frameworks instead. Skipping the catalog fetch when the Briefing will
+  // render also skips the per-framework readiness fan-out below (guarded on
+  // frameworks.length), removing 1+N engine round-trips of pure TTFB from the
+  // opening screen. Flag-off (legacy) fetch behavior is byte-identical.
   const [recentFindingsData, frameworksData] = isPlatformEarly
     ? await Promise.all([
         getFindings(token, { active: true, limit: 5 }),
-        getFrameworks(token),
+        briefingEnabled ? Promise.resolve(null) : getFrameworks(token),
       ])
     : [null, null];
   const recentFindings = recentFindingsData?.findings ?? [];
@@ -106,6 +126,12 @@ export default async function DashboardPage({
     frameworks.map((f, i) => ({ framework: f, readiness: frameworkReadinessResults[i] ?? null }));
 
   const latestIssue = issuesData?.issues?.[0] ?? null;
+  // EDX-1: "no brief published yet" is a claim about the customer's publication
+  // history, so it may only be printed when the read that would have found one
+  // SUCCEEDED. getLatestBrief now discriminates; the page must not flatten that
+  // back into a single falsy check.
+  const latestBrief = latestBriefResult.state === "brief" ? latestBriefResult.brief : null;
+  const latestBriefUnavailable = latestBriefResult.state === "unavailable";
   const entitlementLevel = me?.entitlementLevel ?? "starter";
   const onboardingCompleted = session.onboardingCompleted ?? false;
   const isPaid = ["premium", "professional", "platform", "team"].includes(entitlementLevel);
@@ -162,10 +188,27 @@ export default async function DashboardPage({
     briefingCtx,
   );
   const briefingEligible = resolveEligibleModules(briefingCtx);
+  // Since-last-visit delta (EG2 slice 10): fetched only when the Briefing is
+  // live for this session AND there is a previous login to diff against —
+  // a first visit has no delta, and the engine route is Briefing-flag-gated.
+  const previousLoginAt = authMe?.previousLoginAt ?? null;
+  const briefingChanges =
+    briefingEnabled && isPlatformUser && previousLoginAt
+      ? await getBriefingChanges(token, previousLoginAt)
+      : null;
   const briefingVm = composeBriefing({
     summary: dashboardSummary,
     findingsSummary: findingsSummaryData?.summary ?? null,
     actionsSummary,
+    changes: briefingChanges,
+    previousLoginAt,
+    postureSnapshots: postureHistory?.snapshots ?? [],
+    // EX1 PR-2: undefined = not fetched; null = fetch failed; array = loaded.
+    myFindings:
+      myFindingsRes === undefined ? undefined : myFindingsRes?.findings ?? null,
+    myActions:
+      myActionsRes === undefined ? undefined : myActionsRes?.actions ?? null,
+    now: new Date(),
   });
   // Viewers cannot persist a layout (platform-wide viewer-mutation block) —
   // the customize surface is withheld rather than offering a save that 403s.
@@ -215,6 +258,11 @@ export default async function DashboardPage({
 
       {/* Industry templates banner — first 7 days, dismissible.
           Self-gates on env var + user state; renders null when not applicable. */}
+      {/* Wave 1 orientation — explains the navigation change that shipped with
+          the promotion. Gated on the same flag that made the change, so it can
+          never describe a layout the customer isn't looking at. */}
+      <WhatsNewPanel authMe={authMe} />
+
       <IndustryTemplatesBanner authMe={authMe} />
 
       {/* Onboarding banner — only when setup is genuinely incomplete (D-2): a
@@ -236,7 +284,9 @@ export default async function DashboardPage({
           planName={planName}
           modules={briefingModules}
           vm={briefingVm}
+          hasPlatformData={hasPlatformData}
           latestBrief={latestBrief}
+          latestBriefUnavailable={latestBriefUnavailable}
           latestIssue={latestIssue}
           issuesCount={issuesData?.count ?? 0}
           recentFindings={recentFindings}
@@ -299,6 +349,16 @@ export default async function DashboardPage({
               issue={latestIssue}
               viewerIsPlatform={isPlatformUser}
               showStaleWarning
+            />
+          ) : latestBriefUnavailable ? (
+            // The read failed. "No briefs published yet" here would state
+            // something about the customer's publication history that nothing
+            // in this response supports.
+            <UnavailableNotice
+              subject="Your latest brief"
+              denial="not a sign that no brief has been published"
+              reassurance="Published briefs are unaffected."
+              retryHref="/dashboard"
             />
           ) : (
             <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">

@@ -202,3 +202,66 @@ export function sqlFindingOverdue(
 export function sqlActionOverdue(statusCol = "status", dueCol = "due_date"): string {
   return `${sqlActionActive(statusCol)} AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
 }
+
+/**
+ * Overdue obligation: ACTIVE (waived / not_applicable are decided — a decided
+ * obligation cannot be overdue) AND due strictly before today. DATE comparison
+ * (CURRENT_DATE), never NOW() — a due-today obligation is NOT overdue anywhere.
+ */
+export function sqlObligationOverdue(statusCol = "status", dueCol = "due_date"): string {
+  return `${statusCol} = 'active' AND ${dueCol} IS NOT NULL AND ${dueCol} < CURRENT_DATE`;
+}
+
+// ── Vendor assessment state ─────────────────────────────────────────────────
+
+/**
+ * ASSESSED VENDOR = at least one row in vendor_assessments for that vendor in
+ * that org.  (product ruling 2026-08-09)
+ *
+ * This module exists because the same business word was computed differently
+ * per surface. "Assessed" had reached THREE definitions:
+ *   * ≥1 row in vendor_assessments        — /vendors, /vendors/risk
+ *   * last_reviewed_at IS NOT NULL        — the legacy ?reviewed=never filter
+ *   * current_risk_score IS NOT NULL      — ask.ts
+ *
+ * Only the first is ratified. The second reads a column NOTHING in the product
+ * writes, so it reported effectively every vendor as unreviewed. The third
+ * counts a SCORE: `GET /api/vendors/:id/risk-score` computes and persists one
+ * on demand, so a vendor nobody has ever assessed acquires a risk score and
+ * starts counting as assessed.
+ *
+ * No status, type, or recency qualifier is implied — GET /api/vendor-assessments
+ * applies none, so neither does this. A cadence-based "due for review" filter is
+ * a separate product concept and is deliberately NOT expressible here.
+ *
+ * Org scoping lives INSIDE the correlation, not merely on the outer query: the
+ * subquery would otherwise be free to see another tenant's assessment rows even
+ * though the vendor it hangs off is correctly scoped.
+ */
+export function sqlVendorAssessmentScope(
+  vendorTable = "vendors",
+  va = "va"
+): string {
+  return `FROM vendor_assessments ${va}
+   WHERE ${va}.vendor_id = ${vendorTable}.id
+     AND ${va}.organization_id = ${vendorTable}.organization_id`;
+}
+
+/** `EXISTS (…)` — the vendor has been assessed at least once. */
+export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
+  return `EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+}
+
+/**
+ * `NOT EXISTS (…)` — the vendor has never been assessed. The complement of
+ * sqlVendorAssessed on the SAME axis, derived from the same scope, so the two
+ * are exhaustive by construction.
+ *
+ * Surfaces that print a count of this population AND link to a list of it
+ * (the "Never assessed" pill on /vendors) must build both from this function.
+ * An authoritative count that navigates to a differently-defined list is worse
+ * than a capped count: both halves look equally trustworthy.
+ */
+export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): string {
+  return `NOT EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+}

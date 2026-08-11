@@ -82,6 +82,10 @@ export type NavItem =
 export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Dashboard", href: "/dashboard" },
   { type: "link",  label: "Briefs",    href: "/briefs" },
+  // Global search — federated lookup across the canonical domain objects
+  // (findings, risks, vendors, AI systems, controls, obligations, assets).
+  // Platform-gated to mirror the engine route's premium-or-core-platform gate.
+  { type: "link",  label: "Search",    href: "/search",    platform: true },
   { type: "link",  label: "Ask",       href: "/ask",       platform: true },
   { type: "link",  label: "Queue",     href: "/queue",     platform: true },
   // Assets — the unified Asset Registry is the SINGLE canonical entry point
@@ -148,6 +152,8 @@ export const NAV_ITEMS: NavItem[] = [
 // scope — Actions and both Vendor pages remain distinct items.
 export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   { type: "link", label: "Dashboard", href: "/dashboard" },
+  // Global search — same entry as the legacy IA (see NAV_ITEMS note).
+  { type: "link", label: "Search", href: "/search", platform: true },
   // Posture Dashboard — the canonical org-performance destination (read-surface
   // architecture D1). Previously nav-orphaned in BOTH IAs; surfaced here so the
   // Dashboards concept survives the /dashboard → Briefing relabel. Legacy
@@ -194,6 +200,9 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Frameworks",  href: "/frameworks" },
       { label: "Policies",    href: "/policies" },
       { label: "Obligations", href: "/obligations" },
+      // EG2 slice 8 — the org-wide evidence inventory. Workspace nav only:
+      // the legacy flat nav (line ~114) stays byte-identical (EG v1 preserved).
+      { label: "Evidence",    href: "/evidence" },
     ],
   },
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
@@ -423,5 +432,10 @@ export const SECONDARY_NAV_ITEMS: SecondaryNavItem[] = [
   { group: "Settings", label: "Risk rating scale",           href: "/settings/risk-scale" },
   { group: "Settings", label: "Risk policy",                 href: "/settings/risk-policy" },
   // Onboarding
-  { group: "Onboarding", label: "Getting started checklist", href: "/getting-started" },
+  // /getting-started redirects orgs without platform entitlement to /dashboard
+  // (every checklist step targets a platform-gated destination). The guard is
+  // in the page body, so declare it here or the index would tell the Ask
+  // assistant this page is open to everyone — and the assistant would send
+  // free-tier customers to a checklist they cannot start.
+  { group: "Onboarding", label: "Getting started checklist", href: "/getting-started", access: "platform" },
 ];

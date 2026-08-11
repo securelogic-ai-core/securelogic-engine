@@ -185,7 +185,7 @@ these answers.
   byte-identical until the Briefing flag flips in prod; after the flip it is
   retired naturally with the flag.
 
-## 6. Smallest implementation to close GATE B (D1 — NOT authorized yet)
+## 6. Smallest implementation to close GATE B (D1 — SHIPPED; marker superseded per the header note)
 
 App-only; no schema, no engine change, no new flags.
 

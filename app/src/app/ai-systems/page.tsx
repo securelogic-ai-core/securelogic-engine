@@ -5,8 +5,16 @@ import { getAiSystems, getGovernanceReviews, type AiSystem } from "@/lib/api";
 // EAR Phase 4: badges come from the cross-domain kit (was a local duplicate).
 // StatusChip stays local — it styles DEPLOYMENT status, a different vocabulary.
 import { CriticalityBadge, MetaChip } from "@/components/assetKit";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import { ListSearchForm } from "@/components/ListSearchForm";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { isUnavailable } from "@/lib/edx/loadState";
 
-export default async function AiSystemsPage() {
+export default async function AiSystemsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
@@ -14,8 +22,16 @@ export default async function AiSystemsPage() {
     redirect("/login");
   }
 
+  const sp = (await searchParams) ?? {};
+  // Shared platform search (2–120 bounds, engine-resolved via the asset-search
+  // capability: name, product alias, exact UUID). A URL param like every list.
+  const search =
+    typeof sp.q === "string" && sp.q.trim().length >= 2 && sp.q.trim().length <= 120
+      ? sp.q.trim()
+      : undefined;
+
   const [systemsData, reviewsData] = await Promise.all([
-    getAiSystems(token),
+    getAiSystems(token, { q: search }),
     getGovernanceReviews(token),
   ]);
 
@@ -65,6 +81,11 @@ export default async function AiSystemsPage() {
           >
             ↑ Import CSV
           </Link>
+          <ExportCsvButton
+            endpoint="/api/export/ai-systems"
+            filenamePrefix="ai-systems"
+            queryString=""
+          />
           <Link
             href="/ai-systems/new"
             className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
@@ -75,17 +96,56 @@ export default async function AiSystemsPage() {
         </div>
       </div>
 
+      {/* Search — the shared register list-page form; the term is a URL param
+          resolved by the asset-search capability (name, product alias, exact UUID). */}
+      <ListSearchForm
+        action="/ai-systems"
+        inputId="ai-system-search"
+        placeholder="Name, system ID, product alias..."
+        defaultValue={search}
+      />
+
       {/* Not entitled */}
-      {systemsData === null && (
+      {/* EDX-1: getAiSystems returns null for ANY non-OK response or thrown
+          request, so this branch cannot know why the fetch failed and must
+          claim nothing about the cause.
+
+          NOTE — unlike /vendors, /obligations and /policies, this page has no
+          platform-entitlement redirect above, while GET /api/ai-systems IS
+          gated (requirePremiumOrCorePlatform). A 403 is therefore genuinely
+          reachable here, so the denial deliberately refuses only the reading
+          the data DOES rule out — an empty register — rather than asserting
+          "not a limit of your plan", which would trade one unsupported claim
+          for its opposite. Aligning the page gate is a follow-up, not a
+          silent entitlement change in this PR. */}
+      {isUnavailable(systemsData) && (
+        <UnavailableNotice
+          subject="AI systems"
+          denial="not an empty register"
+          reassurance="Your AI systems are unchanged."
+          retryHref={search ? `/ai-systems?q=${encodeURIComponent(search)}` : "/ai-systems"}
+        />
+      )}
+
+      {/* Entitled but nothing to show — an active search gets an honest "no match",
+          never "no systems registered" over a populated org. */}
+      {systemsData !== null && aiSystems.length === 0 && search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
-          <p className="text-sm" style={{ color: '#94a3b8' }}>
-            AI system data is not available for your current plan.
+          <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
+            No AI systems match your search.
           </p>
+          <Link
+            href="/ai-systems"
+            className="text-sm font-medium hover:opacity-80"
+            style={{ color: "#00c4b4" }}
+          >
+            Clear search →
+          </Link>
         </div>
       )}
 
       {/* Entitled but no systems yet */}
-      {systemsData !== null && aiSystems.length === 0 && (
+      {systemsData !== null && aiSystems.length === 0 && !search && (
         <div className="bg-brand-surface border border-brand-line rounded-xl p-8 text-center">
           <p className="text-sm mb-3" style={{ color: '#94a3b8' }}>
             No AI systems registered yet.

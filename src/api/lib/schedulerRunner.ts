@@ -46,6 +46,9 @@ import { runScheduler } from "./briefScheduler.js";
 import { runDailyDigest } from "./digestScheduler.js";
 import { runWeeklySummary } from "./summaryScheduler.js";
 import { runAuthAnomalyScan } from "./authAnomaly.js";
+import { runDailyPostureSnapshots } from "./postureSnapshotScheduler.js";
+import { runDailySlaBreachSweep } from "./slaBreachScheduler.js";
+import { runBriefStalenessCheck } from "./briefStalenessMonitor.js";
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
@@ -122,6 +125,28 @@ export function startScheduler(): void {
     "Intelligence Brief scheduler registered"
   );
 
+  // Daily posture snapshot — 7:30 AM UTC, BEFORE the 8:00 digest and the
+  // Monday 9:00 weekly summary, so both read a fresh score. Idempotent
+  // ((org, snapshot_date) upsert): a signal-driven snapshot earlier the same
+  // day is refreshed, never duplicated. Continuous posture history is the
+  // platform promise this cron keeps for quiet orgs.
+  schedule(
+    "30 7 * * *",
+    async () => {
+      try {
+        await runDailyPostureSnapshots();
+      } catch (err) {
+        logger.error({ event: "daily_posture_snapshot_cron_error", err }, "Daily posture snapshot cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "30 7 * * * (UTC)", description: "Daily posture snapshot 7:30 AM UTC" },
+    "Daily posture snapshot scheduler registered"
+  );
+
   // Daily digest — 8:00 AM UTC every day
   schedule(
     "0 8 * * *",
@@ -138,6 +163,48 @@ export function startScheduler(): void {
   logger.info(
     { event: "scheduler_registered", schedule: "0 8 * * * (UTC)", description: "Daily digest 8:00 AM UTC" },
     "Daily digest scheduler registered"
+  );
+
+  // Daily SLA-breach sweep — 8:15 AM UTC (EG2 slice 11): one grouped email
+  // per owner for work that BECAME overdue yesterday. Self-gating (dark
+  // behind SECURELOGIC_SLA_ALERTS_ENABLED → zero-DB no-op while off).
+  schedule(
+    "15 8 * * *",
+    async () => {
+      try {
+        await runDailySlaBreachSweep();
+      } catch (err) {
+        logger.error({ event: "sla_breach_cron_error", err }, "SLA-breach sweep cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "15 8 * * * (UTC)", description: "Daily SLA-breach sweep 8:15 AM UTC" },
+    "SLA-breach sweep scheduler registered"
+  );
+
+  // Daily Brief-staleness sweep — 8:30 AM UTC. Outcome-based observability
+  // for the weekly Brief (ADR-0007): detects active orgs whose newest
+  // published brief is missing or >8 days old — including the case where the
+  // Tuesday cron never fired at all, which no per-run health check can see.
+  // Operator-webhook alert only; no customer email; no flag (observability).
+  schedule(
+    "30 8 * * *",
+    async () => {
+      try {
+        await runBriefStalenessCheck();
+      } catch (err) {
+        logger.error({ event: "brief_staleness_cron_error", err }, "Brief-staleness sweep cron threw an unexpected error");
+      }
+    },
+    { timezone: "UTC" }
+  );
+
+  logger.info(
+    { event: "scheduler_registered", schedule: "30 8 * * * (UTC)", description: "Daily Brief-staleness sweep 8:30 AM UTC" },
+    "Brief-staleness sweep scheduler registered"
   );
 
   // Weekly posture summary — 9:00 AM UTC every Monday

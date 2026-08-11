@@ -33,7 +33,15 @@ import {
   validateObligationPatch
 } from "../lib/obligationValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { sqlFindingActive } from "../lib/metricDefinitions.js";
+import { sqlFindingActive, sqlObligationOverdue } from "../lib/metricDefinitions.js";
+import {
+  OBLIGATION_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
+import { searchLikePattern } from "../lib/findingQuerySearch.js";
 
 const router = Router();
 
@@ -49,9 +57,11 @@ const router = Router();
  */
 export function buildObligationSummary(
   byStatusRows: ReadonlyArray<{ status: string; count: string }>,
-  byDomainRows: ReadonlyArray<{ domain: string; count: string }>
+  byDomainRows: ReadonlyArray<{ domain: string; count: string }>,
+  overdueRow: { count: string } | null = null
 ): {
   total: number;
+  overdue: number;
   by_status: Record<string, number>;
   by_domain: Record<string, number>;
 } {
@@ -73,7 +83,11 @@ export function buildObligationSummary(
 
   const total = Object.values(by_status).reduce((s, n) => s + n, 0);
 
-  return { total, by_status, by_domain };
+  // Metric Contract: overdue = ACTIVE with due_date strictly before today
+  // (sqlObligationOverdue) — the missed-regulatory-deadline number.
+  const overdue = overdueRow ? parseInt(overdueRow.count, 10) : 0;
+
+  return { total, overdue, by_status, by_domain };
 }
 
 const DEFAULT_LIMIT = 25;
@@ -239,15 +253,18 @@ router.get(
       return;
     }
 
-    // Status filter: default to active
+    // Status filter: default to active (unchanged contract for existing
+    // callers). The explicit `status=all` sentinel returns every lifecycle
+    // state — the register view the UI tabs need; absence-of-param stays
+    // "active" so no existing client's list silently grows.
     const filterStatus = isNonEmptyString(req.query.status)
       ? (req.query.status as string).trim()
       : "active";
 
-    if (!VALID_STATUS_FILTERS.has(filterStatus)) {
+    if (filterStatus !== "all" && !VALID_STATUS_FILTERS.has(filterStatus)) {
       res.status(400).json({
         error: "invalid_status_filter",
-        allowed: [...VALID_STATUS_FILTERS]
+        allowed: [...VALID_STATUS_FILTERS, "all"]
       });
       return;
     }
@@ -270,8 +287,33 @@ router.get(
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
 
-      params.push(filterStatus);
-      conditions.push(`status = $${params.length}`);
+      if (filterStatus !== "all") {
+        params.push(filterStatus);
+        conditions.push(`status = $${params.length}`);
+      }
+
+      // ?overdue=true — the deep-link destination for the overdue count
+      // (Metric Contract: sqlObligationOverdue pins status='active', so this
+      // composes with the default/active status filter and would honestly
+      // return zero rows combined with status=waived/not_applicable).
+      if (req.query.overdue === "true") {
+        conditions.push(sqlObligationOverdue());
+      }
+
+      // Register search — platform 2–120 bounds, ratified ILIKE escaping.
+      // Matches the fields a compliance officer knows an obligation by:
+      // title, the regulation it comes from, and the description.
+      if (req.query.q !== undefined && !(typeof req.query.q === "string" && req.query.q.trim().length === 0)) {
+        const term = typeof req.query.q === "string" ? req.query.q.trim() : "";
+        if (term.length < 2 || term.length > 120) {
+          res.status(400).json({ error: "invalid_search" });
+          return;
+        }
+        params.push(searchLikePattern(term));
+        conditions.push(
+          `(title ILIKE $${params.length} OR COALESCE(source_regulation, '') ILIKE $${params.length} OR COALESCE(description, '') ILIKE $${params.length})`
+        );
+      }
 
       if (filterDomain !== null) {
         params.push(filterDomain);
@@ -348,7 +390,7 @@ router.get(
     }
 
     try {
-      const [byStatusResult, byDomainResult] = await Promise.all([
+      const [byStatusResult, byDomainResult, overdueResult] = await Promise.all([
         pg.query<{ status: string; count: string }>(
           `
           SELECT status, COUNT(*)::text AS count
@@ -367,12 +409,22 @@ router.get(
           ORDER BY count DESC, domain ASC
           `,
           [organizationId]
+        ),
+        pg.query<{ count: string }>(
+          `
+          SELECT COUNT(*)::text AS count
+          FROM obligations
+          WHERE organization_id = $1
+            AND ${sqlObligationOverdue()}
+          `,
+          [organizationId]
         )
       ]);
 
       const summary = buildObligationSummary(
         byStatusResult.rows,
-        byDomainResult.rows
+        byDomainResult.rows,
+        overdueResult.rows[0] ?? null
       );
 
       res.status(200).json(summary);
@@ -439,6 +491,74 @@ router.get(
         "GET /api/obligations/:id failed"
       );
       res.status(500).json({ error: "obligation_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/obligations/:id/history
+   Per-obligation audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   obligation plus its assessments and risk-obligation links,
+   newest first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/obligations/:id (no admin gate) — anyone
+   who can read the obligation can read its history.
+   ========================================================= */
+
+router.get(
+  "/obligations/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const obligationId = String(req.params.id ?? "").trim();
+    if (!obligationId) {
+      res.status(400).json({ error: "obligation_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(obligationId)) {
+      res.status(400).json({ error: "obligation_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM obligations WHERE id = $1 AND organization_id = $2`,
+        [obligationId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "obligation_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        OBLIGATION_HISTORY_SPEC,
+        organizationId,
+        obligationId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "obligation_history_failed", err, obligationId },
+        "GET /api/obligations/:id/history failed"
+      );
+      res.status(500).json({ error: "obligation_history_failed" });
     }
   })
 );

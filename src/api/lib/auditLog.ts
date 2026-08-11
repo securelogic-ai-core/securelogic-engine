@@ -55,7 +55,27 @@ export function writeAuditEvent(event: AuditEventInput): void {
   void _writeAsync(event);
 }
 
-async function _writeAsync(event: AuditEventInput): Promise<void> {
+/**
+ * Same write, but awaited, and it reports whether the row actually landed.
+ *
+ * Fire-and-forget is right for the overwhelming majority of callers: a lost
+ * audit row must never fail a customer's business operation. It is wrong for
+ * the small set of actions whose only durable record IS the audit row —
+ * irreversible mutations of state that lives outside this database, where
+ * "we think an operator did this, but we cannot show you when or who" is not an
+ * acceptable answer.
+ *
+ * Still never throws. The caller gets `false` and is expected to say so in its
+ * response rather than pretend the action was fully recorded.
+ */
+export async function writeAuditEventAwaited(
+  event: AuditEventInput
+): Promise<boolean> {
+  return _writeAsync(event);
+}
+
+/** Returns true when the row was committed. Never throws, by contract. */
+async function _writeAsync(event: AuditEventInput): Promise<boolean> {
   try {
     // RLS adoption (A04-G1 gap C', PR-C2): writes go through pgElevated (owner
     // pool, outside any tenant scope). security_audit_log is cross-tenant and
@@ -88,10 +108,12 @@ async function _writeAsync(event: AuditEventInput): Promise<void> {
         event.ipAddress ?? null
       ]
     );
+    return true;
   } catch (err) {
     logger.warn(
       { event: "audit_write_failed", eventType: event.eventType, err },
       "Security audit log write failed"
     );
+    return false;
   }
 }

@@ -34,7 +34,6 @@ import {
   aVendorFinding,
   aVendorReview,
   aVendorReviewsResponse,
-  aVendorSignalContext,
 } from "@/test/fixtures";
 
 const api = vi.hoisted(() => ({
@@ -42,7 +41,7 @@ const api = vi.hoisted(() => ({
   getVendorAssessmentsForVendor: vi.fn(),
   getVendorReviews: vi.fn(),
   getVendorFindings: vi.fn(),
-  getVendorSignalContext: vi.fn(),
+  getVendorSignals: vi.fn(),
   getVendorAiDependencies: vi.fn(),
   listVendorAssuranceDocuments: vi.fn(),
   getVendorAssuranceExtraction: vi.fn(),
@@ -70,7 +69,7 @@ beforeEach(() => {
   api.getVendorAssessmentsForVendor.mockResolvedValue(aVendorAssessmentsResponse([]));
   api.getVendorReviews.mockResolvedValue(aVendorReviewsResponse([]));
   api.getVendorFindings.mockResolvedValue({ findings: [], total: 0 });
-  api.getVendorSignalContext.mockResolvedValue(aVendorSignalContext());
+  api.getVendorSignals.mockResolvedValue([]);
   api.getVendorAiDependencies.mockResolvedValue([]);
   api.listVendorAssuranceDocuments.mockResolvedValue({ documents: [] });
   api.getVendorAssuranceExtraction.mockResolvedValue(null);
@@ -161,7 +160,7 @@ describe("/vendors/[id] — no cross-org, no cross-entity fill", () => {
     // Each related read carries the vendor id. An unscoped read here would fill a
     // vendor page with the org's other vendors' work.
     expect(api.getVendorFindings).toHaveBeenCalledWith("test-jwt", "v-1");
-    expect(api.getVendorSignalContext).toHaveBeenCalledWith("test-jwt", "v-1");
+    expect(api.getVendorSignals).toHaveBeenCalledWith("test-jwt", "v-1", 10);
     expect(api.getVendorAiDependencies).toHaveBeenCalledWith("test-jwt", "v-1");
     expect(api.getVendorAssessmentsForVendor).toHaveBeenCalledWith("test-jwt", "v-1", 20);
     expect(api.getVendorReviews).toHaveBeenCalledWith("test-jwt", "v-1", 20);
@@ -188,7 +187,7 @@ describe("/vendors/[id] — no cross-org, no cross-entity fill", () => {
     for (const fn of [
       api.getVendor,
       api.getVendorFindings,
-      api.getVendorSignalContext,
+      api.getVendorSignals,
       api.getVendorAiDependencies,
       api.listVendorAssuranceDocuments,
     ]) {
@@ -273,64 +272,63 @@ describe("/vendors/[id] — related findings", () => {
 });
 
 describe("/vendors/[id] — live intelligence and the AI systems that depend on this vendor", () => {
-  it("matched signals render with their severity and title, and offer a real reassess route", async () => {
-    api.getVendorSignalContext.mockResolvedValue(
-      aVendorSignalContext({
-        overallRiskSummary: "One actively exploited vulnerability affects this vendor.",
-        matchedSignals: [
-          {
-            title: "Actively exploited RCE in Acme Cloud Gateway",
-            relevance: "high",
-            severity: "Critical",
-            suggestedFindingTitle: "Patch the gateway",
-            suggestedFindingDescription: "Apply the vendor advisory.",
-          },
-        ],
-      })
-    );
+  it("linked signals render dated, sourced, and drillable — with a real reassess route", async () => {
+    api.getVendorSignals.mockResolvedValue([
+      {
+        link_id: "svl-1",
+        link_created_at: "2026-07-20T00:00:00.000Z",
+        id: "sig-1",
+        source: "cisa-kev",
+        signal_type: "vulnerability",
+        severity: "Critical",
+        normalized_summary: "Actively exploited RCE in Acme Cloud Gateway",
+        affected_vendor: "Acme Cloud",
+        affected_cve: "CVE-2026-1234",
+        ingestion_timestamp: "2026-07-19T00:00:00.000Z",
+        intelligence_event_id: "evt-9",
+        event_summary: null,
+      },
+    ]);
 
     const { container } = await renderPage(VendorDetailPage, props("v-1"));
 
+    // Deterministic evidence: the signal's own summary, its CVE, and the date
+    // the link was accepted — not an unlinked LLM paraphrase.
     expect(
       screen.getByText("Actively exploited RCE in Acme Cloud Gateway")
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("One actively exploited vulnerability affects this vendor.")
-    ).toBeInTheDocument();
+    expect(screen.getByText("CVE-2026-1234")).toBeInTheDocument();
+    expect(screen.getByText(/linked Jul 20, 2026/)).toBeInTheDocument();
+    expect(hrefOf(container, /View intelligence event/)).toBe("/intelligence/evt-9");
     expect(hrefOf(container, /Reassess with this intelligence/)).toBe("/vendors/v-1/assess");
   });
 
-  it("no matched signals: a guiding empty state that explains Live Intelligence — and NO reassess link to nothing", async () => {
-    api.getVendorSignalContext.mockResolvedValue(aVendorSignalContext({ matchedSignals: [] }));
+  it("no linked signals: a guiding empty state that routes to the review queue — and NO reassess link to nothing", async () => {
+    api.getVendorSignals.mockResolvedValue([]);
 
     const { container } = await renderPage(VendorDetailPage, props());
 
-    // V-2: the empty state now explains WHAT Live Intelligence is and WHY it may be empty,
-    // instead of a bare "No external signals currently match this vendor."
     expect(
-      screen.getByText(
-        /Live Intelligence matches external threat and vendor signals to this vendor/i
-      )
+      screen.getByText(/No confirmed external signals are linked to this vendor/i)
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/new intelligence will appear here automatically/i)
-    ).toBeInTheDocument();
+    // The way out is the confirmation queue, pre-filtered to vendor targets.
+    expect(hrefOf(container, /review queue/)).toContain("/queue?target_type=vendor");
     expect(hrefOf(container, /Reassess with this intelligence/)).toBeNull();
   });
 
-  it("a signal-context outage does not invent a clean vendor", async () => {
-    // getVendorSignalContext returns null when the engine is unreachable. The section
-    // then shows the SAME guiding empty state it uses for a genuine zero. Documented,
-    // not endorsed (see report).
-    api.getVendorSignalContext.mockResolvedValue(null);
+  it("an intelligence-read outage does not invent a clean vendor", async () => {
+    // getVendorSignals returns null when the engine is unreachable — the section
+    // says so explicitly instead of rendering the zero-signals state.
+    api.getVendorSignals.mockResolvedValue(null);
 
     await renderPage(VendorDetailPage, props());
 
     expect(
-      screen.getByText(
-        /Live Intelligence matches external threat and vendor signals to this vendor/i
-      )
+      screen.getByText(/does not mean the vendor is clear/i)
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No confirmed external signals are linked/i)
+    ).toBeNull();
   });
 
   it("dependent AI systems deep-link to the AI system that actually exists", async () => {
@@ -539,6 +537,73 @@ describe("/vendors/[id] — history sections", () => {
 
     expect(screen.getByText("Concerns Identified")).toBeInTheDocument();
     expect(screen.getByText("Two gaps.")).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// 6a. The retired "Last reviewed" row
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * PRODUCT RULING: "reviewed" is not a valid customer-facing vendor metric.
+ * `vendors.last_reviewed_at` is written by nothing in the product, so the row
+ * rendered an em dash on every vendor in every org — directly above an
+ * Assessment History section listing real dates. Not a stale value: a claim
+ * the data can never support, sitting next to evidence that contradicts it.
+ *
+ * The engine still RETURNS the field (API compatibility, same as the legacy
+ * ?reviewed=never filter). So these tests feed it a value deliberately: the
+ * contract is that the page ignores it, not that it never arrives.
+ */
+describe('/vendors/[id] — "Last reviewed" is retired, not merely blank', () => {
+  const REVIEWED_SENTINEL = "2019-03-07T00:00:00.000Z";
+
+  it("renders no Last reviewed row even when the engine returns a date", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: REVIEWED_SENTINEL }));
+
+    const { container } = await renderPage(VendorDetailPage, props());
+
+    expect(screen.queryByText("Last reviewed")).not.toBeInTheDocument();
+    // The formatted date must not appear anywhere either — relabelling the row
+    // would keep the unsupported claim while passing a label-only assertion.
+    expect(container.textContent).not.toContain("Mar 7, 2019");
+    expect(container.textContent).not.toContain("2019");
+  });
+
+  it("does not fall back to an em dash under some other review label", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: null }));
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.queryByText(/last review/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/never reviewed/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the Added row that sat beside it", async () => {
+    api.getVendor.mockResolvedValue(
+      aVendor({ created_at: "2026-01-15T00:00:00.000Z", last_reviewed_at: REVIEWED_SENTINEL })
+    );
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.getByText("Added")).toBeInTheDocument();
+    expect(screen.getByText("Jan 15, 2026")).toBeInTheDocument();
+  });
+
+  it("still tells the customer when this vendor was last assessed — from vendor_assessments", async () => {
+    api.getVendor.mockResolvedValue(aVendor({ last_reviewed_at: null }));
+    api.getVendorAssessmentsForVendor.mockResolvedValue(
+      aVendorAssessmentsResponse([
+        aVendorAssessment({ id: "va-1", performed_at: "2026-06-11T00:00:00.000Z" }),
+      ])
+    );
+
+    await renderPage(VendorDetailPage, props());
+
+    // Removing the dead field must not leave the page silent about recency:
+    // Assessment History is the maintained source, and it is still rendering.
+    expect(screen.getByText("Assessment History")).toBeInTheDocument();
+    expect(screen.queryByText("No assessments recorded")).not.toBeInTheDocument();
   });
 });
 

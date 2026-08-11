@@ -25,9 +25,15 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { csvRow } from "../lib/csvExport.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset } from "../lib/assetRegistrar.js";
+import {
+  backingIdsOf,
+  normalizeAssetSearchTerm,
+  resolveAssetSearch
+} from "../lib/assetSearchResolver.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -38,8 +44,19 @@ import {
   validateVendorPatch
 } from "../lib/vendorValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { sqlFindingActive } from "../lib/metricDefinitions.js";
-import { computeVendorRiskScore } from "../lib/vendorRiskScore.js";
+import {
+  VENDOR_HISTORY_SPEC,
+  fetchResourceHistory,
+  isHistoryUuid,
+  parseHistoryLimit,
+  parseHistoryOffset,
+} from "../lib/resourceHistory.js";
+import {
+  sqlFindingActive,
+  sqlVendorAssessmentScope,
+  sqlVendorNeverAssessed
+} from "../lib/metricDefinitions.js";
+import { recomputeAndPersistVendorRiskScore } from "../lib/vendorRiskScoreRecompute.js";
 
 const router = Router();
 
@@ -48,6 +65,25 @@ const MAX_LIMIT = 100;
 
 const VALID_STATUS_FILTERS = new Set(["active", "archived"]);
 const VALID_CRITICALITY_FILTERS = new Set(["critical", "high", "medium", "low"]);
+const VALID_ASSESSED_FILTERS = new Set(["never"]);
+
+/**
+ * The RATIFIED vendor-assessment definitions, from the Metric Contract.
+ *
+ * They live in metricDefinitions.ts — not here — because "assessed" is a
+ * business word that had reached three different computations across the
+ * product, which is precisely the failure that module exists to prevent. Every
+ * use on this route (the ?assessed=never list filter, the never_assessed_count
+ * aggregate, and the per-row assessment_count) resolves to the SAME string, so
+ * a count and the list it links to cannot describe different populations.
+ *
+ * NOT vendors.last_reviewed_at — written by nothing in the product, so a claim
+ * built on it is one the system cannot support; it survives only as the legacy
+ * ?reviewed=never filter below, kept for API compatibility. NOT
+ * current_risk_score either.
+ */
+const ASSESSMENT_SCOPE = sqlVendorAssessmentScope();
+const NEVER_ASSESSED_PREDICATE = sqlVendorNeverAssessed();
 
 const VENDOR_SELECT = `
   id,
@@ -75,6 +111,24 @@ function parseLimit(value: unknown): number {
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
+}
+
+/**
+ * The criticality breakdown for a population with no members.
+ *
+ * A genuine zero is an ANSWER and must be shaped exactly like a non-zero one:
+ * the search-miss early return below would otherwise omit the aggregate keys
+ * entirely, and a caller reading `by_criticality.critical` would get
+ * `undefined` — which renders as blank or NaN, not as the 0 it actually is.
+ */
+function emptyCriticalityCounts(): {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  uncategorized: number;
+} {
+  return { critical: 0, high: 0, medium: 0, low: 0, uncategorized: 0 };
 }
 
 /* =========================================================
@@ -262,6 +316,101 @@ router.get(
         conditions.push(`criticality = $${params.length}`);
       }
 
+      // ?reviewed=never — vendors with NO review on record (last_reviewed_at
+      // IS NULL): the factual TPRM audit slice, needing no cadence policy.
+      // A due-for-review filter (cadence-based) is a separate product ruling
+      // and deliberately not implied here.
+      const filterReviewed = isNonEmptyString(req.query.reviewed)
+        ? req.query.reviewed
+        : null;
+      if (filterReviewed !== null) {
+        if (filterReviewed !== "never") {
+          res.status(400).json({
+            error: "invalid_reviewed_filter",
+            allowed: ["never"]
+          });
+          return;
+        }
+        conditions.push("last_reviewed_at IS NULL");
+      }
+
+      // ?assessed=never — vendors with NO assessment on record. The ratified
+      // customer-facing definition, and the one the "Never assessed" pill on
+      // /vendors both counts and links to.
+      //
+      // It shares NEVER_ASSESSED_PREDICATE with the never_assessed_count
+      // aggregate below, so the count a customer reads and the list they reach
+      // by clicking it are the same population by construction.
+      //
+      // Additive: ?reviewed=never above is untouched and keeps its
+      // last_reviewed_at meaning for existing API callers. The two are
+      // different questions and are deliberately not merged.
+      const filterAssessed = isNonEmptyString(req.query.assessed)
+        ? req.query.assessed
+        : null;
+      if (filterAssessed !== null) {
+        if (!VALID_ASSESSED_FILTERS.has(filterAssessed)) {
+          res.status(400).json({
+            error: "invalid_assessed_filter",
+            allowed: [...VALID_ASSESSED_FILTERS]
+          });
+          return;
+        }
+        // Pushed into `conditions` BEFORE the pre-cursor snapshot, so the
+        // aggregates describe the same filtered population the rows come from.
+        conditions.push(NEVER_ASSESSED_PREDICATE);
+      }
+
+      // Shared asset-search q — the platform capability (name, alias, exact
+      // UUID, any registry identifier), narrowed to vendor-typed assets and
+      // applied by BACKING id, so this list never re-implements matching.
+      const rawQ = req.query.q;
+      if (rawQ !== undefined && !(typeof rawQ === "string" && rawQ.trim().length === 0)) {
+        const searchTerm = normalizeAssetSearchTerm(rawQ);
+        if (searchTerm === null) {
+          res.status(400).json({ error: "invalid_search" });
+          return;
+        }
+        const resolved = await resolveAssetSearch(pg, organizationId, searchTerm, {
+          assetTypes: ["vendor"]
+        });
+        const vendorIds = backingIdsOf(resolved.matches, "vendors");
+        if (vendorIds.length === 0) {
+          res.status(200).json({
+            count: 0,
+            limit,
+            total: 0,
+            by_criticality: emptyCriticalityCounts(),
+            // A genuine zero, shaped exactly like a non-zero one — see
+            // emptyCriticalityCounts(). Omitting the key here would reach the
+            // caller as `undefined`, which every honest caller must read as
+            // "unknown", and an empty search result is not unknown.
+            never_assessed_count: 0,
+            organizationId,
+            statusFilter: filterStatus,
+            nextCursor: null,
+            vendors: []
+          });
+          return;
+        }
+        params.push(vendorIds);
+        conditions.push(`id = ANY($${params.length}::uuid[])`);
+      }
+
+      // Snapshot the filter set BEFORE the cursor + limit params, so the
+      // aggregates below describe the SAME population as the list and are
+      // untouched by paging — the identical discipline GET /api/actions and
+      // GET /api/findings already use for their `total`.
+      //
+      // This is the whole point of the contract: `count` is the length of the
+      // returned slice and always was, so a caller that needed the size of the
+      // register had nothing to read and could only count rows it had been
+      // given — capped at MAX_LIMIT. A cap counted as if it were a population
+      // is not a small error, it is a confident wrong number, and it silently
+      // stops being wrong only for orgs small enough not to notice.
+      const preCursorConditions = [...conditions];
+      const preCursorParams = [...params];
+
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
         const ci = params.length - 1;
@@ -303,11 +452,37 @@ router.get(
             AND ${predicate})::int
       `;
 
+      // Per-vendor ASSESSMENT state, computed HERE, in the database.
+      //
+      // "Has this vendor ever been assessed?" was answered in the browser by
+      // fetching GET /api/vendor-assessments?limit=100 — the ORG's assessments,
+      // capped — and asking whether the vendor appeared in it. Past 100
+      // assessments in the org, an assessed vendor's rows fell off the end of
+      // that page and the vendor rendered as "Never assessed", which on
+      // /vendors/risk also gave it a red border and pushed it into Requires
+      // Attention. Absence from a capped page is not absence from the table.
+      //
+      // The predicate is deliberately the one the app already used and the one
+      // customers already understand: ANY row in vendor_assessments for this
+      // vendor in this org. No status, type, or recency qualifier is implied,
+      // because GET /api/vendor-assessments applies none. `last_reviewed_at` is
+      // a DIFFERENT metric and is not substituted here.
+      //
+      // ASSESSMENT_SCOPE is the module-level constant the ?assessed=never
+      // filter and the never_assessed_count aggregate are also built from.
       const result = await pg.query(
         `
         SELECT ${VENDOR_SELECT},
                ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
-               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count
+               ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count,
+               (SELECT COUNT(*) ${ASSESSMENT_SCOPE})::int              AS assessment_count,
+               -- The date the surfaces print as "Last Assessment". Ordered the
+               -- way the capped list it replaces was ordered (created_at DESC,
+               -- id DESC) and reading the same column, so un-capping the value
+               -- does not quietly redefine which assessment it refers to.
+               (SELECT va.performed_at ${ASSESSMENT_SCOPE}
+                 ORDER BY va.created_at DESC, va.id DESC
+                 LIMIT 1)                                             AS latest_assessment_at
         FROM vendors
         ${whereClause}
         ORDER BY
@@ -325,12 +500,74 @@ router.get(
         params
       );
 
+      // Exact aggregates over the SAME filter set (cursor + limit excluded).
+      // One extra query, served by idx_vendors_org_status /
+      // idx_vendors_org_criticality — the same index path the list itself uses.
+      const aggregateRow = await pg.query<{
+        total: string;
+        critical: string;
+        high: string;
+        medium: string;
+        low: string;
+        uncategorized: string;
+        never_assessed: string;
+      }>(
+        `
+        SELECT
+          COUNT(*)                                                     AS total,
+          COUNT(*) FILTER (WHERE criticality = 'critical')             AS critical,
+          COUNT(*) FILTER (WHERE criticality = 'high')                 AS high,
+          COUNT(*) FILTER (WHERE criticality = 'medium')               AS medium,
+          COUNT(*) FILTER (WHERE criticality = 'low')                  AS low,
+          -- NULL and any value outside the four known bands, so the parts
+          -- always sum to total. A vendor with an unrecognised criticality
+          -- must appear SOMEWHERE in the breakdown rather than vanish from it.
+          COUNT(*) FILTER (
+            WHERE criticality IS NULL
+               OR criticality NOT IN ('critical', 'high', 'medium', 'low')
+          )                                                            AS uncategorized,
+          -- Vendors with NO assessment on record, over the SAME filtered
+          -- population as total. The surfaces that print "Need Assessment"
+          -- counted this by scanning a ≤100-row page against a ≤100-row
+          -- assessment page — two caps multiplied, presented as a total.
+          -- Same predicate as assessment_count above, so the tile and the rows
+          -- beneath it cannot disagree.
+          -- The SAME literal the ?assessed=never list filter uses. The pill on
+          -- /vendors prints this number and links to that filter; sharing the
+          -- string is what makes the two populations identical by construction
+          -- rather than by review.
+          COUNT(*) FILTER (WHERE ${NEVER_ASSESSED_PREDICATE})           AS never_assessed
+        FROM vendors
+        WHERE ${preCursorConditions.join(" AND ")}
+        `,
+        preCursorParams
+      );
+
+      const agg = aggregateRow.rows[0];
+      const total = parseInt(agg?.total ?? "0", 10);
+      const byCriticality = {
+        critical:      parseInt(agg?.critical ?? "0", 10),
+        high:          parseInt(agg?.high ?? "0", 10),
+        medium:        parseInt(agg?.medium ?? "0", 10),
+        low:           parseInt(agg?.low ?? "0", 10),
+        uncategorized: parseInt(agg?.uncategorized ?? "0", 10),
+      };
+      const neverAssessedCount = parseInt(agg?.never_assessed ?? "0", 10);
+
       const vendors = result.rows;
       const last = vendors.length > 0 ? vendors[vendors.length - 1] : null;
 
       res.status(200).json({
         count: vendors.length,
         limit,
+        // Additive: `count` keeps its meaning (the slice length) so every
+        // existing caller is unaffected. `total` and `by_criticality` describe
+        // the whole matching population.
+        total,
+        by_criticality: byCriticality,
+        // Exact over the same population as `total` — never a tally of the
+        // returned slice, and never derived from `last_reviewed_at`.
+        never_assessed_count: neverAssessedCount,
         organizationId,
         statusFilter: filterStatus,
         nextCursor:
@@ -457,16 +694,19 @@ router.get(
 /* =========================================================
    GET /api/vendors/export.csv
    CSV export of all org vendors with optional filters.
+
+   NO "Last Reviewed" COLUMN. `vendors.last_reviewed_at` is written by
+   nothing in the product, so the column was permanently blank for every
+   vendor in every org — a blank cell under that header reads as "this
+   vendor has never been reviewed", which is a claim the data cannot
+   support. Retired here under the ratified ruling that "reviewed" is not
+   a valid customer-facing vendor metric; the canonical concept is
+   "assessed" (>= 1 row in vendor_assessments). Do not reinstate the
+   column, and do not substitute an assessment date under the old header.
    ========================================================= */
 
-function csvCell(val: string | null | undefined): string {
-  const s = val == null ? "" : String(val);
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function csvRow(cells: Array<string | null | undefined>): string {
-  return cells.map(csvCell).join(",");
-}
+// CSV serialization migrated to the shared lib (src/api/lib/csvExport.ts) so
+// every register export escapes identically.
 
 router.get(
   "/vendors/export.csv",
@@ -519,13 +759,13 @@ router.get(
         website: string | null;
         service_description: string | null;
         created_at: string;
-        last_reviewed_at: string | null;
       }>(
         `SELECT id, name, category, criticality, status, data_sensitivity,
-                access_level, website, service_description, created_at, last_reviewed_at
+                access_level, website, service_description, created_at
          FROM vendors
          WHERE ${where}
-         ORDER BY created_at DESC, id DESC`,
+         ORDER BY created_at DESC, id DESC
+         LIMIT 10000`,
         params
       );
 
@@ -546,7 +786,7 @@ router.get(
       const header = csvRow([
         "ID", "Name", "Category", "Criticality", "Status",
         "Data Sensitivity", "Access Level", "Website",
-        "Description", "Last Reviewed", "Created At"
+        "Description", "Created At"
       ]);
       res.write(header + "\r\n");
 
@@ -561,7 +801,6 @@ router.get(
           row.access_level,
           row.website,
           row.service_description,
-          row.last_reviewed_at ? new Date(row.last_reviewed_at).toISOString().slice(0, 10) : null,
           new Date(row.created_at).toISOString().slice(0, 10),
         ]);
         res.write(line + "\r\n");
@@ -624,6 +863,74 @@ router.get(
         "GET /api/vendors/:id failed"
       );
       res.status(500).json({ error: "vendor_get_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/vendors/:id/history
+   Per-vendor audit trail — the RR-3 per-risk history pattern
+   generalized via src/api/lib/resourceHistory.ts. Events on the
+   vendor plus its assessments, reviews, and assurance documents,
+   newest first, mirroring the GET /api/audit-log field shape.
+
+   Auth mirrors GET /api/vendors/:id (no admin gate) — anyone who
+   can read the vendor can read its history.
+   ========================================================= */
+
+router.get(
+  "/vendors/:id/history",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const vendorId = String(req.params.id ?? "").trim();
+    if (!vendorId) {
+      res.status(400).json({ error: "vendor_id_required" });
+      return;
+    }
+    if (!isHistoryUuid(vendorId)) {
+      res.status(400).json({ error: "vendor_id_must_be_uuid" });
+      return;
+    }
+
+    const limit  = parseHistoryLimit(req.query.limit);
+    const offset = parseHistoryOffset(req.query.offset);
+
+    try {
+      // Ownership first: cross-org probes must 404 (an empty events
+      // list for a foreign id would leak existence by absence).
+      const ownership = await pg.query(
+        `SELECT 1 FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, organizationId]
+      );
+      if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
+
+      const page = await fetchResourceHistory(
+        VENDOR_HISTORY_SPEC,
+        organizationId,
+        vendorId,
+        limit,
+        offset
+      );
+      res.status(200).json(page);
+    } catch (err) {
+      logger.error(
+        { event: "vendor_history_failed", err, vendorId },
+        "GET /api/vendors/:id/history failed"
+      );
+      res.status(500).json({ error: "vendor_history_failed" });
     }
   })
 );
@@ -803,50 +1110,24 @@ router.get(
         return;
       }
 
-      const criticality = vendorResult.rows[0]!.criticality;
-
-      const findingsResult = await pg.query<{ severity: string; status: string }>(
-        `
-        SELECT f.severity, f.status
-        FROM findings f
-        JOIN vendor_assessments va
-          ON va.id::text = f.source_id::text
-          AND f.source_type = 'vendor_review'
-        WHERE va.vendor_id = $1
-          AND f.organization_id = $2
-          AND ${sqlFindingActive("f.operational_status")}
-
-        UNION ALL
-
-        SELECT f.severity, f.status
-        FROM findings f
-        JOIN vendor_reviews vr
-          ON vr.id::text = f.source_id::text
-          AND f.source_type = 'vendor_cycle_review'
-        WHERE vr.vendor_id = $1
-          AND f.organization_id = $2
-          AND ${sqlFindingActive("f.operational_status")}
-        `,
-        [vendorId, organizationId]
+      // Shared recompute (vendorRiskScoreRecompute.ts) — the same canonical
+      // finding union and persist every automatic refresh path now uses, so
+      // "Recalculate" can never disagree with the hooks.
+      const recomputed = await recomputeAndPersistVendorRiskScore(
+        organizationId,
+        vendorId
       );
-
-      const { score, risk_level } = computeVendorRiskScore(
-        criticality,
-        findingsResult.rows
-      );
-
-      await pg.query(
-        `UPDATE vendors SET current_risk_score = $1, updated_at = NOW()
-         WHERE id = $2 AND organization_id = $3`,
-        [score, vendorId, organizationId]
-      );
+      if (recomputed === null) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
 
       res.status(200).json({
         vendor_id: vendorId,
-        score,
-        risk_level,
-        finding_count: findingsResult.rowCount ?? 0,
-        criticality,
+        score: recomputed.score,
+        risk_level: recomputed.risk_level,
+        finding_count: recomputed.finding_count,
+        criticality: recomputed.criticality,
         computed_at: new Date().toISOString(),
       });
     } catch (err) {

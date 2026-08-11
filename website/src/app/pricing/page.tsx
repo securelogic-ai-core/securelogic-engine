@@ -64,7 +64,7 @@ const DETAILS = [
   "Brief Team includes up to 6 seats.",
   "Need more than 6 seats on the brief? Move to Platform.",
   "Platform Professional includes up to 10 seats / 50 monitored entities.",
-  "Need more than 10 seats or 50 entities, white-labeling, SSO/SAML, or multi-org? Talk to us about Enterprise.",
+  "Need more than 10 seats or 50 entities, white-labeling, or SSO/SAML? Talk to us about Enterprise.",
   "Founding annual rate available through Dec 2026.",
   "Annual founding customers keep their rate for as long as the subscription remains active.",
   "Month-to-month available at $800/month.",
@@ -114,7 +114,6 @@ const COMPARISON_MATRIX: MatrixGroup[] = [
     rows: [
       { label: "SSO / SAML", cells: [false, false, false, false, true] },
       { label: "White-labeled Intelligence Brief", cells: [false, false, false, false, true] },
-      { label: "Multi-org support (MSSP)", cells: [false, false, false, false, true] },
       { label: "Custom data retention", cells: [false, false, false, false, true] },
       { label: "Dedicated onboarding + SLA", cells: [false, false, false, false, true] },
       { label: "Invoicing & purchase orders", cells: [false, false, false, "Annual plans", true] },
@@ -130,7 +129,7 @@ const PROCUREMENT = [
   },
   {
     title: "Seats & monitored entities",
-    body: "Brief Team includes up to 6 seats; Platform Professional includes up to 10 seats and 50 monitored entities (vendors and AI systems). Need more seats or entities, multi-org, or white-labeling? That's Enterprise.",
+    body: "Brief Team includes up to 6 seats; Platform Professional includes up to 10 seats and 50 monitored entities (vendors and AI systems). Need more seats or entities, or white-labeling? That's Enterprise.",
   },
   {
     title: "Proration",
@@ -142,7 +141,7 @@ const PROCUREMENT = [
   },
   {
     title: "Enterprise purchasing",
-    body: "Enterprise agreements cover custom seats and entities, SSO/SAML, multi-org, custom data retention, security review support (questionnaires, DPA), and a dedicated onboarding plan with an SLA.",
+    body: "Enterprise agreements cover custom seats and entities, SSO/SAML, custom data retention, security review support (questionnaires, DPA), and a dedicated onboarding plan with an SLA.",
   },
   {
     title: "Support & onboarding",
@@ -165,7 +164,7 @@ const FAQ = [
   },
   {
     q: "Do you support enterprise requirements like SSO and white-labeling?",
-    a: "Yes. Enterprise adds SSO / SAML, custom signal sources, a white-labeled Intelligence Brief, multi-org support for MSSPs, custom data retention, and dedicated onboarding with an SLA. Talk to Sales to scope a plan.",
+    a: "Yes. Enterprise adds SSO / SAML, custom signal sources, a white-labeled Intelligence Brief, custom data retention, and dedicated onboarding with an SLA. Talk to Sales to scope a plan.",
   },
   {
     q: "Can I start with the brief and upgrade later?",

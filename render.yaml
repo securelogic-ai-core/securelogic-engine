@@ -9,6 +9,17 @@ services:
     autoDeploy: true
     healthCheckPath: /health
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -24,9 +35,15 @@ services:
       - key: SECURELOGIC_ADMIN_KEY
         sync: false
 
-      # IP allowlist for /admin routes (CIDR, comma-separated; 0.0.0.0/0 is forbidden)
-      # On Render internal network, 10.0.0.0/8 covers private traffic.
-      # Set this to match your actual ingress range before deploying.
+      # OBSERVATIONAL ONLY — this does NOT restrict /admin.
+      # requireAdminNetwork runs dark: it logs `admin_network_evaluated` and always
+      # continues unless SECURELOGIC_ADMIN_NETWORK_ENFORCED === "true" (set nowhere).
+      # Startup (selfTest.ts) still asserts this is non-empty, so it must be SET,
+      # but its value is not currently load-bearing for access control.
+      # Do NOT enable enforcement: staff egress is Codespaces/Azure NAT and rotates
+      # per session, so a /32 list locks operators out of /admin — including the
+      # /admin/ops/* endpoints used to diagnose the lockout.
+      # See TENANT_ISOLATION_STANDARD.md → "NOT a required control".
       - key: SECURELOGIC_ADMIN_ALLOWED_IPS
         sync: false
 
@@ -207,9 +224,30 @@ services:
         value: "false"
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
-      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
+      - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context, plus finding creation and bulk governance decisions. Prod enablement is a separate operator ruling (GATE B); not part of the develop→main release train
         value: "false"
-      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off); engine half of the two-switch: gates /api/briefing/layout (per-user Briefing layout persistence). Prod flip is GATE B.
+      - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off). Engine half of the two-switch: opens /api/briefing/layout + /api/briefing/changes. PROMOTE ENGINE BEFORE APP. Prod stays dark per SPRINT_1 ruling D-E; enablement is a separate operator ruling
+        value: "false"
+
+      # Vendor Assurance — EG3 WAVE 1 (Reveal). Previously UNDECLARED in this
+      # block, so it resolved absent→false while the staging block set it true.
+      # The workspace nav surfaces "Vendor Assurance" unconditionally, so without
+      # this declaration the prod menu item would appear and the API would 403.
+      # Declared explicitly rather than relying on a default.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "true"
+
+      # EG2 notification flags (declared 2026-07-30 release review) — DARK
+      # (default off), listed so the operator flag inventory is complete. Both
+      # initiate outbound customer email, so enablement is operator-owned:
+      # staging first, prod only after the staging checks pass. The matcher
+      # flag is ALSO read by the intelligence worker (declared there too) —
+      # flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED       # EG2 s1 — coalesced Critical/High finding alerts from the automated signal→finding path; run the staging VOLUME CHECK before any prod flip
+        value: "false"
+      - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped); off = zero-DB no-op, cron inert
+        value: "false"
+      - key: SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED    # EG2 s7 — "assigned to you" email on finding/action assignment; off = trigger returns before any query or send. Shipped ungated; gated at the develop→main release review
         value: "false"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
         value: "false"
@@ -222,6 +260,8 @@ services:
       - key: SECURELOGIC_BRIEF_APPLICABILITY_CITATION_ENABLED # EAR P11 (Brief cites applicability) — DARK (default off); double-fenced: also requires SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"
       - key: SECURELOGIC_BRIEF_QUALITY_ENABLED # IQP Q4 title/summary quality contract. OFF = titles are cut mid-word at 77 chars and stored that way. BLOCKED ON STAGING VALIDATION — flip to "true" after staging confirms headings
+        value: "false"
+      - key: SECURELOGIC_SIGNAL_RECENCY_ENABLED # IQP Q2 recency enforcement (operator ledger OP-3). OFF = brief window filters on ingestion time, so decades-old KEV entries ship as "this period" (staging evidence 2026-08-07: CVE-2002-0367 in the Jul 26–Aug 2 brief). BLOCKED ON STAGING VALIDATION — flip to "true" after staging shows stale_signal_suppressed + a clean brief. Requires OP-2 published_at migration on this env's DB; value change reaches the process only on a deploy (same-SHA rebuild), not a restart
         value: "false"
       - key: SECURELOGIC_APPLICABILITY_WORKFLOW_ENABLED # ECL R2/S6 dispatcher — DARK (default off); requires ECL flag too
         value: "false"
@@ -262,10 +302,12 @@ services:
   # enforcement, audit/retention assertions, validateEnv
   # required-env list).
   #
-  # APP_ENV=staging is the labeling-only differentiator used
-  # by the logger pino base to tell staging from prod in log
-  # output. Every other env var must be set to staging
-  # credentials in the dashboard.
+  # APP_ENV=staging is this service's ENVIRONMENT IDENTITY. It began as a
+  # logger label, but P1-2 gave it behaviour: outbound mail is tagged with
+  # it, inbound provider events are classified against it, and the
+  # destructive provider-suppression clear is refused unless it reads
+  # "production". Every other env var must be set to staging credentials in
+  # the dashboard.
   #
   # Keep this block in lockstep with securelogic-engine above.
   # =========================================================
@@ -284,8 +326,10 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Labeling-only — distinguishes staging from prod in logs.
-      # Prod leaves this unset (appEnv: null in pino base).
+      # Environment identity. NO LONGER labeling-only: P1-2 made this
+      # load-bearing (outbound send tagging, inbound event classification, and
+      # the production-only guard on provider-suppression recovery). Prod does
+      # NOT leave it unset — every service now declares it explicitly above.
       - key: APP_ENV
         value: staging
 
@@ -300,6 +344,9 @@ services:
       - key: SECURELOGIC_ADMIN_KEY
         sync: false
 
+      # OBSERVATIONAL ONLY — does NOT restrict /admin. Must be set (selfTest asserts
+      # non-empty) but requireAdminNetwork runs dark. Do not enable enforcement.
+      # See TENANT_ISOLATION_STANDARD.md → "NOT a required control".
       - key: SECURELOGIC_ADMIN_ALLOWED_IPS
         sync: false
 
@@ -455,6 +502,8 @@ services:
         value: "false"
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context (read-only)
         value: "true"
+      - key: SECURELOGIC_SIGNAL_RECENCY_ENABLED # IQP Q2 recency enforcement (operator ledger OP-3). ON — staging validates that the brief window suppresses old-dateAdded KEV rows (expect stale_signal_suppressed in logs and no pre-window published_at item in the next generated brief) before any prod flip. Requires OP-2 published_at migration applied to the staging DB; value change reaches the process only on a deploy (same-SHA rebuild), not a restart
+        value: "true"
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — ENABLED on STAGING: engine half of the two-switch; opens /api/briefing/layout (per-user Briefing layout persistence) for the staging app (app half is "true" below)
         value: "true"
       - key: SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED # ERIP E5 (explainable forecasting) — DARK (default off)
@@ -473,6 +522,16 @@ services:
         value: "false"
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
+
+      # EG2 notification flags (declared 2026-07-30 release review) — DARK
+      # (default off) on staging too; staging enablement for the EG2 validation
+      # pass is a separate operator action (Blueprint sync, then flip here).
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED       # EG2 s1 — coalesced Critical/High finding alerts from the automated signal→finding path
+        value: "false"
+      - key: SECURELOGIC_SLA_ALERTS_ENABLED           # EG2 s11 — daily 8:15 UTC SLA-breach sweep (7-day catch-up window, ledger-deduped)
+        value: "false"
+      - key: SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED    # EG2 s7 — "assigned to you" email on finding/action assignment; flip here first to validate on staging
+        value: "false"
 
       # Finding risk-acceptance lifecycle (ruling 2026-07-12, PR #646) — STAGING
       # ONLY, for staging validation. Gates ENFORCEMENT: approved acceptance
@@ -540,6 +599,17 @@ services:
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -636,6 +706,12 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # EG2 s1 matcher alerting (declared 2026-07-30 release review) — DARK
+      # (default off). Read at signal-processing time in this worker too; the
+      # engine web service declares it as well — flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED
+        value: "false"
+
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer
       # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
@@ -660,6 +736,17 @@ services:
     startCommand: node dist-intelligence-worker/services/intelligence-worker/src/scheduler.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -755,6 +842,13 @@ services:
       - key: SECURELOGIC_LLM_CONTROL_MATCHER_ENABLED  # item 2 — LLM suggest-only, PAID
         value: "true"
 
+      # EG2 s1 matcher alerting (declared 2026-07-30 release review) — DARK
+      # (default off) on staging too; staging enablement for the EG2 validation
+      # pass is a separate operator action. The staging engine declares it as
+      # well — flip both services together.
+      - key: SECURELOGIC_MATCHER_ALERTS_ENABLED
+        value: "false"
+
       # Canonical Intelligence Event projection (Pipeline Hardening / IE) — DARK.
       # Projects cyber_signals into the global intelligence_events layer
       # (corroboration ledger + timeline). Off => zero DB work, legacy behaviour.
@@ -777,6 +871,17 @@ services:
     startCommand: node dist-posture-worker/services/posture-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -811,6 +916,17 @@ services:
     startCommand: node dist-posture-worker/services/posture-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -856,6 +972,17 @@ services:
     startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -908,6 +1035,17 @@ services:
     startCommand: node dist-data-rights-worker/services/data-rights-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -970,8 +1108,32 @@ services:
     startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
+
+      # Vendor Assurance claim gate — MUST track the engine block's value.
+      # runOneTick() calls vendorAssuranceEnabled() against THIS service's
+      # environment (src/api/workers/vendorExtractionWorker.ts), and that helper
+      # returns false under NODE_ENV=production whenever the var is unset. While
+      # the key was undeclared here, the engine's "true" opened the upload/enqueue
+      # route but this worker idle-skipped every claim: vendor_assurance_extract
+      # jobs could queue with nothing ever extracting them. Declaring it true
+      # closes that split — the enqueue side and the claim side are one decision.
+      # The staging worker deliberately omits the key: NODE_ENV=staging there, and
+      # vendorAssuranceEnabled() defaults ON off-production.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "true"
 
       # Shared with API service — same (virginia) Postgres instance.
       - key: DATABASE_URL
@@ -1025,6 +1187,17 @@ services:
     startCommand: node dist-vendor-extraction-worker/services/vendor-extraction-worker/src/index.js
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: staging
 
@@ -1074,7 +1247,24 @@ services:
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
     startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
+    # Readiness probe. Verifies the app process is CONFIGURED to serve
+    # (SESSION_SECRET usable, ENGINE_API_URL set and not the localhost default),
+    # deliberately without calling the engine or the database — a dependency
+    # blip must not fail the app's own health check and cascade into a second
+    # outage. See app/src/app/api/health/route.ts.
+    healthCheckPath: /api/health
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -1129,6 +1319,11 @@ services:
       # is byte-for-byte the legacy nav. The securelogic-app-staging service is
       # defined below in this file — set it true there for staging validation. Prod
       # flip is GATE B.
+      # This is the flag that changes the navigation, so it is also the flag the
+      # WhatsNewPanel keys on — the orientation panel and the change it describes
+      # share one lifecycle and roll back together. Prod stays DARK: enabling it
+      # surfaces an "Approvals" nav entry whose page has no backing capability in
+      # the production flag set (RISK_LIFECYCLE=false, RISK_ACCEPTANCE undeclared).
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
         value: "false"
 
@@ -1153,10 +1348,12 @@ services:
       # The Briefing (Briefing Initiative B1) — DARK (default off). Replaces the
       # /dashboard composition for platform tiers with the personalized Briefing
       # (My Work first, explicit "You" vs "Organization" scope chips) and relabels
-      # the workspace nav's home entry. App-only — no engine route branches on it;
-      # all module data comes from existing engine endpoints. RUNTIME (not
-      # NEXT_PUBLIC): a restart applies it. Flag off = legacy dashboard
-      # byte-for-byte. Staging app is defined below; prod flip is GATE B.
+      # the workspace nav's home entry. TWO-SWITCH: the engine half (same key, in
+      # the securelogic-engine block) gates /api/briefing/layout and
+      # /api/briefing/changes, which this app half calls — promote engine first,
+      # and never enable the app half alone. RUNTIME (not NEXT_PUBLIC): a restart
+      # applies it. Flag off = legacy dashboard byte-for-byte. Staging app is
+      # defined below; prod flip is GATE B.
       # NAMING: deliberately DASHBOARD_BRIEFING — the SECURELOGIC_BRIEF* namespace
       # belongs to the Intelligence Brief product flags; do not shorten.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
@@ -1232,7 +1429,11 @@ services:
     buildCommand: cd app && npm ci --include=dev && rm -rf .next && npm run build
     startCommand: cd app && npx next start -p $PORT
     autoDeploy: true
-    healthCheckPath: /login    # public, client-rendered 200; no engine/DB coupling
+    # Was /login, which only proved Next was serving HTML — an app booted without
+    # SESSION_SECRET or ENGINE_API_URL renders it perfectly while being unable to
+    # authenticate anyone or reach the engine. Same probe as production so the two
+    # environments report readiness identically.
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production      # required for `next start` (prod build); env identity is APP_ENV
@@ -1350,6 +1551,17 @@ services:
       - securelogicai.com
       - www.securelogicai.com
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: production
       - key: NODE_ENV
         value: production
 
@@ -1387,6 +1599,17 @@ services:
     startCommand: cd website && npx serve@latest out -l $PORT
     autoDeploy: true
     envVars:
+      # Environment identity. LOAD-BEARING since P1-2 (email environment
+      # isolation): infra/emailEnvironment.ts tags every outbound send with
+      # this value and classifies every inbound provider event against it,
+      # and lib/providerSuppressionRecoveryPolicy.ts refuses the destructive
+      # provider-suppression clear unless it reads exactly "production".
+      # An unset value resolves to "unknown", which fails closed everywhere
+      # -- safe, but it silently disables both. Declared here rather than
+      # left as dashboard-only state so it survives a Blueprint sync and is
+      # visible in review.
+      - key: APP_ENV
+        value: staging
       - key: NODE_ENV
         value: production
 

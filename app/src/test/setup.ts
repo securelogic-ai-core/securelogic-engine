@@ -17,6 +17,7 @@ afterEach(async () => {
   const harness = await import("./harness");
   harness.resetClientSearchParams();
   harness.resetClientPathname();
+  harness.resetClientRouter();
 });
 
 // next/link resolves through the App Router context, which does not exist outside a
@@ -34,7 +35,9 @@ vi.mock("next/link", () => ({
 // redirect() throws a framework signal to unwind the render. Ours carries the
 // destination so a test can assert an unentitled caller is sent away.
 vi.mock("next/navigation", async () => {
-  const { RedirectSignal, clientSearchParams, clientPathname } = await import("./harness");
+  const { RedirectSignal, clientSearchParams, clientPathname, clientRouter } = await import(
+    "./harness"
+  );
   return {
     redirect: (to: string) => {
       throw new RedirectSignal(to);
@@ -42,17 +45,14 @@ vi.mock("next/navigation", async () => {
     notFound: () => {
       throw new RedirectSignal("__not_found__");
     },
-    // Client components inside these pages (FindingCard et al.) call the router. They
-    // are rendered so their LABELS and CONTROLS can be asserted; navigation itself is
-    // the framework's job, not the contract under test.
-    useRouter: () => ({
-      push: vi.fn(),
-      replace: vi.fn(),
-      refresh: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    }),
+    // Client components inside these pages (FindingCard et al.) call the router.
+    // ONE stable instance, shared across every useRouter() call in a test: for
+    // most pages navigation is the framework's job and this is just a stub, but
+    // where the navigation IS the contract — verify-email choosing between
+    // /dashboard and /getting-started — the destination has to be observable.
+    // Handing out a fresh object per call made that impossible. Reset per test
+    // by resetClientRouter() in the afterEach above.
+    useRouter: () => clientRouter,
     usePathname: () => clientPathname.current,
     // The store lives in harness.ts beside sessionStore, so tests drive
     // ?param branches the same way they drive the session.

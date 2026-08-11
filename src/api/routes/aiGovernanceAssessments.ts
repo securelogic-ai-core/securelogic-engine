@@ -37,6 +37,7 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -200,6 +201,17 @@ router.post(
         },
         "AI governance assessment created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ai_governance_assessment.created",
+        resourceType: "ai_governance_assessment",
+        resourceId: assessment.id as string,
+        payload: { ai_system_id: input.ai_system_id, status: input.status },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(201).json({ assessment });
     } catch (err) {
@@ -647,6 +659,21 @@ router.patch(
         },
         "AI governance assessment status updated"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ai_governance_assessment.updated",
+        resourceType: "ai_governance_assessment",
+        resourceId: assessmentId,
+        payload: {
+          ai_system_id: existing.ai_system_id,
+          status: input.status,
+          finding_created: finding !== null
+        },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({ assessment, finding });
     } catch (err) {

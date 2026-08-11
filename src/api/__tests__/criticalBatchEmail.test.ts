@@ -37,6 +37,15 @@ describe("renderCriticalBatchEmail", () => {
     expect(html).toContain("High");
   });
 
+  it("each row deep-links to ITS finding; the footer keeps the list link", () => {
+    const { html } = renderCriticalBatchEmail("Acme Corp", items);
+    for (const item of items) {
+      expect(html).toContain(`/findings/${item.findingId}`);
+    }
+    // The aggregate link survives as the footer CTA.
+    expect(html).toMatch(/href="[^"]*\/findings"/);
+  });
+
   it("HTML-escapes titles to prevent injection", () => {
     const { html } = renderCriticalBatchEmail("Acme", [
       { findingId: "x", title: `<script>alert(1)</script>`, severity: "Critical", domain: null },
