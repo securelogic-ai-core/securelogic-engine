@@ -30,6 +30,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_CADENCE_BY_RATING, VALID_RATINGS } from "../lib/riskCadence.js";
@@ -298,6 +299,9 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Org-wide risk configuration is an administrative act. requireAdminRole
+  // passes API-key callers (admin-level) and JWT admins; any other JWT role 403s.
+  requireAdminRole,
   asTenant(putRiskSettings)
 );
 

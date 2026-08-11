@@ -36,6 +36,7 @@ import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_WEIGHTS, type RiskScoringWeights } from "../lib/riskScoring.js";
@@ -232,6 +233,9 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Org-wide scoring weights are administrative — they change how every risk
+  // scores. Admin (or API-key) only.
+  requireAdminRole,
   asTenant(putRiskScoringWeights)
 );
 
