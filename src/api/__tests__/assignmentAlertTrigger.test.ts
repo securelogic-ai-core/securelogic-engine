@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { mockPgQuery, mockWithTenant, mockIsSuppressed, mockIsDuplicate, mockRecordSend, mockSend } =
   vi.hoisted(() => ({
@@ -25,7 +25,10 @@ vi.mock("../lib/alerting/alertPrimitives.js", () => ({
   recordSend: mockRecordSend,
 }));
 
-import { triggerAssignmentAlert } from "../lib/assignmentAlertTrigger.js";
+import {
+  triggerAssignmentAlert,
+  assignmentAlertsEnabled,
+} from "../lib/assignmentAlertTrigger.js";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const ASSIGNEE = "22222222-2222-4222-8222-222222222222";
@@ -51,6 +54,10 @@ function input(overrides: Partial<Parameters<typeof triggerAssignmentAlert>[0]> 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The behaviour suite below asserts what the notification does when it is
+  // switched ON. The flag defaults OFF, so it must be stubbed here — without
+  // this every expectation in that suite would pass vacuously.
+  vi.stubEnv("SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED", "true");
   mockPgQuery.mockResolvedValue({
     rowCount: 1,
     rows: [{ email: "owner@acme.test", organization_name: "Acme" }],
@@ -59,6 +66,89 @@ beforeEach(() => {
   mockIsDuplicate.mockResolvedValue(false);
   mockSend.mockResolvedValue({});
   mockRecordSend.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("assignmentAlertsEnabled — fails closed", () => {
+  it("is ON only for the exact string \"true\"", () => {
+    expect(assignmentAlertsEnabled({ SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED: "true" })).toBe(true);
+  });
+
+  it("is OFF when the variable is absent", () => {
+    expect(assignmentAlertsEnabled({})).toBe(false);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace", " "],
+    ["uppercase", "TRUE"],
+    ["mixed case", "True"],
+    ["padded", " true "],
+    ["numeric", "1"],
+    ["yes", "yes"],
+    ["on", "on"],
+    ["explicit false", "false"],
+    ["garbage", "enabled-please"],
+  ])("is OFF for a malformed value (%s)", (_label, value) => {
+    expect(assignmentAlertsEnabled({ SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED: value })).toBe(false);
+  });
+});
+
+describe("triggerAssignmentAlert — flag OFF", () => {
+  it("sends no email and does no work at all when the flag is absent", async () => {
+    vi.stubEnv("SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED", "");
+
+    triggerAssignmentAlert(input());
+    await settle();
+    await settle();
+
+    // The customer-facing send is the thing that must not happen…
+    expect(mockSend).not.toHaveBeenCalled();
+    // …and nothing upstream of it should run either: no tenant scope, no
+    // eligibility read, no ledger write.
+    expect(mockWithTenant).not.toHaveBeenCalled();
+    expect(mockPgQuery).not.toHaveBeenCalled();
+    expect(mockRecordSend).not.toHaveBeenCalled();
+  });
+
+  it("sends no email when the flag is explicitly false", async () => {
+    vi.stubEnv("SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED", "false");
+
+    triggerAssignmentAlert(input());
+    await settle();
+    await settle();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("sends no email for a malformed truthy-looking value", async () => {
+    vi.stubEnv("SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED", "TRUE");
+
+    triggerAssignmentAlert(input());
+    await settle();
+    await settle();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("holds back an action assignment too, not just findings", async () => {
+    vi.stubEnv("SECURELOGIC_ASSIGNMENT_ALERTS_ENABLED", "");
+
+    triggerAssignmentAlert(
+      input({
+        item: { kind: "action", id: "a-1", title: "Rotate keys", parentFindingId: "f-9", dueDate: null },
+      })
+    );
+    await settle();
+    await settle();
+
+    expect(mockSend).not.toHaveBeenCalled();
+  });
 });
 
 describe("triggerAssignmentAlert", () => {
