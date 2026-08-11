@@ -7,6 +7,7 @@ import {
   classifyEventEnvironment,
   currentEmailEnvironment
 } from "../infra/emailEnvironment.js";
+import { isSuppressionEvent } from "../lib/emailEventTypes.js";
 
 const router = Router();
 
@@ -17,10 +18,6 @@ function normalizeEmail(value: unknown): string | null {
 
 function normalizeEventType(value: unknown): string {
   return String(value ?? "").trim().toLowerCase() || "unknown";
-}
-
-function isSuppressionEvent(type: string): boolean {
-  return type.includes("bounce") || type.includes("complaint");
 }
 
 router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
