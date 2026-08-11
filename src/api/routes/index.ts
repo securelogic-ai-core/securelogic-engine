@@ -155,6 +155,7 @@ import {
 } from "../middleware/apiRateLimiter.js";
 
 import { pg } from "../infra/postgres.js";
+import { requireAdminNetwork } from "../middleware/requireAdminNetwork.js";
 import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
 import { adminRateLimit } from "../middleware/adminRateLimit.js";
@@ -284,6 +285,13 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // =========================================================
 
   const adminChain = [
+    // FIRST, deliberately. An off-network caller is turned away before it can
+    // burn a lockout counter that legitimate admins share, before any
+    // timing-safe key comparison runs, and before it consumes rate-limit
+    // budget. DARK until SECURELOGIC_ADMIN_NETWORK_ENFORCED="true" — see
+    // middleware/requireAdminNetwork.ts for why enabling it blind would lock
+    // every operator out of production.
+    requireAdminNetwork,
     adminLockout,      // pre-checks IP lockout, attaches lockout context; fails closed if Redis down
     requireAdminKey,   // timing-safe comparison, rotation support, records failures for lockout
     adminRateLimit,

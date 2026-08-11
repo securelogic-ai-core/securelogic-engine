@@ -47,8 +47,19 @@ function assertProdHardening(): void {
   assertNonEmptyEnv("SECURELOGIC_ADMIN_KEY");
 
   /**
-   * Production MUST have admin network allowlist.
-   * (Because /admin is fail-closed if this is missing.)
+   * Production MUST have an admin network allowlist configured.
+   *
+   * This assertion previously carried the note "/admin is fail-closed if this
+   * is missing", which was FALSE for as long as it existed: requireAdminNetwork
+   * was never mounted, so nothing read the value and /admin was restricted by
+   * key possession alone. The middleware is now first in adminChain, so the
+   * value is finally consumed — but it only REJECTS when
+   * SECURELOGIC_ADMIN_NETWORK_ENFORCED="true".
+   *
+   * So the accurate statement is: with enforcement on, an empty allowlist makes
+   * /admin fail closed (500 server_misconfigured); with enforcement off, this
+   * value is evaluated and logged but refuses nothing. Keeping the assertion
+   * either way is right — the list must be correct BEFORE it is switched on.
    */
   assertNonEmptyEnv("SECURELOGIC_ADMIN_ALLOWED_IPS");
 
