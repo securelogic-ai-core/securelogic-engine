@@ -59,6 +59,7 @@ vi.mock("../lib/corePlatformCapability.js", () => ({
 import findingsRouter from "../routes/findings.js";
 import actionsRouter from "../routes/actions.js";
 import evidenceRouter from "../routes/evidence.js";
+import vendorsRouter from "../routes/vendors.js";
 
 function app(router: express.Router) {
   const a = express();
@@ -102,6 +103,13 @@ describe("detail routes — non-owned is 404 (non-disclosing)", () => {
     expect(res.status).toBe(404);
     expect(JSON.stringify(res.body)).not.toContain("secret");
   });
+
+  it("GET /vendors/:id owned by another user → 404", async () => {
+    queryMock.mockResolvedValue({ rowCount: 1, rows: [{ id: "v2", owner_user_id: OTHER, name: "secret" }] });
+    const res = await asContributor(request(app(vendorsRouter)).get("/api/vendors/33333333-3333-4333-8333-333333333333"));
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain("secret");
+  });
 });
 
 describe("governance / aggregate routes — Contributor 403 (before any DB access)", () => {
@@ -114,6 +122,9 @@ describe("governance / aggregate routes — Contributor 403 (before any DB acces
     ["POST /actions (create)", actionsRouter, "post", "/api/actions"],
     ["GET /evidence/summary", evidenceRouter, "get", "/api/evidence/summary"],
     ["GET /evidence/recent", evidenceRouter, "get", "/api/evidence/recent"],
+    ["GET /vendors/summary", vendorsRouter, "get", "/api/vendors/summary"],
+    ["POST /vendors (create)", vendorsRouter, "post", "/api/vendors"],
+    ["GET /vendors/export.csv", vendorsRouter, "get", "/api/vendors/export.csv"],
   ];
   for (const [label, router, method, path] of cases) {
     it(`${label} → 403 seat_not_permitted`, async () => {

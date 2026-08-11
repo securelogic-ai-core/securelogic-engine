@@ -37,6 +37,8 @@ import {
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import {
@@ -141,6 +143,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -285,6 +288,10 @@ router.get(
 
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
+
+      // Contributor seats see only vendors they own. Inert otherwise / flag off.
+      const contribClause = ownerCondition(req, "owner_user_id", params);
+      if (contribClause) conditions.push(contribClause);
 
       // Status filter: default to active if not provided
       const filterStatus = isNonEmptyString(req.query.status)
@@ -594,6 +601,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -713,6 +721,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -856,6 +865,12 @@ router.get(
         return;
       }
 
+      // Contributor seats may read only vendors they own; else 404.
+      if (!mayAccessOwned(req, result.rows[0].owner_user_id)) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
+
       res.status(200).json({ vendor: result.rows[0] });
     } catch (err) {
       logger.error(
@@ -883,6 +898,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -961,6 +977,18 @@ router.patch(
       if (!vendorId) {
         res.status(400).json({ error: "vendor_id_required" });
         return;
+      }
+
+      // Contributor seats may mutate only vendors they own; else 404.
+      if (isAssignedScope(req)) {
+        const own = await pg.query(
+          `SELECT owner_user_id FROM vendors WHERE id = $1 AND organization_id = $2`,
+          [vendorId, organizationId]
+        );
+        if ((own.rowCount ?? 0) === 0 || !mayAccessOwned(req, own.rows[0].owner_user_id)) {
+          res.status(404).json({ error: "vendor_not_found" });
+          return;
+        }
       }
 
       const validated = validateVendorPatch(req.body);
@@ -1086,6 +1114,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -1151,6 +1180,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
