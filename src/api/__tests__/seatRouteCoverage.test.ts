@@ -18,6 +18,8 @@ import {
   classifyRouteFile,
   isSeatModelActivationReady,
   WIRED_ROUTE_FILES,
+  WIRED_SCOPED_ROUTE_FILES,
+  WIRED_DENY_ROUTE_FILES,
   NEEDS_WIRING_ROUTE_FILES,
 } from "../lib/seatRouteClassification.js";
 
@@ -40,17 +42,25 @@ describe("default-deny coverage", () => {
     expect(unclassified).toEqual([]);
   });
 
-  it("WIRED files actually import the contributor-scope helpers", () => {
-    for (const f of WIRED_ROUTE_FILES) {
+  it("WIRED_SCOPED files import the contributor-scope helpers", () => {
+    for (const f of WIRED_SCOPED_ROUTE_FILES) {
       const src = readFileSync(path.join(ROUTES_DIR, f), "utf8");
       expect(src, `${f} must import contributorScope`).toMatch(/contributorScope/);
     }
   });
 
-  it("WIRED files carry at least one denyContributor (aggregate/create guard)", () => {
+  it("every WIRED file carries denyContributor (deny governance/aggregate/create)", () => {
     for (const f of WIRED_ROUTE_FILES) {
       const src = readFileSync(path.join(ROUTES_DIR, f), "utf8");
       expect(src, `${f} must deny contributors on governance routes`).toMatch(/denyContributor/);
+    }
+  });
+
+  it("WIRED_DENY files deny contributors and do NOT grant scoped access", () => {
+    for (const f of WIRED_DENY_ROUTE_FILES) {
+      const src = readFileSync(path.join(ROUTES_DIR, f), "utf8");
+      expect(src, `${f} must deny contributors`).toMatch(/denyContributor/);
+      expect(src, `${f} must not grant scoped contributor reads`).not.toMatch(/ownerCondition/);
     }
   });
 });

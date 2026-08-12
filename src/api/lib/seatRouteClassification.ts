@@ -22,12 +22,32 @@
  * non-empty. isSeatModelActivationReady() encodes that gate.
  */
 
-/** Class B — Contributor scope enforced and tested. */
-export const WIRED_ROUTE_FILES: readonly string[] = [
+/** Class B — Contributor scope enforced (scoped list/detail) and tested. */
+export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
   "findings.ts",
   "actions.ts",
   "evidence.ts",
   "vendors.ts",
+  "controls.ts",
+  "aiSystems.ts",
+  "obligations.ts",
+  "risks.ts",
+  "riskTreatments.ts",
+];
+
+/**
+ * Class A deny-all — a Contributor is denied every route (no trustworthy
+ * ownership predicate exists on the underlying table, so per the default-deny
+ * rule the whole family is denied rather than partially scoped).
+ */
+export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
+  "dependencies.ts", // the dependencies table has no user column
+];
+
+/** All families with Contributor protection actually applied. */
+export const WIRED_ROUTE_FILES: readonly string[] = [
+  ...WIRED_SCOPED_ROUTE_FILES,
+  ...WIRED_DENY_ROUTE_FILES,
 ];
 
 /**
@@ -37,13 +57,6 @@ export const WIRED_ROUTE_FILES: readonly string[] = [
  * families, then the long tail).
  */
 export const NEEDS_WIRING_ROUTE_FILES: readonly string[] = [
-  // Owner families (owner_user_id exists — same pattern as vendors)
-  "controls.ts",
-  "aiSystems.ts",
-  "obligations.ts",
-  "risks.ts",
-  "riskTreatments.ts",
-  "dependencies.ts",
   // Assessment / response families (assigned_to_user_id — Phase 1 migration)
   "requirements.ts",
   "controlAssessments.ts",
