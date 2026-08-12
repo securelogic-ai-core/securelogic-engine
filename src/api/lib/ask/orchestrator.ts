@@ -34,6 +34,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Request } from "express";
 
 import { logger } from "../../infra/logger.js";
+import { askProvenanceEnabled } from "./askProvenanceFeatureFlag.js";
+import { runProvenancePass, type ProvenanceResult } from "./provenancePass.js";
 import { executeTool } from "../../tools/executor.js";
 import { toolSchemasFor, toolsForActionClasses } from "../../tools/registry.js";
 import type { ToolDefinition, ToolInvocationResult } from "../../tools/types.js";
@@ -60,6 +62,13 @@ export type OrchestrationResult = {
   invocations: RecordedInvocation[];
   iterations: number;
   stoppedBy: "model" | "iteration_cap" | "tool_cap";
+  /**
+   * Verified claims, when the provenance pass ran and produced something.
+   * `null` whenever the flag is off, no tools were called, or the pass failed —
+   * it fails open, so a null here never means the answer is untrustworthy, only
+   * that its provenance is undecomposed.
+   */
+  provenance: ProvenanceResult | null;
 };
 
 /**
@@ -141,6 +150,18 @@ export async function runAskOrchestration(args: {
   ];
 
   const invocations: RecordedInvocation[] = [];
+
+  /**
+   * Full tool payloads, held for THIS TURN ONLY so claim verification can check a
+   * cited value against what the tool actually returned.
+   *
+   * Deliberately a parallel array rather than a field on RecordedInvocation:
+   * RecordedInvocation is what gets persisted to ask_tool_invocations, and a
+   * payload field on it would eventually be written to the ledger by someone
+   * adding a column. The digest is what belongs in the audit trail; the raw
+   * customer risk data does not.
+   */
+  const retained: unknown[] = [];
   let iterations = 0;
   let stoppedBy: OrchestrationResult["stoppedBy"] = "model";
   let answer = "";
@@ -191,7 +212,9 @@ export async function runAskOrchestration(args: {
       const tool = tools.find((t) => t.name === name);
 
       if (!tool) {
-        // The model invented a tool. Say so; do not guess an intent.
+        // The model invented a tool. Say so; do not guess an intent. Nothing is
+        // pushed to `invocations`, so `retained` must not advance either — the
+        // two are index-aligned and citations resolve by index.
         results.push({
           type: "tool_result",
           tool_use_id: use.id,
@@ -213,6 +236,8 @@ export async function runAskOrchestration(args: {
         latencyMs: result.latencyMs,
         outputDigest: result.ok ? digestToolOutput(result.data) : null,
       });
+
+      retained.push(result.ok ? result.data : undefined);
 
       results.push({
         type: "tool_result",
@@ -240,5 +265,21 @@ export async function runAskOrchestration(args: {
     "Ask orchestration complete"
   );
 
-  return { answer, invocations, iterations, stoppedBy };
+  const provenance = askProvenanceEnabled()
+    ? await runProvenancePass({
+        client,
+        model,
+        systemPrompt,
+        messages: messages as Array<{ role: "user" | "assistant"; content: unknown }>,
+        answer,
+        invocations: invocations.map((inv, i) => ({
+          toolName: inv.toolName,
+          authorized: inv.authorized,
+          data: retained[i],
+        })),
+        ...(args.maxTokens !== undefined ? { maxTokens: args.maxTokens } : {}),
+      })
+    : null;
+
+  return { answer, invocations, iterations, stoppedBy, provenance };
 }

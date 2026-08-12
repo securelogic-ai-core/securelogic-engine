@@ -214,9 +214,18 @@ export function verifyClaims(
 export function renderClaims(claims: Claim[]): string {
   return claims
     .map((c) => {
-      if (c.claim_class === "inference") return `Assessment: ${c.text}`;
-      if (c.claim_class === "recommendation") return `Recommended: ${c.text}`;
-      return c.text;
+      const text = c.claim_class === "inference"
+        ? `Assessment: ${c.text}`
+        : c.claim_class === "recommendation"
+          ? `Recommended: ${c.text}`
+          : c.text;
+      // Terminate the sentence if the model did not. Joining unpunctuated claims
+      // with a space runs them together — "...a process gap Recommended: review
+      // the intake workflow" — which is merely untidy in a rich UI and actively
+      // confusing in the surfaces this rendering exists for: a spoken reply or a
+      // plain-text email, where the prefix is the ONLY cue that the class
+      // changed.
+      return /[.!?:;]$/.test(text.trimEnd()) ? text : `${text}.`;
     })
     .join(" ");
 }

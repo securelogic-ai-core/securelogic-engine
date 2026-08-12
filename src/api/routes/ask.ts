@@ -247,7 +247,15 @@ async function handleWithTools(args: {
       origin: req,
     });
 
-    const answer = orchestration.answer || "I was not able to produce an answer for that.";
+    // The provenance pass re-renders the answer from VERIFIED claims, so a
+    // sentence the model called observed but could not substantiate arrives
+    // prefixed "Assessment:" rather than as a bare assertion of fact. When the
+    // pass did not run — flag off, no tools called, or it failed open — the
+    // model's own prose is used unchanged.
+    const answer =
+      orchestration.provenance?.renderedAnswer ||
+      orchestration.answer ||
+      "I was not able to produce an answer for that.";
 
     if (conversationId) {
       try {
@@ -290,6 +298,16 @@ async function handleWithTools(args: {
           status: i.statusCode,
         })),
         stopped_by: orchestration.stoppedBy,
+        // Downgrades are a signal worth keeping: a rising rate means the model
+        // is asserting things the data does not support, which is exactly the
+        // failure the provenance pass exists to catch.
+        provenance: orchestration.provenance
+          ? {
+              claims: orchestration.provenance.claims.length,
+              downgraded: orchestration.provenance.issues.length,
+              reasons: [...new Set(orchestration.provenance.issues.map((i) => i.reason))],
+            }
+          : null,
       },
       ipAddress: req.ip ?? null,
     });
@@ -306,6 +324,25 @@ async function handleWithTools(args: {
         tools_denied: orchestration.invocations.filter((i) => !i.authorized).length,
         complete: orchestration.stoppedBy === "model",
       },
+      // Absent rather than empty when the pass did not run, so a client can tell
+      // "no provenance available" from "provenance says nothing was observed".
+      ...(orchestration.provenance
+        ? {
+            provenance: {
+              verified: orchestration.provenance.clean,
+              claims: orchestration.provenance.claims.map((c) => ({
+                text: c.text,
+                claim_class: c.claim_class,
+                citations: c.citations.map((cit) => ({
+                  tool: cit.tool_name,
+                  ...(cit.object_type ? { object_type: cit.object_type } : {}),
+                  ...(cit.object_id ? { object_id: cit.object_id } : {}),
+                  ...(cit.field ? { field: cit.field } : {}),
+                })),
+              })),
+            },
+          }
+        : {}),
     });
   } catch (err) {
     logger.error({ event: "ask_tools_failed", organizationId, err }, "Ask tool path failed");
