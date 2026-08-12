@@ -7,9 +7,9 @@ Date: 2026-08-12
 
 ## Verdict
 
-**NOT PASSED.** The credential boundary is built and adversarially tested; the
-questionnaire, evidence and comment routes are not built, and two criteria
-require a human.
+**NOT PASSED.** The credential boundary and the questionnaire are built and
+adversarially tested (36 cases against real Postgres). Evidence upload and
+comments are not built, and two criteria require a human.
 
 This document exists so the partial state cannot be mistaken for a pass.
 
@@ -19,7 +19,7 @@ This document exists so the partial state cannot be mistaken for a pass.
 
 | # | Criterion | Result |
 |---|---|---|
-| B.1 | Full adversarial suite — all nine classes | **PARTIAL** — 5 of 9 classes covered |
+| B.1 | Full adversarial suite — all nine classes | **PARTIAL** — 8 of 9 classes covered |
 | B.2 | Static invariant: no portal route reads a caller-supplied identifier | **PASS** (by construction; see §3) |
 | B.3 | Independent security review of the portal surface | **NOT SATISFIABLE HERE** |
 | B.4 | A real external tester completes an engagement on staging | **NOT SATISFIABLE HERE** |
@@ -40,14 +40,16 @@ This document exists so the partial state cannot be mistaken for a pass.
 | `POST /vendor-portal/session` — invite → cookie exchange | Built |
 | `DELETE /vendor-portal/session` — sign out | Built |
 | `GET /vendor-portal/engagement` — orientation read | Built |
+| `GET /vendor-portal/questions` — frozen scope + answers | Built |
+| `PUT /vendor-portal/questions/:requirementId` — save/resume | Built |
+| `POST /vendor-portal/submit` — the state transition | Built |
 
-**Not built:** the questionnaire routes (`GET/PUT /questions`), evidence upload
-and listing, comments, and `POST /submit`. Four of the eleven planned routes
-exist.
+**Not built:** evidence upload and listing, and comments. Seven of the eleven
+planned routes exist.
 
 ---
 
-## 2. Adversarial coverage — 5 of 9 classes
+## 2. Adversarial coverage — 8 of 9 classes
 
 | Class | State |
 |---|---|
@@ -56,13 +58,13 @@ exist.
 | Parameter injection — `engagement_id` / `organization_id` as arguments | **Covered** |
 | Kill switch — off 404s, off is the default, on restores | **Covered** |
 | Cross-surface leakage — both directions | **Covered** |
-| IDOR sweep across every object type | **Blocked** — needs the questionnaire/evidence/comment routes |
+| IDOR sweep across questionnaire objects | **Covered** |
+| State machine — portal attempts transitions it may not cause | **Covered** |
+| Post-submit writes return 409 | **Covered** |
 | Upload abuse — oversize, MIME mismatch, traversal, zip bomb, quota race | **Blocked** — needs the upload route |
-| State machine — portal attempts transitions it may not cause | **Blocked** — needs `POST /submit` |
-| Post-submit writes return 409 | **Blocked** — needs the write routes |
 
-The four blocked classes are blocked on routes that do not exist, not on
-difficulty. They land with those routes.
+The one remaining class is blocked on a route that does not exist, not on
+difficulty. It lands with that route.
 
 ---
 

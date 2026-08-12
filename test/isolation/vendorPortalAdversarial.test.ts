@@ -9,10 +9,11 @@
  * Run against a real Postgres with RLS enabled, because the properties under
  * test are database-layer ones. A mocked cross-tenant probe proves nothing.
  *
- * NOTE ON COVERAGE: the questionnaire, evidence-upload and comment routes are
- * not built yet, so their IDOR and upload-abuse cases are not here. This file
- * covers the credential boundary; Stop Gate B is not passed until the remaining
- * routes land with their own adversarial cases.
+ * NOTE ON COVERAGE: evidence-upload and comment routes are not built yet, so
+ * upload-abuse cases (oversize, MIME mismatch, traversal, zip bomb, quota race)
+ * are absent. Stop Gate B is NOT passed until those land with their own cases —
+ * and it also requires an independent security review and a real external tester
+ * on staging, neither of which a test file can provide.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -36,12 +37,13 @@ let app: express.Express;
 /** Raw invite tokens per org — these are what a vendor receives by email. */
 const tokens: Record<string, string> = {};
 const engagements: Record<string, string> = {};
+const requirements: Record<string, string> = {};
 
 async function seedEngagementWithInvite(
   orgId: string,
   label: string,
-  opts: { expiresInMs?: number; revoked?: boolean } = {}
-): Promise<{ engagementId: string; token: string }> {
+  opts: { expiresInMs?: number; revoked?: boolean; withQuestion?: boolean } = {}
+): Promise<{ engagementId: string; token: string; requirementId: string }> {
   const vendorId = await seedVendor(pool, orgId, { name: `${label} vendor` });
   const eng = await pool.query<{ id: string }>(
     `INSERT INTO vendor_engagements
@@ -68,7 +70,36 @@ async function seedEngagementWithInvite(
       opts.revoked ? "revoked for test" : null,
     ]
   );
-  return { engagementId, token };
+
+  // A framework + requirement + FROZEN scope item, so the questionnaire routes
+  // have something real to serve. `reference_id` carries the org label so a
+  // cross-tenant leak is unmistakable in the assertion output.
+  const fw = await pool.query<{ id: string }>(
+    `INSERT INTO frameworks (organization_id, name, version) VALUES ($1, $2, '1.0') RETURNING id`,
+    [orgId, `${label} framework`]
+  );
+  const req = await pool.query<{ id: string }>(
+    `INSERT INTO requirements (framework_id, reference_id, title, description)
+     VALUES ($1, $2, $3, 'Guidance text.') RETURNING id`,
+    [fw.rows[0]!.id, `${label}-REQ`, `${label} requirement`]
+  );
+  const requirementId = req.rows[0]!.id;
+
+  await pool.query(
+    `INSERT INTO vendor_engagement_scope_items
+       (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons)
+     VALUES ($1, $2, $3, 'full', TRUE, 'deterministic', $4::jsonb)`,
+    [
+      orgId,
+      engagementId,
+      requirementId,
+      JSON.stringify([
+        { rule_id: "S1.baseline", rule_family: "S1", rationale: "Baseline for this tier." },
+      ]),
+    ]
+  );
+
+  return { engagementId, token, requirementId };
 }
 
 beforeAll(async () => {
@@ -79,12 +110,14 @@ beforeAll(async () => {
   process.env.SECURELOGIC_VENDOR_PORTAL_ENABLED = "true";
   pool = new Pool({ connectionString: url, ssl: false });
 
-  const a = await seedEngagementWithInvite(seed.orgA.id, "ORG-A-PORTAL");
-  const b = await seedEngagementWithInvite(seed.orgB.id, "ORG-B-SECRET");
+  const a = await seedEngagementWithInvite(seed.orgA.id, "A-ONLY-1");
+  const b = await seedEngagementWithInvite(seed.orgB.id, "B-SECRET-1");
   tokens.a = a.token;
   tokens.b = b.token;
   engagements.a = a.engagementId;
   engagements.b = b.engagementId;
+  requirements.a = a.requirementId;
+  requirements.b = b.requirementId;
 
   app = express();
   app.use(express.json());
@@ -193,20 +226,20 @@ describe("Stop Gate B — a portal session reaches EXACTLY one engagement", () =
     const cookie = await sessionCookie(tokens.a!);
     const res = await request(app).get("/api/vendor-portal/engagement").set("Cookie", cookie);
     expect(res.status).toBe(200);
-    expect(res.body.vendor_name).toMatch(/ORG-A-PORTAL/);
+    expect(res.body.vendor_name).toMatch(/A-ONLY-1/);
   });
 
   it("org A's session NEVER sees org B's data", async () => {
     const cookie = await sessionCookie(tokens.a!);
     const res = await request(app).get("/api/vendor-portal/engagement").set("Cookie", cookie);
-    expect(JSON.stringify(res.body)).not.toMatch(/ORG-B-SECRET/);
+    expect(JSON.stringify(res.body)).not.toMatch(/B-SECRET-1/);
   });
 
   it("and org B's session sees only its own — the previous test is not vacuous", async () => {
     const cookie = await sessionCookie(tokens.b!);
     const res = await request(app).get("/api/vendor-portal/engagement").set("Cookie", cookie);
-    expect(res.body.vendor_name).toMatch(/ORG-B-SECRET/);
-    expect(JSON.stringify(res.body)).not.toMatch(/ORG-A-PORTAL/);
+    expect(res.body.vendor_name).toMatch(/B-SECRET-1/);
+    expect(JSON.stringify(res.body)).not.toMatch(/A-ONLY-1/);
   });
 
   it("supplying another engagement's id as a PARAMETER changes nothing", async () => {
@@ -222,7 +255,7 @@ describe("Stop Gate B — a portal session reaches EXACTLY one engagement", () =
       })
       .set("Cookie", cookie);
     expect(res.status).toBe(200);
-    expect(JSON.stringify(res.body)).not.toMatch(/ORG-B-SECRET/);
+    expect(JSON.stringify(res.body)).not.toMatch(/B-SECRET-1/);
   });
 
   it("the response never leaks internal risk data to the vendor", async () => {
@@ -328,6 +361,185 @@ describe("Stop Gate B — the flag is a real kill switch", () => {
 });
 
 // ─── Auth-world separation ──────────────────────────────────────────────────
+
+// ─── IDOR across the questionnaire ──────────────────────────────────────────
+
+describe("Stop Gate B — IDOR sweep across questionnaire objects", () => {
+  it("a vendor sees ONLY their own engagement's questions", async () => {
+    const cookieA = await sessionCookie(tokens.a!);
+    const res = await request(app).get("/api/vendor-portal/questions").set("Cookie", cookieA);
+    expect(res.status).toBe(200);
+    const refs = (res.body.questions as Array<{ reference: string }>).map((q) => q.reference);
+    expect(refs.some((r) => r.includes("A-ONLY-1"))).toBe(true);
+    expect(refs.some((r) => r.includes("B-SECRET-1"))).toBe(false);
+  });
+
+  it("and org B sees only theirs — the previous test is not vacuous", async () => {
+    const cookieB = await sessionCookie(tokens.b!);
+    const res = await request(app).get("/api/vendor-portal/questions").set("Cookie", cookieB);
+    const refs = (res.body.questions as Array<{ reference: string }>).map((q) => q.reference);
+    expect(refs.some((r) => r.includes("B-SECRET-1"))).toBe(true);
+    expect(refs.some((r) => r.includes("A-ONLY-1"))).toBe(false);
+  });
+
+  it("answering ANOTHER engagement's requirement by id is refused", async () => {
+    // The core IDOR. The requirement genuinely exists — it is simply not in this
+    // engagement's frozen scope.
+    const cookieA = await sessionCookie(tokens.a!);
+    const res = await request(app)
+      .put(`/api/vendor-portal/questions/${requirements.b}`)
+      .set("Cookie", cookieA)
+      .send({ answer: "pass" });
+    expect(res.status).toBe(404);
+  });
+
+  it("not-in-scope is INDISTINGUISHABLE from does-not-exist", async () => {
+    // Otherwise a vendor could probe which requirements another engagement covers.
+    const cookieA = await sessionCookie(tokens.a!);
+    const real = await request(app)
+      .put(`/api/vendor-portal/questions/${requirements.b}`)
+      .set("Cookie", cookieA)
+      .send({ answer: "pass" });
+    const fake = await request(app)
+      .put("/api/vendor-portal/questions/00000000-0000-4000-8000-000000000000")
+      .set("Cookie", cookieA)
+      .send({ answer: "pass" });
+    expect(real.status).toBe(fake.status);
+    expect(real.body).toEqual(fake.body);
+  });
+
+  it("an answer is never written under another org", async () => {
+    const cookieA = await sessionCookie(tokens.a!);
+    await request(app)
+      .put(`/api/vendor-portal/questions/${requirements.a}`)
+      .set("Cookie", cookieA)
+      .send({ answer: "pass", organization_id: seed.orgB.id, engagement_id: engagements.b });
+
+    const leaked = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM requirement_responses
+        WHERE organization_id = $1 AND responder_type = 'vendor'`,
+      [seed.orgB.id]
+    );
+    expect(leaked.rows[0]!.n).toBe("0");
+  });
+});
+
+// ─── The structured-answer contract ─────────────────────────────────────────
+
+describe("Stop Gate B — a structured answer is REQUIRED", () => {
+  it("rejects free text with no structured answer", async () => {
+    // The effectiveness ladder consumes this value deterministically. Prose
+    // alone would make effectiveness un-computable without an LLM and break the
+    // LLM-independence invariant.
+    const cookie = await sessionCookie(tokens.a!);
+    const res = await request(app)
+      .put(`/api/vendor-portal/questions/${requirements.a}`)
+      .set("Cookie", cookie)
+      .send({ notes: "We do this, mostly." });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_answer");
+  });
+
+  it("rejects an answer outside the closed vocabulary", async () => {
+    const cookie = await sessionCookie(tokens.a!);
+    for (const answer of ["yes", "PASS", "true", "", "compliant"]) {
+      const res = await request(app)
+        .put(`/api/vendor-portal/questions/${requirements.a}`)
+        .set("Cookie", cookie)
+        .send({ answer });
+      expect(res.status, `accepted ${answer}`).toBe(400);
+    }
+  });
+
+  it("accepts each legal answer and records a revision every time", async () => {
+    const cookie = await sessionCookie(tokens.a!);
+    for (const answer of ["pass", "partial", "fail", "not_applicable"]) {
+      const res = await request(app)
+        .put(`/api/vendor-portal/questions/${requirements.a}`)
+        .set("Cookie", cookie)
+        .send({ answer });
+      expect(res.status, `rejected ${answer}`).toBe(200);
+    }
+    // Four saves, four revisions — the history the old destructive upsert could
+    // not provide.
+    const revs = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n
+         FROM requirement_response_revisions rev
+         JOIN requirement_responses rr ON rr.id = rev.response_id
+        WHERE rr.requirement_id = $1 AND rr.engagement_id = $2`,
+      [requirements.a, engagements.a]
+    );
+    expect(Number(revs.rows[0]!.n)).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ─── State machine + post-submit ────────────────────────────────────────────
+
+describe("Stop Gate B — the state machine bounds what a vendor can do", () => {
+  it("submitting with a required question unanswered is refused", async () => {
+    const fresh = await seedEngagementWithInvite(seed.orgA.id, "INCOMPLETE", { withQuestion: true });
+    const cookie = await sessionCookie(fresh.token);
+    const res = await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie);
+    expect(res.status).toBe(422);
+    expect(res.body.unanswered_required).toBeGreaterThan(0);
+  });
+
+  it("submitting once complete moves the engagement to submitted", async () => {
+    const fresh = await seedEngagementWithInvite(seed.orgA.id, "COMPLETE", { withQuestion: true });
+    const cookie = await sessionCookie(fresh.token);
+    await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "pass" });
+
+    const res = await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie);
+    expect(res.status).toBe(200);
+
+    const state = await pool.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1`,
+      [fresh.engagementId]
+    );
+    expect(state.rows[0]!.status).toBe("submitted");
+  });
+
+  it("POST-SUBMIT WRITES ARE REFUSED — evidence that can still change is not evidence", async () => {
+    const fresh = await seedEngagementWithInvite(seed.orgA.id, "LOCKED", { withQuestion: true });
+    const cookie = await sessionCookie(fresh.token);
+    await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "pass" });
+    await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie);
+
+    const after = await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "fail" });
+    expect(after.status).toBe(409);
+    expect(after.body.error).toBe("responses_closed");
+  });
+
+  it("double submission is refused rather than silently repeated", async () => {
+    const fresh = await seedEngagementWithInvite(seed.orgA.id, "DOUBLE", { withQuestion: true });
+    const cookie = await sessionCookie(fresh.token);
+    await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "pass" });
+    expect((await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie)).status).toBe(200);
+    expect((await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie)).status).toBe(409);
+  });
+
+  it("a vendor cannot drive the engagement past submitted", async () => {
+    // The state machine permits a portal actor exactly three transitions. There
+    // is no route to a decision, and there must never be one.
+    const cookie = await sessionCookie(tokens.a!);
+    for (const path of ["/api/vendor-portal/decide", "/api/vendor-portal/approve"]) {
+      const res = await request(app).post(path).set("Cookie", cookie).send({});
+      expect([404, 405]).toContain(res.status);
+    }
+  });
+});
 
 describe("Stop Gate B — the two authentication worlds cannot mix", () => {
   it("a portal session cannot reach a normal authenticated API route", async () => {
