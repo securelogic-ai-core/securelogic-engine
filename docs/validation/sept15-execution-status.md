@@ -50,6 +50,17 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
   15-state engagement state machine, and the S1–S4 scope resolver. 68 tests.
 - **Engagement spine.** `vendor_engagements` (migration `20260919`) with RLS
   (`20260920`), plus Tier B RLS across nine tables (`20260921`).
+- **Portal credential model (Phase 3 foundation).** Migration `20260923`:
+  `vendor_engagement_invites` (long-lived capability, emailed) and
+  `vendor_portal_sessions` (short-lived httpOnly-cookie session), plus the pure
+  token module. The invite is exchanged once for a session so a weeks-long
+  secret never lives in a URL. Built on the shipped
+  `dataExportDownloadToken.ts` model: 256-bit token, SHA-256 at rest, lookup by
+  hash. DB-backed rate counters because the Redis limiter fails open, which is
+  unacceptable on an unauthenticated surface. 24 tests.
+
+  **Not yet built:** the 11 portal routes, `requirePortalSession`, the 7 portal
+  screens, and the Stop Gate B adversarial suite.
 
 ### Workstream 2 — Ask SecureLogic
 
@@ -84,7 +95,7 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 |---|---|
 | `requirements.scope_tags` column + backfill across 321 requirements | 1 |
 | Engagement routes, internal UI, engagement queue | 1 |
-| External vendor portal — 4 migrations, 11 routes, 7 screens, adversarial suite | 3 |
+| External vendor portal — 11 routes, `requirePortalSession`, 7 screens, adversarial suite (credential model done) | 3 |
 | Evidence convergence, analysis worker, exception→finding promotion | 4 |
 | Control-effectiveness ladder, residual calculation, decision workflow | 5 |
 | Monitoring sweeps, intelligence staleness chain | 6 |
