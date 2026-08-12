@@ -293,18 +293,20 @@ services:
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
         value: "false"
 
-      # Enterprise seat model (PR #784) — DARK in production, and the code is
-      # not on main yet (merged to develop after the #756 release cut). Gates
-      # ALL seat enforcement: requireSeat, Contributor scoping, Viewer-seat
-      # read-only, grantable export, SSO-JIT default seat, API-key seat
-      # binding. Strict === "true" read (requireSeat.ts); off/absent = legacy
-      # authorization byte for byte. Engine web service ONLY — no worker or
-      # app reads this key. Prod enablement = develop→main release (four
-      # additive migrations, migrate-before-merge) THEN a separate GATE B
-      # operator ruling; flip this key — value changes reach the process only
-      # on a deploy, not a restart. See flag matrix §1.21.
+      # Enterprise seat model (PR #784) — LIVE in production since 2026-08-12
+      # (GATE B activated 14:23 UTC, same-SHA deploy 14:27 UTC on 98e97098).
+      # Gates ALL seat enforcement: requireSeat, Contributor scoping,
+      # Viewer-seat read-only, grantable export, SSO-JIT default seat, API-key
+      # seat binding. Strict === "true" read (requireSeat.ts); off/absent =
+      # legacy authorization byte for byte. Engine web service ONLY — no
+      # worker or app reads this key. This declaration is reconciled to the
+      # live dashboard value so a future Blueprint sync cannot revert
+      # production to dark; do NOT set it back to "false" here as a way to
+      # disable enforcement — that is an operator ruling made on the service.
+      # Value changes reach the process only on a deploy, not a restart.
+      # Rollback = "false"/unset + same-SHA deploy. See flag matrix §1.21.
       - key: SECURELOGIC_SEAT_MODEL_ENABLED
-        value: "false"
+        value: "true"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
