@@ -20,6 +20,7 @@ import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
@@ -627,6 +628,7 @@ const CHAIN = [
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
 ] as const;
 
 // Reads are open to viewers; mutations require a non-viewer role (requireNotViewer

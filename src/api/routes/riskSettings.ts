@@ -28,6 +28,7 @@ import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
@@ -291,6 +292,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(getRiskSettings)
 );
 
@@ -299,6 +301,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   // Org-wide risk configuration is an administrative act. requireAdminRole
   // passes API-key callers (admin-level) and JWT admins; any other JWT role 403s.
   requireAdminRole,

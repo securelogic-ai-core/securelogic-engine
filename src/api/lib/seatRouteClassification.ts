@@ -1,28 +1,22 @@
 /**
  * seatRouteClassification.ts — the default-deny registry for the seat model.
  *
- * Every entitlement-gated route FILE is classified here. The classification is
- * the enforcement of "anything not explicitly allowed defaults DENY": a route
- * file that is not classified fails the coverage test, and the seat model must
- * not be switched on (SECURELOGIC_SEAT_MODEL_ENABLED) until no file remains in
- * NEEDS_WIRING — because a Contributor reaching an un-wired governance route
- * would read tenant-wide data the seat is meant to withhold.
+ * Every entitlement-gated route FILE is classified here. An unclassified gated
+ * file fails the coverage test — the CI enforcement of "anything not explicitly
+ * allowed defaults DENY". Classes:
+ *   WIRED_SCOPED  — Contributor read scope enforced (list filtered to owner,
+ *                   detail 404 on non-owned) + mutations/aggregates denied.
+ *   WIRED_DENY    — Contributor denied on every route (governance operations,
+ *                   org-wide reads, signals, intelligence, reports, config, and
+ *                   families with no trustworthy ownership predicate).
+ *   EXEMPT        — no Contributor surface (public/system).
  *
- * Classes:
- *   WIRED         — Contributor scope enforced (scoped reads + owner-guarded
- *                   mutations + denied aggregates). Proven by tests.
- *   NEEDS_WIRING  — carries Contributor-reachable governance data but is NOT yet
- *                   scoped. Until wired, the seat model stays OFF. This is the
- *                   default class for anything not proven safe — default deny.
- *   EXEMPT        — no Contributor mutation/leak surface: public/system routes,
- *                   or surfaces with no tenant governance rows. Reviewed, safe
- *                   as-is under the seat model.
- *
- * The seat model flag is OFF in every environment while NEEDS_WIRING is
- * non-empty. isSeatModelActivationReady() encodes that gate.
+ * NEEDS_WIRING is now empty: every governance family is WIRED or EXEMPT, so the
+ * seat model is activation-ready (isSeatModelActivationReady() === true). The
+ * flag remains OFF until an operator enables it per environment.
  */
 
-/** Class B — Contributor scope enforced (scoped list/detail) and tested. */
+/** Class B — Contributor read-scoped and tested. */
 export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
   "findings.ts",
   "actions.ts",
@@ -32,128 +26,108 @@ export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
   "aiSystems.ts",
   "obligations.ts",
   "risks.ts",
-  "riskTreatments.ts",
+  "riskTreatments.ts"
 ];
 
-/**
- * Class A deny-all — a Contributor is denied every route (no trustworthy
- * ownership predicate exists on the underlying table, so per the default-deny
- * rule the whole family is denied rather than partially scoped).
- */
+/** Class A deny-all for Contributors. */
 export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
-  "dependencies.ts", // the dependencies table has no user column
+  "aiGovernanceAssessments.ts",
+  "aiSystemGovernanceContext.ts",
+  "aiSystemVendorDependencies.ts",
+  "aiSystemsExport.ts",
+  "ask.ts",
+  "assess.ts",
+  "assessments.ts",
+  "assetAssessments.ts",
+  "auditLog.ts",
+  "auditPackage.ts",
+  "briefingChanges.ts",
+  "briefingLayouts.ts",
+  "controlAssessments.ts",
+  "controlComplianceContext.ts",
+  "controlMappings.ts",
+  "controlsExport.ts",
+  "cyberSignals.ts",
+  "dashboard.ts",
+  "dashboardPreferences.ts",
+  "dependencies.ts",
+  "dependencyAssessments.ts",
+  "executiveReport.ts",
+  "findingSavedViews.ts",
+  "findingsExport.ts",
+  "frameworkActivation.ts",
+  "frameworkReadiness.ts",
+  "frameworks.ts",
+  "gapReport.ts",
+  "governanceReviews.ts",
+  "insights.ts",
+  "intelligence.ts",
+  "intelligenceBriefs.ts",
+  "obligationAssessments.ts",
+  "obligationComplianceContext.ts",
+  "obligationMappings.ts",
+  "obligationsExport.ts",
+  "policies.ts",
+  "posture.ts",
+  "requirements.ts",
+  "riskAcceptances.ts",
+  "riskApprovals.ts",
+  "riskControlLinks.ts",
+  "riskLifecycle.ts",
+  "riskObligationLinks.ts",
+  "riskScale.ts",
+  "riskScoringWeights.ts",
+  "riskSettings.ts",
+  "risksExport.ts",
+  "search.ts",
+  "signalAiSystemLinks.ts",
+  "signalControlLinks.ts",
+  "signalMatchSuggestions.ts",
+  "signalObligationLinks.ts",
+  "signalVendorLinks.ts",
+  "signals.ts",
+  "templates.ts",
+  "topRisks.ts",
+  "topRisksSummary.ts",
+  "trends.ts",
+  "vendorAssessmentAnalysis.ts",
+  "vendorAssessments.ts",
+  "vendorAssuranceDocuments.ts",
+  "vendorReviews.ts",
+  "vendorSignalContext.ts",
+  "webhooks.ts"
 ];
 
-/** All families with Contributor protection actually applied. */
+/** All families with Contributor protection applied. */
 export const WIRED_ROUTE_FILES: readonly string[] = [
   ...WIRED_SCOPED_ROUTE_FILES,
   ...WIRED_DENY_ROUTE_FILES,
 ];
 
-/**
- * Governance routes that still expose tenant-wide data to a Contributor and
- * MUST be scoped-or-denied before the seat model is enabled. Ordered roughly by
- * the program's remaining Phase 3b sequence (owner families, then assessment
- * families, then the long tail).
- */
-export const NEEDS_WIRING_ROUTE_FILES: readonly string[] = [
-  // Assessment / response families (assigned_to_user_id — Phase 1 migration)
-  "requirements.ts",
-  "controlAssessments.ts",
-  "vendorReviews.ts",
-  "governanceReviews.ts",
-  "obligationAssessments.ts",
-  "dependencyAssessments.ts",
-  "vendorAssessments.ts",
-  "assessments.ts",
-  "aiGovernanceAssessments.ts",
-  "assetAssessments.ts",
-  // Governance operation / link / context / report surfaces
-  "riskAcceptances.ts",
-  "riskApprovals.ts",
-  "riskLifecycle.ts",
-  "riskControlLinks.ts",
-  "riskObligationLinks.ts",
-  "controlMappings.ts",
-  "obligationMappings.ts",
-  "frameworks.ts",
-  "frameworkActivation.ts",
-  "frameworkReadiness.ts",
-  "policies.ts",
-  "findingSavedViews.ts",
-  "aiSystemVendorDependencies.ts",
-  "aiSystemGovernanceContext.ts",
-  "controlComplianceContext.ts",
-  "obligationComplianceContext.ts",
-  "vendorSignalContext.ts",
-  "vendorAssessmentAnalysis.ts",
-  "vendorAssuranceDocuments.ts",
-  "cyberSignals.ts",
-  "signalAiSystemLinks.ts",
-  "signalControlLinks.ts",
-  "signalObligationLinks.ts",
-  "signalVendorLinks.ts",
-  "signalMatchSuggestions.ts",
-  "signals.ts",
-  "intelligence.ts",
-  "intelligenceBriefs.ts",
-  "insights.ts",
-  "trends.ts",
-  "dashboard.ts",
-  "dashboardPreferences.ts",
-  "posture.ts",
-  "topRisks.ts",
-  "topRisksSummary.ts",
-  "briefingChanges.ts",
-  "briefingLayouts.ts",
-  "templates.ts",
-  "search.ts",
-  "ask.ts",
-  "assess.ts",
-  // Reports / exports (also gated separately by export capability in Phase 6)
-  "executiveReport.ts",
-  "auditPackage.ts",
-  "gapReport.ts",
-  "findingsExport.ts",
-  "risksExport.ts",
-  "controlsExport.ts",
-  "obligationsExport.ts",
-  "aiSystemsExport.ts",
-  // Admin / config (Class D — will be denyContributor or admin-only)
-  "riskSettings.ts",
-  "riskScale.ts",
-  "riskScoringWeights.ts",
-  "auditLog.ts",
-  "webhooks.ts",
-];
+/** Empty — every governance family is wired. */
+export const NEEDS_WIRING_ROUTE_FILES: readonly string[] = [];
 
-/** Reviewed as having no Contributor mutation/leak surface. */
+/** No Contributor surface (public/system). */
 export const EXEMPT_ROUTE_FILES: readonly string[] = [
-  "sso.ts", // public ACS + admin-gated config (requireRole("admin"))
-  "subscribers.ts", // public brief signup
-  "transcribe.ts", // ask() audio helper, no governance rows
-  "index.ts", // health/version/system mounting
-  "newsletterDeliveries.ts", // operational, no per-contributor rows
-  "newsletterIssues.ts",
+  "sso.ts",
+  "subscribers.ts",
+  "transcribe.ts",
+  "index.ts",
+  "newsletterDeliveries.ts",
+  "newsletterIssues.ts"
 ];
 
 export type SeatRouteClass = "WIRED" | "NEEDS_WIRING" | "EXEMPT" | "UNCLASSIFIED";
-
 const WIRED = new Set(WIRED_ROUTE_FILES);
 const NEEDS = new Set(NEEDS_WIRING_ROUTE_FILES);
 const EXEMPT = new Set(EXEMPT_ROUTE_FILES);
-
 export function classifyRouteFile(basename: string): SeatRouteClass {
   if (WIRED.has(basename)) return "WIRED";
   if (NEEDS.has(basename)) return "NEEDS_WIRING";
   if (EXEMPT.has(basename)) return "EXEMPT";
   return "UNCLASSIFIED";
 }
-
-/**
- * The activation gate. The seat model must not be enabled in any environment
- * until every governance route is either WIRED or EXEMPT — never NEEDS_WIRING.
- */
+/** The seat model is activation-ready when no governance family remains unwired. */
 export function isSeatModelActivationReady(): boolean {
   return NEEDS_WIRING_ROUTE_FILES.length === 0;
 }

@@ -23,6 +23,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
@@ -42,7 +43,7 @@ function ctx(req: any): { organizationId: string | null; userId: string | null }
   };
 }
 
-const chain = [requireApiKey, attachOrganizationContext, requireEntitlement("premium")];
+const chain = [requireApiKey, attachOrganizationContext, requireEntitlement("premium"), denyContributor()];
 
 /* GET /api/briefing/layout — the caller's saved layout, or {layout: null}. */
 router.get(

@@ -36,6 +36,7 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -114,6 +115,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -238,6 +240,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -337,6 +340,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -420,6 +424,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

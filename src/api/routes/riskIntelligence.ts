@@ -16,7 +16,7 @@ import { pg } from "../infra/postgres.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
-import { requireCapability as requireSeatCapability } from "../middleware/requireSeat.js";
+import { requireCapability as requireSeatCapability, denyContributor } from "../middleware/requireSeat.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { riskIntelligenceFeatureFlag } from "../lib/riskIntelligenceFeatureFlag.js";
@@ -189,7 +189,8 @@ const chain = [
   assetRegistryFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireCapability("enterprise_context")
+  requireCapability("enterprise_context"),
+  denyContributor()
 ];
 
 router.get("/risk/dimensions", ...chain, asTenant(getRiskDimensions));

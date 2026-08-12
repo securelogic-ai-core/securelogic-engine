@@ -3,6 +3,7 @@ import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { analyzeComplianceContext } from "../lib/claudeAssessmentAnalyzer.js";
@@ -14,6 +15,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req: Request, res: Response) => {
     try {
       const orgId: string = (req as unknown as { organizationContext: { organizationId: string } }).organizationContext?.organizationId;

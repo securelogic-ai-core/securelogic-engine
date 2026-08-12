@@ -37,6 +37,7 @@ import { createHash } from "node:crypto";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -1571,6 +1572,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   upload.single("document"),
   multerErrorHandler,
   uploadVendorAssuranceDocument
@@ -1582,6 +1584,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   listVendorAssuranceDocuments
 );
 
@@ -1591,6 +1594,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   getVendorAssuranceDocument
 );
 
@@ -1600,6 +1604,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   getVendorAssuranceExtraction
 );
 
@@ -1609,6 +1614,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   getVendorAssurancePdfRedirect
 );
 
@@ -1618,6 +1624,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   exportVendorAssuranceDocumentXlsx
 );
 
@@ -1627,6 +1634,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   exportVendorAssuranceDocumentPdf
 );
 
@@ -1636,6 +1644,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   recordVendorAssuranceReviewDecisions
 );
 
@@ -1645,6 +1654,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   finalizeVendorAssuranceDocument
 );
 
@@ -1654,6 +1664,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   recordVendorAssuranceFieldOverride
 );
 
@@ -1663,6 +1674,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   approveVendorAssuranceDocument
 );
 
@@ -1672,6 +1684,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requestVendorAssuranceManualReview
 );
 
@@ -1681,6 +1694,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   rejectVendorAssuranceDocument
 );
 
@@ -1692,6 +1706,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   getVendorAssuranceCuecs
 );
 
@@ -1701,6 +1716,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   rematchVendorAssuranceCuecs
 );
 
@@ -1710,6 +1726,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   createVendorAssuranceCuecMapping
 );
 
@@ -1719,6 +1736,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   updateVendorAssuranceCuecReviewStatus
 );
 
@@ -1728,6 +1746,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   updateVendorAssuranceCuecMapping
 );
 
