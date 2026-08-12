@@ -11,9 +11,9 @@ Session 1, 2026-08-12. Baseline `develop` @ `58285e67`.
 |---|---|
 | `feat/sept15-va-phase0-truth-repair` | `cf45594f`, `a3e991bd` |
 | `feat/sept15-ask-a0-truth-pass` | `0c853aba` |
-| `feat/sept15-va-phase1-engagement-spine` | `87b7757a`, `ce52e26f`, `e7c612cd`, `310e3c75`, `59184617`, `6a306ca9` |
+| `feat/sept15-va-phase1-engagement-spine` | `87b7757a` onward — deterministic core, spine, tool registry, ASK-A, Ask A1/A2, portal, LLM-independence |
 
-Nine commits. Branches are stacked in that order; each is a rollback point.
+22 commits. Branches are stacked in that order; each is a rollback point.
 
 ---
 
@@ -25,11 +25,14 @@ Nine commits. Branches are stacked in that order; each is a rollback point.
 | **Gate A0** — Ask truth repair | **PASS** | 14 regression cases |
 | **Stop Gate A** — External Isolation Readiness | **DB-layer PASS** | A.5 human security review outstanding |
 | **Stop Gate ASK-A** — Authorization Equivalence | **Engineering PASS** | A.6 review outstanding; A.2 Contributor scoping deferred with reason |
-| Gate 1 — Phase 1 complete | PARTIAL | Deterministic core + spine done; routes, UI, `scope_tags` backfill not |
-| Stop Gate B / C, ASK-B / ASK-C | Not reached | — |
+| **LLM-independence** (VA security stop gate + DoD item) | **PASS** | Proven by construction AND by a full engagement run with no provider credentials |
+| **Stop Gate B** — External Trust Boundary | **NOT PASSED** | 8/9 adversarial classes; upload abuse blocked on an unbuilt route; review + external tester need a human |
+| Gate 1 — Phase 1 complete | PARTIAL | Deterministic core + spine + scoping done; internal routes, UI and `scope_tags` backfill not |
+| Stop Gate C, ASK-B, ASK-C | Not reached | — |
 
 Full evidence: `sept15-va-phase0-gate0-evidence.md`,
-`sept15-stop-gate-a-evidence.md`, `sept15-stop-gate-ask-a-evidence.md`.
+`sept15-stop-gate-a-evidence.md`, `sept15-stop-gate-ask-a-evidence.md`,
+`sept15-stop-gate-b-progress.md`.
 
 ---
 
@@ -59,8 +62,32 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
   hash. DB-backed rate counters because the Redis limiter fails open, which is
   unacceptable on an unauthenticated surface. 24 tests.
 
-  **Not yet built:** the 11 portal routes, `requirePortalSession`, the 7 portal
-  screens, and the Stop Gate B adversarial suite.
+- **Portal principal resolver + 7 of 11 routes.** `requirePortalSession`
+  resolves org and engagement from the session ROW on the elevated channel
+  (resolution precedes org context), and `portalContext` / `organizationContext`
+  are structurally disjoint so neither auth world can reach the other's routes.
+  Routes: session exchange, sign-out, engagement read, questionnaire read,
+  answer save, submit. **36 adversarial tests against real Postgres, 8 of 9
+  classes** — only upload abuse remains, blocked on an unbuilt route.
+
+- **Frozen questionnaire scope** (migration `20260924`).
+  `vendor_engagement_scope_items` persists what the resolver computed, with the
+  by-value rule trace rendered to the vendor as "why we're asking".
+  `requirement_responses` gains `engagement_id`, `responder_type` and an
+  append-only revisions table, replacing a destructive upsert that could not
+  answer "what did they say before they changed it".
+
+  The adversarial suite caught three real defects: `not_applicable` violated the
+  shipped status CHECK (it conflates "nobody looked" with "does not apply", which
+  the effectiveness ladder treats completely differently); the session exchange
+  never performed `issued → in_progress`, making submission impossible; and one
+  test assertion referenced an id the seeder never produced.
+
+- **LLM-INDEPENDENCE gate PASSED.** Proven twice: no module under
+  `vendorRisk/` or `vendorPortal/` imports a model provider (cannot, not merely
+  does not), and a full engagement runs intake → inherent → scope → questionnaire
+  → answers → submit with `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` deleted and
+  every AI flag off. Ask degrades to `ask_unavailable` rather than 500ing.
 
 ### Workstream 2 — Ask SecureLogic
 
@@ -95,7 +122,7 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 |---|---|
 | `requirements.scope_tags` column + backfill across 321 requirements | 1 |
 | Engagement routes, internal UI, engagement queue | 1 |
-| External vendor portal — 11 routes, `requirePortalSession`, 7 screens, adversarial suite (credential model done) | 3 |
+| Portal: evidence upload + comments (4 of 11 routes), and the 7 portal screens | 3 |
 | Evidence convergence, analysis worker, exception→finding promotion | 4 |
 | Control-effectiveness ladder, residual calculation, decision workflow | 5 |
 | Monitoring sweeps, intelligence staleness chain | 6 |
@@ -137,8 +164,12 @@ engine block and declares no `R2_*`. Uploads would 500 with a misleading
 
 ### B3 — No staging or production credentials in this environment
 
-Structurally prevents: staging validation, both end-to-end walkthroughs, the
-LLM-unavailable workflow run, and Stop Gate B's external tester. All operator-owed.
+Structurally prevents: staging validation, both end-to-end walkthroughs against
+a deployed environment, Stop Gate B's real external tester, and the independent
+security reviews for Stop Gates A / ASK-A / B. All operator-owed.
+
+(The LLM-unavailable workflow is NO LONGER blocked — it runs locally against the
+Docker Postgres and passes; see `vendorAssuranceLlmIndependence.test.ts`.)
 
 ---
 
