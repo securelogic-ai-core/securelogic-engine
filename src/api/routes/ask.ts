@@ -17,7 +17,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
@@ -34,7 +34,17 @@ import {
   sqlVendorAssessmentScope
 } from "../lib/metricDefinitions.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { askEnabled, askFeatureFlag } from "../lib/askFeatureFlag.js";
+import { askFeatureFlag } from "../lib/askFeatureFlag.js";
+import { askToolsEnabled } from "../lib/ask/askToolsFeatureFlag.js";
+import { runAskOrchestration } from "../lib/ask/orchestrator.js";
+import {
+  createConversation,
+  findOwnedConversation,
+  loadHistory,
+  recordAssistantMessage,
+  recordUserMessage,
+  type AskTurn,
+} from "../lib/ask/conversationStore.js";
 import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
@@ -155,6 +165,155 @@ const askRateLimit = rateLimit({
 });
 
 // ---------------------------------------------------------------------------
+// Tool-path handler
+//
+// The model is given authorized TOOLS over canonical routes instead of a
+// pre-assembled snapshot. It runs inside the caller's own request, so every
+// tool call carries that caller's entitlement, seat, capability and RLS.
+//
+// Conversation persistence is BEST-EFFORT and never fails the answer: a user
+// asking a question should not get a 500 because history could not be written.
+// The audit event is written regardless, on the same path as the snapshot
+// handler, so auditability does not depend on which retrieval path ran.
+// ---------------------------------------------------------------------------
+
+const TOOL_PROMPT_VERSION = "ask_tools_v1";
+
+async function handleWithTools(args: {
+  req: Request;
+  res: Response;
+  client: Anthropic;
+  organizationId: string;
+  question: string;
+}): Promise<void> {
+  const { req, res, client, organizationId, question } = args;
+  const userId = (req as { userId?: string }).userId ?? null;
+  const requestedConversationId =
+    typeof (req.body as Record<string, unknown>)?.conversation_id === "string"
+      ? ((req.body as Record<string, string>).conversation_id ?? null)
+      : null;
+
+  try {
+    // History load + conversation resolution run in their own tenant scope and
+    // COMMIT before the model call, so no DB connection is held across a
+    // multi-second round trip (the discipline the snapshot path already follows).
+    let conversationId: string | null = null;
+    let history: AskTurn[] = [];
+
+    try {
+      await withTenant(organizationId, async () => {
+        if (requestedConversationId) {
+          const owned = await findOwnedConversation({
+            organizationId,
+            userId,
+            conversationId: requestedConversationId,
+          });
+          // Not found and not-yours are indistinguishable: a probing caller must
+          // not learn that a colleague's thread exists. We simply start fresh.
+          if (owned) {
+            conversationId = owned.id;
+            history = await loadHistory({ organizationId, conversationId: owned.id });
+          }
+        }
+        if (!conversationId) {
+          conversationId = await createConversation({ organizationId, userId });
+        }
+        await recordUserMessage({
+          organizationId,
+          conversationId: conversationId!,
+          userId,
+          content: question,
+        });
+      });
+    } catch (persistErr) {
+      // Conversation storage is not worth failing a question over.
+      logger.warn(
+        { event: "ask_conversation_persist_failed", organizationId, persistErr },
+        "Ask conversation persistence failed (non-fatal)"
+      );
+    }
+
+    logger.info(
+      { event: "llm_call_start", purpose: "ask_tools", model: ASK_MODEL, organizationId },
+      "LLM call: ask (tool path)"
+    );
+
+    const orchestration = await runAskOrchestration({
+      client,
+      model: ASK_MODEL,
+      systemPrompt: SYSTEM_PROMPT,
+      history,
+      question,
+      origin: req,
+    });
+
+    const answer = orchestration.answer || "I was not able to produce an answer for that.";
+
+    if (conversationId) {
+      try {
+        await withTenant(organizationId, () =>
+          recordAssistantMessage({
+            organizationId,
+            conversationId: conversationId!,
+            userId,
+            content: answer,
+            modelId: ASK_MODEL,
+            promptVersion: TOOL_PROMPT_VERSION,
+            invocations: orchestration.invocations,
+          })
+        );
+      } catch (persistErr) {
+        logger.warn(
+          { event: "ask_answer_persist_failed", organizationId, persistErr },
+          "Ask answer persistence failed (non-fatal)"
+        );
+      }
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorApiKeyId: (req as any).apiKey?.id ?? null,
+      actorUserId: userId,
+      eventType: "ask.question.asked",
+      resourceType: "ask",
+      resourceId: conversationId,
+      payload: {
+        question: question.slice(0, 500),
+        model: ASK_MODEL,
+        answer_length: answer.length,
+        retrieval: "tools",
+        // The tool ledger IS the context digest on this path: which authorized
+        // reads happened, and which were refused.
+        tool_calls: orchestration.invocations.map((i) => ({
+          tool: i.toolName,
+          authorized: i.authorized,
+          status: i.statusCode,
+        })),
+        stopped_by: orchestration.stoppedBy,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      answer,
+      question,
+      conversation_id: conversationId,
+      // Same key the snapshot path returns, so the app needs no change to read
+      // it — but sourced from the tool ledger rather than a fixed blob.
+      context_used: {
+        retrieval: "tools",
+        tool_calls: orchestration.invocations.length,
+        tools_denied: orchestration.invocations.filter((i) => !i.authorized).length,
+        complete: orchestration.stoppedBy === "model",
+      },
+    });
+  } catch (err) {
+    logger.error({ event: "ask_tools_failed", organizationId, err }, "Ask tool path failed");
+    res.status(502).json({ error: "ask_failed", message: "Unable to process query" });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/ask
 // ---------------------------------------------------------------------------
 
@@ -190,6 +349,23 @@ router.post(
     const client = getClient();
     if (!client) {
       res.status(503).json({ error: "ask_unavailable", message: "AI query is not configured" });
+      return;
+    }
+
+    // ── Retrieval path switch ────────────────────────────────────────────
+    //
+    // The TOOL path gives the model authorized tools over canonical routes,
+    // so every fact arrives through the product's own query with the caller's
+    // entitlement, seat, capability and RLS applied. The SNAPSHOT path below
+    // is the A0-corrected eight-query blob it replaces.
+    //
+    // Dark by default (SECURELOGIC_ASK_TOOLS_ENABLED). Rollback is the flag:
+    // no migration, no deploy, no data change. Two retrieval implementations
+    // is exactly the parallel-data-path problem this programme removes — it is
+    // a transition, not a steady state, and the snapshot path retires with the
+    // flag once staging validates the tool path.
+    if (askToolsEnabled()) {
+      await handleWithTools({ req, res, client, organizationId, question: question.trim() });
       return;
     }
 
