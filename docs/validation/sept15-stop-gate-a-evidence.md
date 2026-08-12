@@ -93,9 +93,18 @@ test/isolation/vendorTierBRls.test.ts           48 passed
                                                 ──────────
                                                 62 passed
 
-Full isolation suite:  140 files · 960 tests · 0 failed
+Full isolation suite:  141 files · 975 tests · 0 failed
   (baseline before this work: 138 files · 898 tests)
 ```
+
+The +3 files / +77 tests are this work: the two RLS suites above (62) plus the
+ASK-A equivalence suite (15, §Stop Gate ASK-A).
+
+> **Do not run two isolation suites concurrently.** They share one test database
+> and `bootstrapTestDb` corrupts the other mid-run. The signature is many FILES
+> failing with few actual test failures and a large skip count — an intermediate
+> run here reported "33 files failed / 11 tests failed / 220 skipped" purely from
+> that contention, and passed cleanly when run alone.
 
 **Zero regressions** across the pre-existing 898 tests despite enabling RLS on
 nine previously-unprotected tables — including `vendors`, which many suites

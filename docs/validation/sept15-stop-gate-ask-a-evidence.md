@@ -109,6 +109,8 @@ Covering `findings.search`, `findings.summary`, `vendors.search`, `risks.search`
 `findings.search?severity=Critical`. Comparing bodies rather than shapes means a
 divergence cannot hide behind a plausible-looking response.
 
+Verified in the full suite: **141 files · 975 tests · 0 failed.**
+
 **Cross-tenant.** Orgs are seeded with distinguishable data (`ORG-A-ONLY` /
 `ORG-B-SECRET`) so a leak is unmistakable in the failure output:
 

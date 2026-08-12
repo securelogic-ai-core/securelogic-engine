@@ -169,6 +169,20 @@ Three traps worth knowing:
    and `bootstrapTestDb` corrupts the other mid-run — the signature is many files
    failing with few actual test failures and a large skip count.
 
+## 8. Final verified test state
+
+```
+engine     306 files · 5709 passed · 3 skipped · 0 failed
+isolation  141 files ·  975 passed ·             0 failed
+typecheck  clean (engine + app)
+lint       clean (1 pre-existing warning)
+```
+
+Isolation baseline before this work: 138 files / 898 tests. The +3 files / +77
+tests are `vendorEngagementsRls` (14), `vendorTierBRls` (48) and
+`askToolAuthorizationEquivalence` (15). **Zero regressions** across the
+pre-existing 898 despite RLS landing on nine previously-unprotected tables.
+
 A stray `/` had also been left on line 1 of
 `20260420_cyber_signals_allow_null_org.sql` in the working tree, making it
 invalid SQL. That was reverted; without it no fresh database can bootstrap.
