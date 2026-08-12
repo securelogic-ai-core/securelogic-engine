@@ -309,6 +309,41 @@ production (no prod enablement without an explicit operator ruling).
   `ASSET_REGISTRY` populated); degrades to `no_match`/`needs_review` otherwise. Introduced
   by ERG convergence C3 (PR #602) / C3b (PR #603).
 
+### 1.21 `SECURELOGIC_SEAT_MODEL_ENABLED` (Enterprise Seat / Role / Scoped Authorization — PR #784)
+- **Purpose:** gates ALL seat-model enforcement: the `requireSeat` middleware seam,
+  Contributor scoping (`src/api/lib/contributorScope.ts`), Viewer-seat read-only (regardless
+  of role), separately grantable export, seat-aware provisioning + SSO-JIT default seat,
+  and API-key binding to the issuer's seat/role. OFF = legacy authorization, byte-identical
+  (verified by the branch regression suite).
+- **Required services:** **Engine only.** The App reads **no env var** — the UI consumes the
+  resolved `seat` block on `GET /api/me` (`seat.enforced` tells the UI whether the model is
+  live in this environment; the server remains authoritative).
+- **Redeploy/restart:** Yes, Engine. The 2026-08-12 staging activation used explicit
+  same-SHA API-triggered deploys after setting the env (per the EG2 Wave-1 env-injection
+  incident: set the flag first, then deploy).
+- **Default:** OFF — strict `=== "true"` read (`src/api/middleware/requireSeat.ts`).
+  **Not declared in `render.yaml`** (known IaC drift): the staging value is dashboard-set,
+  so a Blueprint sync will not carry or restore it. Declaring it `"false"` in IaC is an
+  open follow-up.
+- **Staging order:** migrations `20260915_enterprise_seat_model` → `20260916_sso_default_seat`
+  → `20260917_viewer_export` → `20260918_api_key_seat_binding` (all additive) → set flag on
+  `securelogic-engine-staging` → deploy.
+- **Staging state (VERIFIED live 2026-08-12):** **ENABLED and enforcing.** Config `"true"`
+  on `securelogic-engine-staging`; in-process `GET /api/me` returns `seat.enforced: true`
+  with resolved scope; staging DB at 207 migrations with all four seat migrations applied
+  (2026-08-12 02:45 UTC, 203 → 207).
+- **Production order:** **GATE B — and additionally the code is NOT on `main`.** PR #784
+  merged to `develop` after the #756 release cut; prod (`49691948`) predates the package,
+  the prod flag is unset, and prod is at 203 migrations (no seat migrations). Prod
+  enablement therefore requires a develop→main release (with its four migrations,
+  migrate-before-merge) **before** any GATE B flag ruling.
+- **Validation:** `GET /api/me` seat block (`seatType`/`role`/scopes/`capabilities`/`enforced`);
+  deny paths: Contributor `POST /api/findings` → 403, Viewer writes → 403, ungranted
+  `GET /api/findings/export.csv` → 403; API-key calls constrained to issuer seat/role.
+- **Rollback:** unset / `"false"` + redeploy Engine → legacy authorization everywhere; the
+  four migrations are additive and inert with the flag off (no destructive rollback needed).
+- **Dependencies:** none of the other Tier-A flags — migrations only.
+
 ---
 
 > **Note (app flag reads):** §0 row for the App lists the three *legacy* nav flags; the app also reads `SECURELOGIC_RISK_WORKSPACE_ENABLED` (Packages 1/2 nav + queue reskin) and `SECURELOGIC_DECISION_WORKSPACE_ENABLED` (§1.19) server-side.
