@@ -12,7 +12,7 @@
  * everything (a guaranteed-false predicate on lists; false on ownership checks).
  */
 
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import { getSeatScope, seatModelEnabled } from "../middleware/requireSeat.js";
 import { projectForContributor, type ProjectedRow } from "./contributorProjection.js";
 
@@ -57,6 +57,39 @@ export function mayAccessOwned(req: Request, ownerUserId: string | null | undefi
   if (!isAssignedScope(req)) return true;
   const uid = scopedUserId(req);
   return uid !== null && ownerUserId === uid;
+}
+
+/**
+ * Assignment guard for assessment/response families. For a Contributor-scoped
+ * caller, verifies the row `id` in `table` exists in the org AND is assigned to
+ * them (`assigned_to_user_id`); otherwise responds 404 (non-disclosing) and
+ * returns false so the handler returns early. Non-Contributors pass through
+ * (returns true, no query). Used for BOTH detail reads and the respond/update
+ * path — a Contributor may act only on assessments assigned to them, and can
+ * never create one (create routes stay denyContributor).
+ *
+ * `table` is always a fixed string literal at the call site (never user input),
+ * so the interpolation carries no injection surface.
+ */
+export async function assertAssignedOr404(
+  req: Request,
+  res: Response,
+  pgLike: { query: (sql: string, params: unknown[]) => Promise<{ rowCount: number | null; rows: Array<{ assigned_to_user_id?: string | null }> }> },
+  table: string,
+  id: string,
+  organizationId: string,
+  notFoundError: string
+): Promise<boolean> {
+  if (!isAssignedScope(req)) return true;
+  const r = await pgLike.query(
+    `SELECT assigned_to_user_id FROM ${table} WHERE id = $1 AND organization_id = $2`,
+    [id, organizationId]
+  );
+  if ((r.rowCount ?? 0) === 0 || !mayAccessOwned(req, r.rows[0]?.assigned_to_user_id)) {
+    res.status(404).json({ error: notFoundError });
+    return false;
+  }
+  return true;
 }
 
 /**

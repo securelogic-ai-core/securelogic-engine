@@ -60,6 +60,7 @@ import findingsRouter from "../routes/findings.js";
 import actionsRouter from "../routes/actions.js";
 import evidenceRouter from "../routes/evidence.js";
 import vendorsRouter from "../routes/vendors.js";
+import controlAssessmentsRouter from "../routes/controlAssessments.js";
 
 function app(router: express.Router) {
   const a = express();
@@ -110,6 +111,18 @@ describe("detail routes — non-owned is 404 (non-disclosing)", () => {
     expect(res.status).toBe(404);
     expect(JSON.stringify(res.body)).not.toContain("secret");
   });
+
+  it("GET /control-assessments/:id assigned to another user → 404 (assignment guard)", async () => {
+    queryMock.mockResolvedValue({ rowCount: 1, rows: [{ assigned_to_user_id: OTHER }] });
+    const res = await asContributor(request(app(controlAssessmentsRouter)).get("/api/control-assessments/33333333-3333-4333-8333-333333333333"));
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /control-assessments/:id assigned to me → not 404", async () => {
+    queryMock.mockResolvedValue({ rowCount: 1, rows: [{ assigned_to_user_id: ME }] });
+    const res = await asContributor(request(app(controlAssessmentsRouter)).get("/api/control-assessments/33333333-3333-4333-8333-333333333333"));
+    expect(res.status).not.toBe(404);
+  });
 });
 
 describe("governance / aggregate routes — Contributor 403 (before any DB access)", () => {
@@ -125,6 +138,7 @@ describe("governance / aggregate routes — Contributor 403 (before any DB acces
     ["GET /vendors/summary", vendorsRouter, "get", "/api/vendors/summary"],
     ["POST /vendors (create)", vendorsRouter, "post", "/api/vendors"],
     ["GET /vendors/export.csv", vendorsRouter, "get", "/api/vendors/export.csv"],
+    ["POST /control-assessments (create)", controlAssessmentsRouter, "post", "/api/control-assessments"],
   ];
   for (const [label, router, method, path] of cases) {
     it(`${label} → 403 seat_not_permitted`, async () => {
