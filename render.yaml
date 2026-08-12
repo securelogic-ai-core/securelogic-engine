@@ -325,6 +325,25 @@ services:
       - key: SECURELOGIC_ASK_TOOLS_ENABLED
         value: "false"
 
+      # EXTERNAL VENDOR PORTAL — the platform's first unauthenticated write path
+      # that touches tenant data. THE most consequential flag here.
+      #
+      # Defaults OFF everywhere INCLUDING non-production, unlike
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED which opens off-production for
+      # developer convenience. That reasoning does not transfer: an external
+      # write path must never be open by accident on a preview environment.
+      #
+      # Off = 404 before any handler, any DB read, and — on the exchange route —
+      # before a presented token is even hashed. Enablement is GATE B and
+      # requires Stop Gate B to have passed (adversarial suite, independent
+      # security review, a real external tester on staging).
+      #
+      # Turning this off does not by itself revoke live sessions; also run the
+      # mass revocation:
+      #   UPDATE vendor_portal_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL;
+      - key: SECURELOGIC_VENDOR_PORTAL_ENABLED
+        value: "false"
+
       # Enterprise seat model (PR #784) — LIVE in production since 2026-08-12
       # (GATE B activated 14:23 UTC, same-SHA deploy 14:27 UTC on 98e97098).
       # Gates ALL seat enforcement: requireSeat, Contributor scoping,
@@ -649,6 +668,25 @@ services:
       # retrieval implementations is the parallel-data-path problem this program
       # removes, acceptable only as a transition.
       - key: SECURELOGIC_ASK_TOOLS_ENABLED
+        value: "false"
+
+      # EXTERNAL VENDOR PORTAL — the platform's first unauthenticated write path
+      # that touches tenant data. THE most consequential flag here.
+      #
+      # Defaults OFF everywhere INCLUDING non-production, unlike
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED which opens off-production for
+      # developer convenience. That reasoning does not transfer: an external
+      # write path must never be open by accident on a preview environment.
+      #
+      # Off = 404 before any handler, any DB read, and — on the exchange route —
+      # before a presented token is even hashed. Enablement is GATE B and
+      # requires Stop Gate B to have passed (adversarial suite, independent
+      # security review, a real external tester on staging).
+      #
+      # Turning this off does not by itself revoke live sessions; also run the
+      # mass revocation:
+      #   UPDATE vendor_portal_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL;
+      - key: SECURELOGIC_VENDOR_PORTAL_ENABLED
         value: "false"
 
       # Enterprise seat model (PR #784) — ENABLED on staging 2026-08-12
