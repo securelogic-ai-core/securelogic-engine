@@ -266,6 +266,46 @@ export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): stri
   return `NOT EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
 }
 
+// ── Finding provenance groupings ────────────────────────────────────────────
+//
+// "How many of my findings came from vendor work / from external intelligence?"
+// is a question several surfaces answer, and each one that hand-rolls its own
+// source_type list drifts the moment a new type is added to the DB CHECK.
+// Ask did exactly that: it counted `source_type = 'vendor_review'` and
+// `source_type = 'signal'` as if those were the whole story, so vendor review
+// CYCLES and every finding the matcher wrote as 'cyber_signal' — plus the newer
+// 'intelligence_event' — were silently reported as zero.
+//
+// Keep these in lockstep with FINDING_SOURCE_TYPES (findingValidation.ts) and
+// the findings_source_type_check CHECK constraint.
+
+/** Findings that originated in a vendor assessment or review workflow. */
+export const VENDOR_SOURCED_FINDING_TYPES = [
+  "vendor_review",        // point-in-time vendor_assessments
+  "vendor_cycle_review"   // mutable vendor_reviews cycles
+] as const;
+
+/** Findings that originated in the external-intelligence pipeline. */
+export const SIGNAL_SOURCED_FINDING_TYPES = [
+  "signal",              // legacy matcher write
+  "cyber_signal",        // current matcher dual-write
+  "intelligence_event"   // normalized event projection
+] as const;
+
+function sqlInList(col: string, values: readonly string[]): string {
+  return `${col} IN (${values.map((v) => `'${v}'`).join(", ")})`;
+}
+
+/** SQL predicate: the finding came from a vendor workflow. */
+export function sqlFindingVendorSourced(col = "source_type"): string {
+  return sqlInList(col, VENDOR_SOURCED_FINDING_TYPES);
+}
+
+/** SQL predicate: the finding came from the intelligence pipeline. */
+export function sqlFindingSignalSourced(col = "source_type"): string {
+  return sqlInList(col, SIGNAL_SOURCED_FINDING_TYPES);
+}
+
 // ── Vendor-assurance document review state ──────────────────────────────────
 
 /**
