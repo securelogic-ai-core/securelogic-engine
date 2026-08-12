@@ -74,20 +74,45 @@ function buildToolRequest(
     }
   }
 
-  const proto = Object.create(Object.getPrototypeOf(origin) as object) as Request;
+  // PROTOTYPAL inheritance from the live request, not a copy.
+  //
+  // Two reasons, and the second is the security-relevant one:
+  //
+  //  1. Express defines `path`, `query`, `ip`, `protocol` and friends as GETTERS
+  //     on the request prototype. Object.assign cannot copy them ("Cannot set
+  //     property path of #<IncomingMessage> which has only a getter"), so a
+  //     copy-based approach fails outright.
+  //
+  //  2. Inheriting means every auth-bearing field the middleware chain reads —
+  //     apiKey, organizationContext, userId, seat scope, and anything a future
+  //     middleware attaches — resolves to the SAME OBJECT on the originating
+  //     request. There is no snapshot to go stale and no field a refactor could
+  //     forget to carry across. The tool request cannot hold a wider identity
+  //     than the request it came from, because it does not hold one at all.
+  //
+  // Only the ROUTING surface is shadowed, as own data properties. Note what is
+  // absent: nothing here can set organization context, a user id, or a seat.
+  const req = Object.create(origin) as Request;
 
-  return Object.assign(proto, origin, {
-    method: tool.binding.method,
-    url: tool.binding.path,
-    originalUrl: tool.binding.path,
-    path: tool.binding.path,
-    params: pathParams,
-    query,
-    body: isRead ? {} : rest,
-    // A tool call is not a browser navigation; drop anything route code might
-    // read from headers that would be misleading in this context.
-    headers: { ...origin.headers, "content-type": "application/json" },
-  }) as Request;
+  const shadow = (key: string, value: unknown): void => {
+    Object.defineProperty(req, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  };
+
+  shadow("method", tool.binding.method);
+  shadow("url", tool.binding.path);
+  shadow("originalUrl", tool.binding.path);
+  shadow("path", tool.binding.path);
+  shadow("params", pathParams);
+  shadow("query", query);
+  shadow("body", isRead ? {} : rest);
+  shadow("headers", { ...origin.headers, "content-type": "application/json" });
+
+  return req;
 }
 
 /**
