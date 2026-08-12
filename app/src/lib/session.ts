@@ -8,6 +8,14 @@ export interface SessionData {
   email?: string;
   name?: string;
   userRole?: string;
+  /**
+   * Enterprise seat class: full | contributor | viewer. Carried for UI
+   * affordance gating (defense in depth). The authoritative resolved scope —
+   * capabilities, read/write scope, isAdmin — comes from GET /api/me's `seat`
+   * block, which the server computes with the same resolveScope it enforces
+   * with. The UI must never treat this as a security boundary.
+   */
+  seatType?: string;
   jwtToken?: string;
 
   // Legacy API-key auth (kept for backward compatibility)
