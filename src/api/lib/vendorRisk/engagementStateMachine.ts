@@ -256,8 +256,53 @@ export function isInherentOverridable(state: EngagementState): boolean {
   return SCOPE_MUTABLE_STATES.includes(state);
 }
 
-/** Portal writes (answers, evidence, comments) are refused once submitted. */
+/** Portal writes (answers, evidence) are refused once submitted. */
 const PORTAL_WRITABLE_STATES: EngagementState[] = ["issued", "in_progress"];
 export function isPortalWritable(state: EngagementState): boolean {
   return PORTAL_WRITABLE_STATES.includes(state);
+}
+
+/**
+ * States in which the vendor may still CHANGE their submission.
+ *
+ * This is `isPortalWritable` plus `clarification_requested`, and the difference
+ * matters: the transition table permits `clarification_requested -> in_progress`
+ * by a portal actor, but `isPortalWritable` excludes that state — so a reviewer
+ * who asked for clarification produced an engagement the vendor could see and
+ * could not act on. The transition was unreachable and the request was a dead
+ * end.
+ *
+ * Answering while in `clarification_requested` is what CAUSES that transition;
+ * the route performs it on the first write. It is kept separate from
+ * `isPortalWritable` rather than folded into it because the two questions differ:
+ * "may the vendor edit?" is not "is this engagement in its initial response
+ * window?", and callers that mean the latter (progress display, reminder
+ * scheduling) must not silently acquire the former.
+ */
+const PORTAL_RESPONDABLE_STATES: EngagementState[] = [
+  ...PORTAL_WRITABLE_STATES,
+  "clarification_requested",
+];
+export function isPortalRespondable(state: EngagementState): boolean {
+  return PORTAL_RESPONDABLE_STATES.includes(state);
+}
+
+/**
+ * States in which the clarification thread accepts messages.
+ *
+ * Wider than the write window on purpose: the reviewer's questions arrive DURING
+ * review, after the questionnaire has locked, and a thread the vendor cannot
+ * reply to is not a thread. It stops at `analysis_complete` — past that point the
+ * assessment is concluded and a late message would arrive with nobody obliged to
+ * read it, which is worse than a closed thread that says so.
+ */
+const PORTAL_COMMENTABLE_STATES: EngagementState[] = [
+  "issued",
+  "in_progress",
+  "submitted",
+  "in_review",
+  "clarification_requested",
+];
+export function isPortalCommentable(state: EngagementState): boolean {
+  return PORTAL_COMMENTABLE_STATES.includes(state);
 }

@@ -15,6 +15,8 @@ import {
   canTransition,
   findTransition,
   isInherentOverridable,
+  isPortalCommentable,
+  isPortalRespondable,
   isPortalWritable,
   isScopeMutable,
   portalPermittedTransitions,
@@ -186,6 +188,81 @@ describe("engagement state machine — decision guards", () => {
   it("every transition carries a description", () => {
     for (const t of ALL_TRANSITIONS) {
       expect(t.description.length, `${t.from}->${t.to}`).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe("engagement state machine — the portal write windows", () => {
+  it("every portal-permitted transition is REACHABLE from some portal window", () => {
+    // This is the test that would have caught the defect it was written for.
+    // `clarification_requested -> in_progress` is portal-permitted, but nothing
+    // could cause it: isPortalWritable excluded that state, so a reviewer who
+    // requested clarification produced an engagement the vendor could see and
+    // could not act on. A transition an actor may cause but can never reach is a
+    // dead end in the workflow, not a safety property.
+    for (const t of portalPermittedTransitions()) {
+      const reachable = isPortalRespondable(t.from) || isPortalCommentable(t.from);
+      expect(reachable, `portal transition ${t.from}->${t.to} is unreachable`).toBe(true);
+    }
+  });
+
+  it("respondable is writable PLUS clarification_requested, and nothing else", () => {
+    const extra = ENGAGEMENT_STATES.filter((s) => isPortalRespondable(s) && !isPortalWritable(s));
+    expect(extra).toEqual(["clarification_requested"]);
+  });
+
+  it("respondable never opens a state the write window closed for a reason", () => {
+    // submitted is the one that matters: after submission the questionnaire is
+    // evidence, and evidence that can still change is not evidence.
+    expect(isPortalRespondable("submitted")).toBe(false);
+    expect(isPortalRespondable("in_review")).toBe(false);
+    expect(isPortalRespondable("decided")).toBe(false);
+  });
+
+  it("the comment thread stays open through review but closes at analysis", () => {
+    // Clarifications arrive DURING review, after the questionnaire locks. A
+    // thread the vendor cannot reply to is not a thread.
+    expect(isPortalCommentable("submitted")).toBe(true);
+    expect(isPortalCommentable("in_review")).toBe(true);
+    expect(isPortalCommentable("clarification_requested")).toBe(true);
+    // Past analysis the assessment is concluded; a late message would arrive
+    // with nobody obliged to read it.
+    expect(isPortalCommentable("analysis_complete")).toBe(false);
+    expect(isPortalCommentable("decision_pending")).toBe(false);
+    expect(isPortalCommentable("monitoring")).toBe(false);
+  });
+
+  it("no portal window is open in a terminal state", () => {
+    for (const state of TERMINAL_STATES) {
+      expect(isPortalWritable(state), state).toBe(false);
+      expect(isPortalRespondable(state), state).toBe(false);
+      expect(isPortalCommentable(state), state).toBe(false);
+    }
+  });
+
+  it("commentable is a superset of respondable", () => {
+    // A vendor who may change their answers may always explain the change.
+    for (const state of ENGAGEMENT_STATES) {
+      if (isPortalRespondable(state)) {
+        expect(isPortalCommentable(state), state).toBe(true);
+      }
+    }
+  });
+
+  it("widening a window never grants a transition the actor lacks", () => {
+    // The windows say WHEN; the transition table says WHETHER. Opening a window
+    // must not become a back door around the actor check.
+    for (const state of ENGAGEMENT_STATES) {
+      if (!isPortalRespondable(state) && !isPortalCommentable(state)) continue;
+      for (const to of ENGAGEMENT_STATES) {
+        const check = canTransition(state, to, "portal");
+        if (check.allowed) {
+          expect(
+            portalPermittedTransitions().some((t) => t.from === state && t.to === to),
+            `${state}->${to}`
+          ).toBe(true);
+        }
+      }
     }
   });
 });

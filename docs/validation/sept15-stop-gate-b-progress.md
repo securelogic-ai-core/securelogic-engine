@@ -1,17 +1,20 @@
 # Stop Gate B — External Trust Boundary · Progress
 
 Program: September 15 design-partner launch, Workstream 1 Phase 3
-Date: 2026-08-12
+Date: 2026-08-12 (revised — evidence and comment routes landed)
 
 ---
 
 ## Verdict
 
-**NOT PASSED.** The credential boundary and the questionnaire are built and
-adversarially tested (36 cases against real Postgres). Evidence upload and
-comments are not built, and two criteria require a human.
+**NOT PASSED.**
 
-This document exists so the partial state cannot be mistaken for a pass.
+All eleven planned routes now exist and all nine adversarial classes are
+covered — 70 cases against real Postgres. What remains cannot be produced by a
+test file: an independent security review of the surface, and a real external
+tester completing an engagement on staging.
+
+This document exists so the near-complete state cannot be mistaken for a pass.
 
 ---
 
@@ -19,37 +22,42 @@ This document exists so the partial state cannot be mistaken for a pass.
 
 | # | Criterion | Result |
 |---|---|---|
-| B.1 | Full adversarial suite — all nine classes | **PARTIAL** — 8 of 9 classes covered |
-| B.2 | Static invariant: no portal route reads a caller-supplied identifier | **PASS** (by construction; see §3) |
+| B.1 | Full adversarial suite — all nine classes | **PASS** — 9 of 9, 70 cases |
+| B.2 | Static invariant: no portal route reads a caller-supplied identifier | **PASS** — now enforced by test, not by reading |
 | B.3 | Independent security review of the portal surface | **NOT SATISFIABLE HERE** |
 | B.4 | A real external tester completes an engagement on staging | **NOT SATISFIABLE HERE** |
 | B.5 | Rate limiting holds with Redis stopped | **PASS** — DB-backed by design |
-| B.6 | Kill switch 404s every route and invalidates live sessions | **PASS** |
-| B.7 | Every portal action in `audit_log` with its invite and engagement | **PARTIAL** — covered for the routes that exist |
+| B.6 | Kill switch 404s every route and invalidates live sessions | **PASS** — re-verified across all eleven |
+| B.7 | Every portal action in `audit_log` with its invite and engagement | **PASS** — all eleven routes |
+
+Two of seven criteria need a human. Both are operator-owed and neither is
+compressible.
 
 ---
 
-## 1. What is built
+## 1. What is built — the complete surface
 
-| Component | State |
+| Route | Purpose |
 |---|---|
-| `vendor_engagement_invites` + `vendor_portal_sessions` (migration `20260923`) | Built, RLS enabled |
-| `portalTokens.ts` — minting, hashing, validity, cookie policy | Built, 24 tests |
-| `requirePortalSession` — the external principal resolver | Built, 23 tests |
-| `vendorPortalFeatureFlag` — the kill switch | Built |
-| `POST /vendor-portal/session` — invite → cookie exchange | Built |
-| `DELETE /vendor-portal/session` — sign out | Built |
-| `GET /vendor-portal/engagement` — orientation read | Built |
-| `GET /vendor-portal/questions` — frozen scope + answers | Built |
-| `PUT /vendor-portal/questions/:requirementId` — save/resume | Built |
-| `POST /vendor-portal/submit` — the state transition | Built |
+| `POST /vendor-portal/session` | invite → cookie exchange |
+| `DELETE /vendor-portal/session` | sign out |
+| `GET /vendor-portal/engagement` | orientation read |
+| `GET /vendor-portal/questions` | frozen scope + answers so far |
+| `PUT /vendor-portal/questions/:requirementId` | save / resume one answer |
+| `POST /vendor-portal/submit` | the state transition |
+| `POST /vendor-portal/evidence` | attach a document |
+| `GET /vendor-portal/evidence` | list attachments (metadata only) |
+| `DELETE /vendor-portal/evidence/:evidenceId` | withdraw an attachment |
+| `GET /vendor-portal/comments` | read the clarification thread |
+| `POST /vendor-portal/comments` | send a message |
 
-**Not built:** evidence upload and listing, and comments. Seven of the eleven
-planned routes exist.
+Supporting: migration `20260925` (evidence gains `engagement_id`,
+`requirement_id`, `uploaded_via_invite_id`; new `vendor_engagement_comments`
+with RLS), and `portalUploadPolicy.ts` (17 unit tests).
 
 ---
 
-## 2. Adversarial coverage — 8 of 9 classes
+## 2. Adversarial coverage — 9 of 9 classes
 
 | Class | State |
 |---|---|
@@ -61,70 +69,97 @@ planned routes exist.
 | IDOR sweep across questionnaire objects | **Covered** |
 | State machine — portal attempts transitions it may not cause | **Covered** |
 | Post-submit writes return 409 | **Covered** |
-| Upload abuse — oversize, MIME mismatch, traversal, zip bomb, quota race | **Blocked** — needs the upload route |
+| **Upload abuse** — oversize, MIME mismatch, traversal, archive, quota, orphan | **Covered** — 34 cases |
 
-The one remaining class is blocked on a route that does not exist, not on
-difficulty. It lands with that route.
+The upload class is `test/isolation/vendorPortalUploadAdversarial.test.ts`. It
+stubs **only** the R2 client; the database is real, because the quota is a SUM
+over real rows and the confidentiality rule is a SQL filter backed by a CHECK.
+An unconfigured bucket would have made every upload return 503 and every
+assertion pass for the wrong reason.
 
 ---
 
-## 3. Why B.2 is structural rather than tested-by-sampling
+## 3. Four defects the new routes exposed
 
-No portal handler reads an identifier from the request. `req.portalContext`
-carries `organizationId`, `engagementId`, `inviteId` and `sessionId`, all resolved
-by `requirePortalSession` from the session ROW.
+**1. The third portal transition was unreachable.** The transition table permits
+`clarification_requested → in_progress` by a portal actor, but
+`isPortalWritable` excluded that state. A reviewer who requested clarification
+therefore produced an engagement the vendor could see and could not act on. The
+request was a dead end. Fixed with `isPortalRespondable`, and a new test asserts
+that *every* portal-permitted transition is reachable from some window — the
+general property, not the one instance.
 
-A caller therefore cannot *express* the attack. The adversarial suite confirms it
-behaviourally — supplying `engagement_id`, `engagementId` and `organization_id`
-as query parameters changes nothing — but the property holds because there is no
-code path that would read them.
+**2. Opening the link answered the clarification request.** Fixing (1)
+immediately created (2): the session exchange asked the transition table "may a
+portal actor reach `in_progress` from here?", and once the answer became yes for
+`clarification_requested`, merely exchanging the invite marked the reviewer's
+request as being worked on. The exchange now tests `from === "issued"`
+explicitly. Opening a link is not answering.
 
-When the remaining routes land, the planned static test (grep the router source
-for those keys) becomes worth adding, because by then there will be more handlers
-than a reader can hold in their head.
+**3. A vendor could exhaust the customer's org-wide evidence budget.** The
+existing 2 GiB cap is per-org and sufficient against an internal user, who only
+harms their own organisation. It is not sufficient here: the portal lets a third
+party consume a shared resource, so one vendor could stop the customer's own
+staff attaching evidence anywhere in the product. Per-engagement byte *and* file
+count budgets now bind first, and a test proves a saturated engagement blocks
+neither the org nor another vendor.
+
+**4. Three assertions were passing against an empty fixture.** The test file read
+`seed.orgA.userId`, which does not exist on `SeededOrg` — it was `undefined`,
+inserted NULL, and thereby *satisfied* the very attribution constraints it was
+meant to violate. Real user rows are now seeded. Worth recording because the
+failure mode is silent: the tests were green and proved nothing.
 
 ---
 
 ## 4. Design decisions worth re-reading before extending this
 
-**The invite is exchanged for a session.** The existing `/accept-invite`
-precedent puts the token in the URL, which is fine for a one-shot internal
-invite. A vendor engagement lives for weeks, so a URL-borne token would persist
-that whole time in browser history, in `Referer` headers to any third-party
-asset, and in every access log between the vendor and us.
+Everything in the prior revision still holds (invite exchanged for a session;
+resolution on `pgElevated`; disjoint auth contexts; DB-backed rate limiting;
+fingerprint drift flagged not blocked; flag off everywhere by default). New:
 
-**Resolution runs on `pgElevated`.** It necessarily precedes org context — the
-lookup is what establishes the org — so the tenant channel would return zero rows
-post-flip. Same shape as the tokenized data-export download route.
+**The portal is metadata-only.** There is no download route and no signed URL on
+this surface. The vendor already holds every file they sent, so a read channel
+back into the org's evidence store buys them nothing — and if it ever
+mis-scoped, the blast radius is the customer's entire evidence library rather
+than one row. A test asserts the absence, including that no response body
+carries a URL or a storage key.
 
-**`portalContext` and `organizationContext` are structurally disjoint.** Neither
-middleware populates the other's field, so a portal request cannot reach an
-authenticated route and an API key cannot drive a portal route. The resolver also
-strips a pre-existing `organizationContext` rather than letting it ride along.
+**Withdrawal is a hard delete, and the audit event is the survivor.** A vendor
+who attached the wrong client's report needs it gone, not flagged. The audit row
+keeps filename, size and SHA-256, so deleting the file does not delete the fact
+that it was sent. Row first, blob second: the reverse order can leave a record
+pointing at nothing.
 
-**Rate limiting is DB-backed.** `apiRateLimiter.ts` fails open when Redis is
-unavailable — defensible for authenticated API keys, unacceptable on a public
-endpoint where a blip would remove the only limit. The counter lives on the
-session row.
+**Comment bodies are stored verbatim** — not escaped, not stripped. Escaping at
+write time destroys the original text and double-escapes as soon as a second
+renderer appears; the renderer is the correct boundary. It also matters for
+ASK-B and the analysis worker: **this is a prompt-injection ingress point, and
+the analysis layer must be able to see an injection attempt in order to be
+evaluated against one.** Sanitising here would hide the attack from the defence.
 
-**Fingerprint drift is flagged, never blocked.** Vendors legitimately switch
-networks and devices mid-questionnaire; blocking would lock out honest users
-while barely inconveniencing someone who already holds the cookie.
+**`visibility` defaults to `internal`.** A caller that forgets to set it
+discloses nothing. The portal read filters in SQL rather than in the mapper, and
+a CHECK makes a vendor-authored internal-only row unrepresentable — so a future
+route that gets it wrong still cannot hide a vendor's own message from them.
 
-**The flag defaults OFF everywhere**, including non-production — unlike
-`vendorAssuranceFeatureFlag`, which opens off-production for developer
-convenience. An external write path must never be open by accident on a preview
-environment.
+**The comment window is wider than the write window.** Clarifications arrive
+during review, after the questionnaire locks; a thread the vendor cannot reply to
+is not a thread. It closes at `analysis_complete`, past which a message would
+arrive with nobody obliged to read it.
 
 ---
 
 ## 5. Operator note
 
-Turning the flag off does **not** by itself revoke live sessions; it makes
-`requirePortalSession` unreachable. To kill the boundary in anger, also run:
+Unchanged: turning the flag off makes `requirePortalSession` unreachable but does
+not revoke live sessions. To kill the boundary in anger, also run:
 
 ```sql
 UPDATE vendor_portal_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL;
 ```
 
-The partial index `idx_vendor_portal_sessions_live` exists for exactly this.
+New for this release: `20260925` alters the shared `evidence` table (three
+nullable columns, a widened `source_type` CHECK, two new CHECKs). It is additive
+and reversible, but it is not confined to portal tables — a rollback must drop
+the constraints before the columns.

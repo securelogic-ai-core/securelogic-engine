@@ -26,7 +26,7 @@ Session 1, 2026-08-12. Baseline `develop` @ `58285e67`.
 | **Stop Gate A** — External Isolation Readiness | **DB-layer PASS** | A.5 human security review outstanding |
 | **Stop Gate ASK-A** — Authorization Equivalence | **Engineering PASS** | A.6 review outstanding; A.2 Contributor scoping deferred with reason |
 | **LLM-independence** (VA security stop gate + DoD item) | **PASS** | Proven by construction AND by a full engagement run with no provider credentials |
-| **Stop Gate B** — External Trust Boundary | **NOT PASSED** | 8/9 adversarial classes; upload abuse blocked on an unbuilt route; review + external tester need a human |
+| **Stop Gate B** — External Trust Boundary | **NOT PASSED** | 5/7 criteria PASS — all 11 routes built, **9/9 adversarial classes, 70 cases**. B.3 (independent security review) and B.4 (real external tester on staging) need a human |
 | Gate 1 — Phase 1 complete | PARTIAL | Deterministic core + spine + scoping done; internal routes, UI and `scope_tags` backfill not |
 | Stop Gate C, ASK-B, ASK-C | Not reached | — |
 
@@ -62,13 +62,14 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
   hash. DB-backed rate counters because the Redis limiter fails open, which is
   unacceptable on an unauthenticated surface. 24 tests.
 
-- **Portal principal resolver + 7 of 11 routes.** `requirePortalSession`
+- **Portal principal resolver + all 11 routes.** `requirePortalSession`
   resolves org and engagement from the session ROW on the elevated channel
   (resolution precedes org context), and `portalContext` / `organizationContext`
   are structurally disjoint so neither auth world can reach the other's routes.
   Routes: session exchange, sign-out, engagement read, questionnaire read,
-  answer save, submit. **36 adversarial tests against real Postgres, 8 of 9
-  classes** — only upload abuse remains, blocked on an unbuilt route.
+  answer save, submit, evidence upload / list / withdraw, and the two-sided
+  clarification thread. **70 adversarial tests against real Postgres, 9 of 9
+  classes.**
 
 - **Frozen questionnaire scope** (migration `20260924`).
   `vendor_engagement_scope_items` persists what the resolver computed, with the
@@ -122,7 +123,7 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 |---|---|
 | `requirements.scope_tags` column + backfill across 321 requirements | 1 |
 | Engagement routes, internal UI, engagement queue | 1 |
-| Portal: evidence upload + comments (4 of 11 routes), and the 7 portal screens | 3 |
+| The 7 portal screens (the API surface is complete) | 3 |
 | Evidence convergence, analysis worker, exception→finding promotion | 4 |
 | Control-effectiveness ladder, residual calculation, decision workflow | 5 |
 | Monitoring sweeps, intelligence staleness chain | 6 |
@@ -229,11 +230,15 @@ Three traps worth knowing:
 ## 8. Final verified test state
 
 ```
-engine     306 files · 5709 passed · 3 skipped · 0 failed
-isolation  141 files ·  975 passed ·             0 failed
+engine     466 files · 7596 passed · 3 skipped · 0 failed
+isolation  144 files · 1052 passed ·             0 failed
 typecheck  clean (engine + app)
-lint       clean (1 pre-existing warning)
+lint       clean
 ```
+
+(The engine figure is the full default vitest config. Earlier revisions of this
+document quoted a path-filtered subset — 306/5709 — which was a narrower run of
+the same tree, not a smaller tree.)
 
 Isolation baseline before this work: 138 files / 898 tests. The +3 files / +77
 tests are `vendorEngagementsRls` (14), `vendorTierBRls` (48) and
