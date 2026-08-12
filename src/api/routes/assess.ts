@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { logger } from "../infra/logger.js";
@@ -265,6 +266,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const startedAt = Date.now();
 

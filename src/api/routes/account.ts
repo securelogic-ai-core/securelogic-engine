@@ -3,6 +3,8 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { scopeFromRequest } from "../lib/seatScope.js";
+import { seatModelEnabled } from "../middleware/requireSeat.js";
 
 const router = Router();
 
@@ -69,7 +71,23 @@ router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, nex
     // banner could never render during Stripe's retry/grace window.
     const billingActive = entitlementLevel !== "starter" && !row.payment_failed_at;
 
+    // The resolved seat scope — the SAME resolveScope the server enforces with,
+    // so the client drives navigation and affordances from one source of truth
+    // (defense in depth; the server remains authoritative). `enforced` tells the
+    // UI whether the seat model is live in this environment.
+    const scope = scopeFromRequest(req as unknown as Parameters<typeof scopeFromRequest>[0]);
+    const seat = {
+      seatType: scope.seatType,
+      role: scope.effectiveRole,
+      isAdmin: scope.isAdmin,
+      readScope: scope.readScope,
+      writeScope: scope.writeScope,
+      capabilities: [...scope.capabilities],
+      enforced: seatModelEnabled(),
+    };
+
     res.json({
+      seat,
       organizationId:     row.organization_id,
       organizationName:   row.organization_name,
       organizationSlug:   row.organization_slug,

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { PDFParse } from "pdf-parse";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { analyzeAssessmentDocument } from "../lib/claudeAssessmentAnalyzer.js";
@@ -86,6 +87,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   upload.single("document"),
   analyzeAssessmentDocumentHandler
 );

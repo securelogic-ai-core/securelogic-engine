@@ -44,8 +44,10 @@ describe("GET /api/findings/:id/history — source guards", () => {
 
   it("verifies finding ownership and 404s BEFORE the history fetch", () => {
     const b = block![0];
+    // The ownership pre-check now also reads owner_user_id so a Contributor
+    // seat can be scoped to findings they own (enterprise seat program).
     expect(b).toMatch(
-      /SELECT 1 FROM findings WHERE id = \$1 AND organization_id = \$2/
+      /SELECT owner_user_id FROM findings WHERE id = \$1 AND organization_id = \$2/
     );
     expect(b).toMatch(/error:\s*["']finding_not_found["']/);
     expect(b.indexOf("finding_not_found")).toBeLessThan(

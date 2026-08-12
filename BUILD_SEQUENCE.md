@@ -423,6 +423,23 @@ Billing note:
 > "not yet authorized" — retroactive disposition is pending the operator ruling tracked in
 > #694; the Backlog row below is superseded by that pending ruling.
 
+> **Reality-sync (2026-08-12, seat-model doc-sync; docs only, no code changed):** the live
+> workstream since the 2026-07-28 note has been the **Enterprise Seat / Role / Scoped-
+> Authorization package**, now **shipped**: PR **#784** merged to `develop` @ `1cc39602`
+> (2026-08-11; 15 commits, Phases 0–7 + 2 activation blockers + a release-review P1 fix).
+> **Live enablement state (VERIFIED 2026-08-12 ~06:00 UTC):** `securelogic-engine-staging`
+> runs `1cc39602` with `SECURELOGIC_SEAT_MODEL_ENABLED="true"` and in-process
+> `seat.enforced: true` — **staging is actively enforcing the seat model, not dark**;
+> staging DB at 207 migrations (all four seat migrations applied 02:45 UTC). Production is
+> untouched: `main` @ `49691948` (the #756 release) **does not contain the package**, prod
+> flag unset, prod DB at 203 migrations. Full record under Completed; flag mechanics in
+> `docs/runbooks/FEATURE-FLAG-ENABLEMENT-MATRIX.md` §1.21.
+> **Known drift (recorded, NOT backfilled by this sync):** this document has no entries
+> between 2026-07-28 and this note — the #756 develop→main release (2026-08-11), EG2
+> Wave-1, EDX W0/W1, IQ-1a, and the assignment-notification flag gate (#783) among them.
+> That reconciliation is a separate doc-sync package; nothing here supersedes those
+> programs' own trackers.
+
 `Priority 4 — Signal Ingestion Hardening` — **status: STALLED at 4A.1+A3 (was: ACTIVE, authorized 2026-06-26); resumption tracked as #696.**
 
 > **Active-workstream update (2026-07-04):** the live build workstream has moved to the
@@ -477,6 +494,40 @@ All four criteria now hold (met 2026-06-26); the package is **UNBLOCKED and ACTI
 **Scope guard:** design decisions **D6/D7** (dependency linkage, reassessment triggers) are **DEFERRED to Priority 5** — not in Priority 4. The A04-G1 RLS `app_request` flip remains **in-flight infrastructure**, not part of this package. Pillar-1 Part 2 prod enablement and the parked in-app price-label reconciliation remain out of scope.
 
 ## Completed (since last update)
+
+> **Doc-sync 2026-08-12 — Enterprise Seat Model shipped + staging enablement recorded
+> (docs only; no application code changed by this sync).** Records the seat-model package
+> below and its verified runtime state. Evidence labels: **VERIFIED** = commit/PR/file/API/DB
+> read directly · **INFERRED** = deduced · **RECOMMENDED** = proposed/not built.
+
+- **Enterprise Seat / Role / Scoped-Authorization — COMPLETE (merged to `develop`; STAGING ENABLED; not in production).**
+  **VERIFIED:** PR #784 (branch `feat/enterprise-seat-model`, 15 commits `06b0d34d`…`6200d37f`)
+  merged to `develop` 2026-08-11, merge commit `1cc39602` (124 files, +3729/−78). Scope:
+  seat data model; centralized `requireSeat` resolution/enforcement seam; Contributor
+  scoping across findings/actions/evidence/vendors + default-deny across every governance
+  family; SSO JIT that never silently consumes a Full seat; seat-aware provisioning +
+  escalation guards; export as a separately grantable permission; resolved seat scope
+  exposed to the UI via the `GET /api/me` `seat` block; Contributor write-response to
+  assigned assessments; API keys bound to issuer seat/role. Independent release review
+  found one P1 (a Viewer **seat** is read-only regardless of role) — fixed `6200d37f`.
+  Branch CI green incl. the cross-org-isolation lane.
+  - **Migrations (4, additive):** `20260915_enterprise_seat_model`, `20260916_sso_default_seat`,
+    `20260917_viewer_export`, `20260918_api_key_seat_binding`.
+  - **Staging (VERIFIED live 2026-08-12 ~06:00 UTC):** engine-staging deploys `1cc39602`
+    with `SECURELOGIC_SEAT_MODEL_ENABLED="true"` (dashboard-set — **not in `render.yaml`**,
+    known IaC drift); in-process `GET /api/me` returns `seat.enforced: true`; staging DB
+    `schema_migrations` 203 → **207** (all four applied 02:45 UTC). Activation used
+    same-SHA API deploys (03:36/03:44/04:04 UTC) per the EG2 Wave-1 env-injection lesson.
+    A one-hour post-enablement soak elapsed with **zero error-level logs** and no
+    restarts (04:04→06:05 UTC window read), with deny-path validation 403s observed
+    02:45–04:04 UTC; **no formal soak sign-off was recorded** — that acceptance remains
+    open (operator-owned). *(Superseded later the same day: the formal soak sign-off was
+    completed 2026-08-12 with verdict **PASS** — staging soak gate CLOSED; see
+    `docs/validation/seat-model-staging-soak-signoff.md`.)*
+  - **Production: NOT shipped.** `main` @ `49691948` (#756 release) predates the merge —
+    the package is absent from prod code, the prod flag is unset, prod DB remains at 203
+    migrations. Path to prod = develop→main release (migrate-before-merge, four
+    migrations) **then** a GATE B flag ruling. See flag matrix §1.21.
 
 > **Doc-sync 2026-06-25 (BUILD_SEQUENCE.md only; no application code changed).** This doc had frozen at `72b4d3c5` (2026-06-23, ~Pillar-1 step 6/7) while ~25 commits merged past it (#338–#360). This sync marks the Pillar-1 worker package Complete (acceptance = staging soak green, MET), records the post-freeze merges with their **promotion state**, updates the A04-G1 table count, and sets the new Active package. Evidence labels: **VERIFIED** = commit/PR/file/branch read · **INFERRED** = deduced (e.g. live prod runtime state) · **RECOMMENDED** = proposed/not built.
 

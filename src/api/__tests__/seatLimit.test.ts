@@ -78,7 +78,7 @@ const SSO_SRC = readFileSync(resolve(__dirname, "../routes/sso.ts"), "utf8");
 
 describe("seat-limit wiring — SSO JIT provisioning (#9a)", () => {
   it("imports and calls enforceSeatLimit", () => {
-    expect(SSO_SRC).toMatch(/import \{ enforceSeatLimit \} from "\.\.\/lib\/seatLimit\.js"/);
+    expect(SSO_SRC).toMatch(/import \{[^}]*\benforceSeatLimit\b[^}]*\} from "\.\.\/lib\/seatLimit\.js"/);
     expect(SSO_SRC).toMatch(/enforceSeatLimit\(orgId\)/);
   });
 

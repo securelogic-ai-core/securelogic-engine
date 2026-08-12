@@ -2,6 +2,8 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, assertAssignedOr404 } from "../lib/contributorScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -66,6 +68,10 @@ router.get(
 
       const params: unknown[] = [organizationId, limit];
       const conditions: string[] = ["a.organization_id = $1"];
+
+      // Contributor seats see only assessments assigned to them.
+      const asmtAssigned = ownerCondition(req, "a.assigned_to_user_id", params);
+      if (asmtAssigned) conditions.push(asmtAssigned);
 
       if (useCursor) {
         params.push(beforeCreatedAt, beforeId);
@@ -146,6 +152,9 @@ router.get(
         res.status(400).json({ error: "assessment_id_required" });
         return;
       }
+
+      // Contributor seats may read only assessments assigned to them.
+      if (!(await assertAssignedOr404(req, res, pg, "assessments", assessmentId, organizationId, "assessment_not_found"))) return;
 
       // Fetch assessment — org check enforces tenant isolation (returns 404 not 403 to avoid enumeration)
       const assessmentResult = await pg.query(

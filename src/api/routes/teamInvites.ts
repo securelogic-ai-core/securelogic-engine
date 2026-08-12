@@ -25,12 +25,29 @@ import { requireRole } from "../middleware/requireRole.js";
 import { signJwt } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAllCurrentConsents } from "../lib/legalConsent.js";
-import { enforceSeatLimit } from "../lib/seatLimit.js";
+import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
+import { seatModelEnabled } from "../middleware/requireSeat.js";
 import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const router = Router();
 
 const VALID_ROLES = new Set(["admin", "analyst", "viewer"]);
+const VALID_SEAT_TYPES = new Set(["full", "contributor", "viewer"]);
+
+/**
+ * A seat sets the ceiling; an incompatible (seat, role) pair is rejected at
+ * write time so stored state is always clean (resolveScope also clamps at read
+ * time as a backstop). Only a Full seat may hold the admin role.
+ */
+function seatRoleCompatible(seatType: string, role: string): boolean {
+  // Only a Full seat may hold admin.
+  if (role === "admin" && seatType !== "full") return false;
+  // A Viewer seat is read-only, so it may hold only the viewer role — pairing
+  // it with a writing role is meaningless (resolveScope clamps it to viewer)
+  // and must not be provisioned.
+  if (seatType === "viewer" && role !== "viewer") return false;
+  return true;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -174,6 +191,16 @@ router.post(
       const body  = req.body as Record<string, unknown>;
       const email = isValidEmail(body.email) ? String(body.email).trim().toLowerCase() : null;
       const role  = typeof body.role === "string" && VALID_ROLES.has(body.role) ? body.role : "analyst";
+      // Seat type carried on the invite (enterprise seat program). Defaults to
+      // 'full' so behaviour is unchanged when the caller does not specify one.
+      const seatType = typeof body.seat_type === "string" && VALID_SEAT_TYPES.has(body.seat_type)
+        ? body.seat_type
+        : "full";
+
+      if (!seatRoleCompatible(seatType, role)) {
+        res.status(400).json({ error: "incompatible_seat_role", detail: "Only a Full seat can hold the admin role." });
+        return;
+      }
 
       if (!email) {
         res.status(400).json({ error: "invalid_email" });
@@ -225,10 +252,10 @@ router.post(
       let invite: Record<string, unknown>;
       try {
         const result = await pg.query(
-          `INSERT INTO org_invites (organization_id, invited_by_user_id, email, role, token)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, email, role, expires_at, status`,
-          [orgId, userId, email, role, token]
+          `INSERT INTO org_invites (organization_id, invited_by_user_id, email, role, seat_type, token)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, email, role, seat_type, expires_at, status`,
+          [orgId, userId, email, role, seatType, token]
         );
         invite = result.rows[0] as Record<string, unknown>;
       } catch (err: unknown) {
@@ -674,10 +701,11 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       organization_id: string;
       email: string;
       role: string;
+      seat_type: string | null;
       status: string;
       expires_at: Date;
     }>(
-      `SELECT id, organization_id, email, role, status, expires_at
+      `SELECT id, organization_id, email, role, seat_type, status, expires_at
        FROM org_invites
        WHERE token = $1
        LIMIT 1`,
@@ -722,11 +750,16 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     // INSERT and the inactive→active reactivation below consume a seat, so this
     // gates ahead of either. On rejection we return BEFORE the transaction, so
     // the invite stays 'pending' and the same link succeeds once a seat frees.
-    const seat = await enforceSeatLimit(invite.organization_id);
+    // Under the seat model, the cap is enforced per CLASS against the invite's
+    // seat type; with the flag off, the legacy whole-org (Full) cap applies.
+    const inviteSeatType = invite.seat_type ?? "full";
+    const seat = seatModelEnabled()
+      ? await enforceSeatLimitForClass(invite.organization_id, inviteSeatType as SeatClass)
+      : await enforceSeatLimit(invite.organization_id);
     if (seat.exceeded) {
       res.status(409).json({
         error: "seat_limit_reached",
-        detail: `This organisation has reached its plan limit of ${seat.cap} members. Ask an admin to free a seat or upgrade, then use this invite link again.`
+        detail: `This organisation has reached its plan limit of ${seat.cap} ${seatModelEnabled() ? inviteSeatType + " seats" : "members"}. Ask an admin to free a seat or upgrade, then use this invite link again.`
       });
       return;
     }
@@ -749,17 +782,18 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
              name          = $1,
              password_hash = $2,
              role          = $3,
+             seat_type     = $4,
              updated_at    = NOW()
-           WHERE id = $4`,
-          [name, passwordHash, invite.role, existingUser.id]
+           WHERE id = $5`,
+          [name, passwordHash, invite.role, inviteSeatType, existingUser.id]
         );
         newUserId = existingUser.id;
       } else {
         const userResult = await client.query(
-          `INSERT INTO users (organization_id, email, name, role, status, password_hash, email_verified)
-           VALUES ($1, $2, $3, $4, 'active', $5, TRUE)
+          `INSERT INTO users (organization_id, email, name, role, seat_type, status, password_hash, email_verified)
+           VALUES ($1, $2, $3, $4, $5, 'active', $6, TRUE)
            RETURNING id`,
-          [invite.organization_id, invite.email, name, invite.role, passwordHash]
+          [invite.organization_id, invite.email, name, invite.role, inviteSeatType, passwordHash]
         );
         newUserId = userResult.rows[0].id as string;
 

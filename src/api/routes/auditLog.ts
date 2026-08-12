@@ -11,6 +11,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
@@ -55,6 +56,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireAdminRole,
   async (req, res) => {
     const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -155,6 +157,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireAdminRole,
   async (req, res) => {
     const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -191,6 +194,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireAdminRole,
   async (req, res) => {
     const organizationId = (req as any).organizationContext?.organizationId ?? null;

@@ -22,6 +22,7 @@ import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -82,6 +83,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   attachAssetSearchEligibility,
   asTenant(async (req, res) => {
     const r = req as OrgContextRequest;

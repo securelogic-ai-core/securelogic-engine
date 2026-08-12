@@ -42,9 +42,10 @@ export async function attachOrganizationContext(
       payment_failed_at: string | null;
       stripe_customer_id: string | null;
       stripe_subscription_tier: string | null;
+      viewer_export_enabled: boolean | null;
     }>(
       `SELECT entitlement_level, payment_failed_at, stripe_customer_id,
-              stripe_subscription_tier
+              stripe_subscription_tier, viewer_export_enabled
          FROM organizations
         WHERE id = $1
         LIMIT 1`,
@@ -62,6 +63,9 @@ export async function attachOrganizationContext(
       // 'professional' (rank 2), so tier-scoped capabilities (team invites)
       // need the raw tier to distinguish 'teams' from solo Brief Pro.
       stripeSubscriptionTier: row?.stripe_subscription_tier ?? null,
+      // Per-org grant consumed by the seat resolver: may Viewer-class
+      // identities bulk-export? Full/admin always may regardless.
+      viewerExportEnabled: row?.viewer_export_enabled === true,
     };
 
     next();

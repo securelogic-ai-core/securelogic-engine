@@ -17,7 +17,8 @@ import * as samlify from "samlify";
 import { pg, pgElevated } from "../infra/postgres.js";
 import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { enforceSeatLimit } from "../lib/seatLimit.js";
+import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
+import { seatModelEnabled } from "../middleware/requireSeat.js";
 import { logger } from "../infra/logger.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireRole } from "../middleware/requireRole.js";
@@ -314,10 +315,29 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       // operator raises the cap via PATCH /admin/organizations/:id (the
       // sales-led seat-allocation path for Platform / Enterprise). Existing
       // members are unaffected — only NEW JIT provisioning is gated.
-      const seat = await enforceSeatLimit(orgId);
+      // Resolve the seat/role for the new user. Under the seat model, an org
+      // chooses the JIT default (a read-only Viewer seat unless configured
+      // otherwise), and the per-CLASS cap is enforced. With the flag off,
+      // behaviour is exactly as before: analyst role, whole-org (Full) cap, and
+      // seat_type left to the column default.
+      const seatModelOn = seatModelEnabled();
+      let jitSeatType = "full";
+      let jitRole = "analyst";
+      if (seatModelOn) {
+        const defaults = await pg.query<{ default_sso_seat_type: string; default_sso_role: string }>(
+          `SELECT default_sso_seat_type, default_sso_role FROM organizations WHERE id = $1`,
+          [orgId]
+        );
+        jitSeatType = defaults.rows[0]?.default_sso_seat_type ?? "viewer";
+        jitRole = defaults.rows[0]?.default_sso_role ?? "viewer";
+      }
+
+      const seat = seatModelOn
+        ? await enforceSeatLimitForClass(orgId, jitSeatType as SeatClass)
+        : await enforceSeatLimit(orgId);
       if (seat.exceeded) {
         logger.warn(
-          { event: "sso_seat_limit_reached", orgId, email, used: seat.used, cap: seat.cap },
+          { event: "sso_seat_limit_reached", orgId, email, used: seat.used, cap: seat.cap, seatType: jitSeatType },
           "SSO JIT provisioning blocked — seat limit reached"
         );
         writeAuditEvent({
@@ -331,7 +351,8 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
         return;
       }
 
-      // JIT provisioning — new user, analyst role only.
+      // JIT provisioning — the seat/role resolved above (a read-only Viewer
+      // seat by default under the seat model; analyst/Full under legacy).
       //
       // NOTE: SSO JIT does not record legal consent at user creation. Per the
       // operator's design, SSO users are required to consent at first-login via
@@ -340,13 +361,13 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       // POST /api/auth/accept-terms (handled by the customer app UI in a
       // separate PR).
       const inserted = await pg.query<{ id: string }>(
-        `INSERT INTO users (organization_id, email, name, password_hash, email_verified, role, sso_provider)
-         VALUES ($1, $2, $3, '', true, 'analyst', 'saml')
+        `INSERT INTO users (organization_id, email, name, password_hash, email_verified, role, seat_type, sso_provider)
+         VALUES ($1, $2, $3, '', true, $4, $5, 'saml')
          RETURNING id`,
-        [orgId, email, displayName]
+        [orgId, email, displayName, jitRole, jitSeatType]
       );
       userId     = inserted.rows[0]!.id;
-      userRole   = "analyst";
+      userRole   = jitRole;
       wasNewUser = true;
     }
 

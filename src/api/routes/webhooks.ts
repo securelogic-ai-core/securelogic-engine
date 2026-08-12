@@ -21,6 +21,7 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireNotViewer } from "../middleware/requireRole.js";
@@ -119,6 +120,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -157,6 +159,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -263,6 +266,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (_req, res) => {
     res.status(200).json({ event_types: webhookEventCatalog() });
   }
@@ -278,6 +282,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
@@ -325,6 +330,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -432,6 +438,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -492,6 +499,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -572,6 +580,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   requireNotViewer,
   async (req, res) => {
     try {
@@ -640,6 +649,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;

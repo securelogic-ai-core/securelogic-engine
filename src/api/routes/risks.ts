@@ -21,6 +21,8 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -251,6 +253,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -477,6 +480,9 @@ router.get(
     try {
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
+      // Contributor seats see only rows they own. Inert otherwise / flag off.
+      const contribClause = ownerCondition(req, "owner_user_id", params);
+      if (contribClause) conditions.push(contribClause);
 
       if (input.status !== null) {
         params.push(input.status);
@@ -598,6 +604,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -767,6 +774,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -889,6 +897,12 @@ router.get(
         return;
       }
 
+      // Contributor seats may read only rows they own; else 404.
+      if (!mayAccessOwned(req, result.rows[0].owner_user_id)) {
+        res.status(404).json({ error: "risk_not_found" });
+        return;
+      }
+
       res.status(200).json({ risk: result.rows[0] });
     } catch (err) {
       logger.error(
@@ -918,6 +932,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -1007,6 +1022,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -1198,6 +1214,7 @@ router.patch(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;

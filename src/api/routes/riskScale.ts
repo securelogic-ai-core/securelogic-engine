@@ -11,8 +11,10 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 
 const router = Router();
 
@@ -46,6 +48,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;
@@ -120,6 +123,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     if (!orgCtx?.organizationId) {
@@ -165,6 +169,10 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
+  // Org-wide risk scale is administrative — it defines what the platform
+  // calls critical. Admin (or API-key) only.
+  requireAdminRole,
   async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;

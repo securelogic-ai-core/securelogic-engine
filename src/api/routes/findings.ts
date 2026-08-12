@@ -15,6 +15,8 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValidation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
@@ -148,6 +150,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -342,6 +345,11 @@ router.get(
       // Build filter conditions
       const conditions: string[] = ["f.organization_id = $1"];
       const params: unknown[] = [organizationId];
+
+      // Contributor seats see only findings they own. Inert for Full/Viewer/
+      // API-key callers and when the seat model is off.
+      const contribClause = ownerCondition(req, "f.owner_user_id", params);
+      if (contribClause) conditions.push(contribClause);
 
       const filterStatus = isNonEmptyString(req.query.status)
         ? req.query.status
@@ -785,6 +793,9 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Org-wide finding counts/posture are a governance view, not a Contributor's
+  // scope. Contributors see their own work through GET /findings (scoped list).
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
@@ -966,6 +977,8 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  // Entity-centric roll-up across the tenant is a governance view.
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
@@ -1099,6 +1112,13 @@ router.get(
         return;
       }
 
+      // Contributor seats may read only findings they own. A non-owned finding
+      // is 404 (non-disclosing — indistinguishable from "does not exist").
+      if (!mayAccessOwned(req, result.rows[0].owner_user_id)) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+
       res.status(200).json({ finding: result.rows[0] });
     } catch (err) {
       logger.error(
@@ -1153,10 +1173,15 @@ router.get(
       // Ownership-404 first — an empty list for a foreign id would leak
       // existence by absence, mirroring GET /api/findings/:id.
       const ownership = await pg.query(
-        `SELECT 1 FROM findings WHERE id = $1 AND organization_id = $2`,
+        `SELECT owner_user_id FROM findings WHERE id = $1 AND organization_id = $2`,
         [findingId, organizationId]
       );
       if ((ownership.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "finding_not_found" });
+        return;
+      }
+      // Contributor seats: history of a finding they do not own is 404.
+      if (!mayAccessOwned(req, ownership.rows[0].owner_user_id)) {
         res.status(404).json({ error: "finding_not_found" });
         return;
       }
@@ -1220,6 +1245,18 @@ router.get(
         return;
       }
 
+      // Contributor seats: context for a finding they do not own is 404.
+      {
+        const own = await pg.query(
+          `SELECT owner_user_id FROM findings WHERE id = $1 AND organization_id = $2`,
+          [findingId, organizationId]
+        );
+        if ((own.rowCount ?? 0) === 0 || !mayAccessOwned(req, own.rows[0].owner_user_id)) {
+          res.status(404).json({ error: "finding_not_found" });
+          return;
+        }
+      }
+
       const sinceRaw = req.query["since"];
       let since = typeof sinceRaw === "string" && !Number.isNaN(Date.parse(sinceRaw)) ? sinceRaw : null;
 
@@ -1267,6 +1304,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
@@ -1368,6 +1406,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     if (process.env.SECURELOGIC_DECISION_WORKSPACE_ENABLED !== "true") {
       res.status(404).json({ error: "not_found" });
@@ -1570,6 +1609,20 @@ router.patch(
       if (!findingId) {
         res.status(400).json({ error: "finding_id_required" });
         return;
+      }
+
+      // Contributor seats may mutate only findings they own. Pre-check once,
+      // uniformly across every update path below; a non-owned finding is 404
+      // (non-disclosing). Skipped entirely for Full/Viewer/API-key callers.
+      if (isAssignedScope(req)) {
+        const own = await pg.query(
+          `SELECT owner_user_id FROM findings WHERE id = $1 AND organization_id = $2`,
+          [findingId, organizationId]
+        );
+        if ((own.rowCount ?? 0) === 0 || !mayAccessOwned(req, own.rows[0].owner_user_id)) {
+          res.status(404).json({ error: "finding_not_found" });
+          return;
+        }
       }
 
       const body =
@@ -2063,6 +2116,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
