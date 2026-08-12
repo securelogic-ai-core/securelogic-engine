@@ -48,6 +48,7 @@ describe("seat wiring on provisioning paths", () => {
 // The compatibility rule, verified directly.
 function seatRoleCompatible(seatType: string, role: string): boolean {
   if (role === "admin" && seatType !== "full") return false;
+  if (seatType === "viewer" && role !== "viewer") return false;
   return true;
 }
 describe("seatRoleCompatible", () => {
@@ -56,8 +57,13 @@ describe("seatRoleCompatible", () => {
     expect(seatRoleCompatible("contributor", "admin")).toBe(false);
     expect(seatRoleCompatible("viewer", "admin")).toBe(false);
   });
-  it("non-admin roles are compatible with any seat", () => {
-    for (const s of ["full", "contributor", "viewer"]) {
+  it("a Viewer seat may hold only the viewer role (read-only)", () => {
+    expect(seatRoleCompatible("viewer", "viewer")).toBe(true);
+    expect(seatRoleCompatible("viewer", "analyst")).toBe(false);
+    expect(seatRoleCompatible("viewer", "admin")).toBe(false);
+  });
+  it("Full/Contributor seats accept non-admin roles", () => {
+    for (const s of ["full", "contributor"]) {
       expect(seatRoleCompatible(s, "analyst")).toBe(true);
       expect(seatRoleCompatible(s, "viewer")).toBe(true);
     }

@@ -142,9 +142,13 @@ export async function requireApiKey(
         return;
       }
 
-      // Viewer accounts may not perform mutations.
-      // API key auth (non-JWT) bypasses this check — API keys are admin-level.
-      if (effectiveRole === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
+      // Viewer accounts may not perform mutations. A Viewer ROLE is read-only
+      // always; a Viewer SEAT is read-only too when the seat model is on,
+      // regardless of the paired role — realizing resolveScope's clamp so an
+      // incompatible (viewer seat, non-viewer role) pair cannot write.
+      const seatIsReadOnly =
+        process.env["SECURELOGIC_SEAT_MODEL_ENABLED"] === "true" && effectiveSeatType === "viewer";
+      if ((effectiveRole === "viewer" || seatIsReadOnly) && MUTATION_METHODS.has(req.method.toUpperCase())) {
         res.status(403).json({
           error: "read_only_access",
           detail: "Viewer accounts cannot make changes."
@@ -281,6 +285,19 @@ export async function requireApiKey(
     if (process.env["SECURELOGIC_SEAT_MODEL_ENABLED"] === "true" && typeof apiKey.bound_seat_type === "string" && apiKey.bound_seat_type) {
       req.userSeatType = apiKey.bound_seat_type as string;
       req.userRole = (apiKey.bound_role as string | null) ?? "viewer";
+
+      // A key bound to a Viewer seat/role is read-only — mirror the JWT
+      // chokepoint so a bound viewer key cannot mutate either.
+      if (
+        (req.userSeatType === "viewer" || req.userRole === "viewer") &&
+        MUTATION_METHODS.has(req.method.toUpperCase())
+      ) {
+        res.status(403).json({
+          error: "read_only_access",
+          detail: "Viewer accounts cannot make changes.",
+        });
+        return;
+      }
     }
 
     next();

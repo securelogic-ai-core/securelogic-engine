@@ -40,7 +40,12 @@ const VALID_SEAT_TYPES = new Set(["full", "contributor", "viewer"]);
  * time as a backstop). Only a Full seat may hold the admin role.
  */
 function seatRoleCompatible(seatType: string, role: string): boolean {
+  // Only a Full seat may hold admin.
   if (role === "admin" && seatType !== "full") return false;
+  // A Viewer seat is read-only, so it may hold only the viewer role — pairing
+  // it with a writing role is meaningless (resolveScope clamps it to viewer)
+  // and must not be provisioned.
+  if (seatType === "viewer" && role !== "viewer") return false;
   return true;
 }
 
