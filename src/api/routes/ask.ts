@@ -29,8 +29,12 @@ import { renderProductKnowledge } from "../lib/productKnowledge.js";
 import {
   sqlFindingActive,
   sqlFindingClosed,
+  sqlFindingSignalSourced,
+  sqlFindingVendorSourced,
   sqlVendorAssessmentScope
 } from "../lib/metricDefinitions.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
+import { askEnabled, askFeatureFlag } from "../lib/askFeatureFlag.js";
 import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
@@ -117,12 +121,33 @@ const SYSTEM_PROMPT = buildAskSystemPrompt();
 // Rate limiter — 20 questions per minute per org
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-ORG limiter. 20 questions/minute.
+ *
+ * This read `(req as any).organizationId`, which is assigned NOWHERE in the
+ * codebase — attachOrganizationContext sets `req.organizationContext.organizationId`.
+ * So the key was always undefined and every request fell through to the IP
+ * branch. Behind Cloudflare `req.ip` is a rotating edge address (the same root
+ * cause that makes the tier-2 auth-anomaly detector unable to fire), so the
+ * per-org cap the file header advertises did not exist: the limiter was
+ * fragmenting across edge IPs and Ask was an uncapped spend surface.
+ *
+ * Falling back to the IP is still correct for a request that has no org context
+ * — but such a request is rejected by the handler anyway, so the fallback is now
+ * a genuine last resort rather than the normal path.
+ */
 const askRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => (req as any).organizationId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
+  keyGenerator: (req) => {
+    const orgId =
+      (req as unknown as { organizationContext?: { organizationId?: string | null } })
+        .organizationContext?.organizationId ?? null;
+    if (orgId) return `org:${orgId}`;
+    return req.ip ? ipKeyGenerator(req.ip) : "unknown";
+  },
   message: {
     error: "rate_limit_exceeded",
     message: "Too many questions. Wait 60 seconds.",
@@ -135,6 +160,7 @@ const askRateLimit = rateLimit({
 
 router.post(
   "/ask",
+  askFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
@@ -233,6 +259,13 @@ router.post(
         // so all four counts were permanently 0 and 'medium' was not even a value.
         // And `closed_count` was `status != 'open'`, reporting in-progress work as
         // closed. The assistant was reasoning from a posture of zero severe findings.
+        //
+        // The two provenance counts now come from the Metric Contract
+        // (sqlFindingVendorSourced / sqlFindingSignalSourced) rather than a
+        // route-local list. They were `source_type = 'vendor_review'` and
+        // `source_type = 'signal'`, which missed vendor review CYCLES entirely,
+        // and missed every finding the matcher writes as 'cyber_signal' plus the
+        // newer 'intelligence_event'. Ask reported those populations as zero.
         const findingsSummaryResult = await pg.query<{
           active_count: string;
           critical_active: string;
@@ -252,8 +285,8 @@ router.post(
              COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND severity = 'Low')         AS low_active,
              COUNT(*) FILTER (WHERE ${sqlFindingClosed()})                              AS closed_count,
              COUNT(*) FILTER (WHERE ${sqlFindingActive()} AND priority = 'immediate')   AS immediate_priority,
-             COUNT(*) FILTER (WHERE source_type = 'vendor_review')                      AS vendor_sourced,
-             COUNT(*) FILTER (WHERE source_type = 'signal')                             AS signal_sourced
+             COUNT(*) FILTER (WHERE ${sqlFindingVendorSourced()})                       AS vendor_sourced,
+             COUNT(*) FILTER (WHERE ${sqlFindingSignalSourced()})                       AS signal_sourced
            FROM findings
            WHERE organization_id = $1`,
           [organizationId]
@@ -384,7 +417,20 @@ router.post(
           [organizationId]
         );
 
-        // 7. Recent high/critical open findings
+        // 7. Recent High/Critical ACTIVE findings.
+        //
+        // This carried the SAME defect that was fixed in query 3 above and was
+        // missed here: the severity literals were lower-cased ('critical',
+        // 'high') and the domain is PascalCase — findings.ts:87
+        // VALID_SEVERITIES = {Critical, High, Moderate, Low}. The predicate
+        // matched NOTHING for any finding created through the API, so the
+        // "recent critical findings" list handed to the model was permanently
+        // empty and Ask narrated a posture with no severe findings in it.
+        //
+        // It also used `status = 'open'`, which is not the canonical population:
+        // sqlFindingActive() is the authoritative operational axis and is what
+        // query 3 ten lines above already uses. A list that disagrees with the
+        // count beside it is worse than either alone.
         const criticalFindingsResult = await pg.query<{
           title: string;
           severity: string;
@@ -397,10 +443,10 @@ router.post(
           `SELECT title, severity, status, source_type, domain, priority, created_at
            FROM findings
            WHERE organization_id = $1
-             AND severity IN ('critical', 'high')
-             AND status = 'open'
+             AND severity IN ('Critical', 'High')
+             AND ${sqlFindingActive()}
            ORDER BY
-             CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 END,
+             CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 END,
              created_at DESC
            LIMIT 15`,
           [organizationId]
@@ -561,6 +607,38 @@ router.post(
         res.status(502).json({ error: "ask_failed", message: "Unable to process query" });
         return;
       }
+
+      // Ask recorded NOTHING before this: no audit event for the question, the
+      // answer, or the org data that fed it. An LLM-mediated read path over
+      // customer risk data that leaves no trace is not auditable, which is a
+      // hard requirement for a governance product — "who asked what, and what
+      // were they shown" must be answerable after the fact.
+      //
+      // The question is recorded; the ANSWER is not. Answers are unbounded model
+      // output and belong in conversation storage (Ask A1), not in audit_log.
+      // The context_used digest records the shape of what the model saw, so an
+      // investigator can tell whether an answer could have been grounded.
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "ask.question.asked",
+        resourceType: "ask",
+        resourceId: null,
+        payload: {
+          question: question.trim().slice(0, 500),
+          model: ASK_MODEL,
+          answer_length: answer.length,
+          context_digest: {
+            findings_active: findingsSummary.active_count,
+            risks: topRisksResult.rows.length,
+            vendors_active: parseInt(vendorCountResult.rows[0]?.total ?? "0", 10),
+            critical_findings_listed: criticalFindingsResult.rows.length,
+            posture_as_of: posture?.snapshot_date ?? null
+          }
+        },
+        ipAddress: req.ip ?? null
+      });
 
       res.status(200).json({
         answer,
