@@ -322,9 +322,14 @@ production (no prod enablement without an explicit operator ruling).
   same-SHA API-triggered deploys after setting the env (per the EG2 Wave-1 env-injection
   incident: set the flag first, then deploy).
 - **Default:** OFF — strict `=== "true"` read (`src/api/middleware/requireSeat.ts`).
-  **Not declared in `render.yaml`** (known IaC drift): the staging value is dashboard-set,
-  so a Blueprint sync will not carry or restore it. Declaring it `"false"` in IaC is an
-  open follow-up.
+  **Declared in `render.yaml` since 2026-08-12** (engine blocks only, per-service values —
+  the closure-gate pattern): prod engine `"false"` (explicit fail-closed), staging engine
+  `"true"` (matches the live dashboard value, so the next Blueprint sync is a value no-op
+  that transfers ownership to IaC and will restore the flag if the dashboard var is lost).
+  Blueprint-sync caveat: the Blueprint instance watches **`main`** with `autoSync: false`
+  (currently paused), so this declaration is inert until the change reaches `main` AND an
+  operator runs a manual sync — until then the staging dashboard value remains the
+  operative source (values agree, so no behavioral difference either way).
 - **Staging order:** migrations `20260915_enterprise_seat_model` → `20260916_sso_default_seat`
   → `20260917_viewer_export` → `20260918_api_key_seat_binding` (all additive) → set flag on
   `securelogic-engine-staging` → deploy.
