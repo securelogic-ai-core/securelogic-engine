@@ -8,6 +8,7 @@ import {
 } from "../lib/riskClassification.js";
 import { filterTopRisksBySector } from "../lib/filterTopRisks.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 
@@ -18,6 +19,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("standard"),
+  denyContributor(),
   async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null

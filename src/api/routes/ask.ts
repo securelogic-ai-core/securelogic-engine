@@ -22,6 +22,7 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
@@ -137,6 +138,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   askRateLimit,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;

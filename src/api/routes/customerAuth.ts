@@ -458,8 +458,8 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       orgId = orgResult.rows[0].id as string;
 
       await client.query(
-        `INSERT INTO api_keys (organization_id, label, key_hash, status)
-         VALUES ($1, $2, $3, 'active')`,
+        `INSERT INTO api_keys (organization_id, label, key_hash, status, bound_seat_type, bound_role)
+         VALUES ($1, $2, $3, 'active', 'full', 'admin')`,
         [orgId, email, keyHash]
       );
 

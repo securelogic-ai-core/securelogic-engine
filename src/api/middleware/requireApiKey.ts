@@ -13,6 +13,12 @@ declare global {
       /** Role of the authenticated user (JWT path only) */
       userRole?: string;
       /**
+       * Seat class of the authenticated user (JWT path only): full |
+       * contributor | viewer. Absent on API-key auth, which is admin-level and
+       * treated as a full seat by the seat resolver.
+       */
+      userSeatType?: string;
+      /**
        * When a JWT user is authenticated, this is their user UUID.
        * Routes can use it as a fallback for owner_user_id when the
        * caller doesn't provide one explicitly.
@@ -72,13 +78,18 @@ export async function requireApiKey(
       // api_keys lookup below has no fallback either, so failing JWT-bridge
       // auth here doesn't widen the outage envelope.
       let effectiveRole: string;
+      // Seat class (enterprise seat program). Read live from the users row, like
+      // the role, so a seat change takes effect immediately. Legacy/null rows
+      // resolve to 'full' — the pre-seat-model default.
+      let effectiveSeatType = "full";
       try {
         const pwResult = await pg.query<{
           password_changed_at: Date | null;
           status: string;
           role: string;
+          seat_type: string | null;
         }>(
-          `SELECT password_changed_at, status, role FROM users WHERE id = $1 LIMIT 1`,
+          `SELECT password_changed_at, status, role, seat_type FROM users WHERE id = $1 LIMIT 1`,
           [payload.sub]
         );
         const userRow = pwResult.rows[0] ?? null;
@@ -111,6 +122,7 @@ export async function requireApiKey(
         // Role changes take effect immediately: authz below uses the
         // current DB role, not the claim baked into the token at issue.
         effectiveRole = userRow.role;
+        effectiveSeatType = userRow.seat_type ?? "full";
       } catch (err) {
         logger.error(
           { event: "jwt_bridge_pw_check_db_error", err, userId: payload.sub },
@@ -130,9 +142,13 @@ export async function requireApiKey(
         return;
       }
 
-      // Viewer accounts may not perform mutations.
-      // API key auth (non-JWT) bypasses this check — API keys are admin-level.
-      if (effectiveRole === "viewer" && MUTATION_METHODS.has(req.method.toUpperCase())) {
+      // Viewer accounts may not perform mutations. A Viewer ROLE is read-only
+      // always; a Viewer SEAT is read-only too when the seat model is on,
+      // regardless of the paired role — realizing resolveScope's clamp so an
+      // incompatible (viewer seat, non-viewer role) pair cannot write.
+      const seatIsReadOnly =
+        process.env["SECURELOGIC_SEAT_MODEL_ENABLED"] === "true" && effectiveSeatType === "viewer";
+      if ((effectiveRole === "viewer" || seatIsReadOnly) && MUTATION_METHODS.has(req.method.toUpperCase())) {
         res.status(403).json({
           error: "read_only_access",
           detail: "Viewer accounts cannot make changes."
@@ -167,6 +183,7 @@ export async function requireApiKey(
       (req as any).jwtPayload = { ...payload, role: effectiveRole };
       req.userId              = payload.sub;
       req.userRole            = effectiveRole;
+      req.userSeatType        = effectiveSeatType;
       req.autoUserId          = payload.sub;
       next();
       return;
@@ -178,7 +195,7 @@ export async function requireApiKey(
       `
       SELECT id, organization_id, label, key_hash, status,
              last_used_at, created_at, revoked_at, expires_at,
-             created_by_user_id
+             created_by_user_id, bound_seat_type, bound_role
       FROM api_keys
       WHERE key_hash = $1
       LIMIT 1
@@ -258,6 +275,31 @@ export async function requireApiKey(
     ).catch(() => { /* silent */ });
 
     (req as any).apiKey = apiKey;
+
+    // Seat/role binding (activation blocker 2). When the seat model is ON, a
+    // key bound to a seat/role acts AS that identity — closing the historical
+    // "API key = admin-level" bypass. A legacy key (bound_seat_type NULL) keeps
+    // admin-level behaviour during the compatibility window until rotated. When
+    // the model is OFF, nothing is attached and every key stays admin-level,
+    // exactly as before.
+    if (process.env["SECURELOGIC_SEAT_MODEL_ENABLED"] === "true" && typeof apiKey.bound_seat_type === "string" && apiKey.bound_seat_type) {
+      req.userSeatType = apiKey.bound_seat_type as string;
+      req.userRole = (apiKey.bound_role as string | null) ?? "viewer";
+
+      // A key bound to a Viewer seat/role is read-only — mirror the JWT
+      // chokepoint so a bound viewer key cannot mutate either.
+      if (
+        (req.userSeatType === "viewer" || req.userRole === "viewer") &&
+        MUTATION_METHODS.has(req.method.toUpperCase())
+      ) {
+        res.status(403).json({
+          error: "read_only_access",
+          detail: "Viewer accounts cannot make changes.",
+        });
+        return;
+      }
+    }
+
     next();
   } catch (err) {
     logger.error({ event: "require_api_key_error", err }, "API key validation failed");

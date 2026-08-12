@@ -159,8 +159,8 @@ router.post("/api-keys", async (req, res) => {
 
       const result = await pg.query(
         `
-        INSERT INTO api_keys (organization_id, label, key_hash, status, created_at)
-        VALUES ($1, $2, $3, 'active', NOW())
+        INSERT INTO api_keys (organization_id, label, key_hash, status, created_at, bound_seat_type, bound_role)
+        VALUES ($1, $2, $3, 'active', NOW(), 'full', 'admin')
         RETURNING id, organization_id, label, status, created_at
         `,
         [organizationId, label, keyHash]

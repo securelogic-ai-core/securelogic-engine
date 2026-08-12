@@ -3,6 +3,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -147,6 +148,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const userId = req.userId;
@@ -206,6 +208,7 @@ router.delete(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       const userId = req.userId;
@@ -255,6 +258,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       if (req.userRole !== "admin") {
@@ -297,6 +301,7 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(async (req, res) => {
     try {
       if (req.userRole !== "admin") {

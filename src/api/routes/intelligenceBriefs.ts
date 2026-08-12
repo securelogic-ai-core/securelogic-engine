@@ -24,6 +24,7 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import {
@@ -87,7 +88,7 @@ router.use(
 // POST /api/intelligence-briefs/generate
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/generate", requireEntitlement("standard"), async (req, res) => {
+router.post("/intelligence-briefs/generate", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   // Accept optional period_start / period_end; default to last 7 days.
@@ -456,7 +457,7 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), asy
 // Upserts on (organization_id, email): reactivates if previously unsubscribed.
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), async (req, res) => {
+router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const rawEmail = String(req.body?.email ?? "").trim().toLowerCase();
@@ -500,7 +501,7 @@ router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), 
 // "subscribers" as a brief UUID parameter.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), async (req, res) => {
+router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const includeInactive = req.query["include_inactive"] === "true";
@@ -544,7 +545,7 @@ router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), a
 // Hard delete is intentionally not supported — preserves audit history.
 // ---------------------------------------------------------------------------
 
-router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standard"), async (req, res) => {
+router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -583,7 +584,7 @@ router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standa
 // IMPORTANT: defined before /:id routes.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), async (req, res) => {
+router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -638,7 +639,7 @@ const VALID_PREF_CATEGORIES = new Set([
   "general"
 ]);
 
-router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), async (req, res) => {
+router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -745,7 +746,7 @@ router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlem
 // Trigger delivery of a published brief to all active subscribers.
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), async (req, res) => {
+router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id } = req.params as { id: string };
 

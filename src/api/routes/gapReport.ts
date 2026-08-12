@@ -16,6 +16,7 @@ import PDFDocument from "pdfkit";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
@@ -937,6 +938,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId      = organizationContext?.organizationId ?? null;

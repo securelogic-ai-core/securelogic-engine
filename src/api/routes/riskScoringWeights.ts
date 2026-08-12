@@ -34,8 +34,10 @@ import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_WEIGHTS, type RiskScoringWeights } from "../lib/riskScoring.js";
@@ -224,6 +226,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   asTenant(getRiskScoringWeights)
 );
 
@@ -232,6 +235,10 @@ router.put(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
+  // Org-wide scoring weights are administrative — they change how every risk
+  // scores. Admin (or API-key) only.
+  requireAdminRole,
   asTenant(putRiskScoringWeights)
 );
 

@@ -40,7 +40,7 @@ describe("teamInvites — seat-limit enforcement", () => {
 
 describe("teamInvites — accept-path seat-cap enforcement (bypass regression)", () => {
   it("imports the shared enforceSeatLimit helper", () => {
-    expect(SRC).toMatch(/import \{ enforceSeatLimit \} from "\.\.\/lib\/seatLimit\.js"/);
+    expect(SRC).toMatch(/import \{[^}]*\benforceSeatLimit\b[^}]*\} from "\.\.\/lib\/seatLimit\.js"/);
   });
 
   it("re-checks the cap on accept using the invite's organization_id", () => {

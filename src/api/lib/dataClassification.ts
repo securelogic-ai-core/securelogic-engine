@@ -310,6 +310,7 @@ export const TOMBSTONE_PRESERVED_COLUMNS: readonly string[] = [
   "id", // the whole point of tombstone — UUID preserved for audit integrity
   "organization_id", // FK / audit attribution integrity
   "role", // org structure, last-admin accounting
+  "seat_type", // seat accounting — not PII; a tombstoned row consumes no seat (status != active)
   "created_at", // audit
   "deletion_scheduled_at", // audit: when the grace window started
   "deletion_requested_by_user_id", // audit: who requested the deletion

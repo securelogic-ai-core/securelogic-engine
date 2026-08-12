@@ -17,6 +17,7 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -37,7 +38,7 @@ function ctx(req: any): { organizationId: string | null; userId: string | null }
   };
 }
 
-const chain = [requireApiKey, attachOrganizationContext, requireEntitlement("premium")];
+const chain = [requireApiKey, attachOrganizationContext, requireEntitlement("premium"), denyContributor()];
 
 /* GET /api/finding-saved-views — the caller's own saved views. */
 router.get(

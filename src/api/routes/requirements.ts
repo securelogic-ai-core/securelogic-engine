@@ -22,6 +22,8 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { validateRequirementCreate } from "../lib/requirementValidation.js";
@@ -70,6 +72,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -182,6 +185,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -295,6 +299,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -364,6 +369,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -615,6 +621,20 @@ router.post(
         }
       }
 
+      // Contributor seats may respond ONLY to a response already assigned to
+      // them — an update, never a create. A missing or unassigned response 404s.
+      if (isAssignedScope(req)) {
+        const owns = await pg.query<{ assigned_to_user_id: string | null }>(
+          `SELECT assigned_to_user_id FROM requirement_responses
+            WHERE organization_id = $1 AND requirement_id = $2 AND assessment_type = $3 AND subject_id = $4::uuid`,
+          [organizationId, input.requirement_id, input.assessment_type, input.subject_id]
+        );
+        if ((owns.rowCount ?? 0) === 0 || !mayAccessOwned(req, owns.rows[0]?.assigned_to_user_id)) {
+          res.status(404).json({ error: "requirement_response_not_found" });
+          return;
+        }
+      }
+
       // Upsert — detect insert vs update via xmax
       const upsertResult = await pg.query<{
         id: string;
@@ -804,6 +824,9 @@ router.get(
         return;
       }
 
+      // Contributor seats see only responses assigned to them.
+      const respParams: unknown[] = [organizationId, assessmentType, subjectId, frameworkId];
+      const respAssigned = ownerCondition(req, "rr.assigned_to_user_id", respParams);
       const result = await pg.query<{
         id: string;
         requirement_id: string;
@@ -834,9 +857,10 @@ router.get(
           AND rr.assessment_type  = $2
           AND rr.subject_id       = $3::uuid
           AND r.framework_id      = $4
+          ${respParams.length > 4 ? `AND ${respAssigned}` : ""}
         ORDER BY r.created_at ASC, r.id ASC
         `,
-        [organizationId, assessmentType, subjectId, frameworkId]
+        respParams
       );
 
       res.status(200).json({

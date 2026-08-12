@@ -16,6 +16,7 @@ import { pg } from "../infra/postgres.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireCapability } from "../lib/enterpriseContextCapability.js";
+import { requireCapability as requireSeatCapability, denyContributor } from "../middleware/requireSeat.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { assetRegistryFeatureFlag } from "../lib/assetRegistryFeatureFlag.js";
 import { riskIntelligenceFeatureFlag } from "../lib/riskIntelligenceFeatureFlag.js";
@@ -188,13 +189,16 @@ const chain = [
   assetRegistryFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
-  requireCapability("enterprise_context")
+  requireCapability("enterprise_context"),
+  denyContributor()
 ];
 
 router.get("/risk/dimensions", ...chain, asTenant(getRiskDimensions));
 router.get("/risk/trends", ...chain, asTenant(getRiskTrends));
 router.get("/risk/kpis", ...chain, asTenant(getRiskKpis));
-router.get("/risk/export", ...chain, asTenant(exportRiskHistory));
+// Bulk export is separately permissioned: Viewers export only when the org
+// grants it; Contributors never. Inert when the seat model is off.
+router.get("/risk/export", ...chain, requireSeatCapability("export:data"), asTenant(exportRiskHistory));
 router.get("/executive/risk-summary", ...chain, asTenant(getExecutiveRiskSummary));
 
 export default router;

@@ -38,6 +38,8 @@ import { Router } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { ownerCondition, assertAssignedOr404 } from "../lib/contributorScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -122,6 +124,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requirePremiumOrCorePlatform,
+  denyContributor(),
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -265,6 +268,10 @@ router.get(
       const conditions: string[] = ["organization_id = $1"];
       const params: unknown[] = [organizationId];
 
+      // Contributor seats see only assessments assigned to them.
+      const contribAssigned = ownerCondition(req, "assigned_to_user_id", params);
+      if (contribAssigned) conditions.push(contribAssigned);
+
       // obligation_id filter
       const filterObligationId = isNonEmptyString(req.query.obligation_id)
         ? req.query.obligation_id.trim()
@@ -378,6 +385,9 @@ router.get(
       return;
     }
 
+    // Contributor seats may read/respond only to assessments assigned to them.
+    if (!(await assertAssignedOr404(req, res, pg, "obligation_assessments", assessmentId, organizationId, "obligation_assessment_not_found"))) return;
+
     try {
       const assessmentResult = await pg.query(
         `
@@ -462,6 +472,9 @@ router.patch(
       res.status(400).json({ error: "assessment_id_must_be_uuid" });
       return;
     }
+
+    // Contributor seats may read/respond only to assessments assigned to them.
+    if (!(await assertAssignedOr404(req, res, pg, "obligation_assessments", assessmentId, organizationId, "obligation_assessment_not_found"))) return;
 
     const validated = validateObligationAssessmentStatusTransition(req.body);
     if ("error" in validated) {
