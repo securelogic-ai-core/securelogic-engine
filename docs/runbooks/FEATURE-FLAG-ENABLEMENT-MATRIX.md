@@ -336,7 +336,11 @@ production (no prod enablement without an explicit operator ruling).
 - **Staging state (VERIFIED live 2026-08-12):** **ENABLED and enforcing.** Config `"true"`
   on `securelogic-engine-staging`; in-process `GET /api/me` returns `seat.enforced: true`
   with resolved scope; staging DB at 207 migrations with all four seat migrations applied
-  (2026-08-12 02:45 UTC, 203 → 207).
+  (2026-08-12 02:45 UTC, 203 → 207). **Formal staging soak signed off 2026-08-12: PASS —
+  gate CLOSED** (~3h20m under enforcement, zero restarts/errors/incidents, expected-only
+  403s; SSO/JIT, live API-key binding, and live Admin-vs-Full separation are documented
+  coverage limits that go into GATE B validation — see
+  `docs/validation/seat-model-staging-soak-signoff.md`).
 - **Production order:** **GATE B — and additionally the code is NOT on `main`.** PR #784
   merged to `develop` after the #756 release cut; prod (`49691948`) predates the package,
   the prod flag is unset, and prod is at 203 migrations (no seat migrations). Prod

@@ -521,7 +521,9 @@ All four criteria now hold (met 2026-06-26); the package is **UNBLOCKED and ACTI
     A one-hour post-enablement soak elapsed with **zero error-level logs** and no
     restarts (04:04→06:05 UTC window read), with deny-path validation 403s observed
     02:45–04:04 UTC; **no formal soak sign-off was recorded** — that acceptance remains
-    open (operator-owned).
+    open (operator-owned). *(Superseded later the same day: the formal soak sign-off was
+    completed 2026-08-12 with verdict **PASS** — staging soak gate CLOSED; see
+    `docs/validation/seat-model-staging-soak-signoff.md`.)*
   - **Production: NOT shipped.** `main` @ `49691948` (#756 release) predates the merge —
     the package is absent from prod code, the prod flag is unset, prod DB remains at 203
     migrations. Path to prod = develop→main release (migrate-before-merge, four
