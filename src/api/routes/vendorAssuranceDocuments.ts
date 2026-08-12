@@ -61,6 +61,7 @@ import {
   getVendorAssurancePdfSignedUrl
 } from "../lib/vendorAssuranceStorage.js";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
+import { sqlAssuranceReviewed } from "../lib/metricDefinitions.js";
 import {
   refreshCuecMappingsForDocument,
   MATCH_SCORE_MIN_THRESHOLD,
@@ -85,6 +86,14 @@ const VALID_STATUSES = new Set([
   "manual_review_requested",
   "rejected"
 ]);
+
+/**
+ * Pseudo-status accepted by the ?status= list filter. Not a column value —
+ * it expands to `processing_status IN ('approved','finalized')` via
+ * sqlAssuranceReviewed(). See ASSURANCE_REVIEWED_STATUSES for why the reviewed
+ * population is two values and must never be hardcoded as one.
+ */
+const ASSURANCE_REVIEWED_FILTER = "reviewed";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -369,12 +378,24 @@ export async function listVendorAssuranceDocuments(req: Request, res: Response):
   const statusRaw = req.query["status"];
   if (isNonEmptyString(statusRaw)) {
     const s = statusRaw.trim();
-    if (!VALID_STATUSES.has(s)) {
-      res.status(400).json({ error: "invalid_status_filter", allowed: [...VALID_STATUSES] });
+    // 'reviewed' is a PSEUDO-STATUS, not a column value: it means "a human
+    // accepted this extraction", which is `approved OR finalized` (see
+    // ASSURANCE_REVIEWED_STATUSES). Callers that want the latest reviewed
+    // document must use it rather than naming a raw state — hardcoding
+    // 'finalized' is dead on the current flow and hardcoding 'approved' drops
+    // legacy reviewed rows.
+    if (s === ASSURANCE_REVIEWED_FILTER) {
+      conditions.push(sqlAssuranceReviewed());
+    } else if (!VALID_STATUSES.has(s)) {
+      res.status(400).json({
+        error: "invalid_status_filter",
+        allowed: [...VALID_STATUSES, ASSURANCE_REVIEWED_FILTER]
+      });
       return;
+    } else {
+      params.push(s);
+      conditions.push(`processing_status = $${params.length}`);
     }
-    params.push(s);
-    conditions.push(`processing_status = $${params.length}`);
   }
 
   params.push(limit);

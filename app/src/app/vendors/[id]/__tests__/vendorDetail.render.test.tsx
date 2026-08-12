@@ -169,14 +169,32 @@ describe("/vendors/[id] — no cross-org, no cross-entity fill", () => {
     // org's review cycles. The vendor id must always be present.
     expect(api.getVendorReviews.mock.calls[0][1]).toBe("v-1");
 
-    // Assurance documents are listed BY VENDOR and by finalized status, never org-wide,
+    // Assurance documents are listed BY VENDOR and by REVIEWED status, never org-wide,
     // and the extraction is read for the document that list returned.
+    //
+    // `reviewed` is the canonical pseudo-status (approved OR finalized). This
+    // asserted `finalized` — a state migration 20260612 retired and that no
+    // current code path writes — so the card rendered its empty state forever
+    // however many SOC reports a reviewer approved, and this test locked the bug in.
     expect(api.listVendorAssuranceDocuments).toHaveBeenCalledWith("test-jwt", {
       vendorId: "v-1",
-      status: "finalized",
+      status: "reviewed",
       limit: 1,
     });
     expect(api.getVendorAssuranceExtraction).toHaveBeenCalledWith("test-jwt", "doc-1");
+  });
+
+  it("NEVER filters assurance documents by a single terminal status", async () => {
+    await renderPage(VendorDetailPage, props("v-1"));
+
+    // The regression guard for D1. Naming either raw state alone is a defect in
+    // one direction or the other: 'finalized' is dead on the current flow, and
+    // 'approved' alone drops legacy reviewed rows. Only the pseudo-status covers
+    // both, so assert the raw values can never reappear here.
+    const statusArg = api.listVendorAssuranceDocuments.mock.calls[0]?.[1]?.status;
+    expect(statusArg).toBe("reviewed");
+    expect(statusArg).not.toBe("finalized");
+    expect(statusArg).not.toBe("approved");
   });
 
   it("the token on every read is the CALLER's — the engine's org scope rides on it", async () => {
@@ -471,7 +489,78 @@ describe("/vendors/[id] — vendor assurance evidence", () => {
     expect(screen.queryByText("unqualified")).toBeNull();
     // Un-reviewed fields fall through to the extraction.
     expect(screen.getByText("SOC 2 Type II")).toBeInTheDocument();
-    expect(hrefOf(container, /View finalized review/)).toBe("/vendor-assurance/doc-42");
+    expect(hrefOf(container, /View reviewed report/)).toBe("/vendor-assurance/doc-42");
+  });
+
+  it("a FIELD OVERRIDE beats both the legacy decision and the extraction", async () => {
+    // The live correction mechanism since migration 20260612. The card consulted
+    // only current_decisions — the store that same migration tore out — so on the
+    // current flow every reviewer correction was invisible and the pre-override
+    // extraction was rendered as if it were the accepted value.
+    api.listVendorAssuranceDocuments.mockResolvedValue({
+      documents: [aVendorAssuranceDocument({ id: "doc-42", processing_status: "approved" })],
+    });
+    api.getVendorAssuranceExtraction.mockResolvedValue(
+      aVendorAssuranceExtractionResponse({
+        // A legacy decision AND an override on the same field: the override wins.
+        current_decisions: {
+          auditor_name: {
+            decision: "edit",
+            reviewed_value: "Stale Legacy Value LLP",
+            reviewer_note: null,
+            decided_by_user_id: "user-1",
+            decided_at: "2026-05-21T00:00:00.000Z",
+          },
+        },
+        field_overrides: [
+          {
+            field_name: "auditor_name",
+            original_value: "Ledger & Co",
+            override_value: "Ledger & Co LLP",
+            reason: "Legal entity name corrected from the cover page",
+            overridden_by_user_id: "user-1",
+            overridden_at: "2026-05-22T00:00:00.000Z",
+          },
+        ],
+      })
+    );
+
+    await renderPage(VendorDetailPage, props());
+
+    expect(screen.getByText("Ledger & Co LLP")).toBeInTheDocument();
+    // Neither the raw extraction nor the superseded legacy decision may surface.
+    expect(screen.queryByText("Ledger & Co")).toBeNull();
+    expect(screen.queryByText("Stale Legacy Value LLP")).toBeNull();
+    // A corrected value is labelled as corrected — never presented as the model's own.
+    expect(screen.getByText("corrected")).toBeInTheDocument();
+  });
+
+  it("renders an APPROVED document — the state the current review flow writes", async () => {
+    // The end-to-end proof for D1: approve is what DocumentActions calls, and the
+    // card must render its result. Before the fix this produced the empty state.
+    api.listVendorAssuranceDocuments.mockResolvedValue({
+      documents: [
+        aVendorAssuranceDocument({
+          id: "doc-99",
+          processing_status: "approved",
+          finalized_at: null,
+          finalized_by_user_id: null,
+          approved_at: "2026-05-22T00:00:00.000Z",
+          approved_by_user_id: "user-1",
+        }),
+      ],
+    });
+    api.getVendorAssuranceExtraction.mockResolvedValue(aVendorAssuranceExtractionResponse());
+
+    const { container } = await renderPage(VendorDetailPage, props());
+
+    expect(screen.getByText("SOC 2 Type II")).toBeInTheDocument();
+    expect(hrefOf(container, /View reviewed report/)).toBe("/vendor-assurance/doc-99");
+    expect(
+      screen.queryByText(
+        "No assurance documents reviewed yet. Upload a SOC report to begin extraction and review."
+      )
+    ).toBeNull();
   });
 
   it("a document whose extraction is missing falls back whole — no half-populated card", async () => {

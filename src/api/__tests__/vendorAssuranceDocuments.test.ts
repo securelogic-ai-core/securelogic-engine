@@ -503,6 +503,52 @@ describe("listVendorAssuranceDocuments", () => {
     await listVendorAssuranceDocuments(req as never, res as never);
     expect(status).toHaveBeenCalledWith(400);
   });
+
+  // ── the 'reviewed' pseudo-status (D1) ────────────────────────────────────
+  //
+  // "A human accepted this extraction" is TWO column values, not one:
+  // migration 20260612 replaced 'finalized' with 'approved' and no current code
+  // path writes the former, but the rows written before that change are real
+  // customer review decisions. Filtering on either value alone is a defect in
+  // one direction or the other, so the list route exposes a pseudo-status that
+  // expands to both.
+
+  it("'reviewed' expands to approved OR finalized — never a single hardcoded state", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ query: { status: "reviewed" } });
+    const { res } = buildRes();
+    await listVendorAssuranceDocuments(req as never, res as never);
+
+    const sql = String(pgQuerySpy.mock.calls[0]?.[0] ?? "");
+    expect(sql).toMatch(/processing_status IN \('approved', 'finalized'\)/);
+
+    // The expansion is a compile-time constant, never a bound parameter: the
+    // only params are the org id and the limit.
+    const params = pgQuerySpy.mock.calls[0]?.[1] as unknown[];
+    expect(params).toHaveLength(2);
+    expect(params?.[0]).toBe(ORG_A);
+    expect(params).not.toContain("reviewed");
+  });
+
+  it("still supports an exact single-state filter", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const req = buildReq({ query: { status: "extracted" } });
+    const { res } = buildRes();
+    await listVendorAssuranceDocuments(req as never, res as never);
+
+    const sql = String(pgQuerySpy.mock.calls[0]?.[0] ?? "");
+    expect(sql).toMatch(/processing_status = \$2/);
+    const params = pgQuerySpy.mock.calls[0]?.[1] as unknown[];
+    expect(params?.[1]).toBe("extracted");
+  });
+
+  it("advertises 'reviewed' in the allowed list when a filter is rejected", async () => {
+    const req = buildReq({ query: { status: "lol" } });
+    const { res, json } = buildRes();
+    await listVendorAssuranceDocuments(req as never, res as never);
+    const body = json.mock.calls[0]?.[0] as { allowed?: string[] };
+    expect(body?.allowed).toContain("reviewed");
+  });
 });
 
 describe("getVendorAssuranceDocument", () => {

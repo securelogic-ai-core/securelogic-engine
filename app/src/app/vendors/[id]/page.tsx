@@ -29,6 +29,7 @@ import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
 import { ArchiveVendorButton } from "./ArchiveVendorButton";
 import { VendorAssuranceUploadForm } from "./VendorAssuranceUploadForm";
+import { fieldLabel } from "@/lib/vendorAssurance/fieldGroups";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -890,18 +891,23 @@ export default async function VendorDetailPage({
     )
   ).filter((p): p is VendorFrameworkProgress => p !== null);
 
-  // Vendor-Assurance read: latest finalized document + its extraction +
-  // current decision per field projected at read time. No stored snapshot.
+  // Vendor-Assurance read: latest REVIEWED document + its extraction, with the
+  // current value per field projected at read time. No stored snapshot.
+  //
+  // `status: "reviewed"` is the canonical predicate (approved OR finalized).
+  // This previously read `status: "finalized"` — a state migration 20260612
+  // retired and that no current code path writes, so the card rendered its
+  // empty state forever no matter how many SOC reports a reviewer approved.
   const assuranceDocsData = await listVendorAssuranceDocuments(token, {
     vendorId: vendor.id,
-    status: "finalized",
+    status: "reviewed",
     limit: 1,
   });
-  const latestFinalizedAssuranceDoc: VendorAssuranceDocument | null =
+  const latestReviewedAssuranceDoc: VendorAssuranceDocument | null =
     assuranceDocsData?.documents?.[0] ?? null;
   const latestAssuranceExtraction: VendorAssuranceExtractionResponse | null =
-    latestFinalizedAssuranceDoc
-      ? await getVendorAssuranceExtraction(token, latestFinalizedAssuranceDoc.id)
+    latestReviewedAssuranceDoc
+      ? await getVendorAssuranceExtraction(token, latestReviewedAssuranceDoc.id)
       : null;
 
   const assessments = assessmentsData?.assessments ?? [];
@@ -1022,7 +1028,7 @@ export default async function VendorDetailPage({
           <ActionsCard vendorId={vendor.id} vendorName={vendor.name} vendorStatus={vendor.status} />
           <VendorAssuranceCard
             vendorId={vendor.id}
-            document={latestFinalizedAssuranceDoc}
+            document={latestReviewedAssuranceDoc}
             extraction={latestAssuranceExtraction}
           />
         </div>
@@ -1265,24 +1271,49 @@ function VendorAssuranceCard({
     );
   }
 
-  // Project current decision per field for the displayed material fields.
-  const display: Array<{ name: string; rendered: string }> = [];
+  // Project the CURRENT value per displayed material field.
+  //
+  // Precedence, highest first:
+  //   1. field_overrides  — the live mechanism (migration 20260612). Append-only;
+  //      the engine already projects the latest row per field, so the array holds
+  //      at most one entry per field_name.
+  //   2. current_decisions — the LEGACY per-field accept/edit/reject store, torn
+  //      out at the UI layer by the same migration. Still honoured so documents
+  //      reviewed under the old flow render their reviewed values rather than
+  //      silently reverting to the raw extraction.
+  //   3. the raw extracted value.
+  //
+  // This card previously consulted only (2), so on the current flow every
+  // reviewer override was invisible here and the pre-override extraction was
+  // shown as if it were the accepted value.
+  const overrideByField = new Map(
+    (extraction.field_overrides ?? []).map((o) => [o.field_name, o])
+  );
+
+  const renderValue = (v: unknown): string =>
+    v == null ? "—" : typeof v === "string" ? v : JSON.stringify(v);
+
+  const display: Array<{ name: string; rendered: string; overridden: boolean }> = [];
   for (const fieldName of ASSURANCE_DISPLAY_FIELDS) {
+    const override = overrideByField.get(fieldName);
     const decision = extraction.current_decisions[fieldName];
     const field = extraction.extraction.fields[fieldName];
+
     let rendered: string;
-    if (decision?.decision === "reject") {
+    let overridden = false;
+    if (override) {
+      rendered = renderValue(override.override_value);
+      overridden = true;
+    } else if (decision?.decision === "reject") {
       rendered = "(rejected)";
     } else if (decision?.decision === "edit") {
-      const v = decision.reviewed_value;
-      rendered = typeof v === "string" ? v : JSON.stringify(v);
+      rendered = renderValue(decision.reviewed_value);
     } else if (field) {
-      const v = field.value;
-      rendered = v == null ? "—" : typeof v === "string" ? v : JSON.stringify(v);
+      rendered = renderValue(field.value);
     } else {
       rendered = "—";
     }
-    display.push({ name: fieldName, rendered });
+    display.push({ name: fieldName, rendered, overridden });
   }
 
   // report_freshness_days: derived at read time from period_end + issued_date
@@ -1309,12 +1340,22 @@ function VendorAssuranceCard({
       <dl style={{ marginTop: 12, fontSize: 12 }}>
         {display.map((d) => (
           <div key={d.name} style={{ marginBottom: 8 }}>
-            <dt style={{ color: "#64748b" }}>{d.name}</dt>
+            <dt style={{ color: "#64748b" }}>
+              {fieldLabel(d.name)}
+              {d.overridden && (
+                <span
+                  title="A reviewer corrected this value"
+                  style={{ marginLeft: 6, fontSize: 10, color: "#fbbf24" }}
+                >
+                  corrected
+                </span>
+              )}
+            </dt>
             <dd style={{ margin: 0, color: "#e5e7eb", wordBreak: "break-word" }}>{d.rendered}</dd>
           </div>
         ))}
         <div style={{ marginBottom: 8 }}>
-          <dt style={{ color: "#64748b" }}>report_freshness_days</dt>
+          <dt style={{ color: "#64748b" }}>Report age at issue</dt>
           <dd style={{ margin: 0, color: "#e5e7eb" }}>{freshness}</dd>
         </div>
       </dl>
@@ -1322,11 +1363,8 @@ function VendorAssuranceCard({
         href={`/vendor-assurance/${document.id}`}
         style={{ fontSize: 12, color: "#00c4b4", marginTop: 8, display: "inline-block" }}
       >
-        View finalized review →
+        View reviewed report →
       </Link>
-      <p style={{ marginTop: 8, fontSize: 11, color: "#475569" }}>
-        Vendor: {vendorId.slice(0, 8)}…
-      </p>
     </div>
   );
 }

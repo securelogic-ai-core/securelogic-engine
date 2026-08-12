@@ -5698,9 +5698,21 @@ export type VendorAssuranceReviewDecisionInput = {
   reviewer_note?: string | null;
 };
 
+/**
+ * Filter values accepted by listVendorAssuranceDocuments. `"reviewed"` is a
+ * PSEUDO-STATUS meaning "a human accepted this extraction" — it expands
+ * server-side to `approved OR finalized`. Surfaces that want the latest
+ * reviewed document MUST pass this rather than naming a raw state: `finalized`
+ * is written by no current code path (migration 20260612) and `approved` alone
+ * drops legacy reviewed rows.
+ */
+export type VendorAssuranceStatusFilter =
+  | VendorAssuranceProcessingStatus
+  | "reviewed";
+
 export async function listVendorAssuranceDocuments(
   token: string,
-  opts?: { vendorId?: string; status?: VendorAssuranceProcessingStatus; limit?: number }
+  opts?: { vendorId?: string; status?: VendorAssuranceStatusFilter; limit?: number }
 ): Promise<{ documents: VendorAssuranceDocument[] } | null> {
   const params = new URLSearchParams();
   if (opts?.vendorId) params.set("vendor_id", opts.vendorId);
