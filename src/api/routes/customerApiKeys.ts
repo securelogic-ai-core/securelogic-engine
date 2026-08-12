@@ -18,6 +18,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
+import { scopeFromRequest } from "../lib/seatScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 
 const router = Router();
@@ -119,13 +120,17 @@ router.post(
       const rawKey  = generateApiKey();
       const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
+      // Bind the key to the ISSUER's resolved seat + role, so the key acts as
+      // that identity when the seat model is on (closing the API-key admin
+      // bypass). An admin's key is admin-level; a scoped user's key is scoped.
+      const issuer = scopeFromRequest(req as unknown as Parameters<typeof scopeFromRequest>[0]);
       const inserted = await pg.query<ApiKeyRow>(
         `INSERT INTO api_keys
-           (organization_id, label, key_hash, status, created_by_user_id, expires_at)
-         VALUES ($1, $2, $3, 'active', $4, $5)
+           (organization_id, label, key_hash, status, created_by_user_id, expires_at, bound_seat_type, bound_role)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7)
          RETURNING id, organization_id, label, status,
                    last_used_at, created_at, revoked_at, expires_at, created_by_user_id`,
-        [orgId, rawLabel, keyHash, userId, expiresAt]
+        [orgId, rawLabel, keyHash, userId, expiresAt, issuer.seatType, issuer.effectiveRole]
       );
 
       const newKey = inserted.rows[0]!;

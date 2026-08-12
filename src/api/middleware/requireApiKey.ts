@@ -191,7 +191,7 @@ export async function requireApiKey(
       `
       SELECT id, organization_id, label, key_hash, status,
              last_used_at, created_at, revoked_at, expires_at,
-             created_by_user_id
+             created_by_user_id, bound_seat_type, bound_role
       FROM api_keys
       WHERE key_hash = $1
       LIMIT 1
@@ -271,6 +271,18 @@ export async function requireApiKey(
     ).catch(() => { /* silent */ });
 
     (req as any).apiKey = apiKey;
+
+    // Seat/role binding (activation blocker 2). When the seat model is ON, a
+    // key bound to a seat/role acts AS that identity — closing the historical
+    // "API key = admin-level" bypass. A legacy key (bound_seat_type NULL) keeps
+    // admin-level behaviour during the compatibility window until rotated. When
+    // the model is OFF, nothing is attached and every key stays admin-level,
+    // exactly as before.
+    if (process.env["SECURELOGIC_SEAT_MODEL_ENABLED"] === "true" && typeof apiKey.bound_seat_type === "string" && apiKey.bound_seat_type) {
+      req.userSeatType = apiKey.bound_seat_type as string;
+      req.userRole = (apiKey.bound_role as string | null) ?? "viewer";
+    }
+
     next();
   } catch (err) {
     logger.error({ event: "require_api_key_error", err }, "API key validation failed");
