@@ -59,6 +59,22 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 - **Platform tool registry.** `src/api/tools/` as a platform capability, with
   chains resolved from the live Express router. 12 read tools. Differential
   authorization proven against a real database.
+- **Ask A1 complete.** Conversation storage (migration `20260922`: threads,
+  messages, and the tool-invocation ledger that doubles as the provenance
+  substrate), the bounded tool-calling orchestrator, and the switchover wired
+  into `POST /api/ask` behind `SECURELOGIC_ASK_TOOLS_ENABLED` — **dark by
+  default**. Rollback is the flag alone: no migration, no data change.
+
+  Two modelling decisions the data-classification guard forced, both
+  improvements: `ask_messages.user_id` is denormalised from the conversation
+  because the GDPR self-export query builder matches on user columns and cannot
+  follow a join; and `ask_tool_invocations` is category **E** (audit ledger,
+  alongside `audit_log`) rather than C — it records what the system did, and
+  must survive an erasure that removes the conversation it describes.
+
+  **The snapshot path retires with the flag** once staging validates the tool
+  path. Two retrieval implementations is the parallel-data-path problem this
+  programme removes; it is tolerable as a transition, not as a steady state.
 
 ---
 
@@ -73,7 +89,6 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 | Control-effectiveness ladder, residual calculation, decision workflow | 5 |
 | Monitoring sweeps, intelligence staleness chain | 6 |
 | Legacy demotion of `vendor_assessments` / `vendor_reviews` writers | 7 |
-| Ask orchestration loop (tool-calling), conversation storage | A1 |
 | Provenance / citation verification | A2 |
 | Multi-turn conversation UI, streaming | A3 |
 | Realtime voice | A5 (P1) |
