@@ -293,6 +293,19 @@ services:
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
         value: "false"
 
+      # Ask SecureLogic KILL SWITCH (Sept-15 program, Ask A0). Ask shipped with
+      # no flag at all — an LLM-mediated read path over customer risk data,
+      # with unbounded per-request provider cost, that could not be closed
+      # without cutting a release.
+      #
+      # Deliberately defaults to ENABLED (only the literal "false" disables it):
+      # Ask is already live in production, so a default-off flag would silently
+      # remove a shipped capability the moment it landed. This is a kill switch,
+      # not a dark launch — turning it off is an explicit operator act.
+      # Off = every /api/ask request 404s BEFORE any DB read or provider call.
+      - key: SECURELOGIC_ASK_ENABLED
+        value: "true"
+
       # Enterprise seat model (PR #784) — LIVE in production since 2026-08-12
       # (GATE B activated 14:23 UTC, same-SHA deploy 14:27 UTC on 98e97098).
       # Gates ALL seat enforcement: requireSeat, Contributor scoping,
@@ -586,6 +599,19 @@ services:
       # The prod engine block keeps its own "false" and is not touched.
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
         value: "true" # ENABLED 2026-07-17 — O-6: staging brief dormant since May 19; the weekly cron's single Tuesday-07:00 firing chance lives in a service that redeploys on every develop commit. Catch-up recovers a missed Tuesday at next boot. Prod stays "false".
+
+      # Ask SecureLogic KILL SWITCH (Sept-15 program, Ask A0). Ask shipped with
+      # no flag at all — an LLM-mediated read path over customer risk data,
+      # with unbounded per-request provider cost, that could not be closed
+      # without cutting a release.
+      #
+      # Deliberately defaults to ENABLED (only the literal "false" disables it):
+      # Ask is already live in production, so a default-off flag would silently
+      # remove a shipped capability the moment it landed. This is a kill switch,
+      # not a dark launch — turning it off is an explicit operator act.
+      # Off = every /api/ask request 404s BEFORE any DB read or provider call.
+      - key: SECURELOGIC_ASK_ENABLED
+        value: "true"
 
       # Enterprise seat model (PR #784) — ENABLED on staging 2026-08-12
       # (dashboard-set + same-SHA deploys; multi-seat walkthrough passed,
