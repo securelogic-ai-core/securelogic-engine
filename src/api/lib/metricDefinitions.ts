@@ -215,8 +215,10 @@ export function sqlObligationOverdue(statusCol = "status", dueCol = "due_date"):
 // ── Vendor assessment state ─────────────────────────────────────────────────
 
 /**
- * ASSESSED VENDOR = at least one row in vendor_assessments for that vendor in
- * that org.  (product ruling 2026-08-09)
+ * ASSESSED VENDOR = at least one row in vendor_assessments OR in
+ * vendor_engagements for that vendor in that org.  (product ruling 2026-08-09;
+ * engagement leg added 2026-08-13 with the B1 legacy-writer demotion — see
+ * sqlVendorAssessed for the rationale)
  *
  * This module exists because the same business word was computed differently
  * per surface. "Assessed" had reached THREE definitions:
@@ -247,15 +249,46 @@ export function sqlVendorAssessmentScope(
      AND ${va}.organization_id = ${vendorTable}.organization_id`;
 }
 
-/** `EXISTS (…)` — the vendor has been assessed at least once. */
-export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
-  return `EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+/**
+ * Correlated scope over the canonical engagement spine — the Launch Completion
+ * extension of the assessed axis. Same org-inside-the-correlation rule as
+ * sqlVendorAssessmentScope, for the same IDOR reason.
+ */
+export function sqlVendorEngagementScope(
+  vendorTable = "vendors",
+  ve = "ve"
+): string {
+  return `FROM vendor_engagements ${ve}
+   WHERE ${ve}.vendor_id = ${vendorTable}.id
+     AND ${ve}.organization_id = ${vendorTable}.organization_id`;
 }
 
 /**
- * `NOT EXISTS (…)` — the vendor has never been assessed. The complement of
- * sqlVendorAssessed on the SAME axis, derived from the same scope, so the two
- * are exhaustive by construction.
+ * `(EXISTS … OR EXISTS …)` — the vendor has been assessed at least once.
+ *
+ * DEFINITION EXTENDED (2026-08-13, Launch Completion 1 / B1 demotion): with
+ * `vendor_engagements` as the single canonical workflow writer and the legacy
+ * write paths demoted, a vendor whose only assessment activity is an
+ * engagement MUST count as assessed — otherwise the ratified metric freezes at
+ * its pre-demotion value and every newly-engaged vendor reports "never
+ * assessed" forever. The extension is monotone: no vendor that counted as
+ * assessed before counts as unassessed after. The engagement leg follows the
+ * same existence-based, no-status-qualifier stance as the 2026-08-09 ruling
+ * (an engagement computes an inherent rating at intake, so its existence IS
+ * assessment activity).
+ *
+ * assessment_count / latest_assessment_at on /vendors and ask.ts deliberately
+ * still count LEGACY records only — they describe vendor_assessments rows, and
+ * engagement activity has its own surfaces. Renaming/merging those columns is
+ * convergence work (Launch Completion 6), not part of this predicate.
+ */
+export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
+  return `(EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)}) OR EXISTS (SELECT 1 ${sqlVendorEngagementScope(vendorTable, `${va}_e`)}))`;
+}
+
+/**
+ * The complement of sqlVendorAssessed on the SAME axis, derived by negating
+ * the same predicate, so the two are exhaustive by construction.
  *
  * Surfaces that print a count of this population AND link to a list of it
  * (the "Never assessed" pill on /vendors) must build both from this function.
@@ -263,7 +296,7 @@ export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
  * than a capped count: both halves look equally trustworthy.
  */
 export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): string {
-  return `NOT EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+  return `NOT ${sqlVendorAssessed(vendorTable, va)}`;
 }
 
 // ── Finding provenance groupings ────────────────────────────────────────────

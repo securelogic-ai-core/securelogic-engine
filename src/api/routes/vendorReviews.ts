@@ -46,6 +46,10 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
+  legacyVendorWritesEnabled,
+  LEGACY_VENDOR_WRITE_GONE,
+} from "../lib/legacyVendorWriteFlag.js";
+import {
   validateVendorReviewCreate,
   validateVendorReviewStatusTransition,
   TERMINAL_STATUSES,
@@ -131,6 +135,23 @@ router.post(
 
     if (!organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    // B1 demotion (Launch Completion 1): vendor_engagements is the canonical
+    // workflow writer. Refuse before any validation or DB work.
+    if (!legacyVendorWritesEnabled()) {
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "vendor_review.legacy_write_rejected",
+        resourceType: "vendor_review",
+        resourceId: null,
+        payload: { route: "POST /api/vendor-reviews" },
+        ipAddress: req.ip ?? null,
+      });
+      res.status(410).json(LEGACY_VENDOR_WRITE_GONE);
       return;
     }
 
@@ -455,6 +476,25 @@ router.patch(
     }
     if (!isUuid(reviewId)) {
       res.status(400).json({ error: "review_id_must_be_uuid" });
+      return;
+    }
+
+    // B1 demotion (Launch Completion 1): the status-transition write retires
+    // with the other legacy writers. Gate BEFORE the assignment probe so the
+    // demoted state cannot be used to enumerate review ids (410 for every id,
+    // real or not).
+    if (!legacyVendorWritesEnabled()) {
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "vendor_review.legacy_write_rejected",
+        resourceType: "vendor_review",
+        resourceId: reviewId,
+        payload: { route: "PATCH /api/vendor-reviews/:id" },
+        ipAddress: req.ip ?? null,
+      });
+      res.status(410).json(LEGACY_VENDOR_WRITE_GONE);
       return;
     }
 

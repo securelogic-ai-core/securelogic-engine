@@ -3,8 +3,14 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
+import { legacyVendorWritesEnabled } from "@/lib/legacyVendorWrites";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+
+const LEGACY_RETIRED_ERROR = {
+  error:
+    "Review cycles have been retired — open a vendor engagement instead.",
+} as const;
 
 export type CreateReviewResult = { error: string };
 
@@ -20,6 +26,9 @@ export async function completeReview(
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
+
+  // B1 demotion: refuse before the engine does (it would 410).
+  if (!legacyVendorWritesEnabled()) return LEGACY_RETIRED_ERROR;
 
   const status = ((formData.get("completion_status") as string | null) ?? "").trim();
   if (!status) return { error: "Status is required" };
@@ -65,6 +74,9 @@ export async function createReview(
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
+
+  // B1 demotion: refuse before the engine does (it would 410).
+  if (!legacyVendorWritesEnabled()) return LEGACY_RETIRED_ERROR;
 
   const status = ((formData.get("status") as string | null) ?? "").trim();
   if (!status) return { error: "Status is required" };

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { isActiveStatus } from "@/app/findings/decisionQueue";
+import { legacyVendorWritesEnabled, engagementCta } from "@/lib/legacyVendorWrites";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
@@ -246,9 +247,15 @@ function OpenFindingsSectionClient({
       </div>
 
       {activeFindings.length === 0 ? (
-        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "Run an assessment" }}>
+        <SectionEmpty
+          action={
+            legacyVendorWritesEnabled()
+              ? { href: `/vendors/${vendorId}/assess`, label: "Run an assessment" }
+              : engagementCta(vendorId)
+          }
+        >
           No active findings for this vendor — findings appear here when an
-          assessment or review cycle identifies an issue.
+          assessment, review cycle, or engagement identifies an issue.
         </SectionEmpty>
       ) : (
         <div className="space-y-3">
@@ -419,7 +426,13 @@ function AssessmentHistorySection({
       </div>
 
       {assessments.length === 0 ? (
-        <SectionEmpty action={{ href: `/vendors/${vendorId}/assess`, label: "New assessment" }}>
+        <SectionEmpty
+          action={
+            legacyVendorWritesEnabled()
+              ? { href: `/vendors/${vendorId}/assess`, label: "New assessment" }
+              : engagementCta(vendorId)
+          }
+        >
           No assessments recorded
         </SectionEmpty>
       ) : (
@@ -496,7 +509,13 @@ function ReviewCyclesSection({
       </div>
 
       {reviews.length === 0 ? (
-        <SectionEmpty action={{ href: `/vendors/${vendorId}/review`, label: "Start a review cycle" }}>
+        <SectionEmpty
+          action={
+            legacyVendorWritesEnabled()
+              ? { href: `/vendors/${vendorId}/review`, label: "Start a review cycle" }
+              : engagementCta(vendorId)
+          }
+        >
           No review cycles recorded
         </SectionEmpty>
       ) : (
@@ -783,24 +802,36 @@ function ActionsCard({
         Actions
       </h3>
       <div className="space-y-2">
-        <Link
-          href={`/vendors/${vendorId}/assess`}
-          className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
-          style={{ background: "#00c4b4", color: "#0a0f1a" }}
-        >
-          New Assessment
-        </Link>
-        <Link
-          href={`/vendors/${vendorId}/review`}
-          className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-medium border transition-colors"
-          style={{
-            borderColor: "#1e2d45",
-            color: "#94a3b8",
-            background: "transparent",
-          }}
-        >
-          New Review Cycle
-        </Link>
+        {legacyVendorWritesEnabled() ? (
+          <>
+            <Link
+              href={`/vendors/${vendorId}/assess`}
+              className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
+              style={{ background: "#00c4b4", color: "#0a0f1a" }}
+            >
+              New Assessment
+            </Link>
+            <Link
+              href={`/vendors/${vendorId}/review`}
+              className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-medium border transition-colors"
+              style={{
+                borderColor: "#1e2d45",
+                color: "#94a3b8",
+                background: "transparent",
+              }}
+            >
+              New Review Cycle
+            </Link>
+          </>
+        ) : (
+          <Link
+            href={engagementCta(vendorId).href}
+            className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-90"
+            style={{ background: "#00c4b4", color: "#0a0f1a" }}
+          >
+            Open an Engagement
+          </Link>
+        )}
         <Link
           href={`/vendors/${vendorId}/findings/new`}
           className="flex items-center justify-center w-full py-2 rounded-lg text-sm font-medium border transition-colors"
@@ -993,10 +1024,32 @@ export default async function VendorDetailPage({
             vendorId={vendor.id}
           />
           <ReviewCyclesSection reviews={reviews} vendorId={vendor.id} />
-          <CompleteReviewSection
-            inProgressReviews={inProgressReviews}
-            vendorId={vendor.id}
-          />
+          {legacyVendorWritesEnabled() ? (
+            <CompleteReviewSection
+              inProgressReviews={inProgressReviews}
+              vendorId={vendor.id}
+            />
+          ) : (
+            inProgressReviews.length > 0 && (
+              <div
+                className="bg-brand-surface border border-brand-line rounded-xl p-5 text-sm"
+                style={{ color: "#94a3b8" }}
+              >
+                {inProgressReviews.length} in-progress review
+                {inProgressReviews.length === 1 ? "" : "s"} remain
+                {inProgressReviews.length === 1 ? "s" : ""} read-only — the
+                review-cycle workflow has been retired. Continue this vendor's
+                assurance in{" "}
+                <Link
+                  href={engagementCta(vendor.id).href}
+                  style={{ color: "#00c4b4" }}
+                >
+                  an engagement
+                </Link>
+                .
+              </div>
+            )
+          )}
           <HistorySection resourcePath="vendors" resourceId={vendor.id} />
         </div>
 
@@ -1151,7 +1204,11 @@ function ExternalIntelligenceSection({
           ))}
           <div className="flex items-center gap-4">
             <Link
-              href={`/vendors/${vendorId}/assess`}
+              href={
+                legacyVendorWritesEnabled()
+                  ? `/vendors/${vendorId}/assess`
+                  : engagementCta(vendorId).href
+              }
               className="inline-block text-xs font-medium"
               style={{ color: "#00c4b4" }}
             >

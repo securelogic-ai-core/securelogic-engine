@@ -35,6 +35,10 @@ import { asTenant } from "../middleware/asTenant.js";
 import { validateVendorAssessmentCreate } from "../lib/vendorAssessmentValidation.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  legacyVendorWritesEnabled,
+  LEGACY_VENDOR_WRITE_GONE,
+} from "../lib/legacyVendorWriteFlag.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 
@@ -92,6 +96,24 @@ router.post(
 
     if (!organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    // B1 demotion (Launch Completion 1): vendor_engagements is the canonical
+    // workflow writer. Refuse before any validation or DB work; the audit row
+    // is how the cutover runbook watches for stragglers still calling this.
+    if (!legacyVendorWritesEnabled()) {
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: req.userId ?? null,
+        eventType: "vendor_assessment.legacy_write_rejected",
+        resourceType: "vendor_assessment",
+        resourceId: null,
+        payload: { route: "POST /api/vendor-assessments" },
+        ipAddress: req.ip ?? null,
+      });
+      res.status(410).json(LEGACY_VENDOR_WRITE_GONE);
       return;
     }
 
