@@ -156,13 +156,16 @@ describe("Stop Gate B — invite exchange", () => {
     expect(res.body).toEqual({ ok: true });
   });
 
-  it("the cookie is httpOnly and PATH-SCOPED to the portal", async () => {
+  it("the cookie is httpOnly and PATH-SCOPED to the portal API mount", async () => {
     const res = await request(app).post("/api/vendor-portal/session").send({ token: tokens.a });
     const cookie = (res.headers["set-cookie"] as unknown as string[]).find((c) =>
       c.startsWith(PORTAL_SESSION_COOKIE)
     )!;
     expect(cookie).toMatch(/HttpOnly/i);
-    expect(cookie).toMatch(/Path=\/vendor-portal/i);
+    // Must sit UNDER the real route mount (/api/vendor-portal): RFC 6265 sends
+    // a cookie only to requests under its path, so any other value means a
+    // browser never attaches it and every authenticated portal call 401s.
+    expect(cookie).toMatch(/Path=\/api\/vendor-portal/i);
     expect(cookie).toMatch(/SameSite=Lax/i);
   });
 
@@ -517,6 +520,36 @@ describe("Stop Gate B — the state machine bounds what a vendor can do", () => 
       .send({ answer: "fail" });
     expect(after.status).toBe(409);
     expect(after.body.error).toBe("responses_closed");
+  });
+
+  it("an answer edit during clarification_requested SAVES and resumes the engagement", async () => {
+    // The state exists to invite exactly this edit: the reviewer asked the
+    // vendor to change an answer, and the state machine's
+    // clarification_requested -> in_progress transition is caused by the write.
+    // Regression: this route once gated on the narrow write window and 409'd
+    // every answer edit during a clarification, leaving evidence uploads as the
+    // only way to reopen the engagement.
+    const fresh = await seedEngagementWithInvite(seed.orgA.id, "CLARIFY", { withQuestion: true });
+    const cookie = await sessionCookie(fresh.token);
+    await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "pass" });
+    await pool.query(`UPDATE vendor_engagements SET status = 'clarification_requested' WHERE id = $1`, [
+      fresh.engagementId,
+    ]);
+
+    const edit = await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "fail", notes: "Corrected after the reviewer's question." });
+    expect(edit.status, JSON.stringify(edit.body)).toBe(200);
+
+    const after = await pool.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1`,
+      [fresh.engagementId]
+    );
+    expect(after.rows[0]!.status).toBe("in_progress");
   });
 
   it("double submission is refused rather than silently repeated", async () => {

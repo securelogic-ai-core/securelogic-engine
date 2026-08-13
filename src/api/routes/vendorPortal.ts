@@ -299,7 +299,9 @@ export async function getPortalEngagement(req: PortalRequest, res: Response): Pr
       title: row.title,
       status: row.status,
       due_date: row.next_review_due,
-      accepting_responses: isPortalWritable(row.status as EngagementState),
+      // Respondable, not writable: during a clarification the questionnaire IS
+      // accepting the vendor's revised answers — that is the point of the state.
+      accepting_responses: isPortalRespondable(row.status as EngagementState),
     });
   } catch (err) {
     logger.error({ event: "portal_engagement_read_failed", err }, "Portal engagement read failed");
@@ -406,7 +408,13 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
       );
       const state = eng.rows[0]?.status as EngagementState | undefined;
       if (!state) return { code: 401 as const };
-      if (!isPortalWritable(state)) return { code: 409 as const, state };
+      // RESPONDABLE, not merely writable: `clarification_requested` is exactly
+      // the state where the reviewer has asked the vendor to change an answer.
+      // Gating on the narrow write window here meant a vendor asked for
+      // clarification got 409 on every answer edit — the one edit the state
+      // exists to invite (the state machine's clarification_requested ->
+      // in_progress transition is caused by this very write).
+      if (!isPortalRespondable(state)) return { code: 409 as const, state };
 
       // The requirement must be IN THIS ENGAGEMENT'S FROZEN SCOPE. A vendor
       // cannot answer a question they were not asked, and cannot reach another
@@ -452,6 +460,10 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
          VALUES ($1, $2, $3, $4, 'vendor', $5)`,
         [ctx.organizationId, saved.rows[0]!.id, status, notes, ctx.inviteId]
       );
+
+      // Answering during a clarification is what reopens the engagement —
+      // the state machine's clarification_requested -> in_progress transition.
+      await resumeFromClarification(ctx.organizationId, ctx.engagementId, state);
 
       return { code: 200 as const };
     });
