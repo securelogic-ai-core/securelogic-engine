@@ -67,6 +67,36 @@ knowledge-index drift test); typecheck clean.
 
 ---
 
+## 0.2 Staging verification (2026-08-13, post-merge)
+
+Verified by direct probe, not inference, ~15 minutes after the stack merged:
+
+- **Deploys:** `securelogic-engine-staging` (develop-pinned, autoDeploy on)
+  deployed each squash in order — `a21262e3` → `47814937` → `648ff0e6` →
+  `f24cdeaa` (docs-only) live.
+- **Migrations:** a one-off Render job on the service queried
+  `schema_migrations` over the service's own `DATABASE_URL`: **all 12
+  September-15 files (`20260919`–`20260930`) recorded, `applied_at`
+  17:03:04–17:03:07Z** — inside the `648ff0e6` deploy's startup, whose
+  startCommand gates boot on `npm run migrate` succeeding.
+- **Ledger reconciled:** 219 ledger rows = 219 repo migration files; the
+  `f24cdeaa` migrate logged `Migrations complete` with zero
+  `Applied migration` lines (nothing left to apply).
+- **Schema effective:** `vendor_engagements` exists with
+  `relrowsecurity = true`; `/health` reports `db: connected`.
+
+Operational caution recorded: Render CLI **log retrieval corrupted output**
+during this verification (one fetch showed four ledger filenames
+pair-swapped, plus empty results, usage-help dumps, and a duplicate of a
+UNIQUE-constrained row). SQL probes via one-off jobs are the authority;
+do not trust `render logs` for precise values.
+
+Staging now has the full September-15 schema live — the operator-owed
+staging items (walkthroughs, Stop Gate B.4 external tester) have a real
+surface to run against.
+
+---
+
 ## 1. Branches and commits
 
 | Branch | Commits |
