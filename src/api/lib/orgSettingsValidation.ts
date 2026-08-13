@@ -25,13 +25,22 @@ export interface OrgSettingsPatch {
   handles_pii?: boolean;
   safety_critical?: boolean;
   scale?: OrgScale;
+  /** ASK-C C-1 (LC-4): tenant-level voice governance — admin can disable
+   *  Ask voice input for the whole org; enforced engine-side on transcribe. */
+  voice_input_enabled?: boolean;
 }
 
 export type OrgSettingsPatchResult =
   | { ok: true; patch: OrgSettingsPatch }
   | { ok: false; error: string; detail?: string };
 
-const BOOLEAN_FIELDS = ["require_mfa", "regulated", "handles_pii", "safety_critical"] as const;
+const BOOLEAN_FIELDS = [
+  "require_mfa",
+  "regulated",
+  "handles_pii",
+  "safety_critical",
+  "voice_input_enabled",
+] as const;
 const KNOWN_FIELDS = new Set<string>(["name", "scale", ...BOOLEAN_FIELDS]);
 
 export function validateOrgSettingsPatch(body: unknown): OrgSettingsPatchResult {

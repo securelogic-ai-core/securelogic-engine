@@ -30,6 +30,16 @@ vi.mock("../infra/providerQuotaAlert.js", () => ({
   instrumentOpenAIClient: (c: unknown) => c,
   instrumentAnthropicClient: (c: unknown) => c,
 }));
+// LC-4 additions to the transcribe chain: auditLog transitively imports the
+// postgres pool (throws without DATABASE_URL), and requireSeat is mocked for
+// the same reason as the other middleware. Gate behavior for both is covered
+// by askVoiceGate.test.ts; this file exercises the upload pipeline only.
+vi.mock("../lib/auditLog.js", () => ({
+  writeAuditEvent: vi.fn(),
+}));
+vi.mock("../middleware/requireSeat.js", () => ({
+  denyContributor: () => (_req: any, _res: any, next: any) => next(),
+}));
 
 // Whisper stub — returns fixed text without any network call.
 const transcribeCreate = vi.fn(async () => ({ text: "what are my top risks" }));

@@ -8,6 +8,13 @@ import {
 } from "./actions";
 import { streamAsk } from "./askStream";
 import {
+  needsVoiceDisclosure,
+  acknowledgeVoiceDisclosure,
+  VOICE_DISCLOSURE_TEXT,
+  speakAnswer,
+  stopSpeaking,
+} from "./voiceGovernance";
+import {
   detectVoiceSupport,
   readVoiceEnv,
   VOICE_UNSUPPORTED_MESSAGE,
@@ -57,6 +64,8 @@ const ASK_ERROR_MESSAGES: Record<string, string> = {
 };
 
 const TRANSCRIBE_ERROR_MESSAGES: Record<string, string> = {
+  voice_disabled_for_org:    "Voice input is disabled for your organization. Please type your question instead.",
+  not_found:                 "Voice input is currently unavailable. Please type your question instead.",
   transcription_unavailable: "Voice transcription is not configured on this server. Please type your question instead.",
   transcription_failed:      "Couldn't transcribe your audio. Please try again or type your question.",
   no_audio:                  "No audio was captured. Please try recording again.",
@@ -322,10 +331,19 @@ function MicIcon() {
 
 export function AskClient({
   streamingEnabled = false,
+  voiceEnabled = true,
+  readbackEnabled = false,
 }: {
   /** Server-rendered from SECURELOGIC_ASK_STREAMING_ENABLED (two-switch model).
    *  Off = this component is byte-for-byte the pre-LC-3 behaviour. */
   streamingEnabled?: boolean;
+  /** ASK-C (LC-4): voice kill switch AND the tenant's voice_input_enabled,
+   *  collapsed server-side. False hides the mic; the engine enforces
+   *  independently (403 voice_disabled_for_org / 404 kill switch). */
+  voiceEnabled?: boolean;
+  /** LC-4 realtime loop: offer browser-local spoken readback of answers to
+   *  voice questions. Dark by default (SECURELOGIC_ASK_VOICE_REALTIME_ENABLED). */
+  readbackEnabled?: boolean;
 } = {}) {
   const [query, setQuery]           = useState("");
   const [answer, setAnswer]         = useState<AskResponse | null>(null);
@@ -363,6 +381,17 @@ export function AskClient({
   const [recordingError, setRecordingError] = useState<StructuredError | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef   = useRef<Blob[]>([]);
+
+  // ── Voice governance (ASK-C, LC-4) ──
+  //
+  // The disclosure card gates the FIRST capture: the mic press renders it
+  // instead of recording until the user explicitly continues (latched per
+  // browser — see voiceGovernance.ts). `voiceOriginRef` marks the next submit
+  // as voice-originated so readback knows to speak the answer; it is consumed
+  // (reset) by submitQuery.
+  const [showVoiceDisclosure, setShowVoiceDisclosure] = useState(false);
+  const [speakAnswers, setSpeakAnswers] = useState(false);
+  const voiceOriginRef = useRef(false);
 
   // Voice capability detection (capability only — no browser/device name
   // gating). Starts null so the server render and the first client render agree
@@ -466,6 +495,14 @@ export function AskClient({
     (text: string) => {
       const q = text.trim();
       if (!q || isPending) return;
+      // Voice-origin marker is consumed exactly once per submit; a new
+      // question always silences any in-flight readback first.
+      const fromVoice = voiceOriginRef.current;
+      voiceOriginRef.current = false;
+      stopSpeaking();
+      const maybeSpeak = (answerText: string) => {
+        if (fromVoice && readbackEnabled && speakAnswers) speakAnswer(answerText);
+      };
       setError(null);
       setAnswer(null);
       setPendingQuestion(q);
@@ -491,6 +528,7 @@ export function AskClient({
           if (outcome.kind === "final") {
             setPendingQuestion(null);
             applyAskSuccess(q, outcome.data);
+            maybeSpeak(outcome.data.answer);
             return;
           }
           if (outcome.kind === "error") {
@@ -506,12 +544,21 @@ export function AskClient({
         setPendingQuestion(null);
         if (result.ok) {
           applyAskSuccess(q, result.data);
+          maybeSpeak(result.data.answer);
         } else {
           applyAskFailure(result);
         }
       });
     },
-    [isPending, selectedId, streamingEnabled, applyAskSuccess, applyAskFailure]
+    [
+      isPending,
+      selectedId,
+      streamingEnabled,
+      readbackEnabled,
+      speakAnswers,
+      applyAskSuccess,
+      applyAskFailure,
+    ]
   );
 
   const handleKeyDown = useCallback(
@@ -575,6 +622,15 @@ export function AskClient({
   const toggleRecording = useCallback(async () => {
     if (isRecording) {
       mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    // ASK-C C-2: the FIRST capture is gated on the disclosure — the press
+    // renders the card instead of recording until the user continues. The
+    // latch is per-browser; getUserMedia's permission prompt remains the
+    // second, OS-level consent after it.
+    if (needsVoiceDisclosure(typeof window !== "undefined" ? window.localStorage : null)) {
+      setShowVoiceDisclosure(true);
       return;
     }
 
@@ -684,6 +740,9 @@ export function AskClient({
           if (result.text) {
             diag.stage = "ok";
             setQuery(result.text);
+            // Mark the submit voice-originated so readback (when enabled and
+            // toggled on) speaks the answer of THIS question only.
+            voiceOriginRef.current = true;
             submitQuery(result.text);
           } else {
             // 200 but empty text — shouldn't happen but guard anyway.
@@ -767,7 +826,7 @@ export function AskClient({
                Rendered whenever the browser is genuinely capable of voice
                input (capability detection only — incl. iPad/iPhone). Hidden
                only on a real capability gap, where the note below explains. */}
-          {voiceSupport?.supported && (
+          {voiceEnabled && voiceSupport?.supported && (
           <button
             onClick={toggleRecording}
             disabled={isTranscribing || isPending}
@@ -825,6 +884,37 @@ export function AskClient({
           </button>
           )}
 
+          {/* ── Spoken readback toggle (LC-4 realtime loop, dark-flagged) ──
+               Browser-local SpeechSynthesis — no audio leaves the device.
+               Applies to answers of VOICE questions only. */}
+          {readbackEnabled && voiceEnabled && voiceSupport?.supported && (
+            <button
+              onClick={() => {
+                setSpeakAnswers((prev) => {
+                  if (prev) stopSpeaking();
+                  return !prev;
+                });
+              }}
+              style={{
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: speakAnswers ? "2px solid #00c4b4" : "2px solid #1e2d45",
+                background: speakAnswers ? "rgba(0,196,180,0.1)" : "transparent",
+                color: speakAnswers ? "#00c4b4" : "#64748b",
+                cursor: "pointer",
+                fontSize: "13px",
+                transition: "all 0.2s",
+              }}
+              aria-pressed={speakAnswers}
+              aria-label={
+                speakAnswers ? "Turn off spoken answers" : "Speak answers to voice questions"
+              }
+              title={speakAnswers ? "Spoken answers on" : "Speak answers to voice questions"}
+            >
+              {speakAnswers ? "🔊" : "🔈"}
+            </button>
+          )}
+
           {/* ── Ask button ── */}
           <button
             onClick={() => submitQuery(query)}
@@ -846,12 +936,76 @@ export function AskClient({
         </div>
       </div>
 
+      {/* ── Voice disclosure (ASK-C C-2) ──
+           Rendered by the first mic press; capture cannot start until the
+           user explicitly continues. Latched per browser thereafter. */}
+      {showVoiceDisclosure && (
+        <div
+          style={{
+            ...CARD,
+            padding: "16px 20px",
+            marginTop: "12px",
+            borderColor: "rgba(0,196,180,0.35)",
+          }}
+        >
+          <p style={{ margin: "0 0 12px", fontSize: "13px", lineHeight: "1.7", color: "#e2e8f0" }}>
+            {VOICE_DISCLOSURE_TEXT}
+          </p>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button
+              onClick={() => {
+                acknowledgeVoiceDisclosure(
+                  typeof window !== "undefined" ? window.localStorage : null
+                );
+                setShowVoiceDisclosure(false);
+                void toggleRecording();
+              }}
+              style={{
+                padding: "8px 18px",
+                borderRadius: "8px",
+                border: "none",
+                background: "#00c4b4",
+                color: "#0a0f1a",
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Continue and record
+            </button>
+            <button
+              onClick={() => setShowVoiceDisclosure(false)}
+              style={{
+                padding: "8px 18px",
+                borderRadius: "8px",
+                border: "1px solid #1e2d45",
+                background: "transparent",
+                color: "#94a3b8",
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Voice-disabled note (tenant governance / kill switch) ──
+           Governance state beats capability messaging: when voice is off for
+           this org, say so instead of the unsupported-browser note. */}
+      {!voiceEnabled && (
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#64748b" }}>
+          Voice input is turned off for your organization.
+        </p>
+      )}
+
       {/* ── Voice-unsupported note ──
            Shown in place of the mic button only when capability detection
            genuinely fails (no getUserMedia/MediaRecorder/supported format),
            so users understand why voice is absent instead of seeing a
            silently broken button. */}
-      {voiceSupport && !voiceSupport.supported && (
+      {voiceEnabled && voiceSupport && !voiceSupport.supported && (
         <p
           style={{
             margin: "12px 0 0",
