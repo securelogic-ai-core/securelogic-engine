@@ -276,6 +276,11 @@ async function handleWithTools(args: {
             content: answer,
             modelId: ASK_MODEL,
             promptVersion: TOOL_PROMPT_VERSION,
+            // The verified-claims record, stored WITH the answer it describes —
+            // this is what lets a reloaded transcript replay its citations
+            // exactly as verified at answer time. Omitting it left the claims
+            // column always NULL and every reloaded thread citation-less.
+            claims: orchestration.provenance?.claims,
             invocations: orchestration.invocations,
           })
         );

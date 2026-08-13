@@ -331,6 +331,41 @@ describe("STEP 4b — conversation reads (the A3 surface)", () => {
     const res = await getOrgA("/api/ask/conversations/not-a-uuid");
     expect(res.status).toBe(404);
   });
+
+  it("a provenance-verified answer's claims are STORED, so a reloaded thread keeps its citations", async () => {
+    process.env.SECURELOGIC_ASK_PROVENANCE_ENABLED = "true";
+    script = [
+      [{ type: "tool_use", id: "t1", name: "vendors.search", input: {} }],
+      [{ type: "text", text: "You have one vendor." }],
+      // The provenance pass turn: the model decomposes into claims.
+      [
+        {
+          type: "tool_use",
+          id: "p1",
+          name: "submit_claims",
+          input: {
+            claims: [
+              {
+                text: "You have one vendor.",
+                claim_class: "observed",
+                citations: [{ invocation_index: 0, tool_name: "vendors.search" }],
+              },
+            ],
+          },
+        },
+      ],
+    ];
+    const asked = await asOrgA("/api/ask").send({ question: "Stored claims check?" });
+    expect(asked.status).toBe(200);
+
+    const read = await getOrgA(`/api/ask/conversations/${asked.body.conversation_id}`);
+    const assistant = read.body.messages.filter((m: { role: string }) => m.role === "assistant").pop();
+    // Regression: recordAssistantMessage was called WITHOUT claims, so the
+    // stored column was always NULL and every reloaded transcript lost its
+    // citations while live responses showed them — two truths for one answer.
+    expect(assistant.claims).not.toBeNull();
+    expect(JSON.stringify(assistant.claims)).toContain("vendors.search");
+  });
 });
 
 describe("STEP 5 — provenance", () => {

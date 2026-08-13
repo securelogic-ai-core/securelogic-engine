@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useTransition } from "react";
-import { askAction } from "./actions";
+import {
+  askAction,
+  listConversationsAction,
+  getConversationAction,
+} from "./actions";
 import {
   detectVoiceSupport,
   readVoiceEnv,
@@ -15,7 +19,12 @@ import {
   newCorrelationId,
   type VoiceDiagnostic,
 } from "./voiceDiagnostics";
-import type { AskResponse } from "@/lib/api";
+import type {
+  AskResponse,
+  AskClaim,
+  AskContextUsed,
+  AskConversationSummary,
+} from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────
 // Error message tables
@@ -43,6 +52,7 @@ const ASK_ERROR_MESSAGES: Record<string, string> = {
   question_required:  "Please enter a question before submitting.",
   question_too_long:  "Your question is too long. Please shorten it to 500 characters or fewer.",
   parse_error:        "The server returned an unexpected response. Please try again.",
+  conversation_not_found: "That conversation is no longer available.",
 };
 
 const TRANSCRIBE_ERROR_MESSAGES: Record<string, string> = {
@@ -82,7 +92,7 @@ const CARD: React.CSSProperties = {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Metadata line helper
+// Metadata helpers
 // ─────────────────────────────────────────────────────────────
 
 function formatDate(iso: string | null): string {
@@ -97,6 +107,189 @@ function formatDate(iso: string | null): string {
     return iso;
   }
 }
+
+/** Compact relative timestamp for the thread list ("just now", "5m", "3h", "2d", else a date). */
+function formatRelative(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const deltaMs = Date.now() - then;
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(iso);
+}
+
+/**
+ * The "answered from" caption under an answer. The engine returns two
+ * context_used shapes (snapshot vs tool retrieval — see AskContextUsed in
+ * lib/api.ts); render whichever one actually arrived, never assume fields.
+ */
+function contextCaption(ctx: AskContextUsed | undefined): string | null {
+  if (!ctx) return null;
+  if (ctx.retrieval === "tools") {
+    const calls = ctx.tool_calls ?? 0;
+    const denied = ctx.tools_denied ?? 0;
+    const parts = [`${calls} authorized data read${calls === 1 ? "" : "s"}`];
+    if (denied > 0) parts.push(`${denied} denied`);
+    if (ctx.complete === false) parts.push("partial");
+    return parts.join(" · ");
+  }
+  if (
+    ctx.posture_score === undefined &&
+    ctx.findings_count === undefined &&
+    ctx.risks_count === undefined
+  ) {
+    return null;
+  }
+  const bits: string[] = [];
+  bits.push(
+    ctx.posture_score != null ? `Posture score ${ctx.posture_score}` : "No posture snapshot"
+  );
+  if (ctx.findings_count !== undefined) bits.push(`${ctx.findings_count} active findings`);
+  if (ctx.risks_count !== undefined) bits.push(`${ctx.risks_count} risks`);
+  if (ctx.as_of) bits.push(`as of ${formatDate(ctx.as_of)}`);
+  return bits.join(" · ");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Claims / provenance rendering
+//
+// Assistant turns loaded from a stored thread carry `claims` — the
+// verified-claims structure captured at answer time (engine
+// conversationStore.AskMessage). Live answers carry the same family under
+// `provenance.claims`. Citations are RENDERED from these records, never
+// recomputed. Both citation spellings the engine emits are handled
+// (`tool_name` in the stored shape, `tool` in the POST response shape).
+// ─────────────────────────────────────────────────────────────
+
+/** Defensive parse of the stored jsonb claims column into renderable claims. */
+function normalizeClaims(raw: unknown): AskClaim[] | null {
+  // The column may hold the raw Claim[] or a wrapped { claims: Claim[] }
+  // (VerifiedClaims). Anything else — null, junk — renders no provenance.
+  const arr: unknown = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object" && Array.isArray((raw as { claims?: unknown }).claims)
+      ? (raw as { claims: unknown[] }).claims
+      : null;
+  if (!Array.isArray(arr)) return null;
+  const claims: AskClaim[] = [];
+  for (const item of arr) {
+    if (!item || typeof item !== "object") continue;
+    const c = item as Record<string, unknown>;
+    if (typeof c.text !== "string" || typeof c.claim_class !== "string") continue;
+    claims.push({
+      text: c.text,
+      claim_class: c.claim_class,
+      citations: Array.isArray(c.citations)
+        ? (c.citations.filter((x) => x && typeof x === "object") as AskClaim["citations"])
+        : [],
+      ...(Array.isArray(c.derived_from)
+        ? { derived_from: c.derived_from.filter((n): n is number => typeof n === "number") }
+        : {}),
+    });
+  }
+  return claims.length > 0 ? claims : null;
+}
+
+/** Class badge palette — observed is the strongest evidence, inference the model's own reasoning. */
+function claimClassStyle(cls: string): { color: string; border: string } {
+  switch (cls) {
+    case "observed":       return { color: "#00c4b4", border: "rgba(0,196,180,0.4)" };
+    case "derived":        return { color: "#60a5fa", border: "rgba(96,165,250,0.4)" };
+    case "inference":      return { color: "#fbbf24", border: "rgba(251,191,36,0.4)" };
+    case "recommendation": return { color: "#c084fc", border: "rgba(192,132,252,0.4)" };
+    default:               return { color: "#94a3b8", border: "#1e2d45" };
+  }
+}
+
+/** One citation's "what this was verified against" line. */
+function citationLabel(cit: AskClaim["citations"][number]): string {
+  const parts: string[] = [];
+  const tool = cit.tool_name ?? cit.tool;
+  if (tool) parts.push(tool);
+  if (cit.object_type) parts.push(cit.object_type);
+  if (cit.object_id) parts.push(String(cit.object_id).slice(0, 8));
+  if (cit.field) parts.push(cit.field);
+  return parts.join(" · ");
+}
+
+function ClaimsDetails({ claims }: { claims: AskClaim[] }) {
+  return (
+    <details style={{ marginTop: "14px" }}>
+      <summary
+        style={{
+          cursor: "pointer",
+          fontSize: "11px",
+          fontWeight: 600,
+          color: "#94a3b8",
+          userSelect: "none",
+        }}
+      >
+        Provenance · {claims.length} claim{claims.length === 1 ? "" : "s"}
+      </summary>
+      <ul style={{ margin: "10px 0 0", padding: 0, listStyle: "none" }}>
+        {claims.map((claim, i) => {
+          const style = claimClassStyle(claim.claim_class);
+          return (
+            <li
+              key={i}
+              style={{
+                padding: "8px 10px",
+                marginBottom: "6px",
+                background: "#0a0f1a",
+                border: "1px solid #1e2d45",
+                borderRadius: "6px",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-block",
+                  padding: "1px 8px",
+                  borderRadius: "999px",
+                  border: `1px solid ${style.border}`,
+                  color: style.color,
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.4px",
+                  marginBottom: "4px",
+                }}
+              >
+                {claim.claim_class}
+              </span>
+              <p style={{ margin: "4px 0 0", fontSize: "12px", lineHeight: 1.5, color: "#cbd5e1" }}>
+                {claim.text}
+              </p>
+              {claim.citations.length > 0 && (
+                <p style={{ margin: "4px 0 0", fontSize: "11px", color: "#64748b" }}>
+                  {claim.claim_class === "inference" ? "Reasoned from" : "Verified against"}:{" "}
+                  {claim.citations.map(citationLabel).filter(Boolean).join("; ")}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Transcript model
+// ─────────────────────────────────────────────────────────────
+
+type TranscriptTurn = {
+  key: string;
+  role: "user" | "assistant";
+  content: string;
+  claims: AskClaim[] | null;
+  contextUsed?: AskContextUsed;
+};
 
 // ─────────────────────────────────────────────────────────────
 // Mic SVG
@@ -133,6 +326,20 @@ export function AskClient() {
   const [isPending, startTransition] = useTransition();
   const textareaRef                 = useRef<HTMLTextAreaElement | null>(null);
 
+  // ── Multi-turn state (Ask A3) ──
+  //
+  // The sidebar renders only once we have EVIDENCE threads exist: a non-empty
+  // list read, or an ask response that returned a conversation_id. On engines
+  // where the tool path is dark (no conversation_id, empty/absent conversation
+  // reads) none of this state ever activates and the page behaves exactly like
+  // single-shot Ask — no dead sidebar, no errors.
+  const [conversations, setConversations] = useState<AskConversationSummary[]>([]);
+  const [threadsAvailable, setThreadsAvailable] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptTurn[] | null>(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+
   const [isRecording, setIsRecording]     = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingError, setRecordingError] = useState<StructuredError | null>(null);
@@ -153,6 +360,23 @@ export function AskClient() {
     setVoiceSupport(detectVoiceSupport(readVoiceEnv()));
   }, []);
 
+  // Load the caller's threads once on mount. Null (engine without the routes,
+  // auth failure, network) and [] both mean: stay single-shot, silently.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await listConversationsAction();
+      if (cancelled || !result) return;
+      if (result.conversations.length > 0) {
+        setConversations(result.conversations);
+        setThreadsAvailable(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
@@ -161,16 +385,55 @@ export function AskClient() {
     el.style.height = `${el.scrollHeight}px`;
   }, [query]);
 
+  /** Best-effort list refresh after a turn lands — ordering/titles are the engine's. */
+  const refreshConversations = useCallback(async () => {
+    const result = await listConversationsAction();
+    if (result && result.conversations.length > 0) {
+      setConversations(result.conversations);
+      setThreadsAvailable(true);
+    }
+  }, []);
+
   const submitQuery = useCallback(
     (text: string) => {
       const q = text.trim();
       if (!q || isPending) return;
       setError(null);
       setAnswer(null);
+      setPendingQuestion(q);
+      // Continue the SELECTED thread; with no selection the engine starts a
+      // new one and we adopt the id it returns.
+      const conversationId = selectedId;
       startTransition(async () => {
-        const result = await askAction(q);
+        const result = await askAction(q, conversationId);
+        setPendingQuestion(null);
         if (result.ok) {
-          setAnswer(result.data);
+          const data = result.data;
+          if (data.conversation_id) {
+            // Multi-turn: append both turns to the transcript and adopt the
+            // thread. Citations for the live turn come from the provenance
+            // captured with this answer.
+            const stamp = Date.now();
+            setTranscript((prev) => [
+              ...(prev ?? []),
+              { key: `u-${stamp}`, role: "user", content: q, claims: null },
+              {
+                key: `a-${stamp}`,
+                role: "assistant",
+                content: data.answer,
+                claims: data.provenance ? normalizeClaims(data.provenance.claims) : null,
+                contextUsed: data.context_used,
+              },
+            ]);
+            setSelectedId(data.conversation_id);
+            setThreadsAvailable(true);
+            setQuery("");
+            void refreshConversations();
+          } else {
+            // No conversation_id — the engine ran single-shot. Behave exactly
+            // like today's Ask.
+            setAnswer(data);
+          }
         } else {
           // Surface the raw failure to the browser console so support can
           // pull it without asking the user to repro. The user-facing
@@ -185,7 +448,7 @@ export function AskClient() {
         }
       });
     },
-    [isPending]
+    [isPending, selectedId, refreshConversations]
   );
 
   const handleKeyDown = useCallback(
@@ -204,6 +467,47 @@ export function AskClient() {
     setQuery("");
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
+
+  /** Start a fresh thread: clear selection + transcript, back to the blank composer. */
+  const startNewConversation = useCallback(() => {
+    setSelectedId(null);
+    setTranscript(null);
+    setAnswer(null);
+    setError(null);
+    setQuery("");
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  }, []);
+
+  /** Load a thread's transcript. Claims render from the STORED structure. */
+  const selectThread = useCallback(
+    (id: string) => {
+      if (threadLoading || isPending) return;
+      setThreadLoading(true);
+      setError(null);
+      setAnswer(null);
+      startTransition(async () => {
+        const detail = await getConversationAction(id);
+        setThreadLoading(false);
+        if (!detail) {
+          // Not-found and not-owned are indistinguishable by contract. Drop
+          // the stale row and say so plainly.
+          setConversations((prev) => prev.filter((c) => c.id !== id));
+          setError({ status: 404, code: "conversation_not_found" });
+          return;
+        }
+        setSelectedId(detail.conversation.id);
+        setTranscript(
+          detail.messages.map((m) => ({
+            key: m.id,
+            role: m.role,
+            content: m.content,
+            claims: m.role === "assistant" ? normalizeClaims(m.claims) : null,
+          }))
+        );
+      });
+    },
+    [threadLoading, isPending]
+  );
 
   const toggleRecording = useCallback(async () => {
     if (isRecording) {
@@ -348,8 +652,170 @@ export function AskClient() {
     }
   }, [isRecording, submitQuery, voiceSupport]);
 
+  const inTranscriptMode = transcript !== null && transcript.length > 0;
+
+  // ── Composer (shared between single-shot and transcript layouts) ──
+  const composer = (
+    <div style={{ ...CARD, padding: "20px", marginBottom: "24px" }}>
+      <textarea
+        ref={(el) => { textareaRef.current = el; }}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        rows={3}
+        placeholder={
+          inTranscriptMode
+            ? "Ask a follow-up question..."
+            : "Ask a question about your risk posture..."
+        }
+        disabled={isPending}
+        style={{
+          width: "100%",
+          background: "transparent",
+          border: "none",
+          outline: "none",
+          color: "#f1f5f9",
+          fontSize: "15px",
+          lineHeight: "1.6",
+          resize: "none",
+          fontFamily: "inherit",
+          minHeight: "72px",
+          overflow: "hidden",
+        }}
+      />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "16px",
+          paddingTop: "16px",
+          borderTop: "1px solid #1e2d45",
+        }}
+      >
+        <span style={{ fontSize: "11px", color: "#334155" }}>
+          {typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
+            ? "⌘ + Enter to submit"
+            : "Ctrl + Enter to submit"}
+        </span>
+
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {/* ── Microphone button ──
+               Rendered whenever the browser is genuinely capable of voice
+               input (capability detection only — incl. iPad/iPhone). Hidden
+               only on a real capability gap, where the note below explains. */}
+          {voiceSupport?.supported && (
+          <button
+            onClick={toggleRecording}
+            disabled={isTranscribing || isPending}
+            style={{
+              padding: "10px 16px",
+              borderRadius: "8px",
+              border: isRecording ? "2px solid #ef4444" : "2px solid #00c4b4",
+              background: isRecording ? "rgba(239,68,68,0.1)" : "transparent",
+              color: isRecording ? "#ef4444" : "#00c4b4",
+              cursor: isTranscribing || isPending ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "14px",
+              transition: "all 0.2s",
+              opacity: isTranscribing || isPending ? 0.5 : 1,
+            }}
+            aria-label={isRecording ? "Stop recording" : "Start voice input"}
+          >
+            {isTranscribing ? (
+              <>
+                <span
+                  style={{
+                    width: "14px",
+                    height: "14px",
+                    borderRadius: "50%",
+                    border: "2px solid #00c4b4",
+                    borderTopColor: "transparent",
+                    display: "inline-block",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+                Transcribing…
+              </>
+            ) : isRecording ? (
+              <>
+                <span
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: "#ef4444",
+                    display: "inline-block",
+                    animation: "pulse 1s infinite",
+                  }}
+                />
+                Stop
+              </>
+            ) : (
+              <>
+                <MicIcon />
+                Voice
+              </>
+            )}
+          </button>
+          )}
+
+          {/* ── Ask button ── */}
+          <button
+            onClick={() => submitQuery(query)}
+            disabled={isPending || query.trim().length === 0}
+            style={{
+              padding: "10px 24px",
+              borderRadius: "8px",
+              border: "none",
+              background: isPending || query.trim().length === 0 ? "#1e2d45" : "#00c4b4",
+              color: isPending || query.trim().length === 0 ? "#475569" : "#0a0f1a",
+              fontSize: "14px",
+              fontWeight: 700,
+              cursor: isPending || query.trim().length === 0 ? "not-allowed" : "pointer",
+              transition: "background 0.15s",
+            }}
+          >
+            {isPending ? "Analyzing…" : "Ask SecureLogic"}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Voice-unsupported note ──
+           Shown in place of the mic button only when capability detection
+           genuinely fails (no getUserMedia/MediaRecorder/supported format),
+           so users understand why voice is absent instead of seeing a
+           silently broken button. */}
+      {voiceSupport && !voiceSupport.supported && (
+        <p
+          style={{
+            margin: "12px 0 0",
+            fontSize: "12px",
+            color: "#64748b",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          <span aria-hidden="true" style={{ opacity: 0.7 }}>
+            <MicIcon />
+          </span>
+          {VOICE_UNSUPPORTED_MESSAGE}
+        </p>
+      )}
+    </div>
+  );
+
   return (
-    <div style={{ maxWidth: "720px", margin: "0 auto", padding: "48px 24px" }}>
+    <div
+      style={{
+        maxWidth: threadsAvailable ? "1040px" : "720px",
+        margin: "0 auto",
+        padding: "48px 24px",
+      }}
+    >
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse {
@@ -374,360 +840,388 @@ export function AskClient() {
         Ask anything about your risk posture in plain English
       </p>
 
-      {/* ── Example chips ── */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "8px",
-          marginBottom: "28px",
-        }}
-      >
-        {EXAMPLE_QUESTIONS.map((q) => (
-          <button
-            key={q}
-            onClick={() => submitQuery(q)}
-            disabled={isPending}
-            style={{
-              padding: "6px 14px",
-              borderRadius: "999px",
-              border: "1px solid #1e2d45",
-              background: "transparent",
-              color: "#94a3b8",
-              fontSize: "12px",
-              fontWeight: 500,
-              cursor: isPending ? "not-allowed" : "pointer",
-              transition: "border-color 0.15s, color 0.15s",
-              opacity: isPending ? 0.5 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (!isPending) {
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "#00c4b4";
-                (e.currentTarget as HTMLButtonElement).style.color = "#00c4b4";
-              }
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "#1e2d45";
-              (e.currentTarget as HTMLButtonElement).style.color = "#94a3b8";
-            }}
+      <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
+        {/* ── Conversation list ──
+             Rendered only once threads are known to exist. Titles + relative
+             last activity, newest first (engine ordering — never re-sorted). */}
+        {threadsAvailable && (
+          <nav
+            aria-label="Conversations"
+            style={{ width: "240px", flexShrink: 0 }}
           >
-            {q}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Input area ── */}
-      <div style={{ ...CARD, padding: "20px", marginBottom: "24px" }}>
-        <textarea
-          ref={(el) => { textareaRef.current = el; }}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={3}
-          placeholder="Ask a question about your risk posture..."
-          disabled={isPending}
-          style={{
-            width: "100%",
-            background: "transparent",
-            border: "none",
-            outline: "none",
-            color: "#f1f5f9",
-            fontSize: "15px",
-            lineHeight: "1.6",
-            resize: "none",
-            fontFamily: "inherit",
-            minHeight: "72px",
-            overflow: "hidden",
-          }}
-        />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginTop: "16px",
-            paddingTop: "16px",
-            borderTop: "1px solid #1e2d45",
-          }}
-        >
-          <span style={{ fontSize: "11px", color: "#334155" }}>
-            {typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
-              ? "⌘ + Enter to submit"
-              : "Ctrl + Enter to submit"}
-          </span>
-
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            {/* ── Microphone button ──
-                 Rendered whenever the browser is genuinely capable of voice
-                 input (capability detection only — incl. iPad/iPhone). Hidden
-                 only on a real capability gap, where the note below explains. */}
-            {voiceSupport?.supported && (
             <button
-              onClick={toggleRecording}
-              disabled={isTranscribing || isPending}
+              onClick={startNewConversation}
+              disabled={isPending || threadLoading}
               style={{
-                padding: "10px 16px",
+                width: "100%",
+                padding: "10px 14px",
+                marginBottom: "12px",
                 borderRadius: "8px",
-                border: isRecording ? "2px solid #ef4444" : "2px solid #00c4b4",
-                background: isRecording ? "rgba(239,68,68,0.1)" : "transparent",
-                color: isRecording ? "#ef4444" : "#00c4b4",
-                cursor: isTranscribing || isPending ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                fontSize: "14px",
-                transition: "all 0.2s",
-                opacity: isTranscribing || isPending ? 0.5 : 1,
-              }}
-              aria-label={isRecording ? "Stop recording" : "Start voice input"}
-            >
-              {isTranscribing ? (
-                <>
-                  <span
-                    style={{
-                      width: "14px",
-                      height: "14px",
-                      borderRadius: "50%",
-                      border: "2px solid #00c4b4",
-                      borderTopColor: "transparent",
-                      display: "inline-block",
-                      animation: "spin 0.8s linear infinite",
-                    }}
-                  />
-                  Transcribing…
-                </>
-              ) : isRecording ? (
-                <>
-                  <span
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      background: "#ef4444",
-                      display: "inline-block",
-                      animation: "pulse 1s infinite",
-                    }}
-                  />
-                  Stop
-                </>
-              ) : (
-                <>
-                  <MicIcon />
-                  Voice
-                </>
-              )}
-            </button>
-            )}
-
-            {/* ── Ask button ── */}
-            <button
-              onClick={() => submitQuery(query)}
-              disabled={isPending || query.trim().length === 0}
-              style={{
-                padding: "10px 24px",
-                borderRadius: "8px",
-                border: "none",
-                background: isPending || query.trim().length === 0 ? "#1e2d45" : "#00c4b4",
-                color: isPending || query.trim().length === 0 ? "#475569" : "#0a0f1a",
-                fontSize: "14px",
+                border: "1px solid #00c4b4",
+                background: "transparent",
+                color: "#00c4b4",
+                fontSize: "13px",
                 fontWeight: 700,
-                cursor: isPending || query.trim().length === 0 ? "not-allowed" : "pointer",
-                transition: "background 0.15s",
+                cursor: isPending || threadLoading ? "not-allowed" : "pointer",
+                textAlign: "left",
               }}
             >
-              {isPending ? "Analyzing…" : "Ask SecureLogic"}
+              + New conversation
             </button>
-          </div>
-        </div>
-
-        {/* ── Voice-unsupported note ──
-             Shown in place of the mic button only when capability detection
-             genuinely fails (no getUserMedia/MediaRecorder/supported format),
-             so users understand why voice is absent instead of seeing a
-             silently broken button. */}
-        {voiceSupport && !voiceSupport.supported && (
-          <p
-            style={{
-              margin: "12px 0 0",
-              fontSize: "12px",
-              color: "#64748b",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
-          >
-            <span aria-hidden="true" style={{ opacity: 0.7 }}>
-              <MicIcon />
-            </span>
-            {VOICE_UNSUPPORTED_MESSAGE}
-          </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {conversations.map((c) => {
+                const active = c.id === selectedId;
+                return (
+                  <li key={c.id} style={{ marginBottom: "6px" }}>
+                    <button
+                      onClick={() => selectThread(c.id)}
+                      disabled={isPending || threadLoading}
+                      aria-current={active ? "true" : undefined}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 12px",
+                        borderRadius: "8px",
+                        border: active ? "1px solid #00c4b4" : "1px solid #1e2d45",
+                        background: active ? "rgba(0,196,180,0.08)" : "#0d1626",
+                        cursor: isPending || threadLoading ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: "block",
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          color: active ? "#f1f5f9" : "#cbd5e1",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {c.title ?? "Untitled conversation"}
+                      </span>
+                      <span
+                        style={{
+                          display: "block",
+                          marginTop: "2px",
+                          fontSize: "11px",
+                          color: "#64748b",
+                        }}
+                      >
+                        {c.mode === "voice" ? "voice · " : ""}
+                        {formatRelative(c.last_message_at)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
         )}
-      </div>
 
-      {/* ── Recording error ──
-           Render priority: code → mapped string; otherwise the server's
-           `message` if present (also covers local-only codes like
-           microphone_denied that carry their own user-facing text);
-           otherwise generic fallback. */}
-      {recordingError && !isRecording && !isTranscribing && (
-        <div
-          style={{
-            ...CARD,
-            padding: "14px 18px",
-            borderColor: "rgba(239,68,68,0.3)",
-            background: "rgba(239,68,68,0.07)",
-            marginBottom: "16px",
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "13px", color: "#fca5a5" }}>
-            {(recordingError.code && TRANSCRIBE_ERROR_MESSAGES[recordingError.code]) ??
-              recordingError.message ??
-              TRANSCRIBE_FALLBACK}
-          </p>
+        {/* ── Main column ── */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* ── Example chips (fresh composer only) ── */}
+          {!inTranscriptMode && !threadLoading && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px",
+                marginBottom: "28px",
+              }}
+            >
+              {EXAMPLE_QUESTIONS.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => submitQuery(q)}
+                  disabled={isPending}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: "999px",
+                    border: "1px solid #1e2d45",
+                    background: "transparent",
+                    color: "#94a3b8",
+                    fontSize: "12px",
+                    fontWeight: 500,
+                    cursor: isPending ? "not-allowed" : "pointer",
+                    transition: "border-color 0.15s, color 0.15s",
+                    opacity: isPending ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isPending) {
+                      (e.currentTarget as HTMLButtonElement).style.borderColor = "#00c4b4";
+                      (e.currentTarget as HTMLButtonElement).style.color = "#00c4b4";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = "#1e2d45";
+                    (e.currentTarget as HTMLButtonElement).style.color = "#94a3b8";
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {/* ── Diagnostic code (non-sensitive) ──
-               A compact, screenshot-friendly trace of this voice attempt so we
-               can diagnose iPad failures from one real attempt. Contains only
-               codes, mime strings, byte sizes, an HTTP status, and a random
-               correlation id — no audio, secrets, or PII. */}
-          {diagnostic && (
-            <details style={{ marginTop: "10px" }}>
-              <summary
+          {/* ── Thread loading ── */}
+          {threadLoading && (
+            <div style={{ ...CARD, padding: "24px", textAlign: "center", marginBottom: "24px" }}>
+              <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
+                Loading conversation…
+              </p>
+            </div>
+          )}
+
+          {/* ── Transcript ── */}
+          {inTranscriptMode && !threadLoading && (
+            <div style={{ marginBottom: "24px" }}>
+              {transcript!.map((turn) => (
+                <div
+                  key={turn.key}
+                  style={{
+                    display: "flex",
+                    justifyContent: turn.role === "user" ? "flex-end" : "flex-start",
+                    marginBottom: "12px",
+                  }}
+                >
+                  <div
+                    style={
+                      turn.role === "user"
+                        ? {
+                            maxWidth: "85%",
+                            padding: "12px 16px",
+                            borderRadius: "12px",
+                            background: "rgba(0,196,180,0.1)",
+                            border: "1px solid rgba(0,196,180,0.25)",
+                          }
+                        : { ...CARD, maxWidth: "92%", padding: "16px 20px" }
+                    }
+                  >
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.5px",
+                        color: turn.role === "user" ? "#00c4b4" : "#64748b",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      {turn.role === "user" ? "You" : "SecureLogic"}
+                    </span>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "14px",
+                        lineHeight: "1.7",
+                        color: "#e2e8f0",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {turn.content}
+                    </p>
+                    {turn.role === "assistant" && turn.contextUsed && (
+                      <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#334155" }}>
+                        {contextCaption(turn.contextUsed)}
+                      </p>
+                    )}
+                    {turn.role === "assistant" && turn.claims && (
+                      <ClaimsDetails claims={turn.claims} />
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* The in-flight question renders immediately; the answer bubble
+                  follows when the engine responds. */}
+              {isPending && pendingQuestion && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
+                  <div
+                    style={{
+                      maxWidth: "85%",
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      background: "rgba(0,196,180,0.1)",
+                      border: "1px solid rgba(0,196,180,0.25)",
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: "14px", lineHeight: "1.7", color: "#e2e8f0" }}>
+                      {pendingQuestion}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {composer}
+
+          {/* ── Recording error ──
+               Render priority: code → mapped string; otherwise the server's
+               `message` if present (also covers local-only codes like
+               microphone_denied that carry their own user-facing text);
+               otherwise generic fallback. */}
+          {recordingError && !isRecording && !isTranscribing && (
+            <div
+              style={{
+                ...CARD,
+                padding: "14px 18px",
+                borderColor: "rgba(239,68,68,0.3)",
+                background: "rgba(239,68,68,0.07)",
+                marginBottom: "16px",
+              }}
+            >
+              <p style={{ margin: 0, fontSize: "13px", color: "#fca5a5" }}>
+                {(recordingError.code && TRANSCRIBE_ERROR_MESSAGES[recordingError.code]) ??
+                  recordingError.message ??
+                  TRANSCRIBE_FALLBACK}
+              </p>
+
+              {/* ── Diagnostic code (non-sensitive) ──
+                   A compact, screenshot-friendly trace of this voice attempt so we
+                   can diagnose iPad failures from one real attempt. Contains only
+                   codes, mime strings, byte sizes, an HTTP status, and a random
+                   correlation id — no audio, secrets, or PII. */}
+              {diagnostic && (
+                <details style={{ marginTop: "10px" }}>
+                  <summary
+                    style={{
+                      cursor: "pointer",
+                      fontSize: "11px",
+                      color: "#94a3b8",
+                      userSelect: "none",
+                    }}
+                  >
+                    Diagnostic details (share with support)
+                  </summary>
+                  <code
+                    style={{
+                      display: "block",
+                      marginTop: "8px",
+                      padding: "10px 12px",
+                      background: "#0a0f1a",
+                      border: "1px solid #1e2d45",
+                      borderRadius: "6px",
+                      fontSize: "11px",
+                      lineHeight: "1.5",
+                      color: "#94a3b8",
+                      wordBreak: "break-all",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    }}
+                  >
+                    {buildDiagnosticCode(diagnostic)}
+                  </code>
+                </details>
+              )}
+            </div>
+          )}
+
+          {/* ── Loading state (single-shot only — the transcript shows the
+               in-flight question inline instead) ── */}
+          {isPending && !inTranscriptMode && !threadLoading && (
+            <div
+              style={{
+                ...CARD,
+                padding: "32px 24px",
+                textAlign: "center",
+                marginBottom: "24px",
+              }}
+            >
+              <div
                 style={{
-                  cursor: "pointer",
-                  fontSize: "11px",
-                  color: "#94a3b8",
-                  userSelect: "none",
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "50%",
+                  border: "3px solid #1e2d45",
+                  borderTopColor: "#00c4b4",
+                  animation: "spin 0.8s linear infinite",
+                  margin: "0 auto 16px",
+                }}
+              />
+              <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
+                Analyzing your posture data…
+              </p>
+            </div>
+          )}
+
+          {/* ── Error state ──
+               Render priority: code → mapped string; otherwise the server's
+               `message` if present; otherwise generic fallback. The raw
+               code/status was already console.error'd at the submit site. */}
+          {error && !isPending && (
+            <div
+              style={{
+                ...CARD,
+                padding: "20px 24px",
+                borderColor: "rgba(239,68,68,0.3)",
+                background: "rgba(239,68,68,0.07)",
+                marginBottom: "24px",
+              }}
+            >
+              <p style={{ margin: 0, fontSize: "14px", color: "#fca5a5" }}>
+                {(error.code && ASK_ERROR_MESSAGES[error.code]) ??
+                  error.message ??
+                  ASK_FALLBACK}
+              </p>
+            </div>
+          )}
+
+          {/* ── Single-shot answer display (engines without conversations) ── */}
+          {answer && !isPending && !inTranscriptMode && (
+            <div style={{ ...CARD, padding: "28px 28px 24px", marginBottom: "24px" }}>
+              <p
+                style={{
+                  margin: "0 0 20px",
+                  fontSize: "15px",
+                  lineHeight: "1.75",
+                  color: "#e2e8f0",
+                  whiteSpace: "pre-wrap",
                 }}
               >
-                Diagnostic details (share with support)
-              </summary>
-              <code
+                {answer.answer}
+              </p>
+
+              {answer.provenance && normalizeClaims(answer.provenance.claims) && (
+                <ClaimsDetails claims={normalizeClaims(answer.provenance.claims)!} />
+              )}
+
+              <div
                 style={{
-                  display: "block",
-                  marginTop: "8px",
-                  padding: "10px 12px",
-                  background: "#0a0f1a",
-                  border: "1px solid #1e2d45",
-                  borderRadius: "6px",
-                  fontSize: "11px",
-                  lineHeight: "1.5",
-                  color: "#94a3b8",
-                  wordBreak: "break-all",
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  paddingTop: "16px",
+                  marginTop: "16px",
+                  borderTop: "1px solid #1e2d45",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "8px",
                 }}
               >
-                {buildDiagnosticCode(diagnostic)}
-              </code>
-            </details>
+                <span style={{ fontSize: "11px", color: "#334155" }}>
+                  {contextCaption(answer.context_used) ?? ""}
+                </span>
+                <button
+                  onClick={reset}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: "#00c4b4",
+                    padding: 0,
+                  }}
+                >
+                  Ask another question →
+                </button>
+              </div>
+            </div>
           )}
         </div>
-      )}
-
-      {/* ── Loading state ── */}
-      {isPending && (
-        <div
-          style={{
-            ...CARD,
-            padding: "32px 24px",
-            textAlign: "center",
-            marginBottom: "24px",
-          }}
-        >
-          <div
-            style={{
-              width: "32px",
-              height: "32px",
-              borderRadius: "50%",
-              border: "3px solid #1e2d45",
-              borderTopColor: "#00c4b4",
-              animation: "spin 0.8s linear infinite",
-              margin: "0 auto 16px",
-            }}
-          />
-          <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
-            Analyzing your posture data…
-          </p>
-        </div>
-      )}
-
-      {/* ── Error state ──
-           Render priority: code → mapped string; otherwise the server's
-           `message` if present; otherwise generic fallback. The raw
-           code/status was already console.error'd at the submit site. */}
-      {error && !isPending && (
-        <div
-          style={{
-            ...CARD,
-            padding: "20px 24px",
-            borderColor: "rgba(239,68,68,0.3)",
-            background: "rgba(239,68,68,0.07)",
-            marginBottom: "24px",
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "14px", color: "#fca5a5" }}>
-            {(error.code && ASK_ERROR_MESSAGES[error.code]) ??
-              error.message ??
-              ASK_FALLBACK}
-          </p>
-        </div>
-      )}
-
-      {/* ── Answer display ── */}
-      {answer && !isPending && (
-        <div style={{ ...CARD, padding: "28px 28px 24px", marginBottom: "24px" }}>
-          <p
-            style={{
-              margin: "0 0 20px",
-              fontSize: "15px",
-              lineHeight: "1.75",
-              color: "#e2e8f0",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {answer.answer}
-          </p>
-
-          <div
-            style={{
-              paddingTop: "16px",
-              borderTop: "1px solid #1e2d45",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "8px",
-            }}
-          >
-            <span style={{ fontSize: "11px", color: "#334155" }}>
-              {answer.context_used.posture_score != null
-                ? `Posture score ${answer.context_used.posture_score}`
-                : "No posture snapshot"}
-              {" · "}
-              {answer.context_used.findings_count} active findings
-              {" · "}
-              {answer.context_used.risks_count} risks
-              {answer.context_used.as_of
-                ? ` · as of ${formatDate(answer.context_used.as_of)}`
-                : ""}
-            </span>
-            <button
-              onClick={reset}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-                color: "#00c4b4",
-                padding: 0,
-              }}
-            >
-              Ask another question →
-            </button>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

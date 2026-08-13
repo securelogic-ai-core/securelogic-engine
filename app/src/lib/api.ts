@@ -5194,17 +5194,149 @@ export async function getWebhookDeliveries(
 // ASK (natural language posture search)
 // =========================================================
 
+/**
+ * `context_used` differs by which retrieval path the engine ran (ask.ts):
+ *   - snapshot path: posture_score / findings_count / risks_count /
+ *     vendors_count / as_of
+ *   - tool path: retrieval:"tools" / tool_calls / tools_denied / complete
+ * All fields optional so one type covers both; callers must branch on
+ * presence, never assume a shape.
+ */
+export type AskContextUsed = {
+  // Snapshot path
+  posture_score?: number | null;
+  findings_count?: number;
+  risks_count?: number;
+  vendors_count?: number;
+  as_of?: string | null;
+  // Tool path
+  retrieval?: "tools";
+  tool_calls?: number;
+  tools_denied?: number;
+  complete?: boolean;
+};
+
+/**
+ * A citation on a verified claim.
+ *
+ * Two field spellings exist in the engine, both real:
+ *   - POST /api/ask's `provenance.claims[].citations[]` maps the engine's
+ *     `tool_name` to `tool` (ask.ts response assembly).
+ *   - The STORED claims column on ask_messages holds the raw engine Claim
+ *     shape (src/api/lib/ask/claims.ts): `invocation_index`, `tool_name`,
+ *     plus optional `object_type` / `object_id` / `field` / `value`.
+ * Renderers read `tool_name ?? tool` and treat every field as optional.
+ */
+export type AskClaimCitation = {
+  invocation_index?: number;
+  tool_name?: string;
+  tool?: string;
+  object_type?: string;
+  object_id?: string;
+  field?: string;
+  value?: unknown;
+};
+
+/** Mirrors CLAIM_CLASSES in src/api/lib/ask/claims.ts (strongest-evidence-first). */
+export type AskClaimClass = "observed" | "derived" | "inference" | "recommendation";
+
+export type AskClaim = {
+  text: string;
+  claim_class: AskClaimClass | string;
+  citations: AskClaimCitation[];
+  /** For `inference`: indices of the claims it reasoned from (stored shape only). */
+  derived_from?: number[];
+};
+
 export type AskResponse = {
   answer: string;
-  context_used: {
-    posture_score: number | null;
-    findings_count: number;
-    risks_count: number;
-    vendors_count: number;
-    as_of: string | null;
-  };
+  context_used: AskContextUsed;
   question: string;
+  /**
+   * Present on the tool path when a thread was created/continued; absent on
+   * the snapshot path and when persistence failed. Its absence means the UI
+   * must behave single-shot.
+   */
+  conversation_id?: string | null;
+  /**
+   * Present only when the provenance pass ran — absent is "no provenance
+   * available", NOT "nothing was observed" (engine contract).
+   */
+  provenance?: {
+    verified: boolean;
+    claims: AskClaim[];
+  };
 };
+
+// ─── Ask conversations (multi-turn) ─────────────────────────
+
+/** Mirrors AskConversation in src/api/lib/ask/conversationStore.ts. */
+export type AskConversationSummary = {
+  id: string;
+  title: string | null;
+  mode: "text" | "voice";
+  last_message_at: string | null;
+};
+
+/**
+ * Mirrors AskMessage in src/api/lib/ask/conversationStore.ts. `claims` is the
+ * verified-claims structure captured at answer time (null on user turns and on
+ * answers whose provenance pass did not run) — citations are RENDERED from it,
+ * never recomputed.
+ */
+export type AskConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  claims: unknown;
+  created_at: string;
+};
+
+export type AskConversationDetail = {
+  conversation: AskConversationSummary;
+  messages: AskConversationMessage[];
+};
+
+/**
+ * GET /api/ask/conversations — the caller's own threads, newest-activity first
+ * (ordering is the engine's; do not re-sort).
+ *
+ * Returns null on ANY failure — including 404 from an engine predating the
+ * conversation routes — and the caller must degrade to single-shot Ask, never
+ * render an error for it.
+ */
+export async function listAskConversations(
+  token: string
+): Promise<{ conversations: AskConversationSummary[] } | null> {
+  try {
+    const res = await engineFetch("/api/ask/conversations", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ conversations: AskConversationSummary[] }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /api/ask/conversations/:id — one owned thread with its transcript.
+ * The engine answers 404 for not-found AND not-owned (indistinguishable on
+ * purpose); both surface here as null.
+ */
+export async function getAskConversation(
+  token: string,
+  conversationId: string
+): Promise<AskConversationDetail | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ask/conversations/${encodeURIComponent(conversationId)}`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AskConversationDetail>;
+  } catch {
+    return null;
+  }
+}
 
 // Discriminated-union result so the caller can distinguish success from
 // each failure mode (auth, rate-limit, model failure, network) and render
@@ -5217,13 +5349,19 @@ export type AskResult =
 
 export async function askQuestion(
   token: string,
-  question: string
+  question: string,
+  conversationId?: string | null
 ): Promise<AskResult> {
   let res: Response;
   try {
     res = await engineFetch("/api/ask", token, {
       method: "POST",
-      body: JSON.stringify({ question }),
+      // conversation_id continues an existing thread on the tool path; the
+      // snapshot path (and an unknown/expired id) simply ignores it, so
+      // sending it is always safe.
+      body: JSON.stringify(
+        conversationId ? { question, conversation_id: conversationId } : { question }
+      ),
     });
   } catch {
     return { ok: false, status: 0, code: "network_error" };

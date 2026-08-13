@@ -1,7 +1,15 @@
 "use server";
 
 import { getSession } from "@/lib/session";
-import { askQuestion, type AskResponse, type AskResult } from "@/lib/api";
+import {
+  askQuestion,
+  listAskConversations,
+  getAskConversation,
+  type AskResponse,
+  type AskResult,
+  type AskConversationSummary,
+  type AskConversationDetail,
+} from "@/lib/api";
 
 // Mirror AskResult so the client can switch on the same shape regardless
 // of whether the failure originated in the API client (network, parse) or
@@ -11,7 +19,8 @@ import { askQuestion, type AskResponse, type AskResult } from "@/lib/api";
 export type AskActionResult = AskResult;
 
 export async function askAction(
-  question: string
+  question: string,
+  conversationId?: string | null
 ): Promise<AskActionResult> {
   const session = await getSession();
   const token = session.jwtToken ?? null;
@@ -23,7 +32,38 @@ export async function askAction(
       message: "Not authenticated",
     };
   }
-  return askQuestion(token, question);
+  return askQuestion(token, question, conversationId ?? null);
+}
+
+/**
+ * The caller's own Ask threads, newest-activity first (engine ordering).
+ *
+ * Returns null on any failure — no auth, engine error, or an engine build
+ * without the conversation routes. The client treats null and an empty list
+ * identically: single-shot Ask, no sidebar, no error. Thread history is an
+ * enhancement, never a failure mode.
+ */
+export async function listConversationsAction(): Promise<
+  { conversations: AskConversationSummary[] } | null
+> {
+  const session = await getSession();
+  const token = session.jwtToken ?? null;
+  if (!token) return null;
+  return listAskConversations(token);
+}
+
+/**
+ * One owned thread with its transcript. Null covers not-found, not-owned
+ * (indistinguishable by engine contract), and any failure.
+ */
+export async function getConversationAction(
+  conversationId: string
+): Promise<AskConversationDetail | null> {
+  const session = await getSession();
+  const token = session.jwtToken ?? null;
+  if (!token) return null;
+  return getAskConversation(token, conversationId);
 }
 
 export type { AskResponse };
+export type { AskConversationSummary, AskConversationDetail };
