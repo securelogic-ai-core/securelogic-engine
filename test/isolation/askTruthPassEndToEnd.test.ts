@@ -275,6 +275,64 @@ describe("STEP 4 — conversation continuity", () => {
   });
 });
 
+describe("STEP 4b — conversation reads (the A3 surface)", () => {
+  const getOrgA = (path: string) => request(app).get(path).set("X-Api-Key", seed.orgA.apiKey);
+  const getOrgB = (path: string) => request(app).get(path).set("X-Api-Key", seed.orgB.apiKey);
+
+  it("lists the caller's own threads, titled from the opening question", async () => {
+    script = toolThenAnswer("vendors.search", {}, "One vendor.");
+    const asked = await asOrgA("/api/ask").send({ question: "A distinctly titled question?" });
+    expect(asked.status).toBe(200);
+
+    const res = await getOrgA("/api/ask/conversations");
+    expect(res.status).toBe(200);
+    const titles = res.body.conversations.map((c: { title: string | null }) => c.title);
+    // Deterministic truncation of the first question — navigation, not analysis.
+    expect(titles).toContain("A distinctly titled question?");
+  });
+
+  it("returns a thread's messages with their verified claims", async () => {
+    const list = await getOrgA("/api/ask/conversations");
+    const id = list.body.conversations[0].id;
+
+    const res = await getOrgA(`/api/ask/conversations/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.conversation.id).toBe(id);
+    const roles = res.body.messages.map((m: { role: string }) => m.role);
+    expect(roles).toContain("user");
+    expect(roles).toContain("assistant");
+    // Provenance is replayed from the record, never recomputed: the claims
+    // column rides along for the UI to render citations as verified at answer
+    // time.
+    for (const m of res.body.messages) {
+      expect(m).toHaveProperty("claims");
+    }
+  });
+
+  it("another org's read of the thread is a plain 404", async () => {
+    const list = await getOrgA("/api/ask/conversations");
+    const id = list.body.conversations[0].id;
+
+    const res = await getOrgB(`/api/ask/conversations/${id}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain("title");
+  });
+
+  it("org B's list does not contain org A's threads", async () => {
+    const a = await getOrgA("/api/ask/conversations");
+    const b = await getOrgB("/api/ask/conversations");
+    const bIds = new Set(b.body.conversations.map((c: { id: string }) => c.id));
+    for (const c of a.body.conversations) {
+      expect(bIds.has(c.id)).toBe(false);
+    }
+  });
+
+  it("a malformed conversation id is a 404, not a 500", async () => {
+    const res = await getOrgA("/api/ask/conversations/not-a-uuid");
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("STEP 5 — provenance", () => {
   it("DOWNGRADES a claim the tool output does not support", async () => {
     process.env.SECURELOGIC_ASK_PROVENANCE_ENABLED = "true";

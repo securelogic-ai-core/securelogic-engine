@@ -100,6 +100,68 @@ export async function loadHistory(args: {
   return result.rows;
 }
 
+/**
+ * The caller's own threads, most recently active first.
+ *
+ * User-scoped like every read here: a colleague's threads are invisible, not
+ * merely inaccessible — the list must not even reveal that they exist.
+ */
+export async function listConversations(args: {
+  organizationId: string;
+  userId: string | null;
+  limit?: number;
+}): Promise<AskConversation[]> {
+  const params: unknown[] = [args.organizationId];
+  const predicate = userPredicate(args.userId, params);
+  params.push(Math.min(args.limit ?? 50, 100));
+  const result = await pg.query<AskConversation>(
+    `SELECT id, title, mode, last_message_at
+       FROM ask_conversations
+      WHERE organization_id = $1 AND ${predicate}
+      ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC
+      LIMIT $${params.length}`,
+    params
+  );
+  return result.rows;
+}
+
+export type AskMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  /** Verified-claims structure from the provenance pass; null on user turns. */
+  claims: unknown;
+  created_at: string;
+};
+
+/**
+ * A thread's messages for rendering, oldest first, bounded.
+ *
+ * Includes `claims` so the UI can show an answer's citations exactly as they
+ * were verified at answer time — provenance is replayed from the record, never
+ * recomputed. Ownership must already be established via findOwnedConversation;
+ * this function does not re-check it.
+ */
+export async function loadMessages(args: {
+  organizationId: string;
+  conversationId: string;
+  limit?: number;
+}): Promise<AskMessage[]> {
+  const limit = Math.min(args.limit ?? 100, 200);
+  const result = await pg.query<AskMessage>(
+    `SELECT id, role, content, claims, created_at FROM (
+       SELECT id, role, content, claims, created_at
+         FROM ask_messages
+        WHERE conversation_id = $1 AND organization_id = $2
+        ORDER BY created_at DESC, id DESC
+        LIMIT $3
+     ) recent
+     ORDER BY created_at ASC, id ASC`,
+    [args.conversationId, args.organizationId, limit]
+  );
+  return result.rows;
+}
+
 export async function recordUserMessage(args: {
   organizationId: string;
   conversationId: string;

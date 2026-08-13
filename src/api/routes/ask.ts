@@ -40,7 +40,9 @@ import { runAskOrchestration } from "../lib/ask/orchestrator.js";
 import {
   createConversation,
   findOwnedConversation,
+  listConversations,
   loadHistory,
+  loadMessages,
   recordAssistantMessage,
   recordUserMessage,
   type AskTurn,
@@ -216,7 +218,14 @@ async function handleWithTools(args: {
           }
         }
         if (!conversationId) {
-          conversationId = await createConversation({ organizationId, userId });
+          // Titled from the opening question so the thread list is legible.
+          // Deterministic truncation, not a model call: a title is navigation,
+          // not analysis.
+          conversationId = await createConversation({
+            organizationId,
+            userId,
+            title: question.length > 80 ? `${question.slice(0, 77)}...` : question,
+          });
         }
         await recordUserMessage({
           organizationId,
@@ -869,6 +878,81 @@ router.post(
     } catch (err) {
       logger.error({ event: "ask_failed", err }, "POST /api/ask failed");
       res.status(500).json({ error: "ask_failed", message: "Unable to process query" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Conversation reads — the A3 multi-turn UI surface.
+//
+// Same gate chain as POST /ask minus the rate limiter (these never touch a
+// model). User-scoped in the store: a colleague's threads are invisible, and
+// not-found vs not-yours is indistinguishable, because a thread can contain
+// data filtered to the OWNER's seat scope and is phrased for them.
+// ---------------------------------------------------------------------------
+
+router.get(
+  "/ask/conversations",
+  askFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  async (req: Request, res: Response) => {
+    const organizationId = (req as any).organizationContext?.organizationId ?? null;
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+    const userId = (req as { userId?: string }).userId ?? null;
+    try {
+      const conversations = await withTenant(organizationId, () =>
+        listConversations({ organizationId, userId })
+      );
+      res.status(200).json({ conversations });
+    } catch (err) {
+      logger.error({ event: "ask_conversation_list_failed", organizationId, err }, "Ask conversation list failed");
+      res.status(500).json({ error: "conversation_list_failed" });
+    }
+  }
+);
+
+router.get(
+  "/ask/conversations/:id",
+  askFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  async (req: Request, res: Response) => {
+    const organizationId = (req as any).organizationContext?.organizationId ?? null;
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+    const userId = (req as { userId?: string }).userId ?? null;
+    const conversationId = String(req.params["id"] ?? "");
+    // A malformed id is a not-found, not a 500: `id = $1` casts to uuid and a
+    // junk string would otherwise throw at the DB layer.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
+      res.status(404).json({ error: "conversation_not_found" });
+      return;
+    }
+    try {
+      const result = await withTenant(organizationId, async () => {
+        const owned = await findOwnedConversation({ organizationId, userId, conversationId });
+        if (!owned) return null;
+        const messages = await loadMessages({ organizationId, conversationId: owned.id });
+        return { conversation: owned, messages };
+      });
+      if (!result) {
+        res.status(404).json({ error: "conversation_not_found" });
+        return;
+      }
+      res.status(200).json(result);
+    } catch (err) {
+      logger.error({ event: "ask_conversation_read_failed", organizationId, err }, "Ask conversation read failed");
+      res.status(500).json({ error: "conversation_read_failed" });
     }
   }
 );
