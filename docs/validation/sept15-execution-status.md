@@ -1,8 +1,15 @@
 # September 15 Program — Execution Status
 
 Sessions 1–3, 2026-08-12 → 2026-08-13. Baseline `develop` @ `58285e67`.
-**All three branches pushed to origin 2026-08-13 (operator-directed).
-Nothing merged, no PRs opened, production untouched.**
+**MERGED TO DEVELOP 2026-08-13 (operator-directed), full stack, bottom-up:**
+PR #786 (`a21262e3`, VA Phase 0) → PR #789 (`47814937`, Ask A0; replaced
+#787, auto-closed by a base-branch deletion) → PR #788 (`648ff0e6`, Phases
+1–6 + Ask A1–A3, carries the 12 migrations — its develop deploy is the
+staging migration moment). Each merged after CI settled with every
+substantive check green, including cross-org-isolation; the only red was
+the `audit` check, red on the `58285e67` baseline itself (inherited
+npm-audit, not branch-attributable). Feature branches deleted post-merge.
+**Production untouched — nothing on `main`, no prod flags flipped.**
 
 ---
 
@@ -69,7 +76,10 @@ knowledge-index drift test); typecheck clean.
 | `feat/sept15-va-phase1-engagement-spine` | `87b7757a` onward — deterministic core, spine, tool registry, ASK-A, Ask A1/A2, portal, LLM-independence |
 
 45 commits above `develop` across the stack (22 at session-1 close). Branches
-are stacked in that order; each is a rollback point.
+were stacked in that order; each was a rollback point until the 2026-08-13
+merge. Post-merge the branches are deleted — the rollback points are now the
+three squash commits on `develop` (`a21262e3`, `47814937`, `648ff0e6`), each
+individually revertable in reverse order.
 
 ---
 
