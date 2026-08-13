@@ -847,6 +847,11 @@ export async function recomputeRisk(req: Request, res: Response): Promise<void> 
           SET residual_score = $3, residual_rating = $4, residual_basis = $5::jsonb,
               residual_computed_at = NOW(),
               effectiveness_score = $6, effectiveness_basis = $7::jsonb,
+              -- The machine's one permitted advance: analysis_complete →
+              -- decision_pending has actors internal|system and its guard
+              -- (residual_computed) is satisfied by this very statement. Every
+              -- other state is left exactly where the humans put it.
+              status = CASE WHEN status = 'analysis_complete' THEN 'decision_pending' ELSE status END,
               updated_at = NOW()
         WHERE id = $1 AND organization_id = $2`,
       [
@@ -1290,6 +1295,124 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
 }
 
 /* =========================================================
+   POST /api/vendor-engagements/:id/begin-review — submitted → in_review.
+
+   The reviewer opening the response. After this, portal writes are already
+   refused (that happened at submit); this records that a human has the file.
+   ========================================================= */
+export async function beginReview(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+    const check = canTransition(from, "in_review", "internal");
+    if (!check.allowed) {
+      res.status(409).json({ error: "cannot_begin_review", from, reason: check.reason });
+      return;
+    }
+
+    await pg.query(
+      `UPDATE vendor_engagements SET status = 'in_review', updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND status = $3`,
+      [id, organizationId, from]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.review_started",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {},
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({ ok: true, status: "in_review" });
+  } catch (err) {
+    logger.error({ event: "begin_review_failed", organizationId, err }, "Begin review failed");
+    res.status(500).json({ error: "begin_review_failed" });
+  }
+}
+
+/* =========================================================
+   POST /api/vendor-engagements/:id/complete-analysis — in_review → analysis_complete.
+
+   Stamps `analysis_coverage` — the ratified record of whether AI-dependent
+   analysis actually ran, so `deterministic_only` can never masquerade as a
+   clean full analysis.
+
+   The coverage value is COMPUTED, not accepted from the caller: it is a system
+   observation about what ran, not an operator claim. Today no engagement-level
+   AI analysis pipeline exists, so the stamp is always `deterministic_only`;
+   when the evidence-analysis worker lands, its recorded results are what will
+   upgrade the stamp to `partial`/`full`. The seam is this route.
+   ========================================================= */
+export async function completeAnalysis(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+    const check = canTransition(from, "analysis_complete", "internal");
+    if (!check.allowed) {
+      res.status(409).json({ error: "cannot_complete_analysis", from, reason: check.reason });
+      return;
+    }
+
+    const coverage = "deterministic_only";
+
+    await pg.query(
+      `UPDATE vendor_engagements
+          SET status = 'analysis_complete',
+              analysis_coverage = $3, analysis_coverage_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND status = $4`,
+      [id, organizationId, coverage, from]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.analysis_completed",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: { analysis_coverage: coverage },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({ ok: true, status: "analysis_complete", analysis_coverage: coverage });
+  } catch (err) {
+    logger.error({ event: "complete_analysis_failed", organizationId, err }, "Complete analysis failed");
+    res.status(500).json({ error: "complete_analysis_failed" });
+  }
+}
+
+/* =========================================================
    POST /api/vendor-engagements/:id/monitoring
 
    Starts (or refreshes) continuous monitoring — the state a decided engagement
@@ -1427,6 +1550,8 @@ router.post(
   asTenant(reviewEvidence)
 );
 router.post("/vendor-engagements/:id/promote-findings", ...chain, asTenant(promoteEngagementFindings));
+router.post("/vendor-engagements/:id/begin-review", ...chain, asTenant(beginReview));
+router.post("/vendor-engagements/:id/complete-analysis", ...chain, asTenant(completeAnalysis));
 router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonitoring));
 
 // The issue route writes the invite on the ELEVATED channel (the credential is

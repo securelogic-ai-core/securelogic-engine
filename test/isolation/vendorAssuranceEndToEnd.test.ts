@@ -613,12 +613,37 @@ describe("STEP 6 — the governance decision", () => {
     expect(res.body.error).toBe("rationale_required");
   });
 
-  it("records the decision", async () => {
-    // The engagement must reach a state the machine allows `decided` from.
-    await pool.query(`UPDATE vendor_engagements SET status = 'decision_pending' WHERE id = $1`, [
-      flow.engagementId,
-    ]);
+  it("walks submitted → in_review → analysis_complete → decision_pending over HTTP", async () => {
+    // No SQL forcing: the review chain is driven through the same API a
+    // reviewer uses. This is part of the LLM-independent end-to-end property.
+    const review = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/begin-review`)
+      .send({});
+    expect(review.status, JSON.stringify(review.body)).toBe(200);
+    expect(review.body.status).toBe("in_review");
 
+    const analysis = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/complete-analysis`)
+      .send({});
+    expect(analysis.status, JSON.stringify(analysis.body)).toBe(200);
+    // RATIFIED — deterministic_only must never imply clean: no AI analysis ran
+    // in this walkthrough, and the stamp says so. The value is computed by the
+    // system, never accepted from the caller.
+    expect(analysis.body.analysis_coverage).toBe("deterministic_only");
+
+    // Residual lands → the machine's one permitted advance.
+    const recompute = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/recompute`)
+      .send({});
+    expect(recompute.status).toBe(200);
+    const row = await pool.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.status).toBe("decision_pending");
+  });
+
+  it("records the decision", async () => {
     const res = await asOrgA
       .post(`/api/vendor-engagements/${flow.engagementId}/decision`)
       .send({
