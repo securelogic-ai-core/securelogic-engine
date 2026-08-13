@@ -54,7 +54,8 @@ monitoring entirely over HTTP (47 tests); the Ask Truth Pass walkthrough is 23.
 | Gate 1 — Phase 1 complete | PARTIAL | Deterministic core + spine + scoping done; internal routes, UI and `scope_tags` backfill not |
 | **VA end-to-end walkthrough** (workflow) | **PASS — local** | 30 tests, real HTTP + real Postgres. NOT the staging walkthrough |
 | **Ask Truth Pass walkthrough** (workflow) | **PASS — local** | 18 tests, real tool registry + real Postgres, scripted model. NOT the staging walkthrough |
-| Stop Gate C, ASK-B, ASK-C | Not reached | — |
+| **Stop Gate ASK-C** — Voice data governance | **Engineering PASS** (session 2) | Live push-to-talk path reviewed: audio memory-only, never persisted/logged; same Ask/tool layer by construction; transcribe limiter P1 fixed. Subprocessor (OpenAI Whisper audio) sign-off operator-owed. Realtime voice DEFERRED per cut rule. Evidence: `sept15-stop-gate-ask-c-evidence.md` |
+| Stop Gate C, ASK-B | Not reached | ASK-B's mutate/governed action classes are explicitly P2 — no mutation tools exist to gate yet |
 
 Launch runbook: `docs/runbooks/sept15-launch-runbook.md` — flags, migration
 order, deploy sequence, incident response, rollback, and the P2/P3 register.

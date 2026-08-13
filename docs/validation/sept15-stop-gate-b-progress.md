@@ -33,6 +33,18 @@ This document exists so the near-complete state cannot be mistaken for a pass.
 Two of seven criteria need a human. Both are operator-owed and neither is
 compressible.
 
+**Session-2 note (2026-08-13).** B.4's prerequisite is now met: the seven
+portal screens exist (`/portal/*` in the app, same-origin proxy), so an
+external tester has something to test the moment staging deploys. Adversarial
+count is now 71 (a clarification-answer regression case was added). Two
+defects the suite structurally could NOT have caught were found and fixed by
+building the screens: the session cookie's path never matched the API mount
+(supertest sets the Cookie header manually, bypassing RFC 6265 path matching —
+the one cookie property a server-side harness cannot exercise), and answer
+edits during `clarification_requested` were refused. B.3's reviewer should
+look hardest at exactly that seam: browser-enforced behaviours the test
+harness bypasses.
+
 ---
 
 ## 1. What is built — the complete surface
