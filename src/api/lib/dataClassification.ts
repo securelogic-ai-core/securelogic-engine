@@ -174,6 +174,7 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   // ── D — Org data not tied to a specific user (leave alone on user delete) ──
   organizations: { category: "D", piiRisk: "low", rlsStatus: "none", exportExcludedColumns: ["stripe_customer_id", "stripe_subscription_id", "stripe_subscription_tier", "stripe_subscription_status", "payment_failed_at", "promo_code"], specialHandling: "ROOT-TENANT. Carries Stripe F-fields (stripe_customer_id, stripe_subscription_*, payment_failed_at) + promo_code with legal-retention — OMITTED from the org_full export (exportExcludedColumns, PR #2b/Q5); entitlement_level (the portable plan tier) is retained. Only touched on ORG deletion, which is out of scope for this workstream." },
   vendor_assurance_extractions: { category: "D", piiRisk: "low", rlsStatus: "pending" },
+  evidence_analysis: { category: "D", piiRisk: "low", rlsStatus: "enabled", specialHandling: "NEW (Sept-15 VA Phase 4). Advisory model verdicts (supports/insufficient/contradicts/unreadable + rationale) about a vendor's evidence document, keyed to the evidence row (CASCADE) — org data with no user ref; derived system output, never authoritative (the effectiveness ladder reads only the human confirmation). RLS enabled from creation (NOT FORCE)." },
   vendor_assurance_extraction_spans: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   frameworks: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   requirements: { category: "D", piiRisk: "low", rlsStatus: "pending" },

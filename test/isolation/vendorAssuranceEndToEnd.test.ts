@@ -835,6 +835,9 @@ describe("cross-tenant isolation holds across the whole workflow", () => {
       `/api/vendor-engagements/${flow.engagementId}/decision`,
       `/api/vendor-engagements/${flow.engagementId}/issue`,
       `/api/vendor-engagements/${flow.engagementId}/monitoring`,
+      `/api/vendor-engagements/${flow.engagementId}/begin-review`,
+      `/api/vendor-engagements/${flow.engagementId}/complete-analysis`,
+      `/api/vendor-engagements/${flow.engagementId}/promote-findings`,
     ]) {
       const res = await asOrgB.post(path).send({
         decision: "approved",

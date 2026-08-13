@@ -117,7 +117,7 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "gapReport.ts": 1,
   "auditPackage.ts": 2,
   // AI features
-  "ask.ts": 1,
+  "ask.ts": 3, // POST /ask + the two A3 conversation reads
   "transcribe.ts": 1,
   // cyber signals (customer CRUD + fetch + reprocess)
   "cyberSignals.ts": 13,

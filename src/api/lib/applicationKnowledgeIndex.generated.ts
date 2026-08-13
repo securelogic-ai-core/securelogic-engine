@@ -677,6 +677,48 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
+      "path": "/portal",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/accept/[token]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/clarifications",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/done",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/evidence",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/questionnaire",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/review",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/posture",
       "dynamic": false,
       "navLabel": null,
