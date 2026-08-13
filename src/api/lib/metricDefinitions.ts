@@ -265,3 +265,42 @@ export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
 export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): string {
   return `NOT EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
 }
+
+// ── Vendor-assurance document review state ──────────────────────────────────
+
+/**
+ * The terminal states meaning A HUMAN HAS ACCEPTED THIS EXTRACTION.
+ *
+ * TWO values, not one, and that is the whole point. Migration 20260612
+ * (`vendor_assurance_document_presentation`) replaced the per-field
+ * Accept/Edit/Reject + Finalize flow with a document-level review whose accept
+ * state is `approved`; its own comment records that "no new code path writes
+ * 'finalized'". But `finalized` stayed a legal value for the rows written
+ * before that change, and those rows are real customer review decisions.
+ *
+ * So "reviewed" is `approved OR finalized`, and any surface that wants "the
+ * latest reviewed assurance document" MUST use this set. Hardcoding either
+ * value alone is a defect in one direction or the other:
+ *   - `finalized` alone  → the surface is dead for every org on the current
+ *     flow (this was the live bug on /vendors/[id]: the card queried
+ *     `status: "finalized"`, which nothing writes, so it rendered the empty
+ *     state forever after a reviewer approved a SOC report);
+ *   - `approved` alone   → legacy reviewed documents silently disappear.
+ */
+export const ASSURANCE_REVIEWED_STATUSES = ["approved", "finalized"] as const;
+
+/** True when a document's processing_status means a human accepted the extraction. */
+export function isAssuranceReviewed(processingStatus: string | null | undefined): boolean {
+  return (ASSURANCE_REVIEWED_STATUSES as readonly string[]).includes(
+    processingStatus ?? ""
+  );
+}
+
+/**
+ * SQL predicate for the reviewed population. Compile-time constant — the column
+ * name comes from the caller's own literal, never from request input.
+ */
+export function sqlAssuranceReviewed(col = "processing_status"): string {
+  const list = ASSURANCE_REVIEWED_STATUSES.map((s) => `'${s}'`).join(", ");
+  return `${col} IN (${list})`;
+}

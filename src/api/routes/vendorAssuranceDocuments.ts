@@ -40,6 +40,7 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { vendorAssuranceFeatureFlag } from "../lib/vendorAssuranceFeatureFlag.js";
 import {
@@ -61,6 +62,7 @@ import {
   getVendorAssurancePdfSignedUrl
 } from "../lib/vendorAssuranceStorage.js";
 import { MATERIAL_FIELD_NAMES } from "../lib/socExtractionPrompt.js";
+import { sqlAssuranceReviewed } from "../lib/metricDefinitions.js";
 import {
   refreshCuecMappingsForDocument,
   MATCH_SCORE_MIN_THRESHOLD,
@@ -85,6 +87,14 @@ const VALID_STATUSES = new Set([
   "manual_review_requested",
   "rejected"
 ]);
+
+/**
+ * Pseudo-status accepted by the ?status= list filter. Not a column value —
+ * it expands to `processing_status IN ('approved','finalized')` via
+ * sqlAssuranceReviewed(). See ASSURANCE_REVIEWED_STATUSES for why the reviewed
+ * population is two values and must never be hardcoded as one.
+ */
+const ASSURANCE_REVIEWED_FILTER = "reviewed";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -171,10 +181,23 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   }
   const meta = validated.input;
 
+  // Captured once: the DB steps below run inside withTenant callbacks, and TS
+  // cannot carry the `req.file` narrowing across a closure boundary.
+  const uploadedFile = req.file;
+
+  // A04-G1 tenant scoping for this handler is EXPLICIT withTenant, not an
+  // asTenant route wrap. The handler streams file bytes to R2 in the middle of
+  // its DB work; an asTenant wrap would hold one tenant transaction open across
+  // that upload. Instead each DB step opens its own short scope, bracketing the
+  // R2 put — so the connection is never held across external I/O and every query
+  // still runs with app.current_org_id set for RLS.
+
   // Pre-flight: vendor must belong to org. 404 (not 403) on cross-org.
-  const vendorCheck = await pg.query(
-    `SELECT 1 FROM vendors WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-    [meta.vendor_id, organizationId]
+  const vendorCheck = await withTenant(organizationId, () =>
+    pg.query(
+      `SELECT 1 FROM vendors WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [meta.vendor_id, organizationId]
+    )
   );
   if ((vendorCheck.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_not_found" });
@@ -191,13 +214,15 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   // 'pending' and does not. The SUM-then-INSERT is deliberately non-atomic —
   // concurrent uploads can overshoot by up to one max-size file each; that is
   // acceptable for a soft storage cap.
-  const usage = await pg.query<{ total_bytes: string; document_count: string }>(
-    `SELECT COALESCE(SUM(byte_size), 0)::text AS total_bytes,
-            COUNT(*)::text                    AS document_count
-       FROM vendor_assurance_documents
-      WHERE organization_id = $1
-        AND storage_key LIKE 'org/%'`,
-    [organizationId]
+  const usage = await withTenant(organizationId, () =>
+    pg.query<{ total_bytes: string; document_count: string }>(
+      `SELECT COALESCE(SUM(byte_size), 0)::text AS total_bytes,
+              COUNT(*)::text                    AS document_count
+         FROM vendor_assurance_documents
+        WHERE organization_id = $1
+          AND storage_key LIKE 'org/%'`,
+      [organizationId]
+    )
   );
   const usedBytes = Number(usage.rows[0]?.total_bytes ?? "0");
   const documentCount = Number(usage.rows[0]?.document_count ?? "0");
@@ -231,7 +256,8 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   // the id baked into the storage_key. If the R2 put fails, we mark the row
   // as extraction_failed:pdf_unparseable and return 500 — the caller should
   // re-upload.
-  const insertResult = await pg.query<{ id: string; created_at: string }>(
+  const insertResult = await withTenant(organizationId, () =>
+    pg.query<{ id: string; created_at: string }>(
     `INSERT INTO vendor_assurance_documents (
        organization_id, vendor_id, uploaded_by_user_id,
        original_filename, byte_size, sha256, storage_key,
@@ -244,13 +270,14 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
       meta.vendor_id,
       req.userId ?? null,
       meta.original_filename,
-      req.file.size,
+      uploadedFile.size,
       sha256,
       // placeholder; will be overwritten with the absolute key once we know id
       "pending",
       "application/pdf",
       meta.document_type_hint
     ]
+    )
   );
   const documentId = insertResult.rows[0]!.id;
 
@@ -264,14 +291,16 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
     storageKey = putResult.key;
   } catch (err) {
     // Rewind: mark the row failed so the operator/UI can see the cause.
-    await pg.query(
-      `UPDATE vendor_assurance_documents
-          SET processing_status = 'extraction_failed',
-              processing_error_code = 'pdf_unparseable',
-              processing_error_detail = $3,
-              updated_at = NOW()
-        WHERE id = $1 AND organization_id = $2`,
-      [documentId, organizationId, `blob put: ${(err as Error)?.message ?? "failed"}`.slice(0, 4000)]
+    await withTenant(organizationId, () =>
+      pg.query(
+        `UPDATE vendor_assurance_documents
+            SET processing_status = 'extraction_failed',
+                processing_error_code = 'pdf_unparseable',
+                processing_error_detail = $3,
+                updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2`,
+        [documentId, organizationId, `blob put: ${(err as Error)?.message ?? "failed"}`.slice(0, 4000)]
+      )
     );
     logger.error(
       { event: "vendor_assurance_blob_put_failed", organizationId, documentId, err },
@@ -281,11 +310,13 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
     return;
   }
 
-  await pg.query(
-    `UPDATE vendor_assurance_documents
-        SET storage_key = $3, updated_at = NOW()
-      WHERE id = $1 AND organization_id = $2`,
-    [documentId, organizationId, storageKey]
+  await withTenant(organizationId, () =>
+    pg.query(
+      `UPDATE vendor_assurance_documents
+          SET storage_key = $3, updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2`,
+      [documentId, organizationId, storageKey]
+    )
   );
 
   writeAuditEvent({
@@ -313,11 +344,13 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   // attempts/max_attempts use the table defaults. job_type is permitted by the
   // step-1 CHECK migration (20260622).
   try {
-    await pg.query(
-      `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
-       VALUES ($1, $2, 'vendor_assurance_extract',
-               jsonb_build_object('documentId', $3::text, 'documentTypeHint', $4::text))`,
-      [organizationId, req.userId ?? null, documentId, meta.document_type_hint]
+    await withTenant(organizationId, () =>
+      pg.query(
+        `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
+         VALUES ($1, $2, 'vendor_assurance_extract',
+                 jsonb_build_object('documentId', $3::text, 'documentTypeHint', $4::text))`,
+        [organizationId, req.userId ?? null, documentId, meta.document_type_hint]
+      )
     );
   } catch (err) {
     // Durable enqueue failed (e.g. transient DB fault). The document row and its
@@ -333,10 +366,12 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
     return;
   }
 
-  const docResult = await pg.query(
-    `SELECT ${DOC_SELECT} FROM vendor_assurance_documents
-      WHERE id = $1 AND organization_id = $2`,
-    [documentId, organizationId]
+  const docResult = await withTenant(organizationId, () =>
+    pg.query(
+      `SELECT ${DOC_SELECT} FROM vendor_assurance_documents
+        WHERE id = $1 AND organization_id = $2`,
+      [documentId, organizationId]
+    )
   );
 
   res.status(202).json({ document: docResult.rows[0] });
@@ -369,12 +404,24 @@ export async function listVendorAssuranceDocuments(req: Request, res: Response):
   const statusRaw = req.query["status"];
   if (isNonEmptyString(statusRaw)) {
     const s = statusRaw.trim();
-    if (!VALID_STATUSES.has(s)) {
-      res.status(400).json({ error: "invalid_status_filter", allowed: [...VALID_STATUSES] });
+    // 'reviewed' is a PSEUDO-STATUS, not a column value: it means "a human
+    // accepted this extraction", which is `approved OR finalized` (see
+    // ASSURANCE_REVIEWED_STATUSES). Callers that want the latest reviewed
+    // document must use it rather than naming a raw state — hardcoding
+    // 'finalized' is dead on the current flow and hardcoding 'approved' drops
+    // legacy reviewed rows.
+    if (s === ASSURANCE_REVIEWED_FILTER) {
+      conditions.push(sqlAssuranceReviewed());
+    } else if (!VALID_STATUSES.has(s)) {
+      res.status(400).json({
+        error: "invalid_status_filter",
+        allowed: [...VALID_STATUSES, ASSURANCE_REVIEWED_FILTER]
+      });
       return;
+    } else {
+      params.push(s);
+      conditions.push(`processing_status = $${params.length}`);
     }
-    params.push(s);
-    conditions.push(`processing_status = $${params.length}`);
   }
 
   params.push(limit);
@@ -569,10 +616,16 @@ export async function getVendorAssurancePdfRedirect(req: Request, res: Response)
     return;
   }
 
-  const docCheck = await pg.query(
-    `SELECT 1 FROM vendor_assurance_documents
-      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-    [documentId, organizationId]
+  // A04-G1: explicit withTenant, not an asTenant route wrap — this handler ends
+  // in a 302 redirect, and asTenant's buffering proxy throws on a handler that
+  // does anything but status()+json(). The scope closes before the signed-URL
+  // issuance so no tenant connection is held across the S3/R2 round trip.
+  const docCheck = await withTenant(organizationId, () =>
+    pg.query(
+      `SELECT 1 FROM vendor_assurance_documents
+        WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [documentId, organizationId]
+    )
   );
   if ((docCheck.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_assurance_document_not_found" });
@@ -1136,9 +1189,15 @@ export async function getVendorAssuranceCuecs(req: Request, res: Response): Prom
   const documentId = String(req.params["id"] ?? "").trim();
   if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
 
-  const docCheck = await pg.query(
-    `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-    [documentId, organizationId]
+  // A04-G1: explicit withTenant rather than an asTenant route wrap — this
+  // handler already opens its own scope for loadCuecsWithMappings below, and
+  // withTenant takes a FRESH pool connection per call, so an outer wrap would
+  // double-connect and nest a second transaction for no benefit.
+  const docCheck = await withTenant(organizationId, () =>
+    pg.query(
+      `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [documentId, organizationId]
+    )
   );
   if ((docCheck.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_assurance_document_not_found" });
@@ -1163,9 +1222,16 @@ export async function rematchVendorAssuranceCuecs(req: Request, res: Response): 
   const documentId = String(req.params["id"] ?? "").trim();
   if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
 
-  const docCheck = await pg.query(
-    `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-    [documentId, organizationId]
+  // A04-G1: explicit withTenant, not an asTenant route wrap. This handler calls
+  // the LLM CUEC matcher, which runs for seconds; an asTenant wrap would hold
+  // the tenant transaction open across that round trip. Each DB step opens its
+  // own scope and commits before the matcher runs — the same commit-then-compute
+  // discipline ask.ts follows for the same reason.
+  const docCheck = await withTenant(organizationId, () =>
+    pg.query(
+      `SELECT 1 FROM vendor_assurance_documents WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [documentId, organizationId]
+    )
   );
   if ((docCheck.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_assurance_document_not_found" });
@@ -1178,9 +1244,11 @@ export async function rematchVendorAssuranceCuecs(req: Request, res: Response): 
   // resync (a resync DELETE-then-INSERTs the cuec rows and would cascade away
   // the user's accepted/dismissed mappings); just re-run the matcher, which
   // preserves user actions and only replaces 'suggested' rows.
-  const cuecCountRes = await pg.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM vendor_assurance_cuecs WHERE document_id = $1 AND organization_id = $2`,
-    [documentId, organizationId]
+  const cuecCountRes = await withTenant(organizationId, () =>
+    pg.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM vendor_assurance_cuecs WHERE document_id = $1 AND organization_id = $2`,
+      [documentId, organizationId]
+    )
   );
   const hasCuecRows = Number(cuecCountRes.rows[0]?.n ?? "0") > 0;
 
@@ -1454,10 +1522,18 @@ async function exportVendorAssuranceDocumentInternal(
   }
 
   // Existence (org-scoped → 404 cross-org) + exportability gate.
-  const gate = await pg.query<{ processing_status: string }>(
-    `SELECT processing_status FROM vendor_assurance_documents
-      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
-    [documentId, organizationId]
+  //
+  // A04-G1: explicit withTenant rather than an asTenant route wrap. This handler
+  // STREAMS (setHeader + send of a rendered buffer) and asTenant's buffering
+  // proxy throws on a handler that sets headers. Every DB read therefore opens
+  // its own short scope and the render/stream happens outside it — which also
+  // keeps the tenant connection off the multi-second workbook/PDF render.
+  const gate = await withTenant(organizationId, () =>
+    pg.query<{ processing_status: string }>(
+      `SELECT processing_status FROM vendor_assurance_documents
+        WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [documentId, organizationId]
+    )
   );
   if ((gate.rowCount ?? 0) === 0) {
     res.status(404).json({ error: "vendor_assurance_document_not_found" });
@@ -1585,7 +1661,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  listVendorAssuranceDocuments
+  asTenant(listVendorAssuranceDocuments)
 );
 
 router.get(
@@ -1595,7 +1671,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  getVendorAssuranceDocument
+  asTenant(getVendorAssuranceDocument)
 );
 
 router.get(
@@ -1605,7 +1681,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  getVendorAssuranceExtraction
+  asTenant(getVendorAssuranceExtraction)
 );
 
 router.get(
@@ -1645,7 +1721,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  recordVendorAssuranceReviewDecisions
+  asTenant(recordVendorAssuranceReviewDecisions)
 );
 
 router.post(
@@ -1655,7 +1731,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  finalizeVendorAssuranceDocument
+  asTenant(finalizeVendorAssuranceDocument)
 );
 
 router.post(
@@ -1665,7 +1741,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  recordVendorAssuranceFieldOverride
+  asTenant(recordVendorAssuranceFieldOverride)
 );
 
 router.post(
@@ -1675,7 +1751,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  approveVendorAssuranceDocument
+  asTenant(approveVendorAssuranceDocument)
 );
 
 router.post(
@@ -1685,7 +1761,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  requestVendorAssuranceManualReview
+  asTenant(requestVendorAssuranceManualReview)
 );
 
 router.post(
@@ -1695,7 +1771,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  rejectVendorAssuranceDocument
+  asTenant(rejectVendorAssuranceDocument)
 );
 
 // ---- CUEC matcher package routes ----
@@ -1727,7 +1803,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  createVendorAssuranceCuecMapping
+  asTenant(createVendorAssuranceCuecMapping)
 );
 
 router.post(
@@ -1737,7 +1813,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  updateVendorAssuranceCuecReviewStatus
+  asTenant(updateVendorAssuranceCuecReviewStatus)
 );
 
 router.patch(
@@ -1747,7 +1823,7 @@ router.patch(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  updateVendorAssuranceCuecMapping
+  asTenant(updateVendorAssuranceCuecMapping)
 );
 
 export default router;
