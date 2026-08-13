@@ -94,6 +94,11 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "trends.ts",
   "vendorAssessmentAnalysis.ts",
   "vendorAssuranceDocuments.ts",
+  // Every route carries denyContributor(): opening an engagement, overriding an
+  // inherent rating, issuing a vendor credential and recording a governance
+  // decision are all owner/admin actions, and issuing in particular mints a
+  // credential for a party outside the organisation.
+  "vendorEngagements.ts",
   "vendorSignalContext.ts",
   "webhooks.ts"
 ];

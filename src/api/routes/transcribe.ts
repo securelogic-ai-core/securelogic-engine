@@ -79,8 +79,15 @@ function uploadAudio(req: Request, res: Response, next: NextFunction) {
 const transcribeRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  // Keyed on the ORG (attachOrganizationContext has run by this point in the
+  // chain). The previous key read `req.organizationId` — a field nothing ever
+  // assigns — so every request fell through to req.ip, and behind Cloudflare's
+  // rotating edge IPs each edge got its own 10/min bucket: effectively no
+  // per-org limit on a paid model call. Same fragmentation class as the
+  // adminLockout fix (resolveThrottleIdentity).
   keyGenerator: (req) =>
-    (req as any).organizationId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
+    (req as any).organizationContext?.organizationId ??
+    (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many transcription requests. Wait 60 seconds."
@@ -129,7 +136,7 @@ router.post(
         {
           event: "voice_transcribe_diagnostic",
           correlationId: cid,
-          organizationId: (req as any).organizationId ?? null,
+          organizationId: (req as any).organizationContext?.organizationId ?? null,
           received_content_type: req.headers["content-type"] ?? null,
           file_mimetype: file?.mimetype ?? null,
           file_originalname: file?.originalname ?? null,

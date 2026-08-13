@@ -18,6 +18,7 @@ import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
+import { startVendorAssuranceMonitoringWorker } from "./workers/vendorAssuranceMonitoringWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
@@ -157,6 +158,9 @@ startRiskHistoryWorker();
 // Accepted risk is time-boxed: expired acceptances reopen their findings. Self-gates
 // on SECURELOGIC_RISK_ACCEPTANCE_ENABLED.
 startRiskAcceptanceExpiryWorker();
+// Vendor Assurance monitoring: overdue reviews + intelligence-triggered
+// reassessment recommendations. Self-gates on SECURELOGIC_VENDOR_ASSURANCE_ENABLED.
+startVendorAssuranceMonitoringWorker();
 // ERIP E5: daily predictive forecast inference/retraining. Registered always;
 // self-gates on SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED + asset-registry flag.
 startPredictiveForecastWorker();
