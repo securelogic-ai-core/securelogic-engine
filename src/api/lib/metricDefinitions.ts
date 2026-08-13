@@ -282,7 +282,8 @@ export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): stri
 /** Findings that originated in a vendor assessment or review workflow. */
 export const VENDOR_SOURCED_FINDING_TYPES = [
   "vendor_review",        // point-in-time vendor_assessments
-  "vendor_cycle_review"   // mutable vendor_reviews cycles
+  "vendor_cycle_review",  // mutable vendor_reviews cycles
+  "vendor_engagement"     // the Vendor Assurance workflow spine
 ] as const;
 
 /** Findings that originated in the external-intelligence pipeline. */

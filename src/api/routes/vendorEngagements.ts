@@ -74,6 +74,7 @@ import {
   type EngagementState,
 } from "../lib/vendorRisk/engagementStateMachine.js";
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
+import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
 
 const router = Router();
@@ -1012,6 +1013,282 @@ export async function recordDecision(req: Request, res: Response): Promise<void>
   }
 }
 
+/* =========================================================
+   GET /api/vendor-engagements/:id/evidence — what the vendor sent.
+
+   The reviewer's side of the portal's metadata-only list. Unlike the vendor,
+   the reviewer sees everything attached to the engagement, internal uploads
+   included, and sees who supplied each file.
+   ========================================================= */
+export async function listEngagementEvidence(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const result = await pg.query(
+      `SELECT e.id, e.title, e.original_filename, e.byte_size, e.mime_type,
+              e.created_at, e.reviewed_at, e.review_note,
+              e.requirement_id, r.reference_id AS requirement_reference, r.title AS requirement_title,
+              -- Provenance: an invite means the VENDOR supplied it. A user means
+              -- we did. Both are legitimate; conflating them is not.
+              (e.uploaded_via_invite_id IS NOT NULL) AS from_vendor,
+              e.uploaded_by_user_id
+         FROM evidence e
+         LEFT JOIN requirements r ON r.id = e.requirement_id
+        WHERE e.organization_id = $1
+          AND e.engagement_id   = $2
+          AND e.detached_at IS NULL
+        ORDER BY e.created_at ASC`,
+      [organizationId, id]
+    );
+    res.status(200).json({ evidence: result.rows, count: result.rowCount });
+  } catch (err) {
+    logger.error({ event: "engagement_evidence_list_failed", organizationId, err }, "Evidence list failed");
+    res.status(500).json({ error: "evidence_list_failed" });
+  }
+}
+
+/* =========================================================
+   POST /api/vendor-engagements/:id/evidence/:evidenceId/review
+
+   The step the whole assurance ladder turns on: a human confirming that an
+   attached document actually supports the claim it is attached to. That
+   promotes the control from `documented` to `evidenced` — from "they attached
+   something" to "somebody checked", which is most of what a vendor assurance
+   programme is FOR.
+
+   Deliberately never set by upload, and deliberately reversible: a reviewer who
+   confirmed the wrong file must be able to withdraw the confirmation, and the
+   score must move back.
+   ========================================================= */
+export async function reviewEvidence(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const engagementId = String(req.params["id"] ?? "");
+  const evidenceId = String(req.params["evidenceId"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  // `supports` is REQUIRED and tri-state at the API even though it is boolean:
+  // omitting it must not default to "yes". A confirmation nobody made is the
+  // one thing this route must never produce.
+  if (typeof body.supports !== "boolean") {
+    res.status(400).json({
+      error: "supports_required",
+      message: "State explicitly whether this document supports the control it is attached to.",
+    });
+    return;
+  }
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 2000) : null;
+
+  // Rejecting evidence carries a reason. "This does not support the claim" with
+  // no explanation is not something a vendor can act on.
+  if (body.supports === false && (!note || note.length < 5)) {
+    res.status(400).json({
+      error: "note_required",
+      message: "Explain why this document does not support the control, so the vendor can supply something that does.",
+    });
+    return;
+  }
+
+  try {
+    const updated = await pg.query<{ id: string; original_filename: string | null }>(
+      `UPDATE evidence
+          SET reviewed_at = CASE WHEN $4 THEN NOW() ELSE NULL END,
+              reviewed_by_user_id = CASE WHEN $4 THEN $5::uuid ELSE NULL END,
+              review_note = $6,
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND engagement_id = $3
+        RETURNING id, original_filename`,
+      [evidenceId, organizationId, engagementId, body.supports, userOf(req), note]
+    );
+    if (updated.rowCount === 0) {
+      // Scoped to the engagement, so a cross-engagement id is indistinguishable
+      // from one that does not exist.
+      res.status(404).json({ error: "evidence_not_found" });
+      return;
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: body.supports
+        ? "vendor_engagement.evidence_confirmed"
+        : "vendor_engagement.evidence_rejected",
+      resourceType: "vendor_engagement",
+      resourceId: engagementId,
+      payload: {
+        evidence_id: evidenceId,
+        filename: updated.rows[0]!.original_filename,
+        note,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      reviewed: body.supports,
+      // Recomputation is a separate, explicit call. A review silently changing
+      // a stored risk rating is the kind of invisible mutation the methodology's
+      // versioning rules exist to prevent.
+      note: "Run /recompute to apply this to the effectiveness and residual scores.",
+    });
+  } catch (err) {
+    logger.error({ event: "evidence_review_failed", organizationId, err }, "Evidence review failed");
+    res.status(500).json({ error: "review_failed" });
+  }
+}
+
+/* =========================================================
+   POST /api/vendor-engagements/:id/promote-findings
+
+   Failed, partial and unanswered controls become canonical Findings — the
+   object the rest of the platform already knows how to own, schedule, remediate
+   and close.
+
+   Idempotent by (engagement, requirement): re-running after a vendor revises an
+   answer UPDATES the finding rather than creating a second one. Two findings for
+   one control means closing one leaves the other open, and the vendor looks
+   unremediated forever.
+   ========================================================= */
+export async function promoteEngagementFindings(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ inherent_rating: string | null; vendor_name: string }>(
+      `SELECT e.inherent_rating, v.name AS vendor_name
+         FROM vendor_engagements e JOIN vendors v ON v.id = e.vendor_id
+        WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    if (!eng.rows[0]!.inherent_rating) {
+      res.status(409).json({ error: "inherent_not_computed" });
+      return;
+    }
+
+    const rows = await pg.query<{
+      requirement_id: string;
+      reference_id: string;
+      title: string;
+      mandatory: boolean;
+      status: string | null;
+      notes: string | null;
+    }>(
+      `SELECT si.requirement_id, r.reference_id, r.title, si.mandatory,
+              rr.status, rr.notes
+         FROM vendor_engagement_scope_items si
+         JOIN requirements r ON r.id = si.requirement_id
+         LEFT JOIN requirement_responses rr
+                ON rr.requirement_id = si.requirement_id
+               AND rr.engagement_id  = si.engagement_id
+               AND rr.organization_id = si.organization_id
+        WHERE si.engagement_id = $1 AND si.organization_id = $2
+          AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)`,
+      [id, organizationId]
+    );
+
+    const controls: PromotableControl[] = rows.rows.map((row) => ({
+      requirement_id: row.requirement_id,
+      reference: row.reference_id,
+      title: row.title,
+      // Unanswered is `not_assessed`, not absent — a mandatory control nobody
+      // answered is a gap that must not vanish because only failures promote.
+      status: (row.status ?? "not_assessed") as PromotableControl["status"],
+      mandatory: row.mandatory,
+      notes: row.notes,
+    }));
+
+    const findings = promoteFindings({
+      controls,
+      inherentBand: eng.rows[0]!.inherent_rating as never,
+      vendorName: eng.rows[0]!.vendor_name,
+    });
+
+    let created = 0;
+    let updated = 0;
+    for (const finding of findings) {
+      const result = await pg.query<{ inserted: boolean }>(
+        `INSERT INTO findings
+           (organization_id, source_type, source_id, requirement_id, title, description,
+            recommendation, severity, severity_rationale, status, decision_state,
+            operational_status, evidence_refs)
+         VALUES ($1, 'vendor_engagement', $2, $3, $4, $5, $6, $7, $8,
+                 'open', 'needs_review', 'open', '{}')
+         ON CONFLICT (organization_id, source_id, requirement_id)
+           WHERE source_type = 'vendor_engagement' AND requirement_id IS NOT NULL
+         DO UPDATE SET
+              title = EXCLUDED.title,
+              description = EXCLUDED.description,
+              recommendation = EXCLUDED.recommendation,
+              severity = EXCLUDED.severity,
+              severity_rationale = EXCLUDED.severity_rationale,
+              updated_at = NOW()
+         RETURNING (xmax = 0) AS inserted`,
+        [
+          organizationId,
+          id,
+          finding.requirement_id,
+          finding.title,
+          finding.description,
+          finding.recommendation,
+          finding.severity,
+          finding.severity_rationale,
+        ]
+      );
+      if (result.rows[0]?.inserted) created += 1;
+      else updated += 1;
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.findings_promoted",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        created,
+        updated,
+        by_severity: findings.reduce<Record<string, number>>((acc, f) => {
+          acc[f.severity] = (acc[f.severity] ?? 0) + 1;
+          return acc;
+        }, {}),
+        methodology_version: METHODOLOGY_VERSION,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      promoted: findings.length,
+      created,
+      updated,
+      findings: findings.map((f) => ({
+        reference: f.reference,
+        severity: f.severity,
+        title: f.title,
+        severity_rationale: f.severity_rationale,
+      })),
+    });
+  } catch (err) {
+    logger.error({ event: "finding_promotion_failed", organizationId, err }, "Finding promotion failed");
+    res.status(500).json({ error: "promotion_failed" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring — every route behind the same chain.
 // ---------------------------------------------------------------------------
@@ -1031,6 +1308,13 @@ router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInhe
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
+router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
+router.post(
+  "/vendor-engagements/:id/evidence/:evidenceId/review",
+  ...chain,
+  asTenant(reviewEvidence)
+);
+router.post("/vendor-engagements/:id/promote-findings", ...chain, asTenant(promoteEngagementFindings));
 
 // The issue route writes the invite on the ELEVATED channel (the credential is
 // read before org context exists at exchange time), so it manages its own

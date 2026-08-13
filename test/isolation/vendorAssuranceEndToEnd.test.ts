@@ -460,6 +460,150 @@ describe("STEP 5 — effectiveness and residual", () => {
   });
 });
 
+describe("STEP 5b — evidence review and finding promotion", () => {
+  it("lists the engagement's evidence with its provenance", async () => {
+    // Both vendor-supplied and internal evidence are legitimate; conflating
+    // them is not. `from_vendor` is what lets a reviewer tell "they gave us
+    // this" from "we produced this".
+    const res = await asOrgA.get(`/api/vendor-engagements/${flow.engagementId}/evidence`);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBeGreaterThan(0);
+    for (const row of res.body.evidence) {
+      expect(typeof row.from_vendor).toBe("boolean");
+    }
+  });
+
+  it("refuses a review that does not state whether the document supports the claim", async () => {
+    // Omitting it must NOT default to yes. A confirmation nobody made is the one
+    // thing this route must never produce.
+    const list = await asOrgA.get(`/api/vendor-engagements/${flow.engagementId}/evidence`);
+    const target = list.body.evidence[0];
+
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/evidence/${target.id}/review`)
+      .send({ note: "Looks fine." });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("supports_required");
+  });
+
+  it("requires a reason when evidence is REJECTED", async () => {
+    const list = await asOrgA.get(`/api/vendor-engagements/${flow.engagementId}/evidence`);
+    const target = list.body.evidence[0];
+
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/evidence/${target.id}/review`)
+      .send({ supports: false });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("note_required");
+  });
+
+  it("a withdrawn confirmation moves the score BACK", async () => {
+    // A reviewer who confirmed the wrong file must be able to undo it, and the
+    // rating must follow. A one-way ladder would let a mistake become permanent.
+    const list = await asOrgA.get(`/api/vendor-engagements/${flow.engagementId}/evidence`);
+    const target = list.body.evidence.find((e: { reviewed_at: string | null }) => e.reviewed_at);
+    expect(target, "expected a confirmed piece of evidence from STEP 5").toBeTruthy();
+
+    // Compared on the ARITHMETIC score, not the final one. This engagement has
+    // a failed mandatory control, so the EF1 cap pins the final score at 40 and
+    // would hide the movement entirely — which is the cap working correctly, and
+    // precisely why the arithmetic result is exposed alongside it.
+    const before = (
+      await asOrgA.post(`/api/vendor-engagements/${flow.engagementId}/recompute`).send({})
+    ).body.effectiveness.arithmetic_score;
+
+    const withdraw = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/evidence/${target.id}/review`)
+      .send({ supports: false, note: "Wrong document — this covers a different system." });
+    expect(withdraw.status).toBe(200);
+
+    const after = (
+      await asOrgA.post(`/api/vendor-engagements/${flow.engagementId}/recompute`).send({})
+    ).body.effectiveness.arithmetic_score;
+    expect(after).toBeLessThan(before);
+
+    // Restore for the remaining steps.
+    await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/evidence/${target.id}/review`)
+      .send({ supports: true, note: "Confirmed on re-read." });
+    await asOrgA.post(`/api/vendor-engagements/${flow.engagementId}/recompute`).send({});
+  });
+
+  it("a review cannot reach another engagement's evidence", async () => {
+    const other = await pool.query<{ id: string }>(
+      `INSERT INTO evidence
+         (organization_id, source_type, source_id, title, evidence_type)
+       VALUES ($1, 'finding', gen_random_uuid(), 'Unrelated', 'document')
+       RETURNING id`,
+      [seed.orgA.id]
+    );
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/evidence/${other.rows[0]!.id}/review`)
+      .send({ supports: true });
+    expect(res.status).toBe(404);
+  });
+
+  it("promotes failed, partial and unanswered controls into canonical Findings", async () => {
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/promote-findings`)
+      .send({});
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    // CP-9 failed and IR-4 was partial. The five passes and the one N/A do not
+    // promote.
+    const refs = res.body.findings.map((f: { reference: string }) => f.reference).sort();
+    expect(refs).toEqual(["CP-9", "IR-4"]);
+    expect(res.body.created).toBe(2);
+  });
+
+  it("the findings are real rows the rest of the platform can see", async () => {
+    const rows = await pool.query<{ severity: string; source_type: string; status: string }>(
+      `SELECT severity, source_type, status FROM findings
+        WHERE organization_id = $1 AND source_id = $2`,
+      [seed.orgA.id, flow.engagementId]
+    );
+    expect(rows.rowCount).toBe(2);
+    for (const row of rows.rows) {
+      // A NEW source_type, not a reused one: source_type is a POINTER TYPE, and
+      // tagging these `vendor_review` would make source_id resolve against
+      // `vendor_assessments` — a dangling reference every consumer follows
+      // silently, because both columns are UUIDs.
+      expect(row.source_type).toBe("vendor_engagement");
+      expect(row.status).toBe("open");
+    }
+  });
+
+  it("re-promotion UPDATES rather than duplicating", async () => {
+    // Two findings for one control means closing one leaves the other open, and
+    // the vendor looks unremediated forever.
+    const again = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/promote-findings`)
+      .send({});
+    expect(again.body.created).toBe(0);
+    expect(again.body.updated).toBe(2);
+
+    const count = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM findings
+        WHERE organization_id = $1 AND source_id = $2`,
+      [seed.orgA.id, flow.engagementId]
+    );
+    expect(Number(count.rows[0]!.n)).toBe(2);
+  });
+
+  it("severity reflects THIS vendor, and says why", async () => {
+    const rows = await pool.query<{ severity: string; severity_rationale: string }>(
+      `SELECT severity, severity_rationale FROM findings
+        WHERE organization_id = $1 AND source_id = $2 ORDER BY severity`,
+      [seed.orgA.id, flow.engagementId]
+    );
+    // Critical-inherent vendor: a failed mandatory control lifts to Critical.
+    expect(rows.rows.map((r) => r.severity)).toContain("Critical");
+    for (const row of rows.rows) {
+      expect(row.severity_rationale).toMatch(/inherent risk is Critical/);
+    }
+  });
+});
+
 describe("STEP 6 — the governance decision", () => {
   it("refuses a decision with no rationale", async () => {
     const res = await asOrgA
