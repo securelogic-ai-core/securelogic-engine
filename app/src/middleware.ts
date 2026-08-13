@@ -36,6 +36,9 @@ const PUBLIC_PREFIXES = [
   "/accept-invite",
   "/recover",
   "/pricing",
+  // External vendor portal: authenticated by its own httpOnly cookie
+  // (sl_vendor_portal, enforced by the engine), never by an app session.
+  "/portal",
 ];
 
 function isPublicPath(pathname: string): boolean {
