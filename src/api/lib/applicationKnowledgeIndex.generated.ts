@@ -881,6 +881,24 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/vendor-engagements",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/vendor-engagements/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/vendor-engagements/new",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/vendors",
       "dynamic": false,
       "navLabel": "Vendors",

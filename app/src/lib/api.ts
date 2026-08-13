@@ -7018,3 +7018,659 @@ export async function searchGlobal(
     return null;
   }
 }
+
+// =========================================================
+// VENDOR ENGAGEMENT WORKFLOW (internal reviewer surface)
+//
+// Typed wrappers over src/api/routes/vendorEngagements.ts — the internal half
+// of the Vendor Assurance engagement spine. The ENGINE is the only authority on
+// workflow legality: every transition is re-checked server-side and a refused
+// one comes back as a 409 whose reason these wrappers preserve verbatim
+// (`VendorEngagementFailure`) so the UI can show the engine's words, not a
+// paraphrase.
+// =========================================================
+
+/**
+ * The engine's refusal/validation shape, preserved as-is. 409s carry `reason`
+ * (the state machine's sentence) and/or `message` (the handler's explanation);
+ * 400s on intake carry `missing` + `invalid`.
+ */
+export type VendorEngagementFailure = {
+  error: string;
+  message?: string;
+  reason?: string;
+  from?: string;
+  status?: string;
+  missing?: string[];
+  invalid?: Array<{ field: string; allowed: readonly string[] }>;
+};
+
+export type VendorEngagementResult<T> = T | { failure: VendorEngagementFailure };
+
+export function isEngagementFailure<T>(
+  r: VendorEngagementResult<T>
+): r is { failure: VendorEngagementFailure } {
+  return typeof r === "object" && r !== null && "failure" in r;
+}
+
+/**
+ * The one sentence a reviewer sees when the engine refuses an action.
+ * Preference order: the handler's `message`, then the state machine's `reason`,
+ * then a summary of intake validation, then the bare error code. Never invents
+ * words the engine did not say beyond naming the failed fields.
+ */
+export function vendorEngagementFailureText(f: VendorEngagementFailure): string {
+  if (f.message) return f.message;
+  if (f.reason) return f.reason;
+  const parts: string[] = [];
+  if (f.missing && f.missing.length > 0) {
+    parts.push(`Missing: ${f.missing.join(", ")}`);
+  }
+  if (f.invalid && f.invalid.length > 0) {
+    parts.push(
+      f.invalid
+        .map((i) => `Invalid ${i.field} (allowed: ${i.allowed.join(", ")})`)
+        .join("; ")
+    );
+  }
+  if (parts.length > 0) return parts.join(". ");
+  return f.error;
+}
+
+async function engagementFailureFrom(
+  res: Response,
+  fallback: string
+): Promise<{ failure: VendorEngagementFailure }> {
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return {
+    failure: {
+      error: String(body["error"] ?? fallback),
+      ...(typeof body["message"] === "string" ? { message: body["message"] } : {}),
+      ...(typeof body["reason"] === "string" ? { reason: body["reason"] } : {}),
+      ...(typeof body["from"] === "string" ? { from: body["from"] } : {}),
+      ...(typeof body["status"] === "string" ? { status: body["status"] } : {}),
+      ...(Array.isArray(body["missing"]) ? { missing: body["missing"] as string[] } : {}),
+      ...(Array.isArray(body["invalid"])
+        ? { invalid: body["invalid"] as Array<{ field: string; allowed: readonly string[] }> }
+        : {}),
+    },
+  };
+}
+
+/** One row of GET /api/vendor-engagements — the reviewer's queue. */
+export type VendorEngagementListRow = {
+  id: string;
+  status: string;
+  title: string | null;
+  engagement_type: string;
+  inherent_score: number | null;
+  inherent_rating: string | null;
+  assessment_tier: string | null;
+  residual_score: number | null;
+  residual_rating: string | null;
+  residual_computed_at: string | null;
+  decision: string | null;
+  decided_at: string | null;
+  next_review_due: string | null;
+  analysis_coverage: "full" | "partial" | "deterministic_only" | null;
+  /** Monitoring-sweep signal: status='monitoring' AND next_review_due < today. */
+  review_overdue: boolean;
+  /** Intelligence-triggered reassessment recommendation, if the sweep raised one. */
+  reassessment_recommended_at: string | null;
+  vendor_id: string;
+  vendor_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name. */
+export type VendorEngagementDetail = {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  vendor_name: string;
+  engagement_type: string;
+  parent_engagement_id: string | null;
+  title: string | null;
+  status: string;
+  issued_at: string | null;
+  submitted_at: string | null;
+  closed_at: string | null;
+  cancellation_reason: string | null;
+  inherent_score: number | null;
+  inherent_rating: string | null;
+  inherent_arithmetic_rating: string | null;
+  inherent_basis: unknown;
+  inherent_override_rationale: string | null;
+  inherent_overridden_at: string | null;
+  assessment_tier: string | null;
+  effectiveness_score: number | null;
+  residual_score: number | null;
+  residual_rating: string | null;
+  residual_basis: unknown;
+  residual_computed_at: string | null;
+  decision: string | null;
+  decision_rationale: string | null;
+  decided_at: string | null;
+  decision_expires_at: string | null;
+  analysis_coverage: "full" | "partial" | "deterministic_only" | null;
+  analysis_coverage_at: string | null;
+  next_review_due: string | null;
+  review_cadence_days: number | null;
+  reassessment_recommended_at: string | null;
+  reassessment_reason: string | null;
+  scope_resolved_at: string | null;
+  methodology_version: string;
+  scope_rule_version: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorEngagementQuestionnaire = {
+  scoped: number;
+  answered: number;
+  mandatory: number;
+};
+
+/** One row of GET /api/vendor-engagements/:id/evidence. */
+export type VendorEngagementEvidenceRow = {
+  id: string;
+  title: string | null;
+  original_filename: string | null;
+  /** BIGINT — node-postgres serializes it as a string; callers must coerce. */
+  byte_size: number | string | null;
+  mime_type: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  review_note: string | null;
+  requirement_id: string | null;
+  requirement_reference: string | null;
+  requirement_title: string | null;
+  /** Provenance: an invite upload means the VENDOR supplied it. */
+  from_vendor: boolean;
+  uploaded_by_user_id: string | null;
+  /**
+   * The analysis worker's ADVISORY verdict — a suggestion for where to look
+   * first, never an input to scoring. `unreadable` is the worker's deterministic
+   * "a human must read this". Null when the worker has not run for this file.
+   */
+  analysis_verdict: "supports" | "insufficient" | "contradicts" | "unreadable" | null;
+  analysis_rationale: string | null;
+};
+
+/** One row of GET /api/vendor-engagements/:id/comments. */
+export type VendorEngagementComment = {
+  id: string;
+  author_type: "internal" | "vendor";
+  author_user_id: string | null;
+  author_display_name: string | null;
+  visibility: "internal" | "vendor";
+  body: string;
+  created_at: string;
+  requirement_id: string | null;
+  requirement_reference: string | null;
+};
+
+/** POST /api/vendor-engagements — full intake; every field is required. */
+export type VendorEngagementIntakeInput = {
+  data_sensitivity: string;
+  data_volume: string;
+  access_level: string;
+  operational_dependency: string;
+  recoverability: string;
+  business_criticality: string;
+  regulatory_exposure: string;
+  regulatory_breach_notification: boolean;
+  ai_involvement: string;
+  ai_autonomy: string;
+  hosting_model: string;
+  fourth_party_exposure: string;
+  concentration: string;
+};
+
+export type VendorEngagementCreated = {
+  id: string;
+  status: "draft";
+  inherent: {
+    score: number;
+    rating: string;
+    arithmetic_rating: string;
+    tier: string;
+    basis: unknown;
+  };
+};
+
+export async function listVendorEngagements(
+  token: string,
+  opts?: { status?: string; limit?: number }
+): Promise<{ engagements: VendorEngagementListRow[]; count: number } | null> {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  try {
+    const res = await engineFetch(`/api/vendor-engagements${qs ? `?${qs}` : ""}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagements: VendorEngagementListRow[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorEngagement(
+  token: string,
+  id: string
+): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{
+      engagement: VendorEngagementDetail;
+      questionnaire: VendorEngagementQuestionnaire;
+    }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function createVendorEngagement(
+  token: string,
+  input: {
+    vendor_id: string;
+    engagement_type: "initial" | "periodic" | "targeted" | "event_driven";
+    title?: string;
+    intake: VendorEngagementIntakeInput;
+  }
+): Promise<VendorEngagementResult<VendorEngagementCreated>> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return engagementFailureFrom(res, "engagement_create_failed");
+    return (await res.json()) as VendorEngagementCreated;
+  } catch {
+    return { failure: { error: "engagement_create_failed" } };
+  }
+}
+
+export async function overrideVendorEngagementInherent(
+  token: string,
+  id: string,
+  rating: string,
+  rationale: string
+): Promise<VendorEngagementResult<{ ok: true; inherent_rating: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/inherent`,
+      token,
+      { method: "PATCH", body: JSON.stringify({ rating, rationale }) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "override_failed");
+    return (await res.json()) as { ok: true; inherent_rating: string };
+  } catch {
+    return { failure: { error: "override_failed" } };
+  }
+}
+
+export async function resolveVendorEngagementScope(
+  token: string,
+  id: string
+): Promise<
+  VendorEngagementResult<{
+    scoped: number;
+    excluded: number;
+    tier: string;
+    scope_rule_version: string;
+    notes: unknown;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/scope`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "scope_resolve_failed");
+    return (await res.json()) as {
+      scoped: number;
+      excluded: number;
+      tier: string;
+      scope_rule_version: string;
+      notes: unknown;
+    };
+  } catch {
+    return { failure: { error: "scope_resolve_failed" } };
+  }
+}
+
+/**
+ * POST .../issue — mints the vendor portal invite. The engine returns the RAW
+ * token exactly once (only its hash is stored). The caller must show it once
+ * and never persist it.
+ */
+export async function issueVendorEngagement(
+  token: string,
+  id: string,
+  contactEmail: string,
+  contactName?: string
+): Promise<
+  VendorEngagementResult<{ ok: true; status: "issued"; invite_token: string; expires_at: string }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/issue`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contact_email: contactEmail,
+          ...(contactName ? { contact_name: contactName } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "issue_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "issued";
+      invite_token: string;
+      expires_at: string;
+    };
+  } catch {
+    return { failure: { error: "issue_failed" } };
+  }
+}
+
+export type VendorEngagementRecomputeResult = {
+  effectiveness: {
+    score: number;
+    arithmetic_score: number;
+    assessed: number;
+    not_applicable: number;
+    not_assessed: number;
+    failed_mandatory: number;
+    coverage: number;
+    basis: unknown;
+  };
+  residual: {
+    score: number;
+    rating: string;
+    arithmetic_score: number;
+    inherent_understated: boolean;
+    basis: unknown;
+  };
+};
+
+export async function recomputeVendorEngagementRisk(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<VendorEngagementRecomputeResult>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/recompute`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "recompute_failed");
+    return (await res.json()) as VendorEngagementRecomputeResult;
+  } catch {
+    return { failure: { error: "recompute_failed" } };
+  }
+}
+
+/** The engine's allowed decision values (POST .../decision). */
+export const VENDOR_ENGAGEMENT_DECISIONS = [
+  "approved",
+  "approved_with_conditions",
+  "rejected",
+  "terminated",
+] as const;
+export type VendorEngagementDecision = (typeof VENDOR_ENGAGEMENT_DECISIONS)[number];
+
+export async function recordVendorEngagementDecision(
+  token: string,
+  id: string,
+  decision: VendorEngagementDecision,
+  rationale: string,
+  expiresAt?: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "decided";
+    decision: string;
+    residual_score: number | null;
+    residual_rating: string | null;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/decision`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          decision,
+          rationale,
+          ...(expiresAt ? { expires_at: expiresAt } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "decision_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "decided";
+      decision: string;
+      residual_score: number | null;
+      residual_rating: string | null;
+    };
+  } catch {
+    return { failure: { error: "decision_failed" } };
+  }
+}
+
+export async function listVendorEngagementEvidence(
+  token: string,
+  id: string
+): Promise<{ evidence: VendorEngagementEvidenceRow[]; count: number } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/evidence`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ evidence: VendorEngagementEvidenceRow[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST .../evidence/:evidenceId/review — the human confirmation the assurance
+ * ladder turns on. `supports:false` requires a note the vendor can act on.
+ * The engine reminds: run /recompute to apply the change to the scores.
+ */
+export async function reviewVendorEngagementEvidence(
+  token: string,
+  id: string,
+  evidenceId: string,
+  supports: boolean,
+  note?: string
+): Promise<VendorEngagementResult<{ ok: true; reviewed: boolean; note: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}/review`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({ supports, ...(note ? { note } : {}) }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "review_failed");
+    return (await res.json()) as { ok: true; reviewed: boolean; note: string };
+  } catch {
+    return { failure: { error: "review_failed" } };
+  }
+}
+
+export type VendorEngagementPromotionResult = {
+  promoted: number;
+  created: number;
+  updated: number;
+  findings: Array<{
+    reference: string;
+    severity: string;
+    title: string;
+    severity_rationale: string;
+  }>;
+};
+
+export async function promoteVendorEngagementFindings(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<VendorEngagementPromotionResult>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/promote-findings`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "promotion_failed");
+    return (await res.json()) as VendorEngagementPromotionResult;
+  } catch {
+    return { failure: { error: "promotion_failed" } };
+  }
+}
+
+export async function listVendorEngagementComments(
+  token: string,
+  id: string
+): Promise<{ comments: VendorEngagementComment[]; count: number } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/comments`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ comments: VendorEngagementComment[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST .../comments. Visibility defaults to INTERNAL server-side; a
+ * vendor-visible comment posted while in_review performs
+ * in_review → clarification_requested — the response's `status` reports the
+ * resulting state so the caller can tell whether that transition happened.
+ */
+export async function postVendorEngagementComment(
+  token: string,
+  id: string,
+  body: string,
+  visibility: "internal" | "vendor",
+  requirementId?: string
+): Promise<VendorEngagementResult<{ id: string; visibility: string; status: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/comments`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          body,
+          visibility,
+          ...(requirementId ? { requirement_id: requirementId } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "comment_post_failed");
+    return (await res.json()) as { id: string; visibility: string; status: string };
+  } catch {
+    return { failure: { error: "comment_post_failed" } };
+  }
+}
+
+export async function beginVendorEngagementReview(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<{ ok: true; status: "in_review" }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/begin-review`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "begin_review_failed");
+    return (await res.json()) as { ok: true; status: "in_review" };
+  } catch {
+    return { failure: { error: "begin_review_failed" } };
+  }
+}
+
+export async function completeVendorEngagementAnalysis(
+  token: string,
+  id: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "analysis_complete";
+    analysis_coverage: "full" | "partial" | "deterministic_only";
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/complete-analysis`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "complete_analysis_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "analysis_complete";
+      analysis_coverage: "full" | "partial" | "deterministic_only";
+    };
+  } catch {
+    return { failure: { error: "complete_analysis_failed" } };
+  }
+}
+
+/**
+ * POST .../monitoring — from `decided` it starts monitoring; from `monitoring`
+ * it records a completed periodic review (re-arming both sweep triggers).
+ * Provide cadence_days (1–3650) or an explicit next_review_due (YYYY-MM-DD).
+ */
+export async function startVendorEngagementMonitoring(
+  token: string,
+  id: string,
+  opts: { cadenceDays?: number; nextReviewDue?: string }
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "monitoring";
+    next_review_due: string;
+    cadence_days: number | null;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/monitoring`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(opts.cadenceDays !== undefined ? { cadence_days: opts.cadenceDays } : {}),
+          ...(opts.nextReviewDue ? { next_review_due: opts.nextReviewDue } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "monitoring_start_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "monitoring";
+      next_review_due: string;
+      cadence_days: number | null;
+    };
+  } catch {
+    return { failure: { error: "monitoring_start_failed" } };
+  }
+}
