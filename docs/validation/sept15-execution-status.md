@@ -1,6 +1,6 @@
 # September 15 Program — Execution Status
 
-Sessions 1–2, 2026-08-12 → 2026-08-13. Baseline `develop` @ `58285e67`.
+Sessions 1–3, 2026-08-12 → 2026-08-13. Baseline `develop` @ `58285e67`.
 **Nothing pushed, nothing merged, production untouched.**
 
 ---
@@ -29,6 +29,36 @@ monitoring entirely over HTTP (47 tests); the Ask Truth Pass walkthrough is 23.
 
 ---
 
+## 0.1 Session 3 (2026-08-13, same day) — reviewer UI close-out
+
+Commits after the §0 reconciliation (`eeec9a8a`), recovered-and-continued the
+same way (the reviewer-UI slice was complete-but-uncommitted in the working
+tree when the session resumed):
+
+| Commit | What |
+|---|---|
+| `5a3f3cfb` | Stop Gate ASK-C engineering review + **P1 fix:** transcribe limiter keyed on never-assigned `req.organizationId` (IP-fragmented vacuous cap) |
+| `93802d8f` | Ask A3 multi-turn conversation UI (app) + stored-claims persistence fix |
+| `02dee3b9` | Advisory analysis verdicts surfaced in the reviewer's evidence list |
+| `0835ce28` | Internal clarification thread — the reviewer can ask the vendor |
+| `ba89e4d1` | Gate B session-2 note (B.4 prerequisite met) + ASK-C row |
+| `64966edc` | Queue list carries the monitoring signals (review_overdue, reassessment_recommended_at) |
+| `55f5b8d2` | **Internal reviewer UI** — /vendor-engagements queue + intake + engagement workspace (last open P0 UI item); canonical `isPlatformEntitled()` gates; knowledge index regenerated for the 3 new routes |
+
+Known metadata gap (pre-existing, now also true of the new routes): body-gated
+workflow pages absent from `NAV_ITEMS` classify as `access:"all"` in the
+Application Knowledge Index (`/vendor-assurance/*` has the same issue). Fixing
+it means either a nav decision (surface /vendor-engagements in a menu) or
+extending the declared-access mechanism `SECONDARY_NAV_ITEMS` already uses —
+an operator/IA call, deliberately not made unilaterally here.
+
+Verified: app suite **125 files / 1,659 tests / 0 failures**; engine full
+suite re-run after the index regeneration: **477 files / 7,764 passed / 3
+skipped / 0 failures** (the sole pre-regeneration failure was the
+knowledge-index drift test); typecheck clean.
+
+---
+
 ## 1. Branches and commits
 
 | Branch | Commits |
@@ -37,7 +67,8 @@ monitoring entirely over HTTP (47 tests); the Ask Truth Pass walkthrough is 23.
 | `feat/sept15-ask-a0-truth-pass` | `0c853aba` |
 | `feat/sept15-va-phase1-engagement-spine` | `87b7757a` onward — deterministic core, spine, tool registry, ASK-A, Ask A1/A2, portal, LLM-independence |
 
-22 commits. Branches are stacked in that order; each is a rollback point.
+45 commits above `develop` across the stack (22 at session-1 close). Branches
+are stacked in that order; each is a rollback point.
 
 ---
 
@@ -162,10 +193,10 @@ session 2 — see §0.)
 | Monitoring sweeps, intelligence staleness chain | 6 | DONE (`e37aa985`) |
 | Legacy demotion of `vendor_assessments` / `vendor_reviews` writers | 7 | **Blocked on operator decision B1** |
 | Provenance / citation verification | A2 | DONE (`e600ac8f`, `83832f15`) |
-| Multi-turn conversation UI | A3 | Engine surface DONE (`b1702b45`); app UI in flight |
+| Multi-turn conversation UI | A3 | DONE (engine `b1702b45`, app UI `93802d8f`) |
 | Streaming answers | A3 | Open (P1-adjacent polish; not gate-blocking) |
 | Realtime voice | A5 (P1) | Open — standing cut rule applies; ASK-C gate not designed |
-| Internal engagement UI (reviewer screens) | 1/4 | Open |
+| Internal engagement UI (reviewer screens) | 1/4 | DONE (`55f5b8d2`) |
 
 ---
 
@@ -265,10 +296,11 @@ Three traps worth knowing:
 ## 8. Final verified test state
 
 ```
-engine     466 files · 7596 passed · 3 skipped · 0 failed
-isolation  144 files · 1052 passed ·             0 failed
-typecheck  clean (engine + app)
-lint       clean
+engine     477 files · 7764 passed · 3 skipped · 0 failed   (session 3, after knowledge-index regen)
+app        125 files · 1659 passed ·             0 failed   (session 3)
+isolation  147 files · 1126 passed ·             0 failed   (session 2 — not re-run in session 3; no engine/SQL changes since)
+typecheck  clean (engine + app)                             (session 3)
+lint       clean                                            (session 1 — not re-run)
 ```
 
 (The engine figure is the full default vitest config. Earlier revisions of this
