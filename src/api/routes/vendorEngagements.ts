@@ -1042,9 +1042,15 @@ export async function listEngagementEvidence(req: Request, res: Response): Promi
               -- Provenance: an invite means the VENDOR supplied it. A user means
               -- we did. Both are legitimate; conflating them is not.
               (e.uploaded_via_invite_id IS NOT NULL) AS from_vendor,
-              e.uploaded_by_user_id
+              e.uploaded_by_user_id,
+              -- The analysis worker's ADVISORY verdict, if it has run. A
+              -- suggestion for where to look first — the reviewed_at columns
+              -- above remain the only thing the effectiveness ladder reads.
+              a.verdict AS analysis_verdict,
+              a.rationale AS analysis_rationale
          FROM evidence e
          LEFT JOIN requirements r ON r.id = e.requirement_id
+         LEFT JOIN evidence_analysis a ON a.evidence_id = e.id
         WHERE e.organization_id = $1
           AND e.engagement_id   = $2
           AND e.detached_at IS NULL
