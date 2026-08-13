@@ -858,3 +858,46 @@ describe("Stop Gate B · every new portal action is auditable", () => {
     expect(JSON.stringify(posted!.payload)).not.toContain("Audited message");
   });
 });
+
+// ─── Submission enqueues evidence analysis ──────────────────────────────────
+
+describe("submission enqueues durable evidence-analysis jobs", () => {
+  it("one queued job per stored file; withdrawn files are skipped; submission never fails on it", async () => {
+    const fresh = await seedFixture(seed.orgA.id, "ANALYZE");
+    const cookie = await sessionCookie(fresh.token);
+
+    const kept = await request(app)
+      .post("/api/vendor-portal/evidence")
+      .set("Cookie", cookie)
+      .attach("file", PDF_BYTES, { filename: "kept.pdf", contentType: "application/pdf" });
+    expect(kept.status).toBe(201);
+    const withdrawn = await request(app)
+      .post("/api/vendor-portal/evidence")
+      .set("Cookie", cookie)
+      .attach("file", PDF_BYTES, { filename: "withdrawn.pdf", contentType: "application/pdf" });
+    expect(withdrawn.status).toBe(201);
+    await request(app)
+      .delete(`/api/vendor-portal/evidence/${withdrawn.body.id}`)
+      .set("Cookie", cookie);
+
+    await request(app)
+      .put(`/api/vendor-portal/questions/${fresh.requirementId}`)
+      .set("Cookie", cookie)
+      .send({ answer: "pass" });
+    const submit = await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie);
+    expect(submit.status, JSON.stringify(submit.body)).toBe(200);
+
+    const jobs = await pool.query<{ payload: Record<string, unknown>; status: string }>(
+      `SELECT payload, status FROM jobs
+        WHERE job_type = 'vendor_evidence_analysis'
+          AND organization_id = $1
+          AND payload->>'engagementId' = $2`,
+      [seed.orgA.id, fresh.engagementId]
+    );
+    // The kept file, and only the kept file: a withdrawn document must not be
+    // analysed — the vendor retracted it.
+    expect(jobs.rowCount).toBe(1);
+    expect(jobs.rows[0]!.status).toBe("queued");
+    expect(jobs.rows[0]!.payload.evidenceId).toBe(kept.body.id);
+  });
+});

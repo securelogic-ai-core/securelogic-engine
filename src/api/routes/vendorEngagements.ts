@@ -75,6 +75,7 @@ import {
 } from "../lib/vendorRisk/engagementStateMachine.js";
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
+import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
 
 const router = Router();
@@ -1355,10 +1356,10 @@ export async function beginReview(req: Request, res: Response): Promise<void> {
    clean full analysis.
 
    The coverage value is COMPUTED, not accepted from the caller: it is a system
-   observation about what ran, not an operator claim. Today no engagement-level
-   AI analysis pipeline exists, so the stamp is always `deterministic_only`;
-   when the evidence-analysis worker lands, its recorded results are what will
-   upgrade the stamp to `partial`/`full`. The seam is this route.
+   observation about what ran, not an operator claim. It counts the
+   evidence-analysis worker's recorded rows against the engagement's attached
+   evidence: all analysed -> full, some -> partial, none (or no evidence) ->
+   deterministic_only.
    ========================================================= */
 export async function completeAnalysis(req: Request, res: Response): Promise<void> {
   const organizationId = orgOf(req);
@@ -1384,7 +1385,19 @@ export async function completeAnalysis(req: Request, res: Response): Promise<voi
       return;
     }
 
-    const coverage = "deterministic_only";
+    const counts = await pg.query<{ evidence_count: string; analyzed_count: string }>(
+      `SELECT COUNT(e.id)::text AS evidence_count,
+              COUNT(a.id)::text AS analyzed_count
+         FROM evidence e
+         LEFT JOIN evidence_analysis a ON a.evidence_id = e.id
+        WHERE e.organization_id = $1 AND e.engagement_id = $2
+          AND e.detached_at IS NULL AND e.storage_key IS NOT NULL`,
+      [organizationId, id]
+    );
+    const coverage = computeAnalysisCoverage({
+      evidenceCount: Number(counts.rows[0]?.evidence_count ?? "0"),
+      analyzedCount: Number(counts.rows[0]?.analyzed_count ?? "0"),
+    });
 
     await pg.query(
       `UPDATE vendor_engagements

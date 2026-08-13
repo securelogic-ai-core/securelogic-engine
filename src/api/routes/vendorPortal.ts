@@ -578,6 +578,42 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       ipAddress: req.ip ?? null,
     });
 
+    // Enqueue evidence analysis — one durable job per attached file, claimed by
+    // the out-of-process worker that holds the model key. Gated on a key being
+    // configured ANYWHERE in this deployment topology being pointless to check
+    // from here — the honest gate is that an LLM-less environment simply leaves
+    // these queued jobs to no-op via the worker's own flag/key gates, and
+    // `analysis_coverage` stays deterministic_only. Fire-and-forget: a failed
+    // enqueue must never fail the vendor's submission.
+    try {
+      await withTenant(ctx.organizationId, async () => {
+        await pg.query(
+          `INSERT INTO jobs (organization_id, requested_by_user_id, job_type, payload)
+           SELECT e.organization_id, NULL, 'vendor_evidence_analysis',
+                  jsonb_build_object('evidenceId', e.id, 'engagementId', e.engagement_id)
+             FROM evidence e
+            WHERE e.organization_id = $1 AND e.engagement_id = $2
+              AND e.detached_at IS NULL AND e.storage_key IS NOT NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM evidence_analysis a WHERE a.evidence_id = e.id
+                  )
+              AND NOT EXISTS (
+                    SELECT 1 FROM jobs j
+                     WHERE j.job_type = 'vendor_evidence_analysis'
+                       AND j.organization_id = e.organization_id
+                       AND j.payload->>'evidenceId' = e.id::text
+                       AND j.status IN ('queued', 'processing')
+                  )`,
+          [ctx.organizationId, ctx.engagementId]
+        );
+      });
+    } catch (enqueueErr) {
+      logger.error(
+        { event: "evidence_analysis_enqueue_failed", engagementId: ctx.engagementId, err: enqueueErr },
+        "Evidence-analysis enqueue failed (submission unaffected)"
+      );
+    }
+
     res.status(200).json({ ok: true, status: "submitted" });
   } catch (err) {
     logger.error({ event: "portal_submit_failed", err }, "Portal submit failed");
