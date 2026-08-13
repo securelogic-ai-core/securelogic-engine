@@ -21,12 +21,17 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { NAV_ITEMS, SECONDARY_NAV_ITEMS } from "../app/src/lib/navigation.ts";
+import {
+  NAV_ITEMS,
+  SECONDARY_NAV_ITEMS,
+  ROUTE_ACCESS_DECLARATIONS,
+} from "../app/src/lib/navigation.ts";
 import { scanAppRoutes } from "./lib/scanAppRoutes.ts";
 import {
   buildApplicationKnowledgeIndex,
   type NavInputItem,
   type SecondaryNavInputItem,
+  type RouteAccessDeclaration,
 } from "../src/api/lib/applicationKnowledgeIndex.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,7 +43,8 @@ const routes = scanAppRoutes(appAppDir);
 const index = buildApplicationKnowledgeIndex(
   NAV_ITEMS as NavInputItem[],
   routes,
-  SECONDARY_NAV_ITEMS as SecondaryNavInputItem[]
+  SECONDARY_NAV_ITEMS as SecondaryNavInputItem[],
+  ROUTE_ACCESS_DECLARATIONS as RouteAccessDeclaration[]
 );
 
 const banner =

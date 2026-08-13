@@ -22,6 +22,31 @@ import { APPLICATION_KNOWLEDGE_INDEX } from "./applicationKnowledgeIndex.generat
 import type { ApplicationKnowledgeIndex, NavAccess } from "./applicationKnowledgeIndex.js";
 import { WORKFLOW_REGISTRY } from "../productKnowledge/workflows.generated.js";
 import { renderWorkflows } from "./workflowRegistry.js";
+import type { EntitlementClass } from "./entitlementClass.js";
+
+/**
+ * Whether a requester of the given entitlement class can actually USE a
+ * destination with the given declared access (Launch Completion 2 — Ask
+ * access truth).
+ *
+ * The class comes from collapseEntitlementLevel() — the SAME canonical
+ * collapse requireEntitlement applies — so this answers exactly "would the
+ * page's own guard admit this org". `admin` is a ROLE gate inside an org of
+ * any entitlement, which entitlement cannot decide; admin items therefore
+ * stay visible with their "[admin only]" annotation rather than being
+ * filtered on a signal we don't have.
+ */
+export function accessibleTo(access: NavAccess, cls: EntitlementClass): boolean {
+  switch (access) {
+    case "all":
+    case "admin":
+      return true;
+    case "premium":
+      return cls !== "starter";
+    case "platform":
+      return cls === "premium";
+  }
+}
 
 /**
  * Platform overview — the one-paragraph "what is this product" grounding so the
@@ -54,8 +79,12 @@ function accessNote(access: NavAccess): string {
  * entitlement required to see each. 100% machine-derived from the live menu; no
  * hand-written navigation text.
  */
-function renderNavigation(index: ApplicationKnowledgeIndex): string {
+function renderNavigation(
+  index: ApplicationKnowledgeIndex,
+  cls?: EntitlementClass
+): string {
   return index.navigation
+    .filter((item) => cls === undefined || accessibleTo(item.access, cls))
     .map((item) => {
       if (item.type === "group") {
         const children = item.children
@@ -75,8 +104,13 @@ function renderNavigation(index: ApplicationKnowledgeIndex): string {
  * order. Returns "" when the index carries no secondary navigation (older
  * generated artifacts), so the section is simply omitted.
  */
-function renderSecondaryNavigation(index: ApplicationKnowledgeIndex): string {
-  const items = index.secondaryNavigation ?? [];
+function renderSecondaryNavigation(
+  index: ApplicationKnowledgeIndex,
+  cls?: EntitlementClass
+): string {
+  const items = (index.secondaryNavigation ?? []).filter(
+    (item) => cls === undefined || accessibleTo(item.access, cls)
+  );
   if (items.length === 0) return "";
   const groupsInOrder: string[] = [];
   const byGroup = new Map<string, string[]>();
@@ -108,10 +142,19 @@ export const NOT_USER_ACTIONS: ReadonlyArray<string> = [
  * Deterministic (the index + registry are sorted) so prompt caching and tests
  * are stable.
  */
-export function renderProductKnowledge(): string {
-  const nav = renderNavigation(KNOWLEDGE_INDEX);
-  const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX);
-  const flows = renderWorkflows(WORKFLOW_REGISTRY);
+export function renderProductKnowledge(requesterClass?: EntitlementClass): string {
+  // Requester-aware (Launch Completion 2): with a class given, every
+  // destination and workflow the requester's entitlement cannot actually use
+  // is OMITTED from the prompt — the assistant cannot recommend a surface it
+  // has never been told about. Without a class (older callers, tests of the
+  // full corpus), the complete annotated knowledge renders as before.
+  const nav = renderNavigation(KNOWLEDGE_INDEX, requesterClass);
+  const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX, requesterClass);
+  const flows = renderWorkflows(
+    requesterClass === undefined
+      ? WORKFLOW_REGISTRY
+      : WORKFLOW_REGISTRY.filter((w) => accessibleTo(w.permissions, requesterClass))
+  );
   const limits = NOT_USER_ACTIONS.map((s) => `- ${s}`).join("\n");
 
   const sections = [

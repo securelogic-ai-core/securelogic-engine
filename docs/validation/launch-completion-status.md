@@ -11,8 +11,8 @@ without explicit authorization; prod-affecting flags ship dark.
 
 | # | Item | Branch | Status |
 |---|---|---|---|
-| 1 | B1 legacy VA demotion | `feat/lc1-b1-legacy-va-demotion` | **Built — validation running** |
-| 2 | Ask access truth | — | Not started |
+| 1 | B1 legacy VA demotion | `feat/lc1-b1-legacy-va-demotion` | **Built — validated** |
+| 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
 | 3 | Ask streaming | — | Not started |
 | 4 | Realtime voice | — | Not started |
 | 5 | Bounded agentic Ask | — | Not started |
@@ -91,6 +91,10 @@ workflow.
 - In-progress legacy reviews at flip time become permanently in_progress
   (read-only). Cutover guidance: flip when no reviews are in_progress, or
   accept the frozen state — rows stay visible either way.
+- `assess_vendor.yaml` in the workflow registry (Ask's how-to corpus)
+  describes the legacy assess/review flows — rewrite it around the engagement
+  workflow AT the prod flip, or Ask will narrate a retired path. (Found
+  during LC-2.)
 
 ### Validation (2026-08-13, at commit)
 
@@ -108,3 +112,64 @@ writer guard, engine) + 12 (flag semantics + CTA targets, app). Updated: the 8
 `vendorsAssessmentCounts` SQL-shape assertions now hold the TWO-leg
 never-assessed predicate (both legs org-scoped inside the correlation), and
 the list/aggregate equivalence extractor walks the new `NOT (…)` span.
+
+---
+
+## 2. Ask access truth
+
+**Defect**: body-gated pages absent from both navigations classified
+`access:"all"` in the Application Knowledge Index, and Ask's prompt is
+rendered from that index — so the assistant could route a customer to a
+surface whose page-body guard bounces them to /dashboard. The sweep found
+**12 misclassified routes** (`/vendor-engagements×3`, `/vendor-assurance×2`,
+`/approvals`, `/evidence`, `/posture`, `/getting-started`,
+`/settings/organization`, `/settings/security`, `/account/team` — the last
+found by the new honesty test, not the manual sweep).
+
+**Fix, reusing canonical primitives only (no parallel permission system):**
+
+1. `ROUTE_ACCESS_DECLARATIONS` (navigation.ts) — declared body-gate access
+   for nav-orphaned routes, exactly the mechanism `SECONDARY_NAV_ITEMS.access`
+   already uses. Longest prefix wins; a declaration never overrides
+   nav-derived access. Consumed by the index builder/generator/drift test.
+2. `collapseEntitlementLevel()` — the entitlement collapse `requireEntitlement`
+   always applied inline, now EXPORTED as the canonical class mapping and the
+   middleware refactored onto it (no behavior change).
+3. `renderProductKnowledge(requesterClass?)` — with a class, every
+   destination and workflow the class cannot use is OMITTED from the prompt
+   (nav items, secondary items, and workflows via their existing
+   `permissions` field). Admin items stay annotated ("[admin only]") —
+   admin is a role inside an org of any entitlement, which entitlement
+   cannot decide. No class = full corpus (back-compat).
+4. `ask.ts` — three memoized per-class system prompts (prompt caching stays
+   effective); both the tool path and the snapshot path select by
+   `collapseEntitlementLevel(organizationContext.entitlementLevel)`.
+
+**Honesty enforcement**: a new test scans EVERY page.tsx for body-gate
+patterns (`if (!isPlatform…`, admin-role redirects, `entitlement !==
+"starter"`) and fails the build if a gated page classifies `"all"` —
+the metadata can no longer silently rot. Plus per-class filtering tests
+(starter sees no platform surface; professional sees premium but not
+platform; premium = full corpus byte-identical to the unfiltered render).
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     480 files · 7856 passed · 3 skipped · 0 failed
+app        126 files · 1671 passed ·             0 failed
+isolation  147 files · 1135 passed ·             0 failed   (FRESH Postgres required — rerunning against
+                                                             a database left over from a prior isolation
+                                                             run reports ~39 file failures that are stale-
+                                                             state artifacts, not code defects)
+typecheck  clean (engine + app)
+index      `npm run generate:knowledge-index` reproduces the committed
+           artifact byte-identical (zero drift)
+```
+
+New tests: +65 in `applicationKnowledgeIndex.test.ts` (18 → 83): the access-
+truth suite generates one test per body-gated page (so a new gated page is
+automatically covered) plus the per-class filtering suite (starter/
+professional/premium corpus expectations, premium ≡ unfiltered byte-identical,
+admin-annotation preservation). The generated-index diff flips 13 access
+values, every one a tightening (9 → platform, 2 → admin, 2 → premium);
+no route loosened.
