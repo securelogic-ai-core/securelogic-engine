@@ -28,7 +28,12 @@ Session 1, 2026-08-12. Baseline `develop` @ `58285e67`.
 | **LLM-independence** (VA security stop gate + DoD item) | **PASS** | Proven by construction AND by a full engagement run with no provider credentials |
 | **Stop Gate B** — External Trust Boundary | **NOT PASSED** | 5/7 criteria PASS — all 11 routes built, **9/9 adversarial classes, 70 cases**. B.3 (independent security review) and B.4 (real external tester on staging) need a human |
 | Gate 1 — Phase 1 complete | PARTIAL | Deterministic core + spine + scoping done; internal routes, UI and `scope_tags` backfill not |
+| **VA end-to-end walkthrough** (workflow) | **PASS — local** | 30 tests, real HTTP + real Postgres. NOT the staging walkthrough |
+| **Ask Truth Pass walkthrough** (workflow) | **PASS — local** | 18 tests, real tool registry + real Postgres, scripted model. NOT the staging walkthrough |
 | Stop Gate C, ASK-B, ASK-C | Not reached | — |
+
+Launch runbook: `docs/runbooks/sept15-launch-runbook.md` — flags, migration
+order, deploy sequence, incident response, rollback, and the P2/P3 register.
 
 Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 `sept15-stop-gate-a-evidence.md`, `sept15-stop-gate-ask-a-evidence.md`,
