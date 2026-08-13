@@ -1,7 +1,31 @@
 # September 15 Program — Execution Status
 
-Session 1, 2026-08-12. Baseline `develop` @ `58285e67`.
+Sessions 1–2, 2026-08-12 → 2026-08-13. Baseline `develop` @ `58285e67`.
 **Nothing pushed, nothing merged, production untouched.**
+
+---
+
+## 0. Session 2 (2026-08-13) — recovery + the P0/P1 close-out
+
+Recovered the interrupted checkpoint from the working tree (the finding-
+promotion slice was mid-flight: migration + pure module + tests written,
+route wired) and continued on `feat/sept15-va-phase1-engagement-spine`:
+
+| Commit | What |
+|---|---|
+| `48a87a99` | Evidence review + deterministic finding promotion (severity = answer × mandatory × inherent band, idempotent re-promotion) |
+| `e37aa985` | Monitoring sweeps + intelligence reassessment hook (Phase 6): TIME + INTEL triggers, claim-then-emit, human-only reassessment |
+| `6e5eedd5` | **P1 fix:** portal session cookie path never matched the API mount — a real browser never sent it; invisible to supertest |
+| `b1702b45` | Ask A3 engine surface: conversation list/read APIs, stored-claims replay, deterministic titles |
+| `73800f66` | Review-chain transitions over HTTP (begin-review, complete-analysis with computed coverage; recompute advances to decision_pending) — walkthrough no longer SQL-forces states |
+| `5422ff13` | The seven portal screens + same-origin cookie-forwarding proxy (app) |
+| `11602da4` | **P1 fix:** answers during clarification_requested 409'd — the one edit the state exists to invite; found by building the screens against the routes |
+| `cf48c5ed` | Durable evidence-analysis worker (advisory verdicts, rides the extraction service) + computed `analysis_coverage` |
+
+Verified after the migrations landed: **isolation 147 files / 1,126 tests / 0
+failures; app suite 121 files / 1,607 tests / 0 failures**; engine + app +
+worker-service typecheck clean. The VA walkthrough now drives intake →
+monitoring entirely over HTTP (47 tests); the Ask Truth Pass walkthrough is 23.
 
 ---
 
@@ -124,18 +148,23 @@ Full evidence: `sept15-va-phase0-gate0-evidence.md`,
 
 ## 4. Not started, and honestly so
 
-| Item | Phase |
-|---|---|
-| `requirements.scope_tags` column + backfill across 321 requirements | 1 |
-| Engagement routes, internal UI, engagement queue | 1 |
-| The 7 portal screens (the API surface is complete) | 3 |
-| Evidence convergence, analysis worker, exception→finding promotion | 4 |
-| Control-effectiveness ladder, residual calculation, decision workflow | 5 |
-| Monitoring sweeps, intelligence staleness chain | 6 |
-| Legacy demotion of `vendor_assessments` / `vendor_reviews` writers | 7 |
-| Provenance / citation verification | A2 |
-| Multi-turn conversation UI, streaming | A3 |
-| Realtime voice | A5 (P1) |
+(Session-1 list; struck-through items closed by later session-1 commits or
+session 2 — see §0.)
+
+| Item | Phase | Status |
+|---|---|---|
+| `requirements.scope_tags` column + backfill | 1 | DONE (`c5661083`) |
+| Engagement routes, engagement queue API | 1 | DONE (`b0fa6bb3`, `73800f66`) — internal UI still open |
+| The 7 portal screens | 3 | DONE (`5422ff13`) |
+| Evidence convergence, analysis worker, exception→finding promotion | 4 | DONE (`48a87a99`, `cf48c5ed`) |
+| Control-effectiveness ladder, residual, decision workflow | 5 | DONE (`17dbde2`+) |
+| Monitoring sweeps, intelligence staleness chain | 6 | DONE (`e37aa985`) |
+| Legacy demotion of `vendor_assessments` / `vendor_reviews` writers | 7 | **Blocked on operator decision B1** |
+| Provenance / citation verification | A2 | DONE (`e600ac8f`, `83832f15`) |
+| Multi-turn conversation UI | A3 | Engine surface DONE (`b1702b45`); app UI in flight |
+| Streaming answers | A3 | Open (P1-adjacent polish; not gate-blocking) |
+| Realtime voice | A5 (P1) | Open — standing cut rule applies; ASK-C gate not designed |
+| Internal engagement UI (reviewer screens) | 1/4 | Open |
 
 ---
 

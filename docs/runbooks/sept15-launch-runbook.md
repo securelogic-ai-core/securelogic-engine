@@ -4,8 +4,9 @@ Operator-facing. Everything here is **owed to a human**: no step in this documen
 has been executed, because every one of them requires credentials or an
 environment this build had no access to.
 
-Baseline: `develop` @ `58285e67`. 29 commits on three stacked branches, none
-pushed, none merged. **Production is untouched.**
+Baseline: `develop` @ `58285e67`. Three stacked branches (session 2 continues
+`feat/sept15-va-phase1-engagement-spine`), none pushed, none merged.
+**Production is untouched.**
 
 ---
 
@@ -31,8 +32,8 @@ on a preview environment.
 
 ## 2. Migrations
 
-Nine, in dependency order. All additive. All validated against a fresh database
-by the isolation harness (146 files / 1,092 tests).
+Twelve, in dependency order. All additive. All validated against a fresh
+database by the isolation harness (147 files / 1,126+ tests).
 
 | Migration | What it does | Reversible? |
 |---|---|---|
@@ -45,12 +46,16 @@ by the isolation harness (146 files / 1,092 tests).
 | `20260925_vendor_portal_evidence_comments` | Comments table; **alters shared `evidence`** | See below |
 | `20260926_requirement_scope_tags` | `scope_tags` + heuristic backfill on `requirements` | Drop columns |
 | `20260927_engagement_intake_and_effectiveness` | Four intake dimensions, effectiveness columns; **alters shared `evidence`** | Drop columns |
+| `20260928_vendor_engagement_findings` | `vendor_engagement` source_type, `requirement_id`/`severity_rationale` on **shared `findings`**, promotion uniqueness | Drop index/columns; **widens `findings.source_type` CHECK** |
+| `20260929_vendor_engagement_monitoring` | Monitoring/reassessment marks on the spine; accepted-vendor-match index | Drop columns/index |
+| `20260930_engagement_evidence_analysis` | `evidence_analysis` (advisory verdicts) + RLS; **widens `jobs.job_type` CHECK** with `vendor_evidence_analysis` | Drop table; re-narrow CHECK after confirming no surviving rows |
 
-**Two migrations touch tables outside the vendor-assurance blast radius.**
+**Three migrations touch tables outside the vendor-assurance blast radius.**
 `20260925` and `20260927` both alter `evidence`, which every remediation and
-control-test surface reads. Both are additive (nullable columns, a widened
-`source_type` CHECK, new constraints), but a rollback must **drop the constraints
-before the columns** or it will fail.
+control-test surface reads; `20260928` alters `findings`, which every findings
+surface reads. All are additive (nullable columns, widened CHECKs, new
+constraints), but a rollback must **drop the constraints before the columns**
+or it will fail.
 
 `20260926` runs a data backfill over every row in `requirements`. It is
 idempotent and never overwrites a row marked `curated`.
@@ -208,6 +213,12 @@ reasoning; custom questionnaire templates with conditional logic; automated
 evidence validation; continuous attestation; shared vendor profiles across
 tenants.
 
-**Not started and NOT deferred — these are unfinished P0/P1 work:** the seven
-portal screens, the evidence analysis worker, findings/remediation promotion,
-monitoring sweeps, Ask A3 conversational UI, and Ask A5 voice.
+**Session 2 (2026-08-13) closed the previously-unfinished P0/P1 list:** the
+seven portal screens (plus the same-origin proxy), the evidence-analysis
+worker, findings promotion, evidence review, the review-chain transition
+routes, monitoring sweeps + the intelligence reassessment hook, and the Ask A3
+engine surface, plus two P1 defects found by building against the API (the
+portal cookie path that a real browser would never send, and answer edits
+409ing during clarification). **Still open:** Ask A3 conversational UI
+(in flight), Ask A5 voice (P1 — the standing cut rule applies), and every
+operator-owed item in §3–§5.
