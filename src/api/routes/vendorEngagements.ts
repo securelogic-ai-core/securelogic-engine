@@ -1302,6 +1302,119 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
 }
 
 /* =========================================================
+   GET  /api/vendor-engagements/:id/comments — the whole thread.
+   POST /api/vendor-engagements/:id/comments — the reviewer's side.
+
+   The internal half of the two-sided clarification thread. The portal writes
+   `author_type='vendor', visibility='vendor'`; this surface writes
+   `author_type='internal'` with the reviewer's choice of visibility —
+   'internal' (reviewers only, never leaves this surface) or 'vendor' (a
+   question TO the vendor).
+
+   Posting a vendor-visible comment while the engagement is in_review IS the
+   clarification request: it performs in_review → clarification_requested,
+   whose guard (clarification_recorded) is satisfied by this very write. Without
+   this route the transition was unreachable — a reviewer could not ask.
+   ========================================================= */
+export async function listEngagementComments(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  try {
+    const result = await pg.query(
+      `SELECT c.id, c.author_type, c.author_user_id, c.author_display_name,
+              c.visibility, c.body, c.created_at,
+              c.requirement_id, r.reference_id AS requirement_reference
+         FROM vendor_engagement_comments c
+         LEFT JOIN requirements r ON r.id = c.requirement_id
+        WHERE c.organization_id = $1 AND c.engagement_id = $2
+        ORDER BY c.created_at ASC, c.id ASC`,
+      [organizationId, id]
+    );
+    res.status(200).json({ comments: result.rows, count: result.rowCount });
+  } catch (err) {
+    logger.error({ event: "engagement_comments_list_failed", organizationId, err }, "Comment list failed");
+    res.status(500).json({ error: "comments_list_failed" });
+  }
+}
+
+export async function postEngagementComment(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const text = typeof body.body === "string" ? body.body.trim() : "";
+  if (text.length === 0 || text.length > 8000) {
+    res.status(400).json({ error: "body_required", message: "A comment needs a body of at most 8000 characters." });
+    return;
+  }
+  // Default INTERNAL: a note must be deliberately addressed to the vendor to
+  // leave the authenticated surface. The safe direction needs no flag.
+  const visibility = body.visibility === "vendor" ? "vendor" : "internal";
+  const requirementId =
+    typeof body.requirement_id === "string" && body.requirement_id.length > 0
+      ? body.requirement_id
+      : null;
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+
+    const ins = await pg.query<{ id: string }>(
+      `INSERT INTO vendor_engagement_comments
+         (organization_id, engagement_id, requirement_id, author_type, author_user_id, visibility, body)
+       VALUES ($1, $2, $3, 'internal', $4, $5, $6)
+       RETURNING id`,
+      [organizationId, id, requirementId, userOf(req), visibility, text]
+    );
+
+    // A vendor-visible comment during review IS the clarification request.
+    let newState: EngagementState | null = null;
+    if (visibility === "vendor" && canTransition(from, "clarification_requested", "internal").allowed) {
+      await pg.query(
+        `UPDATE vendor_engagements SET status = 'clarification_requested', updated_at = NOW()
+          WHERE id = $1 AND organization_id = $2 AND status = $3`,
+        [id, organizationId, from]
+      );
+      newState = "clarification_requested";
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType:
+        newState === "clarification_requested"
+          ? "vendor_engagement.clarification_requested"
+          : "vendor_engagement.comment_posted",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      // The body is NOT copied into the audit log — the row is the record.
+      payload: { comment_id: ins.rows[0]!.id, visibility, requirement_id: requirementId },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(201).json({ id: ins.rows[0]!.id, visibility, status: newState ?? from });
+  } catch (err) {
+    logger.error({ event: "engagement_comment_post_failed", organizationId, err }, "Comment post failed");
+    res.status(500).json({ error: "comment_post_failed" });
+  }
+}
+
+/* =========================================================
    POST /api/vendor-engagements/:id/begin-review — submitted → in_review.
 
    The reviewer opening the response. After this, portal writes are already
@@ -1569,6 +1682,8 @@ router.post(
   asTenant(reviewEvidence)
 );
 router.post("/vendor-engagements/:id/promote-findings", ...chain, asTenant(promoteEngagementFindings));
+router.get("/vendor-engagements/:id/comments", ...chain, asTenant(listEngagementComments));
+router.post("/vendor-engagements/:id/comments", ...chain, asTenant(postEngagementComment));
 router.post("/vendor-engagements/:id/begin-review", ...chain, asTenant(beginReview));
 router.post("/vendor-engagements/:id/complete-analysis", ...chain, asTenant(completeAnalysis));
 router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonitoring));

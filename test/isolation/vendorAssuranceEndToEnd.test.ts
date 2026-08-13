@@ -622,6 +622,50 @@ describe("STEP 6 — the governance decision", () => {
     expect(review.status, JSON.stringify(review.body)).toBe(200);
     expect(review.body.status).toBe("in_review");
 
+    // ── The clarification round-trip, both sides over HTTP. ────────────────
+    // An internal-only note never leaves this surface and never moves state.
+    const note = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/comments`)
+      .send({ body: "Internal: DR answer looks thin — ask them.", visibility: "internal" });
+    expect(note.status).toBe(201);
+    expect(note.body.status).toBe("in_review");
+
+    // A vendor-visible comment during review IS the clarification request.
+    const ask = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/comments`)
+      .send({ body: "Please confirm the scope of your DR failover test.", visibility: "vendor" });
+    expect(ask.status).toBe(201);
+    expect(ask.body.status).toBe("clarification_requested");
+
+    // The vendor sees the question but NOT the internal note.
+    const vendorThread = await request(app)
+      .get("/api/vendor-portal/comments")
+      .set("Cookie", flow.cookie!);
+    const bodies = JSON.stringify(vendorThread.body);
+    expect(bodies).toContain("scope of your DR failover test");
+    expect(bodies).not.toContain("looks thin");
+
+    // The vendor re-confirms their answer (same value — the resume is about the
+    // TRANSITION, not new data), which reopens the engagement; then resubmits.
+    const questions = (
+      await request(app).get("/api/vendor-portal/questions").set("Cookie", flow.cookie!)
+    ).body.questions as Array<{ requirement_id: string; reference: string }>;
+    const cp9 = questions.find((q) => q.reference === "CP-9")!;
+    const reconfirm = await request(app)
+      .put(`/api/vendor-portal/questions/${cp9.requirement_id}`)
+      .set("Cookie", flow.cookie!)
+      .send({ answer: "fail", notes: "Confirmed: failover tested annually, single region only." });
+    expect(reconfirm.status, JSON.stringify(reconfirm.body)).toBe(200);
+    const resubmit = await request(app)
+      .post("/api/vendor-portal/submit")
+      .set("Cookie", flow.cookie!);
+    expect(resubmit.status, JSON.stringify(resubmit.body)).toBe(200);
+
+    const reopened = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/begin-review`)
+      .send({});
+    expect(reopened.status).toBe(200);
+
     const analysis = await asOrgA
       .post(`/api/vendor-engagements/${flow.engagementId}/complete-analysis`)
       .send({});
