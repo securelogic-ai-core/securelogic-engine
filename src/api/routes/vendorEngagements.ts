@@ -1289,6 +1289,118 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
   }
 }
 
+/* =========================================================
+   POST /api/vendor-engagements/:id/monitoring
+
+   Starts (or refreshes) continuous monitoring — the state a decided engagement
+   lives in until its review comes due or the world changes.
+
+   Two cases, one route:
+     - from `decided`:    the state-machine transition, guarded on a review
+                          date actually being set (`next_review_due_set`);
+     - from `monitoring`: a cadence refresh — recording a completed periodic
+                          review. No state transition; it re-arms both sweep
+                          triggers by clearing their notification marks.
+
+   The sweep worker (vendorAssuranceMonitoringWorker) only ever RECOMMENDS;
+   this route is where a human sets the clock.
+   ========================================================= */
+export async function startMonitoring(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  // A review date is the whole point of the transition: monitoring with no
+  // clock is `decided` wearing a different label.
+  const cadence =
+    typeof body.cadence_days === "number" && Number.isInteger(body.cadence_days)
+      ? body.cadence_days
+      : null;
+  const explicitDue =
+    typeof body.next_review_due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.next_review_due)
+      ? body.next_review_due
+      : null;
+  if (!explicitDue && (cadence === null || cadence < 1 || cadence > 3650)) {
+    res.status(400).json({
+      error: "review_date_required",
+      message:
+        "Provide cadence_days (1-3650) or an explicit next_review_due date. Monitoring without a review date is not monitoring.",
+    });
+    return;
+  }
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+
+    if (from !== "monitoring") {
+      const check = canTransition(from, "monitoring", "internal");
+      if (!check.allowed) {
+        res.status(409).json({ error: "cannot_start_monitoring", from, reason: check.reason });
+        return;
+      }
+    }
+
+    const updated = await pg.query<{ next_review_due: string }>(
+      `UPDATE vendor_engagements
+          SET status = 'monitoring',
+              next_review_due = COALESCE($3::date, CURRENT_DATE + make_interval(days => $4)),
+              review_cadence_days = $4,
+              -- Re-arm both sweep triggers: a fresh review date means the
+              -- previous overdue/reassessment notifications are answered.
+              review_overdue_notified_at = NULL,
+              reassessment_recommended_at = NULL,
+              reassessment_reason = NULL,
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND status = $5
+        RETURNING to_char(next_review_due, 'YYYY-MM-DD') AS next_review_due`,
+      [id, organizationId, explicitDue, cadence, from]
+    );
+    if (updated.rowCount === 0) {
+      // The status moved between read and write; the caller should re-read.
+      res.status(409).json({ error: "engagement_state_changed" });
+      return;
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType:
+        from === "monitoring"
+          ? "vendor_engagement.monitoring_refreshed"
+          : "vendor_engagement.monitoring_started",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        next_review_due: updated.rows[0]!.next_review_due,
+        cadence_days: cadence,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      status: "monitoring",
+      next_review_due: updated.rows[0]!.next_review_due,
+      cadence_days: cadence,
+    });
+  } catch (err) {
+    logger.error({ event: "monitoring_start_failed", organizationId, err }, "Monitoring start failed");
+    res.status(500).json({ error: "monitoring_start_failed" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring — every route behind the same chain.
 // ---------------------------------------------------------------------------
@@ -1315,6 +1427,7 @@ router.post(
   asTenant(reviewEvidence)
 );
 router.post("/vendor-engagements/:id/promote-findings", ...chain, asTenant(promoteEngagementFindings));
+router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonitoring));
 
 // The issue route writes the invite on the ELEVATED channel (the credential is
 // read before org context exists at exchange time), so it manages its own

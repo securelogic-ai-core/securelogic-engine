@@ -655,6 +655,150 @@ describe("STEP 6 — the governance decision", () => {
   });
 });
 
+describe("STEP 7 — monitoring and reassessment", () => {
+  it("refuses monitoring with no review date — monitoring without a clock is not monitoring", async () => {
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/monitoring`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("review_date_required");
+  });
+
+  it("starts monitoring from the decision, with a cadence", async () => {
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/monitoring`)
+      .send({ cadence_days: 90 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.status).toBe("monitoring");
+    expect(res.body.next_review_due).toBeTruthy();
+  });
+
+  it("the sweep leaves an engagement alone while its review is not due", async () => {
+    const { runEngagementReviewDueSweep } = await import(
+      "../../src/api/workers/vendorAssuranceMonitoringWorker.js"
+    );
+    await runEngagementReviewDueSweep();
+    const row = await pool.query<{ review_overdue_notified_at: string | null }>(
+      `SELECT review_overdue_notified_at FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.review_overdue_notified_at).toBeNull();
+  });
+
+  it("marks the engagement overdue ONCE when the review date passes", async () => {
+    const { runEngagementReviewDueSweep } = await import(
+      "../../src/api/workers/vendorAssuranceMonitoringWorker.js"
+    );
+    await pool.query(
+      `UPDATE vendor_engagements SET next_review_due = CURRENT_DATE - 1 WHERE id = $1`,
+      [flow.engagementId]
+    );
+
+    await runEngagementReviewDueSweep();
+    const row = await pool.query<{ review_overdue_notified_at: string | null }>(
+      `SELECT review_overdue_notified_at FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.review_overdue_notified_at).not.toBeNull();
+
+    // Claim-then-emit: a second run finds nothing left to claim.
+    const second = await runEngagementReviewDueSweep();
+    expect(second.overdue).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 300));
+    const events = await pool.query(
+      `SELECT id FROM security_audit_log
+        WHERE resource_id = $1 AND event_type = 'vendor_engagement.review_overdue'`,
+      [flow.engagementId]
+    );
+    expect(events.rowCount).toBe(1);
+  });
+
+  it("an accepted Critical signal-match after the decision recommends reassessment", async () => {
+    const { runEngagementIntelligenceSweep } = await import(
+      "../../src/api/workers/vendorAssuranceMonitoringWorker.js"
+    );
+
+    const signal = await pool.query<{ id: string }>(
+      `INSERT INTO cyber_signals
+         (organization_id, source, signal_type, severity, normalized_summary, dedup_hash)
+       VALUES ($1, 'e2e-feed', 'breach', 'Critical',
+               'Meridian Payments disclosed a breach of its processing environment.',
+               'e2e-meridian-breach-1')
+       RETURNING id`,
+      [seed.orgA.id]
+    );
+    // A PENDING suggestion for a second signal — must NOT count. An unreviewed
+    // machine guess does not page anyone.
+    const pending = await pool.query<{ id: string }>(
+      `INSERT INTO cyber_signals
+         (organization_id, source, signal_type, severity, normalized_summary, dedup_hash)
+       VALUES ($1, 'e2e-feed', 'cve', 'Critical', 'Unreviewed CVE guess.', 'e2e-meridian-cve-1')
+       RETURNING id`,
+      [seed.orgA.id]
+    );
+    await pool.query(
+      `INSERT INTO signal_match_suggestions
+         (organization_id, signal_id, target_type, target_id, accepted_at, accepted_link_id)
+       VALUES ($1, $2, 'vendor', $3, NOW(), gen_random_uuid()),
+              ($1, $4, 'vendor', $3, NULL, NULL)`,
+      [seed.orgA.id, signal.rows[0]!.id, vendorId, pending.rows[0]!.id]
+    );
+
+    const result = await runEngagementIntelligenceSweep();
+    expect(result.recommended).toBeGreaterThanOrEqual(1);
+
+    const row = await pool.query<{
+      reassessment_recommended_at: string | null;
+      reassessment_reason: string | null;
+    }>(
+      `SELECT reassessment_recommended_at, reassessment_reason
+         FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.reassessment_recommended_at).not.toBeNull();
+    // The reason is interrogable: which trigger, how many signals, how severe.
+    expect(row.rows[0]!.reassessment_reason).toMatch(/1 accepted intelligence signal/);
+    expect(row.rows[0]!.reassessment_reason).toMatch(/highest severity Critical/);
+
+    // Once per engagement until re-armed.
+    const second = await runEngagementIntelligenceSweep();
+    expect(second.recommended).toBe(0);
+  });
+
+  it("recording the completed review re-arms both triggers", async () => {
+    const res = await asOrgA
+      .post(`/api/vendor-engagements/${flow.engagementId}/monitoring`)
+      .send({ cadence_days: 30 });
+    expect(res.status).toBe(200);
+
+    const row = await pool.query<{
+      review_overdue_notified_at: string | null;
+      reassessment_recommended_at: string | null;
+      reassessment_reason: string | null;
+    }>(
+      `SELECT review_overdue_notified_at, reassessment_recommended_at, reassessment_reason
+         FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.review_overdue_notified_at).toBeNull();
+    expect(row.rows[0]!.reassessment_recommended_at).toBeNull();
+    expect(row.rows[0]!.reassessment_reason).toBeNull();
+  });
+
+  it("RATIFIED — the sweep recommends; it never changes a risk number or a state", async () => {
+    // The whole monitoring chain ran. The residual measurement and the decision
+    // are exactly as the human left them.
+    const row = await pool.query<{ status: string; residual_rating: string; decision: string }>(
+      `SELECT status, residual_rating, decision FROM vendor_engagements WHERE id = $1`,
+      [flow.engagementId]
+    );
+    expect(row.rows[0]!.status).toBe("monitoring");
+    expect(row.rows[0]!.residual_rating).toBe(flow.residualRating);
+    expect(row.rows[0]!.decision).toBe("approved_with_conditions");
+  });
+});
+
 describe("cross-tenant isolation holds across the whole workflow", () => {
   it("another org cannot read, scope, recompute or decide this engagement", async () => {
     const read = await asOrgB.get(`/api/vendor-engagements/${flow.engagementId}`);
@@ -665,6 +809,7 @@ describe("cross-tenant isolation holds across the whole workflow", () => {
       `/api/vendor-engagements/${flow.engagementId}/recompute`,
       `/api/vendor-engagements/${flow.engagementId}/decision`,
       `/api/vendor-engagements/${flow.engagementId}/issue`,
+      `/api/vendor-engagements/${flow.engagementId}/monitoring`,
     ]) {
       const res = await asOrgB.post(path).send({
         decision: "approved",
