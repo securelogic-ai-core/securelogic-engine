@@ -253,3 +253,121 @@ describe("Ask orchestration — output digest records shape, not payload", () =>
     expect(digestToolOutput({})).toBeNull();
   });
 });
+
+// ─── Streaming events (LC-3) ────────────────────────────────────────────────
+//
+// With onEvent the loop runs through the SDK's streaming API; without it,
+// behaviour is byte-identical to before the parameter existed (every suite
+// above passes a client with NO stream method — that is the proof).
+
+/** A scripted client whose streaming path emits text deltas before resolving. */
+function scriptedStreamClient(script: Array<Array<Record<string, unknown>>>) {
+  let call = 0;
+  const create = vi.fn(async () => {
+    throw new Error("create() must not be called when onEvent is provided");
+  });
+  const stream = vi.fn(() => {
+    const content = script[Math.min(call, script.length - 1)] ?? [textBlock("done")];
+    call += 1;
+    const textListeners: Array<(t: string) => void> = [];
+    return {
+      on: (event: string, cb: (t: string) => void) => {
+        if (event === "text") textListeners.push(cb);
+      },
+      finalMessage: async () => {
+        // The real SDK emits deltas while the response streams; emitting them
+        // before finalMessage resolves reproduces that ordering.
+        for (const block of content) {
+          if (block.type !== "text") continue;
+          for (const word of String(block.text).split(/(?<= )/)) {
+            for (const listener of textListeners) listener(word);
+          }
+        }
+        return { content };
+      },
+    };
+  });
+  return { client: { messages: { create, stream } } as never, create, stream };
+}
+
+describe("Ask orchestration — streaming events (LC-3)", () => {
+  const twoTurnScript = [
+    [textBlock("Checking your findings."), toolUse("findings.search")],
+    [textBlock("You have 2 active findings.")],
+  ];
+
+  it("emits round → deltas → tool_call per turn, and the answer still assembles", async () => {
+    const { client, create, stream } = scriptedStreamClient(twoTurnScript);
+    const events: Array<Record<string, unknown>> = [];
+    const r = await runAskOrchestration({
+      client,
+      model: "test-model",
+      systemPrompt: "sys",
+      history: [],
+      question: "How many findings?",
+      origin: fakeReq(),
+      onEvent: (e) => events.push(e as unknown as Record<string, unknown>),
+    });
+
+    expect(r.answer).toBe("You have 2 active findings.");
+    expect(create).not.toHaveBeenCalled();
+    expect(stream).toHaveBeenCalledTimes(2);
+
+    const types = events.map((e) => e.type);
+    // Round 1: interim prose deltas, then the tool call. Round 2: answer deltas.
+    expect(types[0]).toBe("round");
+    expect(types).toContain("tool_call");
+    const roundIndices = types
+      .map((t, i) => (t === "round" ? i : -1))
+      .filter((i) => i !== -1);
+    expect(roundIndices).toHaveLength(2);
+
+    // Deltas of the SECOND round reassemble the final answer exactly.
+    const secondRoundDeltas = events
+      .slice(roundIndices[1]!)
+      .filter((e) => e.type === "delta")
+      .map((e) => e.text)
+      .join("");
+    expect(secondRoundDeltas).toBe("You have 2 active findings.");
+
+    const toolEvent = events.find((e) => e.type === "tool_call")!;
+    expect(toolEvent.tool).toBe("findings.search");
+    expect(toolEvent.authorized).toBe(true);
+  });
+
+  it("reports denials as tool_call events with authorized:false", async () => {
+    const { client } = scriptedStreamClient([
+      [toolUse("vendors.get", { id: "x" })],
+      [textBlock("That vendor is not accessible.")],
+    ]);
+    const events: Array<Record<string, unknown>> = [];
+    await runAskOrchestration({
+      client,
+      model: "test-model",
+      systemPrompt: "sys",
+      history: [],
+      question: "Show me vendor x",
+      origin: fakeReq(),
+      onEvent: (e) => events.push(e as unknown as Record<string, unknown>),
+    });
+    const toolEvent = events.find((e) => e.type === "tool_call")!;
+    expect(toolEvent.authorized).toBe(false);
+  });
+
+  it("a throwing onEvent listener cannot fail the orchestration", async () => {
+    const { client } = scriptedStreamClient(twoTurnScript);
+    const r = await runAskOrchestration({
+      client,
+      model: "test-model",
+      systemPrompt: "sys",
+      history: [],
+      question: "How many findings?",
+      origin: fakeReq(),
+      onEvent: () => {
+        throw new Error("listener bug");
+      },
+    });
+    expect(r.answer).toBe("You have 2 active findings.");
+    expect(r.stoppedBy).toBe("model");
+  });
+});

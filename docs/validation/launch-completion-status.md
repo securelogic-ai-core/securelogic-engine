@@ -13,7 +13,7 @@ without explicit authorization; prod-affecting flags ship dark.
 |---|---|---|---|
 | 1 | B1 legacy VA demotion | `feat/lc1-b1-legacy-va-demotion` | **Built — validated** |
 | 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
-| 3 | Ask streaming | — | Not started |
+| 3 | Ask streaming | `feat/lc3-ask-streaming` (stacked on LC-2) | **Built — validated** |
 | 4 | Realtime voice | — | Not started |
 | 5 | Bounded agentic Ask | — | Not started |
 | 6 | Platform convergence | — | Blocked on 1–5 |
@@ -173,3 +173,72 @@ professional/premium corpus expectations, premium ≡ unfiltered byte-identical,
 admin-annotation preservation). The generated-index diff flips 13 access
 values, every one a tightening (9 → platform, 2 → admin, 2 → premium);
 no route loosened.
+
+---
+
+## 3. Ask streaming
+
+**Item**: the A3 leftover "Streaming answers" (sept15-execution-status §4 —
+P1-adjacent polish, not gate-blocking). A tool-path turn takes 10–30s of model
+rounds and retrieval; the answer arrived as one JSON blob at the end.
+
+**Shape — one turn implementation, two transports:**
+
+1. `runAskOrchestration` gains an optional `onEvent` callback. With it, model
+   turns run through the SDK's streaming API (`messages.stream`) and emit
+   `round` / `delta` / `tool_call` events; without it, behaviour is
+   byte-identical to before (every pre-existing orchestrator test passes a
+   client with NO `stream` method — that is the proof).
+2. `POST /api/ask/stream` (engine) — the tool-path turn logic extracted to
+   `runAskToolTurn` and shared with the JSON route, so the SSE `final` event
+   is byte-shape-identical to the JSON body (asserted by test). Identical
+   middleware chain INCLUDING the same rate-limiter instance (one 20/min
+   per-org budget across both endpoints). All validation answers plain JSON
+   BEFORE the SSE upgrade; after it, failure is an `error` event with the 502's
+   wording. Audit: same `ask.question.asked` event + `streamed: true|false`.
+3. `app/api/ask/stream` (app) — same-origin proxy, iron-session → Bearer,
+   pipes the SSE body through UNBUFFERED (`engineRes.body` handed to the
+   Response; the vendor-portal proxy's arrayBuffer pattern would defeat it).
+4. `AskClient` — `streamAsk()` fetch-reader consumer (chunk-boundary-safe SSE
+   parser, separately unit-tested) rendering a preview bubble: retrieval
+   activity line + accumulating deltas, reset per `round`, always REPLACED by
+   `final` (the provenance pass may re-render prose after the last delta). A
+   stream that ends without `final` is an error, never a success — a
+   half-delivered preview cannot be mistaken for an answer.
+
+**Flags (dark, two-switch):** `SECURELOGIC_ASK_STREAMING_ENABLED` on both
+engine (404 when off, and streaming also requires `ASK_TOOLS` — no investment
+in the retiring snapshot path) and app (page passes `streamingEnabled` at
+render; a dark deployment costs zero probe requests; a 404 mid-session latches
+a silent fallback to the server action). Rollback is the flag; no migration,
+no schema change, no new SQL.
+
+**Old blocker resolved by construction**: "asTenant throws on streaming" does
+not bite — ask.ts never used the wrap; every `withTenant` scope commits before
+the model round-trips, and the SSE handler documents it must never be wrapped.
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     483 files · 7889 passed · 3 skipped · 0 failed
+app        126 files · 1689 passed ·             0 failed
+typecheck  clean (engine + app)
+isolation  NOT re-run — deliberate: LC-3 adds no SQL, no schema, no tenant-
+           wrap change, and no new DB access path (the SSE route reuses
+           runAskToolTurn's committed-before-model-call withTenant scopes);
+           the LC-2 fresh-Postgres pass at this branch's base still covers
+           the data layer.
+```
+
+New tests: 33 — engine 15 (SSE contract: dual-flag 404s, JSON-before-upgrade
+validation, frame ordering, final ≡ JSON-body parity, error-event wording,
+streamed:true|false audit; orchestrator: round/delta/tool_call emission,
+denial events, throwing-listener immunity) + app 18 (chunk-boundary-safe SSE
+parser incl. \r\n and multi-data frames; streamAsk outcome union — final,
+fallback on 404/rewritten response, structured HTTP errors, terminal error
+event, stream-without-final = error; proxy: 401 pre-engine, Bearer + body
+forwarding, unbuffered pipe-through, status passthrough, 502 on unreachable).
+
+One pre-existing test updated: `vendorEntitlementGate.test.ts`'s structural
+census of `requireEntitlement("premium")` sites in ask.ts (3 → 4) — the
+census caught the new gate exactly as designed.
