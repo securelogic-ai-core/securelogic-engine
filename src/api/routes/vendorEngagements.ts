@@ -316,6 +316,10 @@ export async function listEngagements(req: Request, res: Response): Promise<void
               e.residual_score, e.residual_rating, e.residual_computed_at,
               e.decision, e.decided_at, e.next_review_due,
               e.analysis_coverage,
+              -- The monitoring sweeps' queue signals: a review past its date,
+              -- and an intelligence-triggered reassessment recommendation.
+              (e.status = 'monitoring' AND e.next_review_due < CURRENT_DATE) AS review_overdue,
+              e.reassessment_recommended_at,
               v.id AS vendor_id, v.name AS vendor_name,
               e.created_at, e.updated_at
          FROM vendor_engagements e
