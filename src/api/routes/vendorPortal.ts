@@ -250,7 +250,8 @@ export async function endPortalSession(req: PortalRequest, res: Response): Promi
   } catch (err) {
     logger.warn({ event: "portal_session_end_failed", err }, "Portal sign-out failed (non-fatal)");
   }
-  res.clearCookie(PORTAL_SESSION_COOKIE, { path: "/vendor-portal" });
+  // Path must byte-match the set path or the browser keeps the old cookie.
+  res.clearCookie(PORTAL_SESSION_COOKIE, { path: "/api/vendor-portal" });
   res.status(200).json({ ok: true });
 }
 

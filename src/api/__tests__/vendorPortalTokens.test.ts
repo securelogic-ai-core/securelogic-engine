@@ -180,13 +180,18 @@ describe("portal tokens — session validity checks BOTH bounds", () => {
 // ─── Cookie ─────────────────────────────────────────────────────────────────
 
 describe("portal tokens — cookie attributes", () => {
-  it("is httpOnly, SameSite=Lax, and SCOPED TO THE PORTAL PATH", () => {
-    // Path scoping means the portal cookie is never sent to the authenticated
-    // application, even if a vendor navigates there.
+  it("is httpOnly, SameSite=Lax, and SCOPED TO THE PORTAL API PATH", () => {
+    // Path scoping means the portal cookie is never sent to any other route.
+    // The path must sit UNDER the mount point of the portal API routes
+    // (/api/vendor-portal/...): RFC 6265 attaches a cookie only to requests
+    // under its path, so a value that does not match the real mount means a
+    // real browser never sends the cookie at all — which is exactly the defect
+    // this assertion regressed on (`/vendor-portal` while routes mount at
+    // `/api/vendor-portal`).
     const o = portalCookieOptions(at(SESSION_ABSOLUTE_TTL_MS), true);
     expect(o.httpOnly).toBe(true);
     expect(o.sameSite).toBe("lax");
-    expect(o.path).toBe("/vendor-portal");
+    expect(o.path).toBe("/api/vendor-portal");
     expect(o.secure).toBe(true);
   });
 

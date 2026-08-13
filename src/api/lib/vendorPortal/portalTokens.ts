@@ -173,17 +173,25 @@ export const PORTAL_SESSION_COOKIE = "sl_vendor_portal";
 /**
  * Cookie attributes.
  *
- * `path` scopes the cookie to the portal subtree, so it is never sent to the
- * authenticated application even if a vendor navigates there. httpOnly keeps it
- * out of JS, and SameSite=Lax blocks cross-site POSTs while still allowing the
- * top-level navigation the emailed link performs.
+ * `path` scopes the cookie to the portal API subtree, so it is never sent to
+ * any other route — portal or app — even if a vendor navigates there. httpOnly
+ * keeps it out of JS, and SameSite=Lax blocks cross-site POSTs while still
+ * allowing the top-level navigation the emailed link performs.
+ *
+ * The path MUST match where the portal routes actually mount
+ * (`/api/vendor-portal/...` — see routes/vendorPortal.ts). RFC 6265 sends a
+ * cookie only to requests UNDER its path: the original `/vendor-portal` value
+ * meant a real browser never attached the cookie to a single API call, and
+ * every request after the exchange 401'd. The adversarial suite could not see
+ * this because supertest sets the Cookie header manually, which bypasses
+ * path matching — the one thing a test harness cannot prove about a cookie.
  */
 export function portalCookieOptions(absoluteExpiresAt: Date, isProduction: boolean) {
   return {
     httpOnly: true,
     secure: isProduction,
     sameSite: "lax" as const,
-    path: "/vendor-portal",
+    path: "/api/vendor-portal",
     expires: absoluteExpiresAt,
   };
 }
