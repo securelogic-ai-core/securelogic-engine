@@ -291,6 +291,95 @@ describe("provenance rendering", () => {
   });
 });
 
+// ── 4b. Recent-thread rail truncation ───────────────────────────────────────
+//
+// The rail shows the five most recent threads and hides the rest behind "View
+// all conversations". It is a DISPLAY limit and the tests below hold it to
+// that: every thread the engine returned stays present, selectable, and — once
+// opened — visible in the rail even after collapsing. A truncation that could
+// strand a conversation would be data loss wearing a layout change's clothes.
+
+/** N threads, newest first, in the engine's own ordering. */
+function manyConversations(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `${i}${i}${i}${i}${i}${i}${i}${i}-1111-4111-8111-111111111111`,
+    title: `Thread ${i + 1}`,
+    mode: "text" as const,
+    last_message_at: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
+  }));
+}
+
+const EIGHT = manyConversations(8);
+
+describe("conversation rail truncation", () => {
+  it("shows the five most recent and offers the rest, counted honestly", async () => {
+    mockList.mockResolvedValue({ conversations: EIGHT });
+    render(<AskClient />);
+
+    expect(await screen.findByText("Thread 1")).toBeInTheDocument();
+    expect(screen.getByText("Thread 5")).toBeInTheDocument();
+    expect(screen.queryByText("Thread 6")).not.toBeInTheDocument();
+    expect(screen.queryByText("Thread 8")).not.toBeInTheDocument();
+
+    // The count names the FULL list, not the hidden remainder — the control
+    // promises what it actually reveals.
+    expect(
+      screen.getByRole("button", { name: "View all conversations (8)" })
+    ).toBeInTheDocument();
+  });
+
+  it("reveals every thread in place, and collapses back", async () => {
+    mockList.mockResolvedValue({ conversations: EIGHT });
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /View all conversations/ }));
+
+    for (const c of EIGHT) {
+      expect(screen.getByText(c.title)).toBeInTheDocument();
+    }
+    const collapse = screen.getByRole("button", { name: "Show recent only" });
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(collapse);
+    expect(screen.queryByText("Thread 8")).not.toBeInTheDocument();
+  });
+
+  it("renders no control when nothing is hidden", async () => {
+    // Exactly at the limit: a caller with five threads must not see a control
+    // promising a longer list than exists.
+    mockList.mockResolvedValue({ conversations: manyConversations(5) });
+    render(<AskClient />);
+
+    expect(await screen.findByText("Thread 5")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /View all conversations/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show recent only/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps an older SELECTED thread in the rail after collapsing", async () => {
+    // Expand, open thread 8, collapse. The transcript is on screen, so the rail
+    // must still show which conversation it belongs to — otherwise the page
+    // displays an active conversation with nothing highlighted.
+    mockList.mockResolvedValue({ conversations: EIGHT });
+    mockGet.mockResolvedValue({
+      conversation: EIGHT[7]!,
+      messages: THREAD_DETAIL.messages,
+    });
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /View all conversations/ }));
+    fireEvent.click(screen.getByText("Thread 8"));
+    expect(await screen.findByText("You have 3 critical active findings.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show recent only" }));
+
+    // Still listed, still loaded, and the recent five did not lose a slot to it.
+    expect(screen.getByText("Thread 8")).toBeInTheDocument();
+    expect(screen.getByText("Thread 1")).toBeInTheDocument();
+    expect(screen.getByText("Thread 5")).toBeInTheDocument();
+    expect(screen.queryByText("Thread 7")).not.toBeInTheDocument();
+  });
+});
+
 // ── 5. Graceful single-shot degradation ─────────────────────────────────────
 
 describe("single-shot degradation", () => {

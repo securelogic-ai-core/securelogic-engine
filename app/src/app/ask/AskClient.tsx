@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useTransition } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, useTransition } from "react";
 import {
   askAction,
   listConversationsAction,
@@ -80,6 +80,18 @@ const TRANSCRIBE_ERROR_MESSAGES: Record<string, string> = {
 
 const ASK_FALLBACK = "Unable to process your question. Please try again.";
 const TRANSCRIBE_FALLBACK = "Could not transcribe audio. Please try again.";
+
+/**
+ * How many threads the conversation rail shows before "View all conversations".
+ *
+ * A rail that lists every thread turns the page's primary control — the
+ * composer — into the smallest thing on screen. Five is a display default and
+ * nothing more: the client already holds the whole list the engine returned,
+ * "View all conversations" reveals it in place, and no thread is ever deleted,
+ * truncated, or made unselectable. (The engine's own list read is bounded at 50
+ * threads — a pre-existing server cap this package did not change.)
+ */
+const RECENT_CONVERSATION_LIMIT = 5;
 
 // ─────────────────────────────────────────────────────────────
 // Example chips
@@ -487,6 +499,11 @@ export function AskClient({
   // single-shot Ask — no dead sidebar, no errors.
   const [conversations, setConversations] = useState<AskConversationSummary[]>([]);
   const [threadsAvailable, setThreadsAvailable] = useState(false);
+  // The rail shows the RECENT_CONVERSATION_LIMIT most recent threads and hides
+  // the rest behind "View all conversations". Display only: nothing is deleted,
+  // truncated, or withheld from the client — the full list is already in
+  // `conversations` and every thread stays selectable once expanded.
+  const [showAllConversations, setShowAllConversations] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptTurn[] | null>(null);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -566,6 +583,23 @@ export function AskClient({
       setThreadsAvailable(true);
     }
   }, []);
+
+  /**
+   * The threads the rail actually renders: the most recent
+   * RECENT_CONVERSATION_LIMIT, plus — when collapsed — the SELECTED thread if
+   * it has fallen outside that window (expand, open an old thread, collapse:
+   * the transcript is on screen, so its rail entry must be too, or the page
+   * shows an active conversation with nothing highlighted).
+   */
+  const visibleConversations = useMemo(() => {
+    if (showAllConversations) return conversations;
+    const recent = conversations.slice(0, RECENT_CONVERSATION_LIMIT);
+    if (!selectedId || recent.some((c) => c.id === selectedId)) return recent;
+    const selected = conversations.find((c) => c.id === selectedId);
+    return selected ? [...recent, selected] : recent;
+  }, [conversations, selectedId, showAllConversations]);
+
+  const hiddenConversationCount = conversations.length - visibleConversations.length;
 
   /** Success handling shared by the streaming and non-streaming paths, so the
    *  two cannot drift: the `final` SSE payload and the JSON body are the same
@@ -1214,7 +1248,9 @@ export function AskClient({
       <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
         {/* ── Conversation list ──
              Rendered only once threads are known to exist. Titles + relative
-             last activity, newest first (engine ordering — never re-sorted). */}
+             last activity, newest first (engine ordering — never re-sorted).
+             Shows the RECENT_CONVERSATION_LIMIT most recent by default; "View
+             all conversations" expands the rest in place. */}
         {threadsAvailable && (
           <nav
             aria-label="Conversations"
@@ -1240,7 +1276,7 @@ export function AskClient({
               + New conversation
             </button>
             <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-              {conversations.map((c) => {
+              {visibleConversations.map((c) => {
                 const active = c.id === selectedId;
                 return (
                   <li key={c.id} style={{ marginBottom: "6px" }}>
@@ -1287,6 +1323,33 @@ export function AskClient({
                 );
               })}
             </ul>
+
+            {/* View all / collapse. Rendered only when something is actually
+                hidden, so a caller with five threads or fewer sees no control
+                promising a list that does not exist. */}
+            {(hiddenConversationCount > 0 || showAllConversations) && (
+              <button
+                onClick={() => setShowAllConversations((v) => !v)}
+                aria-expanded={showAllConversations}
+                style={{
+                  width: "100%",
+                  marginTop: "8px",
+                  padding: "8px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid #1e2d45",
+                  background: "transparent",
+                  color: "#94a3b8",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                {showAllConversations
+                  ? "Show recent only"
+                  : `View all conversations (${conversations.length})`}
+              </button>
+            )}
           </nav>
         )}
 
