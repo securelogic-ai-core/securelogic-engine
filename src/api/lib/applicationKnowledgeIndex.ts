@@ -110,6 +110,14 @@ function accessOf(item: { platform?: boolean; premium?: boolean; admin?: boolean
 }
 
 /**
+ * Declared access for body-gated routes outside both navigations (mirrors the
+ * page-body guards the scanner cannot see — see ROUTE_ACCESS_DECLARATIONS in
+ * app/src/lib/navigation.ts). Longest matching prefix wins; a declaration
+ * never overrides access derived from a nav item.
+ */
+export type RouteAccessDeclaration = { prefix: string; access: NavAccess };
+
+/**
  * Pure: turn the nav config + discovered routes into the index. Deterministic
  * (routes sorted by path; navigation/destinations in source order) so the
  * generated artifact and the drift-test rebuild compare equal.
@@ -117,7 +125,8 @@ function accessOf(item: { platform?: boolean; premium?: boolean; admin?: boolean
 export function buildApplicationKnowledgeIndex(
   nav: NavInputItem[],
   rawRoutes: RawRoute[],
-  secondaryNav: SecondaryNavInputItem[] = []
+  secondaryNav: SecondaryNavInputItem[] = [],
+  declaredRouteAccess: RouteAccessDeclaration[] = []
 ): ApplicationKnowledgeIndex {
   const navigation: IndexNavItem[] = nav.map((item) => {
     const access = accessOf(item);
@@ -162,11 +171,27 @@ export function buildApplicationKnowledgeIndex(
       }
     }
     const owner = exact ?? prefix;
+    let access: NavAccess = owner ? owner.access : "all";
+    if (access === "all") {
+      // Fill from the declared body-gate access — longest prefix wins. Only
+      // where nav derivation says "all": an explicit menu flag beats a prefix
+      // rule, and a declaration must never LOOSEN a derived restriction.
+      let best: RouteAccessDeclaration | null = null;
+      for (const d of declaredRouteAccess) {
+        if (
+          (r.path === d.prefix || r.path.startsWith(d.prefix + "/")) &&
+          (best === null || d.prefix.length > best.prefix.length)
+        ) {
+          best = d;
+        }
+      }
+      if (best) access = best.access;
+    }
     routes.push({
       path: r.path,
       dynamic: r.dynamic,
       navLabel: exact ? exact.label : null,
-      access: owner ? owner.access : "all",
+      access,
     });
   }
   routes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

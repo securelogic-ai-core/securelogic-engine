@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { NAV_ITEMS, SECONDARY_NAV_ITEMS } from "../../../app/src/lib/navigation.js";
+import {
+  NAV_ITEMS,
+  SECONDARY_NAV_ITEMS,
+  ROUTE_ACCESS_DECLARATIONS,
+} from "../../../app/src/lib/navigation.js";
 import { scanAppRoutes } from "../../../scripts/lib/scanAppRoutes.js";
 import {
   buildApplicationKnowledgeIndex,
@@ -20,7 +24,8 @@ const appAppDir = join(here, "..", "..", "..", "app", "src", "app");
 const rebuilt = buildApplicationKnowledgeIndex(
   NAV_ITEMS as NavInputItem[],
   scanAppRoutes(appAppDir),
-  SECONDARY_NAV_ITEMS as SecondaryNavInputItem[]
+  SECONDARY_NAV_ITEMS as SecondaryNavInputItem[],
+  ROUTE_ACCESS_DECLARATIONS
 );
 
 const routePaths = new Set(APPLICATION_KNOWLEDGE_INDEX.routes.map((r) => r.path));
@@ -183,5 +188,75 @@ describe("Ask navigation answers are grounded in the index", () => {
     for (const d of APPLICATION_KNOWLEDGE_INDEX.secondaryNavigation) {
       expect(rendered, `missing secondary destination ${d.label}`).toContain(`${d.label} → ${d.href}`);
     }
+  });
+});
+
+/**
+ * Access truth (Launch Completion 2) — a body-gated page must never classify
+ * `access:"all"` in the index. The scanner cannot see page-body guards, so the
+ * declarations in ROUTE_ACCESS_DECLARATIONS / SECONDARY_NAV_ITEMS mirror them;
+ * this suite scans the ACTUAL page sources so the mirror cannot silently rot:
+ * add a gated page without declaring its access and the build fails here.
+ */
+describe("access truth — body-gated pages never classify access:'all'", () => {
+  // A negated platform/entitlement gate followed by a redirect, or an
+  // admin-role redirect. Deliberately narrow: pages that merely MENTION the
+  // predicates for conditional rendering (dashboard, briefs) do not match.
+  const PLATFORM_GATE = /if \(!isPlatform\w*[^)]*\)/;
+  const ADMIN_GATE = /if \(role !== "admin"\)\s*(redirect|{)/;
+  const PAID_GATE = /entitlement !== "starter"/;
+
+  const rebuiltAccess = new Map(rebuilt.routes.map((r) => [r.path, r.access]));
+
+  for (const r of scanAppRoutes(appAppDir)) {
+    const src = readFileSync(join(appAppDir, r.sourceDir, "page.tsx"), "utf8");
+    const platformGated = PLATFORM_GATE.test(src);
+    const adminGated = ADMIN_GATE.test(src);
+    const paidGated = PAID_GATE.test(src);
+    if (!platformGated && !adminGated && !paidGated) continue;
+
+    it(`${r.path} (gated in its page body) is not access:"all"`, () => {
+      const access = rebuiltAccess.get(r.path);
+      expect(access, `route ${r.path} missing from index`).toBeDefined();
+      expect(
+        access,
+        `${r.path} has a body gate but the index says access:"all" — declare it in ROUTE_ACCESS_DECLARATIONS or SECONDARY_NAV_ITEMS (app/src/lib/navigation.ts)`
+      ).not.toBe("all");
+    });
+  }
+});
+
+/**
+ * Requester-aware rendering — the prompt for a class must OMIT surfaces that
+ * class cannot use, and the unfiltered render must be unchanged (back-compat).
+ */
+describe("renderProductKnowledge(requesterClass) filters inaccessible surfaces", () => {
+  it("starter: no platform- or premium-gated destination or workflow is named", () => {
+    const rendered = renderProductKnowledge("starter");
+    expect(rendered).not.toContain("/vendors");
+    expect(rendered).not.toContain("/findings");
+    expect(rendered).not.toContain("/ask");
+    expect(rendered).not.toContain("/getting-started");
+    expect(rendered).not.toContain("[Platform tier]");
+    // The wedge and the account surfaces remain.
+    expect(rendered).toContain("/briefs");
+    expect(rendered).toContain("/account");
+  });
+
+  it("professional: premium destinations render, platform ones do not", () => {
+    const rendered = renderProductKnowledge("professional");
+    expect(rendered).toContain("/account/team");
+    expect(rendered).not.toContain("/vendors");
+    expect(rendered).not.toContain("[Platform tier]");
+  });
+
+  it("premium: everything renders, identical to the unfiltered corpus", () => {
+    expect(renderProductKnowledge("premium")).toBe(renderProductKnowledge());
+  });
+
+  it("admin-only settings stay listed (role, not entitlement) with their annotation", () => {
+    const rendered = renderProductKnowledge("starter");
+    expect(rendered).toContain("Security settings");
+    expect(rendered).toContain("[admin only]");
   });
 });

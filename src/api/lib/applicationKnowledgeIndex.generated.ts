@@ -278,7 +278,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/account/team",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "premium"
     },
     {
       "path": "/actions",
@@ -338,7 +338,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/approvals",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/ask",
@@ -548,7 +548,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/evidence",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/executive",
@@ -596,7 +596,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/getting-started",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/intelligence/[id]",
@@ -722,7 +722,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/posture",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/pricing",
@@ -812,7 +812,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/settings/organization",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "admin"
     },
     {
       "path": "/settings/risk-policy",
@@ -830,7 +830,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/settings/security",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "admin"
     },
     {
       "path": "/settings/sso",
@@ -872,31 +872,31 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/vendor-assurance/[documentId]",
       "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendor-assurance/queue",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendor-engagements",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendor-engagements/[id]",
       "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendor-engagements/new",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendors",
@@ -976,7 +976,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Team & users",
       "href": "/account/team",
       "group": "Account",
-      "access": "all"
+      "access": "premium"
     },
     {
       "label": "API keys",

@@ -413,10 +413,51 @@ export type SecondaryNavItem = {
   access?: SecondaryNavAccess;
 };
 
+/**
+ * Declared access for BODY-GATED ROUTES that appear in neither NAV_ITEMS nor
+ * SECONDARY_NAV_ITEMS (Launch Completion 2 — Ask access truth).
+ *
+ * The index builder derives a route's access from the nav item that owns it;
+ * a body-gated page absent from both navigations therefore classified as
+ * `access:"all"`, and Ask — whose prompt is rendered from the index — could
+ * recommend a surface the requester's entitlement cannot reach (the page
+ * redirects them to /dashboard). These declarations mirror the real page-body
+ * guards, exactly as SECONDARY_NAV_ITEMS.access mirrors its pages' guards.
+ *
+ * Longest matching prefix wins; a declaration NEVER overrides access the
+ * builder derived from a nav item (inference from an explicit menu flag beats
+ * a prefix rule). The drift test regenerates the index from this array, so a
+ * new body-gated route family must be declared here or the honesty test that
+ * scans page bodies for entitlement guards fails the build.
+ */
+export const ROUTE_ACCESS_DECLARATIONS: Array<{
+  prefix: string;
+  access: SecondaryNavAccess;
+}> = [
+  // Vendor Assurance — both the Tier-B document review surfaces and the
+  // engagement spine are platform-gated in their page bodies.
+  { prefix: "/vendor-assurance", access: "platform" },
+  { prefix: "/vendor-engagements", access: "platform" },
+  // Risk-operations surfaces reachable only from in-app links (nav-orphaned
+  // in the legacy header): each redirects sub-platform orgs to /dashboard.
+  { prefix: "/approvals", access: "platform" },
+  { prefix: "/evidence", access: "platform" },
+  { prefix: "/posture", access: "platform" },
+  // Declared in SECONDARY_NAV_ITEMS for the secondary listing; declared here
+  // too so the ROUTES table agrees (the two views must not contradict).
+  { prefix: "/getting-started", access: "platform" },
+  { prefix: "/account/team", access: "premium" },
+  // Admin-gated settings pages (page body redirects non-admins).
+  { prefix: "/settings/organization", access: "admin" },
+  { prefix: "/settings/security", access: "admin" },
+];
+
 export const SECONDARY_NAV_ITEMS: SecondaryNavItem[] = [
   // Account & profile
   { group: "Account",  label: "Account, profile & billing", href: "/account" },
-  { group: "Account",  label: "Team & users",               href: "/account/team" },
+  // /account/team redirects starter orgs to /account (`entitlement !== "starter"`
+  // in the page body) — any PAID tier is admitted, so "premium", not "platform".
+  { group: "Account",  label: "Team & users",               href: "/account/team", access: "premium" },
   { group: "Account",  label: "API keys",                    href: "/account/api-keys" },
   { group: "Account",  label: "Notifications & alerts",      href: "/account/alerts" },
   { group: "Account",  label: "Privacy & data rights",       href: "/account/privacy" },

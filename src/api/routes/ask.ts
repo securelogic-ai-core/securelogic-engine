@@ -25,6 +25,10 @@ import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import {
+  collapseEntitlementLevel,
+  type EntitlementClass,
+} from "../lib/entitlementClass.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
 import {
   sqlFindingActive,
@@ -123,11 +127,26 @@ Format rules:
 CRITICAL — applies to ORGANIZATION DATA only: never invent, assume, or generate proper nouns about this customer's environment — vendor names, domain names, team names, person names, or specific risk titles — that are not explicitly present in the org context data. If a list is empty or a field is null, state that no data is available rather than providing examples (e.g. if the vendor list is empty, say "no vendors have been added yet" — do not name hypothetical vendors). This rule does NOT restrict the PRODUCT KNOWLEDGE section: the feature names, navigation labels, and URL paths there are real and you should use them freely to answer how-to questions.
 `.trim();
 
-export function buildAskSystemPrompt(): string {
-  return `${BASE_INSTRUCTIONS}\n\n---\n\n${renderProductKnowledge()}`;
+export function buildAskSystemPrompt(cls?: EntitlementClass): string {
+  return `${BASE_INSTRUCTIONS}\n\n---\n\n${renderProductKnowledge(cls)}`;
 }
 
-const SYSTEM_PROMPT = buildAskSystemPrompt();
+/**
+ * Requester-aware system prompts (Launch Completion 2 — Ask access truth):
+ * one per entitlement class, memoized so each renders once per process and
+ * provider-side prompt caching stays effective. A class's prompt OMITS every
+ * destination and workflow that class cannot actually use, so the assistant
+ * cannot route a customer to a page whose guard would bounce them.
+ */
+const SYSTEM_PROMPT_BY_CLASS = new Map<EntitlementClass, string>();
+function systemPromptFor(cls: EntitlementClass): string {
+  let p = SYSTEM_PROMPT_BY_CLASS.get(cls);
+  if (p === undefined) {
+    p = buildAskSystemPrompt(cls);
+    SYSTEM_PROMPT_BY_CLASS.set(cls, p);
+  }
+  return p;
+}
 
 // ---------------------------------------------------------------------------
 // Rate limiter — 20 questions per minute per org
@@ -190,6 +209,11 @@ async function handleWithTools(args: {
 }): Promise<void> {
   const { req, res, client, organizationId, question } = args;
   const userId = (req as { userId?: string }).userId ?? null;
+  // The requester's entitlement class picks the product-knowledge variant —
+  // the prompt must not name surfaces this org's entitlement cannot reach.
+  const requesterClass: EntitlementClass = collapseEntitlementLevel(
+    (req as any).organizationContext?.entitlementLevel
+  );
   const requestedConversationId =
     typeof (req.body as Record<string, unknown>)?.conversation_id === "string"
       ? ((req.body as Record<string, string>).conversation_id ?? null)
@@ -250,7 +274,7 @@ async function handleWithTools(args: {
     const orchestration = await runAskOrchestration({
       client,
       model: ASK_MODEL,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: systemPromptFor(requesterClass),
       history,
       question,
       origin: req,
@@ -379,6 +403,11 @@ router.post(
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
+    // The requester's entitlement class picks the product-knowledge variant —
+    // the prompt must not name surfaces this org's entitlement cannot reach.
+    const requesterClass: EntitlementClass = collapseEntitlementLevel(
+      organizationContext?.entitlementLevel
+    );
 
     if (!organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
@@ -823,7 +852,7 @@ router.post(
         const response = await client.messages.create({
           model: ASK_MODEL,
           max_tokens: 1024,
-          system: SYSTEM_PROMPT,
+          system: systemPromptFor(requesterClass),
           messages: [{ role: "user", content: userMessage }],
         });
 
