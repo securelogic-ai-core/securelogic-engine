@@ -159,17 +159,75 @@ describe("ASK-A — action classes", () => {
     buildRoutes({ isDev: false, publicApiDisabled: false }) as never
   );
 
-  it("non-read tools are EXACTLY the ASK-B-approved set", () => {
-    // LC-5 opened `mutate` under Stop Gate ASK-B for precisely these two
-    // tools (docs/validation/ask-b-action-gate.md). A non-read tool outside
-    // this allowlist is a scope breach — governed is LC-5b, decision-gated,
-    // and draft remains unopened. Widening this list REQUIRES extending the
-    // gate evidence first.
-    const nonRead = registry.filter((t) => t.actionClass !== "read");
-    expect(nonRead.map((t) => t.name).sort()).toEqual(["actions.create", "actions.update"]);
-    for (const tool of nonRead) {
-      expect(tool.actionClass, `${tool.name} must be mutate — governed is LC-5b`).toBe("mutate");
+  it("non-read tools are EXACTLY the ASK-B-approved set, class by class", () => {
+    // LC-5 opened `mutate` for two tools; LC-5b opened `governed` for the
+    // operator-ordered transitions (docs/validation/ask-b-action-gate.md).
+    // A non-read tool outside these allowlists is a scope breach — widening
+    // either list REQUIRES extending the gate evidence first. draft remains
+    // unopened.
+    const mutate = registry.filter((t) => t.actionClass === "mutate");
+    const governed = registry.filter((t) => t.actionClass === "governed");
+    const other = registry.filter(
+      (t) => !["read", "mutate", "governed"].includes(t.actionClass)
+    );
+    expect(mutate.map((t) => t.name).sort()).toEqual(["actions.create", "actions.update"]);
+    expect(governed.map((t) => t.name).sort()).toEqual([
+      "findings.close",
+      "risks.accept",
+      "vendors.decide",
+    ]);
+    expect(other).toEqual([]);
+  });
+
+  it("risks.accept binds the PROPOSE step with the 5-minute TTL and owner defaulting", () => {
+    const accept = registry.find((t) => t.name === "risks.accept")!;
+    // The workflow's approval step stays in-product: the tool binds the
+    // proposal route, never /risk-acceptances/:id/approve.
+    expect(accept.binding.path).toBe("/findings/:id/risk-acceptance");
+    expect(accept.proposalTtlMs).toBe(5 * 60 * 1000);
+    expect(accept.inputSchema.required).toEqual(
+      expect.arrayContaining(["id", "rationale", "expires_at"])
+    );
+    // The owner is UNCONDITIONALLY the proposing user — a smuggled owner is
+    // overwritten, and the schema exposes no identity argument at all.
+    expect(accept.applyDefaults!({}, { userId: "u-1" })).toEqual({ owner_user_id: "u-1" });
+    expect(accept.applyDefaults!({ owner_user_id: "u-2" }, { userId: "u-1" })).toEqual({
+      owner_user_id: "u-1",
+    });
+    expect(Object.keys(accept.inputSchema.properties)).not.toContain("owner_user_id");
+  });
+
+  it("every governed tool carries the full governed contract", () => {
+    for (const tool of registry.filter((t) => t.actionClass === "governed")) {
+      // Server-validated mandatory rationale: a required string field whose
+      // substance validateInput enforces.
+      expect(typeof tool.validateInput, `${tool.name} must validateInput`).toBe("function");
+      const rationaleField = (tool.inputSchema.required ?? []).find((f) =>
+        ["rationale", "decision_note"].includes(f)
+      );
+      expect(rationaleField, `${tool.name} must REQUIRE a rationale field`).toBeTruthy();
+      // A token-gesture rationale is refused server-side.
+      expect(
+        tool.validateInput!({ id: "x", decision: "approved", [rationaleField!]: "short" })
+      ).toBeTruthy();
+      // Audit context: transition + rationale + resulting state on one event.
+      expect(typeof tool.auditContext, `${tool.name} must auditContext`).toBe("function");
+      const ctx = tool.auditContext!(
+        { [rationaleField!]: "a substantive rationale", decision: "approved" },
+        null
+      );
+      expect(Object.keys(ctx)).toEqual(
+        expect.arrayContaining(["transition", "rationale", "resulting_state"])
+      );
     }
+  });
+
+  it("findings.close pins its transition literal — the model cannot repoint it", () => {
+    const close = registry.find((t) => t.name === "findings.close")!;
+    expect(close.fixedInput).toEqual({ decision_state: "resolved" });
+    // accepted_risk is NOT reachable through this tool: the schema does not
+    // expose decision_state at all, and fixedInput overwrites any attempt.
+    expect(Object.keys(close.inputSchema.properties)).not.toContain("decision_state");
   });
 
   it("every mutate tool renders its own server-side summary and never binds DELETE", () => {

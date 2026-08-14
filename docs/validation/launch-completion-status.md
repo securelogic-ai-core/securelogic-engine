@@ -15,7 +15,8 @@ without explicit authorization; prod-affecting flags ship dark.
 | 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
 | 3 | Ask streaming | `feat/lc3-ask-streaming` (stacked on LC-2) | **Built — validated** |
 | 4 | Realtime voice | `feat/lc4-realtime-voice` (stacked on LC-3) | **Built — validated** |
-| 5 | Bounded agentic Ask | `feat/lc5-bounded-agentic-ask` (stacked on LC-4) | **Built — validated** |
+| 5 | Bounded agentic Ask | `feat/lc5-bounded-agentic-ask` (stacked on LC-4) | **Built — validated** (committed `0ddfcf3c`) |
+| 5b | Governed agentic Ask | `feat/lc5b-governed-ask` (stacked on LC-5) | **Built — validated** |
 | 6 | Platform convergence | — | Blocked on 1–5 |
 
 ---
@@ -401,3 +402,47 @@ TTL constant, RLS SELECT/INSERT/UPDATE). Updated: `askStreamingRoute` +
 `askToolsSwitchover` orchestrator mocks gained the `proposals` field;
 `seatRouteCoverage`'s default-deny census caught the new route file exactly
 as designed — `askActions.ts` classified WIRED_DENY beside `ask.ts`.
+
+---
+
+## 5b. Governed agentic Ask (LC-5b)
+
+**Operator directive (2026-08-14)**: governed as a separate increment on the
+proven LC-5 infrastructure; order findings.close → vendors.decide → PROGRAM
+STOP GATE → risks.accept LAST; flags independent, both default OFF; eight
+per-action requirements; no staging/production enablement.
+
+Everything is recorded in the gate document — `docs/validation/
+ask-b-action-gate.md` §LC-5b: the governed contract additions (fixedInput,
+validateInput, summary enrichment with proposal-drop on invisible objects,
+auditContext with refusal_detail, applyDefaults), the three tool bindings
+with their workflow gates, and the stop-gate record (one audit-fidelity
+weakness found and closed; otherwise clean; risks.accept bound on the clean
+verdict). risks.accept deliberately binds the PROPOSE step of the signed
+workflow — approval, the only act that closes a finding, stays in-product
+where SoD (proposer ≠ approver) is enforced by route and DB CHECK alike.
+
+### Validation (2026-08-14, at commit)
+
+```
+engine     489 files · 7960 passed · 3 skipped · 0 failed
+app        130 files · 1704 passed ·             0 failed   (unchanged — the governed increment is
+                                                             payload-driven; no app change needed)
+isolation  149 files · 1158 passed ·             0 failed   (FRESH Postgres; includes the 12-test
+                                                             askGovernedExecution suite: real state
+                                                             machines, SoD, the full acceptance round
+                                                             trip, cross-tenant denial)
+typecheck  clean (engine + app)
+```
+
+New tests: +19 engine (proposal flow: governed independence, fixedInput
+pinning incl. an attempted accepted_risk repoint, rationale substance,
+risks.accept owner freezing + smuggled-owner overwrite + missing-expiry
+refusal; route: flag independence ×2, class-disabled 409s ×2, governed audit
+context, workflow-refusal detail, denial stays reason-free; turn: widening
+matrix, enrichment, invisible-object drop, 5-min TTL passthrough; registry:
+class-by-class allowlists, governed contract census, transition pinning,
+PROPOSE-step binding) + 12 isolation (closure machinery ×4 incl. SoD both
+ways; decision machinery ×4 incl. identity-injection inertness + residual
+immutability; acceptance ×4 incl. the full propose→self-approve-403→
+second-user-approve round trip with severity asserted unchanged).

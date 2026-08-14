@@ -295,11 +295,17 @@ export async function executeTool(
       };
     }
 
+    // Surface the route's own error code for WORKFLOW refusals (409 state
+    // machines, 5xx) exactly as invalid_arguments already does — a governed
+    // confirmation's audit trail must record WHY the platform refused
+    // (cannot_decide, remediation incomplete, SoD), not just that it did.
+    // Denials above stay collapsed and non-disclosing; nothing here runs for
+    // 401/403/404.
     return {
       ok: false,
       error: "unavailable",
       status: captured.status,
-      message: "The tool route reported an error.",
+      message: describeError(captured.body) ?? "The tool route reported an error.",
       latencyMs,
     };
   } catch (err) {

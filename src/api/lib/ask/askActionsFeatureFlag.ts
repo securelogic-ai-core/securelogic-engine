@@ -22,3 +22,20 @@
 export function askActionsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["SECURELOGIC_ASK_ACTIONS_ENABLED"] === "true";
 }
+
+/**
+ * ASK_GOVERNED_ENABLED — dark-launch flag for the `governed` class (LC-5b).
+ *
+ * INDEPENDENT of ASK_ACTIONS_ENABLED by operator ruling: each flag gates
+ * exactly its own action class, so governed transitions can be lit or killed
+ * without touching plain mutations, and vice versa. Same default-OFF
+ * semantics (new behavior; only the literal "true" enables).
+ *
+ * The confirm/decline surface exists when EITHER class is enabled; a claimed
+ * proposal whose class flag has since been dropped is honestly unexecutable
+ * (409, token consumed) — a killed class must not honor tokens it issued
+ * while alive.
+ */
+export function askGovernedEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env["SECURELOGIC_ASK_GOVERNED_ENABLED"] === "true";
+}

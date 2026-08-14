@@ -30,6 +30,18 @@ type ToolSpec = {
   pathParams?: string[];
   /** Required for non-read tools — see ToolDefinition.summarize. */
   summarize?: (input: Record<string, unknown>) => string;
+  /** See ToolDefinition — LC-5b governed-tool contract fields. */
+  fixedInput?: Record<string, unknown>;
+  applyDefaults?: (
+    input: Record<string, unknown>,
+    ctx: { userId: string | null }
+  ) => Record<string, unknown>;
+  validateInput?: (input: Record<string, unknown>) => string | null;
+  auditContext?: (
+    input: Record<string, unknown>,
+    resultData: unknown
+  ) => Record<string, unknown>;
+  proposalTtlMs?: number;
 };
 
 /**
@@ -330,6 +342,238 @@ const TOOL_SPECS: ToolSpec[] = [
       return `Update action ${String(input.id ?? "")}: ${changes.length ? changes.join("; ") : "no changes specified"}`;
     },
   },
+  // ── governed (Stop Gate ASK-B extension, LC-5b) ───────────────────────────
+  //
+  // Same propose-confirm mechanism as mutate, with the governed additions:
+  // spec-pinned transition literals (fixedInput — the model cannot repoint the
+  // tool at another transition), server-VALIDATED mandatory rationale
+  // (validateInput), server-sourced object identity in the confirmation
+  // summary (enriched in runAskToolTurn, org-scoped), and an auditContext
+  // that lands proposal + confirmer + transition + rationale + resulting
+  // state on one audit event. Execution re-runs the target route's own
+  // workflow gates — state machine, SoD, remediation/measurement
+  // preconditions — under the CONFIRMING user.
+  {
+    name: "findings.close",
+    description:
+      "PROPOSE closing a finding (governance decision_state → resolved). Nothing " +
+      "changes until the user explicitly confirms in the product UI — describe the " +
+      "closure as prepared and awaiting their confirmation, never as done. Requires " +
+      "decision_note: the closure rationale, which becomes part of the audit " +
+      "record — state WHY the finding is resolved. The platform's closure rules " +
+      "(remediation completeness, separation of duties) are enforced when the user " +
+      "confirms; a closure they forbid will be refused then. Use the finding's UUID " +
+      "from a previous findings.search or findings.get result.",
+    actionClass: "governed",
+    method: "PATCH",
+    path: "/findings/:id",
+    pathParams: ["id"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Finding UUID." },
+        decision_note: {
+          type: "string",
+          description:
+            "Closure rationale (at least 10 characters). Becomes the lifecycle " +
+            "event's comment and part of the audit record.",
+        },
+      },
+      required: ["id", "decision_note"],
+      additionalProperties: false,
+    },
+    // The transition literal is the SPEC's, not the model's: this tool can
+    // only ever request decision_state=resolved. accepted_risk is explicitly
+    // unreachable here — that is the risk-acceptance workflow's output.
+    fixedInput: { decision_state: "resolved" },
+    validateInput: (input) => {
+      const note = typeof input.decision_note === "string" ? input.decision_note.trim() : "";
+      if (note.length < 10) return "decision_note must be a substantive rationale (≥ 10 characters).";
+      if (note.length > 2000) return "decision_note must be at most 2000 characters.";
+      return null;
+    },
+    summarize: (input) => {
+      const note = typeof input.decision_note === "string" ? input.decision_note.trim() : "";
+      return `Close finding ${String(input.id ?? "")} (decision_state → resolved) — rationale: "${note}"`;
+    },
+    auditContext: (input, resultData) => {
+      const finding =
+        resultData && typeof resultData === "object"
+          ? ((resultData as Record<string, unknown>).finding as Record<string, unknown> | undefined)
+          : undefined;
+      return {
+        transition: "decision_state → resolved",
+        rationale: typeof input.decision_note === "string" ? input.decision_note.trim() : null,
+        resulting_state: finding
+          ? {
+              decision_state: finding.decision_state ?? null,
+              operational_status: finding.operational_status ?? null,
+              status: finding.status ?? null,
+            }
+          : null,
+      };
+    },
+  },
+  {
+    name: "vendors.decide",
+    description:
+      "PROPOSE recording the governance decision on a vendor engagement " +
+      "(approved / approved_with_conditions / rejected / terminated). Nothing is " +
+      "recorded until the user explicitly confirms in the product UI — describe " +
+      "the decision as prepared and awaiting their confirmation, never as done. " +
+      "Requires rationale: the decision reasoning, which becomes part of the " +
+      "audit record. The engagement must have a computed residual risk and be in " +
+      "a decidable state — the platform enforces both when the user confirms. " +
+      "The decision is attributed to the confirming user, and it never changes " +
+      "the measured residual risk. Use the engagement's UUID from a previous " +
+      "tool result.",
+    actionClass: "governed",
+    method: "POST",
+    path: "/vendor-engagements/:id/decision",
+    pathParams: ["id"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Vendor engagement UUID." },
+        decision: {
+          type: "string",
+          enum: ["approved", "approved_with_conditions", "rejected", "terminated"],
+        },
+        rationale: {
+          type: "string",
+          description:
+            "Decision reasoning (at least 10 characters). Recorded verbatim on " +
+            "the engagement and in the audit record.",
+        },
+        expires_at: {
+          type: "string",
+          description: "Optional decision expiry, YYYY-MM-DD (e.g. an approval review date).",
+        },
+      },
+      required: ["id", "decision", "rationale"],
+      additionalProperties: false,
+    },
+    validateInput: (input) => {
+      const rationale = typeof input.rationale === "string" ? input.rationale.trim() : "";
+      if (rationale.length < 10) return "rationale must be a substantive reasoning (≥ 10 characters).";
+      if (rationale.length > 2000) return "rationale must be at most 2000 characters.";
+      if (
+        input.expires_at !== undefined &&
+        !(typeof input.expires_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.expires_at))
+      ) {
+        return "expires_at must be YYYY-MM-DD.";
+      }
+      return null;
+    },
+    summarize: (input) => {
+      const rationale = typeof input.rationale === "string" ? input.rationale.trim() : "";
+      const expiry =
+        typeof input.expires_at === "string" ? `, decision expires ${input.expires_at}` : "";
+      return (
+        `Record engagement decision "${String(input.decision ?? "")}" for engagement ` +
+        `${String(input.id ?? "")}${expiry} — rationale: "${rationale}"`
+      );
+    },
+    auditContext: (input, resultData) => {
+      const data =
+        resultData && typeof resultData === "object"
+          ? (resultData as Record<string, unknown>)
+          : {};
+      return {
+        transition: `status → decided (${String(input.decision ?? "")})`,
+        rationale: typeof input.rationale === "string" ? input.rationale.trim() : null,
+        resulting_state: {
+          status: data.status ?? null,
+          decision: data.decision ?? null,
+          // Echoed from the route so the ledger shows the decision changed
+          // NOTHING about the measurement.
+          residual_score: data.residual_score ?? null,
+          residual_rating: data.residual_rating ?? null,
+        },
+      };
+    },
+  },
+  {
+    name: "risks.accept",
+    description:
+      "PROPOSE formally accepting the risk of a finding, via the platform's " +
+      "signed risk-acceptance workflow. This creates an acceptance PROPOSAL: " +
+      "the finding stays fully active, and a DIFFERENT authorized user must " +
+      "approve the acceptance in the product before anything closes — you " +
+      "cannot approve it, the confirming user cannot approve their own " +
+      "proposal, and acceptance never changes the finding's measured severity. " +
+      "Requires rationale (why the risk is acceptable) and expires_at (the " +
+      "review date — an acceptance without expiry is a permanent pardon and is " +
+      "refused). The accountable owner is ALWAYS the asking user — assigning a " +
+      "different owner is done in the product, not through you. Use the " +
+      "finding's UUID from findings.search or findings.get.",
+    actionClass: "governed",
+    method: "POST",
+    path: "/findings/:id/risk-acceptance",
+    pathParams: ["id"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Finding UUID." },
+        rationale: {
+          type: "string",
+          description:
+            "Why this risk is acceptable (at least 10 characters). Recorded on " +
+            "the durable acceptance record and in the audit trail.",
+        },
+        expires_at: {
+          type: "string",
+          description: "Acceptance review/expiry date, YYYY-MM-DD. Required — accepted risk comes back for review.",
+        },
+      },
+      required: ["id", "rationale", "expires_at"],
+      additionalProperties: false,
+    },
+    // The accountable owner is UNCONDITIONALLY the proposing user (== the
+    // confirming user) — the schema exposes no identity argument (the ASK-A
+    // guard forbids them), and anything the model smuggles in is overwritten
+    // here, frozen at proposal time, and shown by name on the card.
+    applyDefaults: (_input, ctx) => (ctx.userId ? { owner_user_id: ctx.userId } : {}),
+    validateInput: (input) => {
+      const rationale = typeof input.rationale === "string" ? input.rationale.trim() : "";
+      if (rationale.length < 10) return "rationale must be a substantive reasoning (≥ 10 characters).";
+      if (rationale.length > 2000) return "rationale must be at most 2000 characters.";
+      if (!(typeof input.expires_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.expires_at))) {
+        return "expires_at must be YYYY-MM-DD.";
+      }
+      return null;
+    },
+    summarize: (input) => {
+      const rationale = typeof input.rationale === "string" ? input.rationale.trim() : "";
+      return (
+        `Propose RISK ACCEPTANCE for finding ${String(input.id ?? "")} — expires ` +
+        `${String(input.expires_at ?? "")}, requires approval by another authorized user — ` +
+        `rationale: "${rationale}"`
+      );
+    },
+    auditContext: (input, resultData) => {
+      const acceptance =
+        resultData && typeof resultData === "object"
+          ? ((resultData as Record<string, unknown>).acceptance as
+              | Record<string, unknown>
+              | undefined)
+          : undefined;
+      return {
+        transition: "finding_risk_acceptance → proposed (approval by another user required)",
+        rationale: typeof input.rationale === "string" ? input.rationale.trim() : null,
+        resulting_state: acceptance
+          ? {
+              acceptance_id: acceptance.id ?? null,
+              state: acceptance.state ?? null,
+              owner_user_id: acceptance.owner_user_id ?? null,
+              expires_at: acceptance.expires_at ?? null,
+            }
+          : null,
+      };
+    },
+    // Operator ruling: acceptance proposals confirm in a 5-minute window.
+    proposalTtlMs: 5 * 60 * 1000,
+  },
   {
     name: "evidence.search",
     description:
@@ -379,6 +623,11 @@ export function buildToolRegistry(routerOverride?: Router): ToolDefinition[] {
       ...(spec.pathParams ? { pathParams: spec.pathParams } : {}),
     },
     ...(spec.summarize ? { summarize: spec.summarize } : {}),
+    ...(spec.fixedInput ? { fixedInput: spec.fixedInput } : {}),
+    ...(spec.applyDefaults ? { applyDefaults: spec.applyDefaults } : {}),
+    ...(spec.validateInput ? { validateInput: spec.validateInput } : {}),
+    ...(spec.auditContext ? { auditContext: spec.auditContext } : {}),
+    ...(spec.proposalTtlMs !== undefined ? { proposalTtlMs: spec.proposalTtlMs } : {}),
     // Resolved from the router — throws at boot if the route is gone.
     chain: resolveRouteChain(routes, spec.method, spec.path),
   }));

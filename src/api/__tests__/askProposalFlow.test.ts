@@ -216,6 +216,155 @@ describe("ASK-B — proposals default closed", () => {
   });
 });
 
+describe("ASK-B governed (LC-5b) — spec-pinned transitions and validated rationale", () => {
+  const GOVERNED_INPUT = {
+    id: "33333333-3333-4333-8333-333333333333",
+    decision_note: "False positive: the affected host was decommissioned in Q2.",
+  };
+
+  it("the governed class widens independently of mutate", async () => {
+    const { result, seen } = run(
+      [[toolUse("findings.close", GOVERNED_INPUT)], [textBlock("Prepared.")]],
+      ["read", "governed"]
+    );
+    const r = await result;
+    expect(r.proposals).toHaveLength(1);
+    expect(vi.mocked(executeTool)).not.toHaveBeenCalled();
+    // mutate tools are NOT declared when only governed is enabled…
+    const declared = JSON.stringify(seen[0]!.tools);
+    expect(declared).not.toContain("actions.create");
+    expect(declared).toContain("findings.close");
+  });
+
+  it("the transition literal is the SPEC's: model attempts to repoint are overwritten", async () => {
+    const { result } = run(
+      [
+        [
+          toolUse("findings.close", {
+            ...GOVERNED_INPUT,
+            // Injection-style attempt: reach accepted_risk through the closure
+            // tool. additionalProperties:false SHOULD stop this at the API,
+            // but even a model that emits it anyway gets the spec's literal.
+            decision_state: "accepted_risk",
+          }),
+        ],
+        [textBlock("done")],
+      ],
+      ["read", "governed"]
+    );
+    const r = await result;
+    expect(r.proposals).toHaveLength(1);
+    expect(r.proposals[0]!.input.decision_state).toBe("resolved");
+  });
+
+  it("a token-gesture rationale is refused server-side — no proposal", async () => {
+    const { result, seen } = run(
+      [
+        [toolUse("findings.close", { id: GOVERNED_INPUT.id, decision_note: "done" })],
+        [textBlock("done")],
+      ],
+      ["read", "governed"]
+    );
+    const r = await result;
+    expect(r.proposals).toHaveLength(0);
+    expect(r.invocations[0]!.errorCode).toBe("invalid_arguments");
+    expect(JSON.stringify(seen.at(-1))).toContain("substantive rationale");
+  });
+
+  it("vendors.decide requires substance too, and keeps the decision enum closed", async () => {
+    const { result } = run(
+      [
+        [
+          toolUse("vendors.decide", {
+            id: "44444444-4444-4444-8444-444444444444",
+            decision: "approved",
+            rationale: "SOC 2 Type II reviewed; residual within appetite; conditions none.",
+          }),
+        ],
+        [textBlock("Prepared.")],
+      ],
+      ["read", "governed"]
+    );
+    const r = await result;
+    expect(r.proposals).toHaveLength(1);
+    expect(r.proposals[0]!.summary).toContain('"approved"');
+    expect(r.proposals[0]!.summary).toContain("SOC 2 Type II reviewed");
+    expect(vi.mocked(executeTool)).not.toHaveBeenCalled();
+  });
+});
+
+describe("ASK-B governed (LC-5b) — risks.accept proposal semantics", () => {
+  const originWithUser = () =>
+    ({ headers: {}, userId: "66666666-6666-4666-8666-666666666666" }) as never;
+
+  const runAs = (script: Array<Array<Record<string, unknown>>>) => {
+    const { client, seen } = scriptedClient(script);
+    return {
+      seen,
+      result: runAskOrchestration({
+        client,
+        model: "test-model",
+        systemPrompt: "sys",
+        history: [],
+        question: "Accept this risk",
+        origin: originWithUser(),
+        actionClasses: ["read", "governed"],
+      }),
+    };
+  };
+
+  it("the accountable owner defaults to the PROPOSING user and is frozen in the input", async () => {
+    const { result } = runAs([
+      [
+        toolUse("risks.accept", {
+          id: "77777777-7777-4777-8777-777777777777",
+          rationale: "Compensating controls cover this exposure through Q4.",
+          expires_at: "2026-12-31",
+        }),
+      ],
+      [textBlock("Prepared.")],
+    ]);
+    const r = await result;
+    expect(r.proposals).toHaveLength(1);
+    expect(r.proposals[0]!.input.owner_user_id).toBe("66666666-6666-4666-8666-666666666666");
+    expect(vi.mocked(executeTool)).not.toHaveBeenCalled();
+  });
+
+  it("a smuggled owner is OVERWRITTEN with the proposing user, and the summary names the approval requirement", async () => {
+    const { result } = runAs([
+      [
+        toolUse("risks.accept", {
+          id: "77777777-7777-4777-8777-777777777777",
+          // Identity-injection attempt: the schema forbids this key, and even
+          // raw it must be overwritten by the spec's unconditional owner rule.
+          owner_user_id: "88888888-8888-4888-8888-888888888888",
+          rationale: "Compensating controls cover this exposure through Q4.",
+          expires_at: "2026-12-31",
+        }),
+      ],
+      [textBlock("Prepared.")],
+    ]);
+    const r = await result;
+    expect(r.proposals[0]!.input.owner_user_id).toBe("66666666-6666-4666-8666-666666666666");
+    expect(r.proposals[0]!.summary).toContain("approval by another authorized user");
+  });
+
+  it("a missing expiry is refused — an acceptance without review is a permanent pardon", async () => {
+    const { result } = runAs([
+      [
+        toolUse("risks.accept", {
+          id: "77777777-7777-4777-8777-777777777777",
+          rationale: "Compensating controls cover this exposure through Q4.",
+        }),
+      ],
+      [textBlock("done")],
+    ]);
+    const r = await result;
+    expect(r.proposals).toHaveLength(0);
+    expect(r.invocations[0]!.errorCode).toBe("invalid_arguments");
+  });
+});
+
 describe("ASK-B — proposal bounds", () => {
   it("missing required fields produce invalid_arguments, not a proposal", async () => {
     const { result, seen } = run(

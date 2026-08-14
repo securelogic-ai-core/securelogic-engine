@@ -43,7 +43,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
-import { askActionsEnabled } from "../lib/ask/askActionsFeatureFlag.js";
+import { askActionsEnabled, askGovernedEnabled } from "../lib/ask/askActionsFeatureFlag.js";
 import {
   claimPendingByTokenHash,
   declineByTokenHash,
@@ -58,13 +58,26 @@ import { logger } from "../infra/logger.js";
 
 const router = Router();
 
-/** 404 with the same body a nonexistent route would produce (flag convention). */
+/**
+ * 404 with the same body a nonexistent route would produce (flag convention).
+ * The surface exists when EITHER agentic class is enabled (LC-5b: the two
+ * flags are independent); per-proposal executability is re-checked against
+ * the specific class's flag after the claim.
+ */
 function askActionsFlag(_req: Request, res: Response, next: NextFunction): void {
-  if (!askActionsEnabled()) {
+  if (!askActionsEnabled() && !askGovernedEnabled()) {
     res.status(404).json({ error: "not_found" });
     return;
   }
   next();
+}
+
+/** Is this tool's action class currently enabled? Read tools are never
+ *  confirmable; unknown classes fail closed. */
+function classCurrentlyEnabled(actionClass: string): boolean {
+  if (actionClass === "mutate") return askActionsEnabled();
+  if (actionClass === "governed") return askGovernedEnabled();
+  return false;
 }
 
 /** The uniform denial. ONE object so the body cannot drift between sites. */
@@ -158,9 +171,11 @@ router.post("/ask/actions/confirm", ...CHAIN, async (req, res) => {
     }
 
     const tool = getTool(record.tool_name);
-    if (!tool || tool.actionClass === "read") {
-      // Registry changed between proposal and confirm (deploy). The token is
-      // consumed; the proposal is honestly unexecutable.
+    if (!tool || tool.actionClass === "read" || !classCurrentlyEnabled(tool.actionClass)) {
+      // The tool is gone (deploy), demoted to read, or its class's flag has
+      // been dropped since the proposal was issued. The token is consumed;
+      // the proposal is honestly unexecutable — a killed class must not
+      // honor tokens it issued while alive.
       await withTenant(organizationId, () =>
         recordExecutionOutcome({
           organizationId,
@@ -186,9 +201,15 @@ router.post("/ask/actions/confirm", ...CHAIN, async (req, res) => {
         organizationId,
         id: record.id,
         httpStatus: result.status,
+        // A refusal's REASON is part of the governance record (the route's
+        // own error code, e.g. cannot_decide). Denials stay reason-free —
+        // their message is the fixed non-disclosing wording by construction.
         digest: result.ok
           ? digestToolOutput(result.data)
-          : { error: result.error },
+          : {
+              error: result.error,
+              ...(result.error !== "denied" ? { detail: result.message } : {}),
+            },
       })
     );
 
@@ -203,8 +224,20 @@ router.post("/ask/actions/confirm", ...CHAIN, async (req, res) => {
         tool: record.tool_name,
         summary: record.summary,
         http_status: result.status,
-        ...(result.ok ? {} : { refusal: result.error }),
+        ...(result.ok
+          ? {}
+          : {
+              refusal: result.error,
+              ...(result.error !== "denied" ? { refusal_detail: result.message } : {}),
+            }),
         conversation_id: record.conversation_id,
+        // LC-5b governed context: transition performed, rationale, and the
+        // resulting object state extracted from the route's own response —
+        // proposal + confirmer (actor fields above) + transition + rationale
+        // + outcome land on ONE event.
+        ...(tool.auditContext
+          ? tool.auditContext(record.tool_input, result.ok ? result.data : null)
+          : {}),
       },
       ipAddress: req.ip ?? null,
     });

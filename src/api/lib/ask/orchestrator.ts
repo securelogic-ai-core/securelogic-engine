@@ -304,6 +304,21 @@ export async function runAskOrchestration(args: {
       // and no token exists yet (minting happens after this loop returns). The
       // model is told the truth: prepared, pending the user's confirmation.
       if (tool.actionClass !== "read") {
+        // Spec-owned arguments WIN over the model's (LC-5b): a governed tool's
+        // transition literal comes from the spec, and no model output can
+        // repoint it at a different transition.
+        if (tool.fixedInput) Object.assign(input, tool.fixedInput);
+        // Server-side defaults, with the PROPOSING user's identity (which is,
+        // by the user-binding of proposals, also the confirming user's).
+        if (tool.applyDefaults) {
+          Object.assign(
+            input,
+            tool.applyDefaults(input, {
+              userId: ((origin as { userId?: string }).userId as string | undefined) ?? null,
+            })
+          );
+        }
+
         const missing = (tool.inputSchema.required ?? []).filter(
           (f) => input[f] === undefined || input[f] === null
         );
@@ -327,6 +342,33 @@ export async function runAskOrchestration(args: {
               error: "invalid_arguments",
               message: `Missing required fields: ${missing.join(", ")}.`,
             }),
+            is_error: true,
+          });
+          continue;
+        }
+
+        // Server-side content validation (LC-5b): schema `required` proved
+        // presence above; this proves SUBSTANCE — a governed rationale that is
+        // whitespace or a token gesture is refused before it can become a
+        // proposal the user might rubber-stamp.
+        const contentError = tool.validateInput?.(input) ?? null;
+        if (contentError) {
+          invocations.push({
+            toolName: tool.name,
+            actionClass: tool.actionClass,
+            input,
+            authorized: false,
+            statusCode: 400,
+            errorCode: "invalid_arguments",
+            latencyMs: 0,
+            outputDigest: null,
+          });
+          retained.push(undefined);
+          emit({ type: "tool_call", tool: tool.name, authorized: false, proposed: true });
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content: JSON.stringify({ error: "invalid_arguments", message: contentError }),
             is_error: true,
           });
           continue;
