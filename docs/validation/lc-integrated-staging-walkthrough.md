@@ -51,6 +51,10 @@
 >
 > ### Still open — do NOT mark this walkthrough READY
 >
+> *(Reconciled 2026-08-14 21:20–21:30Z against deployed `66204045` — see
+> "Re-verification" below. One of these two is now CLOSED on live evidence; the
+> other REMAINS OPEN, narrowed. The entries below are preserved as written.)*
+>
 > - **P1: answers over ~4,000 characters lose every citation.** Reproduced on
 >   `ac4b8898`: a 4,060-char answer returned `claims: 0`. Engine logs show two
 >   branches — `ask_provenance_truncated` (`maxTokens: 4096`) for 5.9k–8.3k-char
@@ -65,6 +69,108 @@
 >   but the fallback — and any environment with streaming off — is not.
 > - The §1–§3 legs below (vendor portal invite/response, SoD, agentic) remain
 >   UNEXECUTED. Reaching the workflow is not the same as completing it.
+>
+> ---
+>
+> ## Re-verification against deployed `66204045` (2026-08-14 21:20–21:30Z)
+>
+> Executed against the CURRENT staging deployment, not against commit messages.
+> Several commits claimed both P1s fixed; only one of the two claims survives
+> live testing.
+>
+> **Deployed SHA — confirmed two independent ways.** Render deploy records show
+> `662040453f7e4fe0e90c8a5cff0ea91183d072a2` Live on both
+> `securelogic-engine-staging` (`dep-d9vob8navr4c739dqnq0`) and
+> `securelogic-app-staging`, and the app self-reports it:
+> `GET /api/version` → `{"commit":"66204045…","branch":"develop",
+> "deployedAt":"2026-08-14T21:20:37.855Z"}`. Engine `/health` → `status: ok`,
+> `db: connected`.
+>
+> **Executor**: `walkthrough-analyst@seed.securelogicai.test` in `[SEED]
+> Walkthrough Org` (`295b989a-…`), `entitlementLevel: platform`, authenticated
+> through the real login on both the engine (`POST /api/auth/login`) and the app
+> (`POST /api/auth-login`, `sl_session` cookie). Production untouched.
+>
+> ### A. Long-answer provenance / citations — **REMAINS OPEN** (narrowed)
+>
+> Two independent reproductions on the deployed SHA. Both returned **HTTP 200
+> with no `provenance` key at all** — not `claims: null`, the field is absent:
+>
+> | Answer chars | Tool calls | HTTP | Time | Provenance | Engine log |
+> |---|---|---|---|---|---|
+> | 358 (control) | 1 | 200 | 14.4s | **verified, 8 claims** | `ask_provenance_complete claims:8 observed:7 downgraded:0` |
+> | 7,135 | 3 | 200 | 44.6s | **none** | `ask_provenance_skipped_no_budget answerChars:7135 tokensNeeded:8160 tokensAffordable:3237 msRemaining:45476` |
+> | 8,147 | 6 | 200 | 54.4s | **none** | `ask_provenance_skipped_no_budget answerChars:8147 tokensNeeded:9172 tokensAffordable:2541 msRemaining:35697` |
+>
+> What CHANGED: the `ask_provenance_truncated` branch (`maxTokens: 4096`,
+> claims discarded) has **not fired since 14:10:16Z**, immediately before the
+> `ac4b8898` deploy went Live at 14:12:31Z. That half is fixed.
+>
+> What did NOT change: `ask_provenance_skipped_no_budget` still fires and still
+> drops every citation. The log message blames time — *"Not enough time left in
+> the request to decompose this answer"* — but the numbers contradict it: the
+> 7,135-char case had **45.5 seconds remaining** and was still refused, because
+> `tokensAffordable` (3,237) is computed far below `tokensNeeded` (8,160). The
+> defect is the budget model, not the deadline. Criterion **G still holds only
+> for ordinary answers and fails for long ones.**
+>
+> The uncited state is **persisted, not transient**: reloading the conversation
+> (`GET /api/ask/conversations/{id}`) returns the stored assistant message with
+> `claims: null` permanently. Product consequence: the longest, most
+> consequential answers — exactly the exhaustive posture reports an executive
+> would ask for — are the ones delivered with no verifiable basis.
+>
+> ### B. Non-streaming `POST /api/ask` 504 — **CLOSED on live evidence**
+>
+> - A deliberately heavy multi-tool question (6 tool calls, `tools_denied: 0`,
+>   `complete: true`, 8,147-char answer) returned **HTTP 200 in 54.4s**. A
+>   second (3 tool calls, 7,135 chars) returned **200 in 44.6s**. Neither
+>   approached the 90s budget.
+> - **Zero 504s on the engine since the fix deployed.** Every 504 in the
+>   service log — 09:39:03 (`responseTimeMS=30003`), 13:22:59 (`90005`),
+>   13:42:23 (`90012`), 14:10:13 (`90006`) — predates the `ac4b8898` deploy
+>   (Live 14:12:31Z). None after it, including under the heavy load above.
+>
+> ### C. Conversation reload — **CONFIRMED**
+>
+> `GET /api/ask/conversations/{id}` replays the stored thread: the control
+> conversation returns 2 messages with the assistant turn carrying its **8
+> stored claims** intact. (The long-answer conversations correctly replay
+> `claims: null` — consistent with defect A, not a separate storage bug.)
+>
+> ### D. Runtime log sweep since the 21:16Z deploy
+>
+> The **only** warn/error emitted is the `ask_provenance_skipped_no_budget`
+> pair from the two long-answer probes above. No 5xx, no 504, no unresolved
+> truncation. Separately noted and NOT part of either P1: three
+> `transcription_failed` / `POST /ask/transcribe 500` entries at 16:03–16:08Z
+> with `err_status: 401` from the upstream provider — voice transcription was
+> failing on an upstream credential rejection **before** this deploy. Not
+> re-tested here; tracked as a separate open item.
+>
+> ---
+>
+> ## UX/IA deployment verification (2026-08-14, `66204045`)
+>
+> The five approved UX/IA decisions (recorded in
+> `launch-completion-status.md` §7) verified from the **authenticated staging
+> UI**, not from tests or flags.
+>
+> | Claim | Verified | Evidence |
+> |---|---|---|
+> | Search removed from primary nav | ✅ | Rendered `<nav>` inner text is exactly `Briefing · Posture · Intelligence · Risk Operations · Assets · Vendor Assurance · Compliance · Context` — no Search, no Ask |
+> | Global Search visible | ✅ | Header carries `<form action="/search" method="get">` with `aria-label="Search your organization"`, placeholder "Search everything…" |
+> | Global Search functional | ✅ | `GET /search?q=Microsoft` → 200, **7 results** across findings, vendor and asset, with real detail links |
+> | Ask removed from profile menu | ✅ | Deployed layout chunk contains `/ask` **only** inside `GlobalUtilities`; the account menu's entries are `/account`, `/account/api-keys`, `/account/team` only. Exactly **one** `href="/ask"` in the whole page |
+> | Global Ask visible | ✅ | Header renders `aria-label="Ask SecureLogic" … href="/ask"` |
+> | Global Ask functional | ✅ | `GET /ask` → 200; questions answered end-to-end (§A/B above) |
+> | Vendor Assurance visible and reachable | ✅ | "Vendor Assurance" is a **top-level nav group**; `/vendor-assurance` → 200, `/vendor-engagements` → 200 |
+> | Ask shows 5 recent conversations, View All exposes the rest | ⚠️ **NOT observed in a browser** | The walkthrough user has **29** conversations. The deployed `/ask` chunk contains the `slice(0,5)` truncation and both controls ("View all conversations", "Show recent only"), and 20 unit tests cover the behavior — but the rail loads client-side, so it renders in no server HTML. **Operator-owed: open `/ask` in a browser and confirm.** |
+>
+> Note on method: nav dropdown children are not server-rendered (`NavGroup`
+> renders its items only when open), so group CONTENTS cannot be verified from
+> HTML — only the group labels. `/vendor-assurance` and `/vendor-engagements`
+> were therefore verified by fetching the pages directly.
 >
 > The remainder of this document is the original plan and is retained
 > unchanged for reference. Its "READY FOR EXECUTION" line is historical.

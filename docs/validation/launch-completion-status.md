@@ -18,6 +18,7 @@ without explicit authorization; prod-affecting flags ship dark.
 | 5 | Bounded agentic Ask | `feat/lc5-bounded-agentic-ask` (stacked on LC-4) | **Built — validated** (committed `0ddfcf3c`) |
 | 5b | Governed agentic Ask | `feat/lc5b-governed-ask` (stacked on LC-5) | **Built — validated** |
 | 6 | Platform convergence | — | Blocked on 1–5 |
+| 7 | UX/IA: global utilities | `develop` (`c13a6cbc`, `66204045`) | **Shipped to staging — verified from the authenticated UI** |
 
 ---
 
@@ -446,3 +447,65 @@ PROPOSE-step binding) + 12 isolation (closure machinery ×4 incl. SoD both
 ways; decision machinery ×4 incl. identity-injection inertness + residual
 immutability; acceptance ×4 incl. the full propose→self-approve-403→
 second-user-approve round trip with severity asserted unchanged).
+
+---
+
+## 7. UX/IA decisions approved 2026-08-14
+
+Operator-approved product decisions, recorded here because they change what the
+product IS, not merely how a page looks. Shipped to staging as `c13a6cbc`
+(navigation) and `66204045` (conversation rail); both verified from the
+authenticated staging UI — see `lc-integrated-staging-walkthrough.md` §"UX/IA
+deployment verification (2026-08-14, `66204045`)" for the evidence.
+
+### The decisions
+
+1. **Search is a global utility, removed from primary workspace navigation.**
+   It operates across every workspace, so it belongs to none of them. It now
+   renders in the header's upper-right cluster at every breakpoint.
+
+2. **Ask SecureLogic is a first-class global utility, removed from the
+   profile/account menu.** Ask is a platform capability, not an account
+   setting. Its previous home — the avatar dropdown — is the one place a user
+   does not look for a product capability. It now sits beside Search in the
+   same cluster.
+
+3. **Ask initially displays the 5 most recent conversations, with full history
+   available through "View all conversations".** A display limit only: the
+   client already holds every thread the engine returned, nothing is deleted or
+   made unselectable, and a thread opened from the expanded list stays visible
+   in the rail after collapsing.
+
+4. **Vendor Assurance remains a first-class Platform capability. No add-on
+   conversion was approved.** It keeps its own top-level navigation group
+   covering the whole engagement lifecycle, and its existing platform
+   entitlement gate is unchanged. Any future repackaging is a separate
+   commercial decision, not implied by this UX work.
+
+5. **The broader navigation redesign is intentionally deferred until
+   design-partner feedback.** These five changes are deliberately the minimum
+   that makes find-and-understand reachable from everywhere; the larger IA
+   question (workspace consolidation, page merges) stays open on purpose rather
+   than being guessed at ahead of real usage.
+
+### Why decisions 1 and 2 are structural, not cosmetic
+
+Production runs `risk_workspace=false` and therefore renders the legacy
+`NAV_ITEMS`. Any destination wired into only `WORKSPACE_NAV_ITEMS` is invisible
+to every production user while appearing correct in any review that happens to
+have the flag on — a gap that has already reached production once
+(`render-yaml-declared-not-synced` / the nav-variant defect recorded in the
+walkthrough's REOPENED header). Rendering Search and Ask from the header itself,
+outside both menus, removes the class of failure rather than the instance.
+
+The Application Knowledge Index moved to v3 in the same change, adding a
+`globalUtilities` section. The index is what Ask answers navigation questions
+from, so leaving these two in `destinations` would have the assistant directing
+callers to a menu entry that is no longer in the menu they are looking at.
+
+### What was NOT decided
+
+- No entitlement, route, or feature-flag semantics changed. Both utilities keep
+  the platform gate they carried as nav items.
+- No page was merged, renamed, or retired.
+- Vendor Assurance packaging is untouched (decision 4).
