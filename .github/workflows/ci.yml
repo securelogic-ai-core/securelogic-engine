@@ -73,6 +73,15 @@ jobs:
           node-version-file: ".nvmrc"
           cache: npm
       - run: npm ci
+      # App dependencies must exist BEFORE the root suite: the root vitest run
+      # includes app/src tests (same-origin proxy routes) that import next/*,
+      # iron-session, etc. from app/node_modules. Without this install the root
+      # suite failed on module resolution (first the Sept-15 vendor-portal
+      # proxy test, then the LC-3 SSE proxy test) AND the failure skipped the
+      # app render tests step below entirely — so the app suite was not
+      # running in CI at all while the job was red.
+      - name: app dependencies
+        run: cd app && npm ci --include=dev
       - run: npm test
       # App render tests — the customer-facing route contracts (links, labels, flag
       # branches, gated states). These exist because a green 8/8 CI shipped a dashboard
@@ -86,7 +95,7 @@ jobs:
       # be non-required by default, which is precisely how a broken customer route would
       # slip through again. `--include=dev` mirrors render.yaml so vitest is installed.
       - name: app render tests
-        run: cd app && npm ci --include=dev && npm run test
+        run: cd app && npm run test
 
   audit:
     name: audit
