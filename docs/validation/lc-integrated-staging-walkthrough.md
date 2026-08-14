@@ -1,6 +1,75 @@
 # Launch Completion — Integrated Staging Walkthrough Plan
 
-Status: **READY FOR EXECUTION (2026-08-14).** Preconditions completed and
+> ## Status: REOPENED — the READY claim below was FALSIFIED (2026-08-14)
+>
+> The operator, signed into `securelogic-app-staging` as `[SEED] Walkthrough
+> Org`, reported that neither Vendor Assurance nor Ask was usable. Both
+> reproduced from the browser-facing surface. The READY assessment below was
+> made from flags, migrations, health checks and 401-probes — none of which
+> establish that a signed-in user can complete a journey. **A 401 from an API
+> is not evidence a feature works.** Process-truth probes confirmed endpoints
+> existed; nobody had opened the pages.
+>
+> ### What was actually broken
+>
+> 1. **`SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` was ABSENT on both staging
+>    services** while `render.yaml` declared `"false"` for both. The flag
+>    defaults ON, so the B1 demotion never activated: `/vendors/{id}` offered
+>    the retired point-in-time `/assess` and `/review` CTAs and **zero** links
+>    to the engagement workflow. Blueprint drift — the declared value had
+>    never been synced to the dashboard. Fixed by setting the key on both
+>    staging services and redeploying (env reaches the process at DEPLOY, not
+>    restart).
+> 2. **`/vendor-assurance` 404'd.** No `page.tsx` existed — only `queue/` and
+>    `[documentId]/`. Landing page added.
+> 3. **The engagement spine was nav-orphaned in EVERY IA variant.**
+>    `/vendor-engagements{,/new,/[id]}` were fully built, returned 200, and
+>    appeared in no navigation. The single "Vendor Assurance" nav child pointed
+>    at `/vendor-assurance/queue` — the document review queue, one evidence
+>    step presented as the product. Promoted to its own top-level nav group.
+> 4. **The Walkthrough Org had zero engagements** (`/api/vendor-engagements`
+>    → `count: 0`), so the workspace was empty even once reachable.
+> 5. **Ask answers were corrupted at the moment they completed.**
+>    `renderClaims` space-joined verified claims into one run-on paragraph and
+>    that string REPLACED the model's structured prose. Rendered `pre-wrap`,
+>    so a clean bulleted answer streamed in and was overwritten on the final
+>    frame. Now joined one claim per line; class prefixes unchanged.
+>
+> ### Verified from the user-facing surface (build `ac4b8898`)
+>
+> | # | Criterion | Evidence |
+> |---|---|---|
+> | A | Vendor Assurance visibly reachable | top nav renders `… Risk Operations · Assets · **Vendor Assurance** · Compliance …` |
+> | B | Landing/workspace opens | `GET /vendor-assurance` → **200** (was 404) |
+> | C | Create/open an engagement | `POST /api/vendor-engagements` → **201**; two engagements created; `/vendor-engagements/{id}` → 200 showing Inherent **Critical · 90** and the gated lifecycle |
+> | D | Ask opens | `GET /ask` → **200** |
+> | E | Question submits | `POST /api/ask/stream` → **200** |
+> | F | Answer uses real tenant data | "Microsoft — risk score 72 (Critical)… Cisco — 58 (High)"; `tools_denied: 0` |
+> | G | Citations/provenance | 12 claims citing `vendors__search` (**caveat below**) |
+> | H | Survives reload | stored thread replays 2 messages, 12 lines, 12 claims |
+> | I | No unexpected 4xx/5xx | 15-route authenticated sweep all 200; `/actions` 307 → `?view=mine` → 200 (benign default view) |
+>
+> ### Still open — do NOT mark this walkthrough READY
+>
+> - **P1: answers over ~4,000 characters lose every citation.** Reproduced on
+>   `ac4b8898`: a 4,060-char answer returned `claims: 0`. Engine logs show two
+>   branches — `ask_provenance_truncated` (`maxTokens: 4096`) for 5.9k–8.3k-char
+>   answers, and `ask_provenance_skipped_no_budget`
+>   (`tokensNeeded: 5308` vs `tokensAffordable: 4121`, with 57.9s still left in
+>   the request). Criterion G therefore holds for ordinary answers and fails for
+>   long ones. Being worked in a parallel session (`ac4b8898`) — do not
+>   duplicate.
+> - **P1: non-streaming `POST /api/ask` 504s at 90s** on heavy multi-tool
+>   questions (`responseTimeMS=90012`). The browser uses SSE
+>   (`streamingEnabled: true` on staging) so the primary path is unaffected,
+>   but the fallback — and any environment with streaming off — is not.
+> - The §1–§3 legs below (vendor portal invite/response, SoD, agentic) remain
+>   UNEXECUTED. Reaching the workflow is not the same as completing it.
+>
+> The remainder of this document is the original plan and is retained
+> unchanged for reference. Its "READY FOR EXECUTION" line is historical.
+
+Status: ~~**READY FOR EXECUTION (2026-08-14).**~~ (superseded — see above) Preconditions completed and
 verified: the LC stack merged as PRs #790–#795 (develop @ `3d1a3705`),
 staging engine+app live on it (221 migrations incl. 20261001/20261002), and
 the §0 flag set applied via env-var update + same-SHA redeploy on BOTH
