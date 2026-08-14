@@ -1,10 +1,14 @@
 # Launch Completion — Integrated Staging Walkthrough Plan
 
-Status: **PLANNED 2026-08-14, not yet executable.** Prepared at the LC-5b
-reconciliation. Precondition: the six LC branches (local-only as of this
-writing) are merged to `develop` and deployed to staging, and the flag set
-in §0 is applied. Staging today runs `bc53ae82` (the Sept-15 master program
-baseline) with 219 migrations; LC-1…LC-5b exist only in this repository.
+Status: **READY FOR EXECUTION (2026-08-14).** Preconditions completed and
+verified: the LC stack merged as PRs #790–#795 (develop @ `3d1a3705`),
+staging engine+app live on it (221 migrations incl. 20261001/20261002), and
+the §0 flag set applied via env-var update + same-SHA redeploy on BOTH
+services (the env-at-deploy rule honored). Process-truth probes after the
+redeploy: agentic confirm surface 401 `api_key_required` (was dark 404),
+streaming 401, portal session exchange 401 `portal_link_invalid`, voice
+`configured:true`; engine health ok, zero warn/error log lines post-deploy.
+Production untouched; production flags unchanged.
 
 Executor: the operator's authenticated session on
 `securelogic-app-staging`, as **`[SEED] Walkthrough Org`**
@@ -100,4 +104,13 @@ BEFORE triggering the deploy, or same-SHA rebuild after setting them.
 
 ## 5. Execution record
 
-To be filled during the walkthrough: step → pass/fail → evidence link.
+**§0 flag activation executed 2026-08-14 (agent, operator-directed):**
+engine-staging set `VENDOR_PORTAL`, `ASK_TOOLS`, `ASK_PROVENANCE`,
+`ASK_STREAMING`, `ASK_VOICE_REALTIME`, `ASK_ACTIONS`, `ASK_GOVERNED` = true;
+app-staging set `ASK_STREAMING`, `ASK_VOICE_REALTIME` = true; same-SHA
+deploys `dep-d9v8n2e7bikc739nmvsg` / `dep-d9v8n2jl550s7380dacg` (both live
+at `3d1a3705`); probes above confirm the running processes carry the flags.
+`DECISION_WORKSPACE` and `RISK_ACCEPTANCE` were already true and untouched.
+
+Walkthrough steps: to be filled during execution — step → pass/fail →
+evidence link.
