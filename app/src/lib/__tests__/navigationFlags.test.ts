@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   NAV_ITEMS,
   WORKSPACE_NAV_ITEMS,
+  GLOBAL_UTILITY_ITEMS,
+  ROUTE_ACCESS_DECLARATIONS,
   getNavItems,
   filterNav,
   isNavItemActive,
@@ -9,6 +11,7 @@ import {
   findingExplorerLabel,
   briefingHomeLabel,
   type NavItem,
+  type NavFlags,
 } from "../navigation";
 
 const flaggedLink: NavItem = {
@@ -334,6 +337,79 @@ describe("isNavItemActive — two destinations on one path", () => {
     expect(isNavItemActive("/risks", "/risks/abc-123", "", RISK_OPS, false)).toBe(false);
     // Never a prefix-of-a-different-route false positive.
     expect(isNavItemActive("/risks", "/risk-register", "", RISK_OPS, true)).toBe(false);
+  });
+});
+
+// ─── Global utilities (header upper-right cluster) ────────────────────────────
+//
+// Search and Ask SecureLogic are no longer menu entries. The regression this
+// guards is not hypothetical: production runs `risk_workspace=false` and so
+// renders the LEGACY NAV_ITEMS, which means a destination added to only ONE nav
+// model is invisible to every production user while looking perfectly correct
+// in the workspace IA. A utility that lives outside BOTH menus is structurally
+// immune to that gap — but only while it is genuinely absent from both, under
+// every flag combination, rather than absent from the one the author happened
+// to open.
+
+/** Every combination of the flags that can restructure the menu. */
+function everyFlagCombination(): NavFlags[] {
+  const keys = [
+    "risk_workspace",
+    "briefing",
+    "asset_registry",
+    "enterprise_context",
+    "risk_intelligence",
+  ] as const;
+  const out: NavFlags[] = [];
+  for (let mask = 0; mask < 1 << keys.length; mask++) {
+    const flags: Record<string, boolean> = {};
+    keys.forEach((k, i) => {
+      flags[k] = Boolean(mask & (1 << i));
+    });
+    out.push(flags as NavFlags);
+  }
+  return out;
+}
+
+describe("GLOBAL_UTILITY_ITEMS — Search and Ask are utilities, not navigation", () => {
+  it("declares exactly Search and Ask SecureLogic, both platform-tier", () => {
+    expect(GLOBAL_UTILITY_ITEMS).toEqual([
+      { label: "Search", href: "/search", access: "platform" },
+      { label: "Ask SecureLogic", href: "/ask", access: "platform" },
+    ]);
+  });
+
+  it("neither appears in EITHER nav model, under any flag combination", () => {
+    // The prod-gap guard. A fully-entitled platform admin is used deliberately:
+    // if the hrefs are absent even for the user who can see the most, they are
+    // absent for everyone, and the absence is structural rather than an
+    // entitlement filter that a future tier change could undo.
+    for (const flags of everyFlagCombination()) {
+      const rendered = allHrefs(filterNav(getNavItems(flags), true, true, true, flags));
+      const label = JSON.stringify(flags);
+      expect(rendered, `flags=${label}`).not.toContain("/ask");
+      expect(rendered, `flags=${label}`).not.toContain("/search");
+    }
+  });
+
+  it("keeps them out of the raw arrays too, so no future getNavItems branch can reintroduce one", () => {
+    for (const model of [NAV_ITEMS, WORKSPACE_NAV_ITEMS]) {
+      const hrefs = allHrefs(model);
+      expect(hrefs).not.toContain("/ask");
+      expect(hrefs).not.toContain("/search");
+    }
+  });
+
+  it("declares the same access to the knowledge index that the route table carries", () => {
+    // The utilities table and the ROUTES table are two independent inputs to the
+    // Application Knowledge Index. If they disagree, Ask recommends itself to
+    // orgs whose every question would 403 — the exact failure the access
+    // annotation exists to prevent.
+    for (const utility of GLOBAL_UTILITY_ITEMS) {
+      const declared = ROUTE_ACCESS_DECLARATIONS.find((d) => d.prefix === utility.href);
+      expect(declared, `${utility.href} has no ROUTE_ACCESS_DECLARATIONS entry`).toBeDefined();
+      expect(declared?.access).toBe(utility.access);
+    }
   });
 });
 

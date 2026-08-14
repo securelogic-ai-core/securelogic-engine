@@ -7,12 +7,14 @@ import {
   NAV_ITEMS,
   SECONDARY_NAV_ITEMS,
   ROUTE_ACCESS_DECLARATIONS,
+  GLOBAL_UTILITY_ITEMS,
 } from "../../../app/src/lib/navigation.js";
 import { scanAppRoutes } from "../../../scripts/lib/scanAppRoutes.js";
 import {
   buildApplicationKnowledgeIndex,
   type NavInputItem,
   type SecondaryNavInputItem,
+  type GlobalUtilityInputItem,
 } from "../lib/applicationKnowledgeIndex.js";
 import { APPLICATION_KNOWLEDGE_INDEX } from "../lib/applicationKnowledgeIndex.generated.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
@@ -25,7 +27,8 @@ const rebuilt = buildApplicationKnowledgeIndex(
   NAV_ITEMS as NavInputItem[],
   scanAppRoutes(appAppDir),
   SECONDARY_NAV_ITEMS as SecondaryNavInputItem[],
-  ROUTE_ACCESS_DECLARATIONS
+  ROUTE_ACCESS_DECLARATIONS,
+  GLOBAL_UTILITY_ITEMS as GlobalUtilityInputItem[]
 );
 
 const routePaths = new Set(APPLICATION_KNOWLEDGE_INDEX.routes.map((r) => r.path));
@@ -69,10 +72,8 @@ describe("Navigation hierarchy matches the actual UI", () => {
     expect(groups).toEqual(expect.arrayContaining(["Assets", "Compliance", "Risk"]));
   });
 
-  it("carries entitlement: Ask is Platform-tier, Dashboard is open", () => {
-    const ask = APPLICATION_KNOWLEDGE_INDEX.destinations.find((d) => d.href === "/ask");
+  it("carries entitlement: Dashboard is open", () => {
     const dash = APPLICATION_KNOWLEDGE_INDEX.destinations.find((d) => d.href === "/dashboard");
-    expect(ask?.access).toBe("platform");
     expect(dash?.access).toBe("all");
   });
 
@@ -188,6 +189,77 @@ describe("Ask navigation answers are grounded in the index", () => {
     for (const d of APPLICATION_KNOWLEDGE_INDEX.secondaryNavigation) {
       expect(rendered, `missing secondary destination ${d.label}`).toContain(`${d.label} → ${d.href}`);
     }
+  });
+});
+
+/**
+ * Global utilities (index v3) — Search and Ask SecureLogic left the primary
+ * menu for the header's upper-right cluster. The index has to describe them as
+ * what they now are: reachable from EVERY page, and therefore not a menu item
+ * the assistant should tell a caller to go find in the navigation.
+ */
+describe("Global utilities are indexed as utilities, not as menu destinations", () => {
+  const utilityByHref = (href: string) =>
+    APPLICATION_KNOWLEDGE_INDEX.globalUtilities.find((u) => u.href === href);
+
+  it("the committed artifact is v3 and carries the utilities section", () => {
+    // A v2 artifact still typechecks against an optional field and would simply
+    // render no section — the prompt would lose Ask and Search silently.
+    expect(APPLICATION_KNOWLEDGE_INDEX.version).toBe(3);
+    expect(APPLICATION_KNOWLEDGE_INDEX.globalUtilities).toHaveLength(2);
+  });
+
+  it("lists Search and Ask at platform tier, pointing at real page routes", () => {
+    expect(utilityByHref("/search")).toMatchObject({ label: "Search", access: "platform" });
+    expect(utilityByHref("/ask")).toMatchObject({ label: "Ask SecureLogic", access: "platform" });
+    for (const u of APPLICATION_KNOWLEDGE_INDEX.globalUtilities) {
+      expect(routePaths.has(u.href), `utility "${u.label}" → ${u.href} has no page.tsx`).toBe(true);
+    }
+  });
+
+  it("does not also list them as menu destinations", () => {
+    // `destinations` means "reachable from the header menu". Leaving a utility
+    // in both tables is how the assistant ends up telling a caller to look for
+    // an entry that is not in the menu they are staring at.
+    const destinationHrefs = APPLICATION_KNOWLEDGE_INDEX.destinations.map((d) => d.href);
+    expect(destinationHrefs).not.toContain("/ask");
+    expect(destinationHrefs).not.toContain("/search");
+    const navHrefs = APPLICATION_KNOWLEDGE_INDEX.navigation.flatMap((n) =>
+      n.type === "link" ? [n.href] : n.children.map((c) => c.href)
+    );
+    expect(navHrefs).not.toContain("/ask");
+    expect(navHrefs).not.toContain("/search");
+  });
+
+  it("agrees with the ROUTES table on access, so the two cannot contradict each other", () => {
+    for (const u of APPLICATION_KNOWLEDGE_INDEX.globalUtilities) {
+      const route = APPLICATION_KNOWLEDGE_INDEX.routes.find((r) => r.path === u.href);
+      expect(route?.access, `${u.href} route access`).toBe(u.access);
+    }
+  });
+
+  it("renders them in the prompt as available everywhere, with their tier", () => {
+    const rendered = renderProductKnowledge();
+    expect(rendered).toContain("Global utilities");
+    expect(rendered).toContain("Ask SecureLogic → /ask");
+    expect(rendered).toContain("Search → /search");
+    // The tier annotation has to survive the move — an unannotated utility is
+    // one the assistant will recommend to a caller who cannot use it.
+    expect(rendered).toMatch(/Ask SecureLogic → \/ask.*\[Platform tier\]/);
+  });
+
+  it("omits the whole section for a class that can use neither", () => {
+    // starter/professional are below platform: no heading promising utilities,
+    // and no hrefs.
+    for (const cls of ["starter", "professional"] as const) {
+      const rendered = renderProductKnowledge(cls);
+      expect(rendered, `${cls} names /ask`).not.toContain("/ask");
+      expect(rendered, `${cls} names /search`).not.toContain("/search");
+      expect(rendered, `${cls} renders an empty utilities heading`).not.toContain(
+        "Global utilities"
+      );
+    }
+    expect(renderProductKnowledge("premium")).toContain("Global utilities");
   });
 });
 

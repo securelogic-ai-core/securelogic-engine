@@ -127,6 +127,26 @@ function renderSecondaryNavigation(
 }
 
 /**
+ * Render the global utilities — the header's upper-right cluster (Search, Ask
+ * SecureLogic), available from every page rather than from a workspace menu.
+ * Machine-derived from GLOBAL_UTILITY_ITEMS via the index. Returns "" when the
+ * index carries none (older generated artifacts predating v3), so the section
+ * is simply omitted rather than rendering an empty heading.
+ */
+function renderGlobalUtilities(
+  index: ApplicationKnowledgeIndex,
+  cls?: EntitlementClass
+): string {
+  const items = (index.globalUtilities ?? []).filter(
+    (item) => cls === undefined || accessibleTo(item.access, cls)
+  );
+  if (items.length === 0) return "";
+  return items
+    .map((item) => `- ${item.label} → ${item.href}${accessNote(item.access)}`)
+    .join("\n");
+}
+
+/**
  * Capabilities the assistant must NOT claim a UI exists for. Keeps it honest
  * about things that are derived/server-side rather than user-authored.
  */
@@ -149,6 +169,7 @@ export function renderProductKnowledge(requesterClass?: EntitlementClass): strin
   // has never been told about. Without a class (older callers, tests of the
   // full corpus), the complete annotated knowledge renders as before.
   const nav = renderNavigation(KNOWLEDGE_INDEX, requesterClass);
+  const globalUtilities = renderGlobalUtilities(KNOWLEDGE_INDEX, requesterClass);
   const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX, requesterClass);
   const flows = renderWorkflows(
     requesterClass === undefined
@@ -166,6 +187,14 @@ export function renderProductKnowledge(requesterClass?: EntitlementClass): strin
     "Top navigation, menus, and who can see each (auto-generated from the live app menu — always current):",
     nav,
   ];
+
+  if (globalUtilities) {
+    sections.push(
+      "",
+      "Global utilities (in the upper-right of the app header on EVERY page — not in the workspace menu):",
+      globalUtilities
+    );
+  }
 
   if (secondaryNav) {
     sections.push(

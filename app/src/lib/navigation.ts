@@ -82,11 +82,12 @@ export type NavItem =
 export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Dashboard", href: "/dashboard" },
   { type: "link",  label: "Briefs",    href: "/briefs" },
-  // Global search — federated lookup across the canonical domain objects
-  // (findings, risks, vendors, AI systems, controls, obligations, assets).
-  // Platform-gated to mirror the engine route's premium-or-core-platform gate.
-  { type: "link",  label: "Search",    href: "/search",    platform: true },
-  { type: "link",  label: "Ask",       href: "/ask",       platform: true },
+  // Search and Ask SecureLogic are NOT here. They are GLOBAL UTILITIES rendered
+  // in the header's upper-right cluster at every breakpoint (see
+  // GLOBAL_UTILITY_ITEMS below and `components/GlobalUtilities.tsx`). Primary
+  // navigation is workspaces; find (Search) and understand (Ask) are utilities
+  // available from every workspace. Their routes, gating, and behavior are
+  // unchanged — only where the entry point lives changed.
   { type: "link",  label: "Queue",     href: "/queue",     platform: true },
   // Assets — the unified Asset Registry is the SINGLE canonical entry point
   // (EAR P12). When SECURELOGIC_ASSET_REGISTRY_ENABLED is on, the "Assets"
@@ -146,14 +147,14 @@ export const NAV_ITEMS: NavItem[] = [
 //     Approvals, which is otherwise reachable only from a /risks back-link.
 //   - "Assets" surfaces Vendor Assurance (otherwise nav-orphaned) and keeps the
 //     EAR asset_registry canonical-entry behavior (EAR-AD-1) unchanged.
-//   - Ask is NOT here — it is demoted to the user menu (Header → UserMenu) until
-//     it becomes a core workflow. Its /ask route stays fully reachable.
+//   - Ask and Search are NOT here — both are GLOBAL UTILITIES in the header's
+//     upper-right cluster (GLOBAL_UTILITY_ITEMS). Ask was previously demoted to
+//     the user menu; it is now a first-class global action instead. Both routes
+//     stay fully reachable with unchanged gating.
 // NOTE: Package 3 (page merges) and Package 4 (workflow convergence) are NOT in
 // scope — Actions and both Vendor pages remain distinct items.
 export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   { type: "link", label: "Dashboard", href: "/dashboard" },
-  // Global search — same entry as the legacy IA (see NAV_ITEMS note).
-  { type: "link", label: "Search", href: "/search", platform: true },
   // Posture Dashboard — the canonical org-performance destination (read-surface
   // architecture D1). Previously nav-orphaned in BOTH IAs; surfaced here so the
   // Dashboards concept survives the /dashboard → Briefing relabel. Legacy
@@ -224,6 +225,36 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   },
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },
   { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
+];
+
+// ─── Global utilities (header upper-right, every breakpoint) ──────────────────
+//
+// The IA rule this encodes: primary navigation is WORKSPACES; Search ("find")
+// and Ask SecureLogic ("understand / analyze / interact") are UTILITIES that
+// belong to no workspace because they operate across all of them. They render
+// in the header's upper-right cluster next to the profile control
+// (`components/GlobalUtilities.tsx`), in BOTH nav models and at every
+// breakpoint — so neither is reachable only through a menu that the
+// `risk_workspace` flag happens to select.
+//
+// `access` is DECLARED, not inferred, exactly as SECONDARY_NAV_ITEMS declares
+// it: these are not nav items, so there is no `platform: true` flag for the
+// index builder to read. Both values mirror the gating that was already in
+// force before the move — /search redirects non-platform orgs in its page body
+// and the engine's global-search route is premium-or-platform; every Ask engine
+// route is `requireEntitlement("premium")`. This package moved the entry
+// points, not the gates. The same values are declared in
+// ROUTE_ACCESS_DECLARATIONS below so the index's ROUTES table agrees.
+export type GlobalUtilityItem = {
+  label: string;
+  href: string;
+  /** Entitlement required to actually use it (mirrors the real page/API gate). */
+  access: SecondaryNavAccess;
+};
+
+export const GLOBAL_UTILITY_ITEMS: GlobalUtilityItem[] = [
+  { label: "Search", href: "/search", access: "platform" },
+  { label: "Ask SecureLogic", href: "/ask", access: "platform" },
 ];
 
 /**
@@ -451,6 +482,15 @@ export const ROUTE_ACCESS_DECLARATIONS: Array<{
   prefix: string;
   access: SecondaryNavAccess;
 }> = [
+  // Global utilities (GLOBAL_UTILITY_ITEMS). They left the header menu for the
+  // upper-right utility cluster, so the builder can no longer derive their
+  // access from a nav flag. Declared here at the SAME level they carried as nav
+  // items — /search redirects non-platform orgs in its page body, and every Ask
+  // engine route requires the premium-or-platform entitlement, so an "all"
+  // classification would have Ask recommending itself to orgs whose questions
+  // would every one of them fail.
+  { prefix: "/search", access: "platform" },
+  { prefix: "/ask", access: "platform" },
   // Vendor Assurance — both the Tier-B document review surfaces and the
   // engagement spine are platform-gated in their page bodies.
   { prefix: "/vendor-assurance", access: "platform" },

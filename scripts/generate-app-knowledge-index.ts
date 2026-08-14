@@ -25,6 +25,7 @@ import {
   NAV_ITEMS,
   SECONDARY_NAV_ITEMS,
   ROUTE_ACCESS_DECLARATIONS,
+  GLOBAL_UTILITY_ITEMS,
 } from "../app/src/lib/navigation.ts";
 import { scanAppRoutes } from "./lib/scanAppRoutes.ts";
 import {
@@ -32,6 +33,7 @@ import {
   type NavInputItem,
   type SecondaryNavInputItem,
   type RouteAccessDeclaration,
+  type GlobalUtilityInputItem,
 } from "../src/api/lib/applicationKnowledgeIndex.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,7 +46,8 @@ const index = buildApplicationKnowledgeIndex(
   NAV_ITEMS as NavInputItem[],
   routes,
   SECONDARY_NAV_ITEMS as SecondaryNavInputItem[],
-  ROUTE_ACCESS_DECLARATIONS as RouteAccessDeclaration[]
+  ROUTE_ACCESS_DECLARATIONS as RouteAccessDeclaration[],
+  GLOBAL_UTILITY_ITEMS as GlobalUtilityInputItem[]
 );
 
 const banner =
@@ -66,5 +69,5 @@ const body =
 writeFileSync(outFile, body, "utf8");
 
 console.log(
-  `Wrote ${outFile}\n  navigation items: ${index.navigation.length}\n  destinations: ${index.destinations.length}\n  secondary destinations: ${index.secondaryNavigation.length}\n  routes: ${index.routes.length}`
+  `Wrote ${outFile}\n  navigation items: ${index.navigation.length}\n  destinations: ${index.destinations.length}\n  global utilities: ${index.globalUtilities.length}\n  secondary destinations: ${index.secondaryNavigation.length}\n  routes: ${index.routes.length}`
 );

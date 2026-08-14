@@ -9,7 +9,7 @@ import type { ApplicationKnowledgeIndex } from "./applicationKnowledgeIndex.js";
 
 export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
 {
-  "version": 2,
+  "version": 3,
   "navigation": [
     {
       "type": "link",
@@ -22,18 +22,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Briefs",
       "href": "/briefs",
       "access": "all"
-    },
-    {
-      "type": "link",
-      "label": "Search",
-      "href": "/search",
-      "access": "platform"
-    },
-    {
-      "type": "link",
-      "label": "Ask",
-      "href": "/ask",
-      "access": "platform"
     },
     {
       "type": "link",
@@ -132,18 +120,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Briefs",
       "href": "/briefs",
       "access": "all",
-      "group": null
-    },
-    {
-      "label": "Search",
-      "href": "/search",
-      "access": "platform",
-      "group": null
-    },
-    {
-      "label": "Ask",
-      "href": "/ask",
-      "access": "platform",
       "group": null
     },
     {
@@ -343,7 +319,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/ask",
       "dynamic": false,
-      "navLabel": "Ask",
+      "navLabel": null,
       "access": "platform"
     },
     {
@@ -805,7 +781,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/search",
       "dynamic": false,
-      "navLabel": "Search",
+      "navLabel": null,
       "access": "platform"
     },
     {
@@ -969,6 +945,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "dynamic": false,
       "navLabel": null,
       "access": "all"
+    }
+  ],
+  "globalUtilities": [
+    {
+      "label": "Search",
+      "href": "/search",
+      "access": "platform"
+    },
+    {
+      "label": "Ask SecureLogic",
+      "href": "/ask",
+      "access": "platform"
     }
   ],
   "secondaryNavigation": [

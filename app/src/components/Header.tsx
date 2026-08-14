@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
+import { GlobalUtilities } from "./GlobalUtilities";
 import { getNavItems, filterNav, isNavItemActive, type NavFlags } from "@/lib/navigation";
 import { getSiteBaseUrl } from "@/lib/siteUrl";
 
@@ -195,13 +196,16 @@ export function Header({
   }, [mobileOpen]);
 
   const visibleNav = filterNav(getNavItems(navFlags), isPlatformUser, isPremiumUser, isAdminUser, navFlags);
-  // When the workspace IA is on, Ask leaves the primary nav and lives in the user
-  // menu (demoted, not removed). Ask is a platform-tier surface.
-  const showAskInMenu = navFlags?.risk_workspace === true && isPlatformUser;
+  // Global utilities (Search, Ask SecureLogic) render in the upper-right cluster
+  // for authenticated platform users — the same entitlement both carried as nav
+  // items, in BOTH nav models and at every breakpoint. No feature flag: this is
+  // a relocation of existing entries, so gating them on one would DARKEN two
+  // live surfaces rather than move them.
+  const showGlobalUtilities = isAuthenticated && isPlatformUser;
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
-      <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between gap-3">
 
         {/* Wordmark */}
         <Link href={isAuthenticated ? "/dashboard" : SITE_URL} className="flex items-center gap-3">
@@ -224,36 +228,17 @@ export function Header({
           </div>
         </Link>
 
-        {/* Desktop Nav */}
+        {/* Desktop Nav — WORKSPACES only. Search and Ask are global utilities and
+            render in the upper-right cluster below, not here. */}
         <nav className="hidden lg:flex items-center gap-6">
           {isAuthenticated ? (
-            <>
-              {visibleNav.map(item =>
-                item.type === "link" ? (
-                  <NavLink key={item.label} href={item.href} label={item.label} />
-                ) : (
-                  <NavGroup key={item.label} label={item.label} items={item.items} />
-                ),
-              )}
-              {userName ? (
-                <UserMenu
-                  name={userName}
-                  email={userEmail ?? ""}
-                  role={userRole ?? "admin"}
-                  organizationName={organizationName}
-                  isPlatformUser={isPlatformUser}
-                  isSsoEligible={isSsoEligible}
-                  showAskLink={showAskInMenu}
-                />
+            visibleNav.map(item =>
+              item.type === "link" ? (
+                <NavLink key={item.label} href={item.href} label={item.label} />
               ) : (
-                <>
-                  <Link href="/account" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
-                    {organizationName ?? "Account"}
-                  </Link>
-                  <LogoutButton />
-                </>
-              )}
-            </>
+                <NavGroup key={item.label} label={item.label} items={item.items} />
+              ),
+            )
           ) : (
             <>
               <a href={SITE_URL} className="text-slate-400 hover:text-white text-sm transition-colors">
@@ -272,15 +257,46 @@ export function Header({
           )}
         </nav>
 
-        {/* Mobile hamburger */}
-        <button
-          className="lg:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
-          onClick={() => setMobileOpen(o => !o)}
-          aria-label="Toggle menu"
-          style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
-        >
-          <span style={{ fontSize: "18px", lineHeight: 1 }}>{mobileOpen ? "✕" : "☰"}</span>
-        </button>
+        {/* Global utilities + profile — upper right, every breakpoint.
+            The utilities are deliberately OUTSIDE the `hidden lg:flex` nav so
+            they survive the tablet/mobile collapse; the profile control keeps
+            its desktop-only placement (the mobile drawer already carries the
+            account links, and two account entry points would be redundant). */}
+        <div className="flex items-center gap-2 lg:gap-3">
+          {showGlobalUtilities && <GlobalUtilities showSearch showAsk />}
+
+          {isAuthenticated && (
+            <div className="hidden lg:flex items-center gap-6">
+              {userName ? (
+                <UserMenu
+                  name={userName}
+                  email={userEmail ?? ""}
+                  role={userRole ?? "admin"}
+                  organizationName={organizationName}
+                  isPlatformUser={isPlatformUser}
+                  isSsoEligible={isSsoEligible}
+                />
+              ) : (
+                <>
+                  <Link href="/account" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
+                    {organizationName ?? "Account"}
+                  </Link>
+                  <LogoutButton />
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Mobile hamburger */}
+          <button
+            className="lg:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
+            onClick={() => setMobileOpen(o => !o)}
+            aria-label="Toggle menu"
+            style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
+          >
+            <span style={{ fontSize: "18px", lineHeight: 1 }}>{mobileOpen ? "✕" : "☰"}</span>
+          </button>
+        </div>
       </div>
 
       {/* Mobile drawer */}
@@ -327,12 +343,10 @@ export function Header({
                     </div>
                   );
                 })}
+                {/* Account section only. Search and Ask are NOT here: they are
+                    global utilities rendered in the top bar at this breakpoint
+                    too, so the drawer never has to be opened to reach them. */}
                 <div className="mt-2 pt-2" style={{ borderTop: "1px solid #1e293b" }}>
-                  {showAskInMenu && (
-                    <Link href="/ask" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
-                      Ask SecureLogic
-                    </Link>
-                  )}
                   <Link href="/account" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
                     Account
                   </Link>

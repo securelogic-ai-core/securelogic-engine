@@ -45,6 +45,16 @@ export type NavInputItem =
  */
 export type SecondaryNavInputItem = { label: string; href: string; group: string; access?: NavAccess };
 
+/**
+ * Structural shape of an app GLOBAL_UTILITY_ITEM — Search and Ask SecureLogic,
+ * which render in the header's upper-right utility cluster rather than in the
+ * primary (workspace) navigation. `access` is DECLARED on the input, exactly as
+ * for the secondary nav: a utility carries no `platform: true` menu flag for
+ * this builder to read, and both are entitlement-gated in the page body / on
+ * the engine route.
+ */
+export type GlobalUtilityInputItem = { label: string; href: string; access: NavAccess };
+
 /** A discovered page route (one `page.tsx`). */
 export type RawRoute = { path: string; dynamic: boolean };
 
@@ -85,11 +95,29 @@ export type IndexSecondaryItem = {
   access: NavAccess;
 };
 
+/**
+ * A global utility — a destination reached from the header's upper-right
+ * cluster (Search, Ask SecureLogic) rather than from the workspace menu. It is
+ * available from every page, which is precisely why it is NOT primary
+ * navigation and must not be described as a menu item.
+ */
+export type IndexGlobalUtility = {
+  label: string;
+  href: string;
+  access: NavAccess;
+};
+
 export type ApplicationKnowledgeIndex = {
   version: number;
   navigation: IndexNavItem[];
   destinations: IndexDestination[];
   routes: IndexRoute[];
+  /**
+   * Header utility cluster (upper right, every page, every breakpoint). Built
+   * from GLOBAL_UTILITY_ITEMS. Present from index v3; older generated artifacts
+   * omit it, so consumers must treat it as optional.
+   */
+  globalUtilities: IndexGlobalUtility[];
   /**
    * Account / settings / billing / onboarding destinations reached from the
    * user menu rather than the header. Built from SECONDARY_NAV_ITEMS; each href
@@ -100,7 +128,9 @@ export type ApplicationKnowledgeIndex = {
 };
 
 // v2 adds `secondaryNavigation` (account/settings surfaces) to the schema.
-export const APPLICATION_KNOWLEDGE_INDEX_VERSION = 2;
+// v3 adds `globalUtilities` (the header's upper-right Search / Ask cluster),
+// which stopped being primary navigation in the pre-September-15 IA refinement.
+export const APPLICATION_KNOWLEDGE_INDEX_VERSION = 3;
 
 function accessOf(item: { platform?: boolean; premium?: boolean; admin?: boolean }): NavAccess {
   if (item.admin) return "admin";
@@ -126,7 +156,8 @@ export function buildApplicationKnowledgeIndex(
   nav: NavInputItem[],
   rawRoutes: RawRoute[],
   secondaryNav: SecondaryNavInputItem[] = [],
-  declaredRouteAccess: RouteAccessDeclaration[] = []
+  declaredRouteAccess: RouteAccessDeclaration[] = [],
+  globalUtilityItems: GlobalUtilityInputItem[] = []
 ): ApplicationKnowledgeIndex {
   const navigation: IndexNavItem[] = nav.map((item) => {
     const access = accessOf(item);
@@ -210,7 +241,25 @@ export function buildApplicationKnowledgeIndex(
     access: item.access ?? routeAccess.get(item.href) ?? "all",
   }));
 
-  return { version: APPLICATION_KNOWLEDGE_INDEX_VERSION, navigation, destinations, routes, secondaryNavigation };
+  // Global utilities: declared verbatim (label, href, access) in source order.
+  // They are NOT folded into `destinations` — that list means "menu
+  // destination", and a utility that lives outside the menu must not be
+  // described as one. Their route-level access comes from the matching
+  // ROUTE_ACCESS_DECLARATIONS entries, so the ROUTES table agrees with this one.
+  const globalUtilities: IndexGlobalUtility[] = globalUtilityItems.map((item) => ({
+    label: item.label,
+    href: item.href,
+    access: item.access,
+  }));
+
+  return {
+    version: APPLICATION_KNOWLEDGE_INDEX_VERSION,
+    navigation,
+    destinations,
+    routes,
+    globalUtilities,
+    secondaryNavigation,
+  };
 }
 
 // ---------------------------------------------------------------------------
