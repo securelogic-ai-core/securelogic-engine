@@ -518,14 +518,34 @@ describe("provenance pass — the deadline is enforced, not predicted", () => {
     expect(options.maxRetries).toBe(0);
   });
 
-  it("runs the long answers the old prediction refused", async () => {
-    // 8,147 chars with 35.7s left: refused outright on staging 66204045, with
-    // the log blaming a clock that had 35 seconds on it.
+  it("declines a long answer WITHOUT calling the model — it cannot finish, so starting only burns time", async () => {
+    // Measured: ~11x output tokens per answer token at ~85 tok/s puts an 8k
+    // answer minutes past any request budget. An intermediate version of this
+    // file dropped the forecast and let these run; staging cut two of them off
+    // at their deadlines after ~30s and thousands of tokens, reaching the same
+    // uncited answer the length. Refusing early is the cheaper identical outcome.
     const client = clientReturning(CLAIMS);
 
     const result = await runProvenancePass({
       ...BASE,
       answer: "x".repeat(8147),
+      client: client as never,
+      invocations: INVOCATIONS,
+      msRemaining: 35_697,
+    });
+
+    expect(result).toBeNull();
+    expect(client.messages.create).not.toHaveBeenCalled();
+  });
+
+  it("runs a short answer on the same clock — the refusal is about cost, not the clock alone", async () => {
+    // The pairing that makes the previous case meaningful: identical time
+    // remaining, and a short answer proceeds. The old log said "not enough time
+    // left in the request" for both.
+    const client = clientReturning(CLAIMS);
+
+    const result = await runProvenancePass({
+      ...BASE,
       client: client as never,
       invocations: INVOCATIONS,
       msRemaining: 35_697,
