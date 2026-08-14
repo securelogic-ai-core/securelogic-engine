@@ -44,46 +44,63 @@ describe("provenanceTokensNeededFor — cost scales with the answer", () => {
   });
 });
 
-describe("provenanceBudgetFor — the clock is the binding constraint", () => {
-  it("DECLINES the exact turn that 504'd: 8275 chars with ~30s left", () => {
-    // Orchestration had already spent 59s of the 90s budget.
-    const budget = provenanceBudgetFor(8275, 31_000);
-    expect(budget.viable).toBe(false);
+/**
+ * The gate is a FLOOR, not a forecast.
+ *
+ * The previous contract converted remaining time into "affordable tokens" at a
+ * hardcoded 89 tok/s and refused unless that covered the whole padded cap. On
+ * staging 66204045 that refused a 7,135-char answer WITH 45.5 SECONDS LEFT —
+ * logging "not enough time left in the request" while time was not the
+ * constraint. Both constants in that comparison were unvalidated, because
+ * nothing ever recorded what a pass actually cost.
+ *
+ * The prediction is gone. The deadline is real instead (passed to the SDK as a
+ * request timeout, so an over-running pass is aborted rather than allowed to
+ * 504), which is precisely what makes forecasting unnecessary.
+ */
+describe("provenanceBudgetFor — a floor and a real deadline, not a forecast", () => {
+  it("RUNS the long answers the old prediction refused, with time to spare", () => {
+    // The two staging reproductions, at the time they actually had left.
+    for (const [chars, msRemaining] of [
+      [7135, 45_476],
+      [8147, 35_697],
+    ] as const) {
+      const budget = provenanceBudgetFor(chars, msRemaining);
+      expect(budget.viable, `${chars} chars with ${msRemaining}ms`).toBe(true);
+    }
   });
 
-  it("runs when the answer is short and the budget is nearly untouched", () => {
-    const budget = provenanceBudgetFor(1500, 80_000);
-    expect(budget.viable).toBe(true);
-    expect(budget.maxTokens).toBe(provenanceTokensNeededFor(1500));
-  });
-
-  it("will NOT run on a partial budget — a truncated pass is discarded anyway", () => {
-    // 40s affords ~2848 tokens; the answer needs ~9300. Running would hit the
-    // cap, be thrown away whole, and spend the rest of the request doing it.
+  it("does not treat the padded cap as a time cost", () => {
+    // The cap is a ceiling the model rarely reaches, sized for headroom so a
+    // payload is not truncated and discarded. Charging the whole of it against
+    // the clock is what produced the false refusals.
     const budget = provenanceBudgetFor(8275, 40_000);
-    expect(budget.affordableTokens).toBe(2848);
     expect(budget.maxTokens).toBe(provenanceTokensNeededFor(8275));
-    expect(budget.viable).toBe(false);
+    expect(budget.viable).toBe(true);
   });
 
-  it("runs only once the time left covers the WHOLE decomposition", () => {
-    const needed = provenanceTokensNeededFor(8275);
-    const msJustEnough = Math.ceil((needed / (89 * 0.8)) * 1000) + 1000;
-    expect(provenanceBudgetFor(8275, msJustEnough).viable).toBe(true);
-  });
-
-  it("declines outright once the request is effectively over", () => {
+  it("still declines when there is genuinely no time to come back in", () => {
     expect(provenanceBudgetFor(2000, 5_000).viable).toBe(false);
     expect(provenanceBudgetFor(2000, 0).viable).toBe(false);
     expect(provenanceBudgetFor(2000, -1_000).viable).toBe(false);
   });
 
-  it("leaves headroom — finishing the tokens is not reaching the client", () => {
-    // A pass sized to exactly fill the remaining time would land ON the
-    // deadline, which is the 504 this exists to prevent. So the time it is
-    // allowed to spend is strictly less than the time that remains.
+  it("bounds the pass strictly inside the time that remains", () => {
+    // Finishing the tokens is not the same as the response reaching the client:
+    // the answer still has to be serialized and written after the pass returns
+    // or is cut off, so the deadline must leave room.
     const ms = 60_000;
-    const budget = provenanceBudgetFor(1_000_000, ms);
-    expect(budget.affordableTokens / 89).toBeLessThan(ms / 1000);
+    const budget = provenanceBudgetFor(8275, ms);
+    expect(budget.deadlineMs).toBeGreaterThan(0);
+    expect(budget.deadlineMs).toBeLessThan(ms);
+  });
+
+  it("scales the deadline with the time left, not with the answer", () => {
+    // Two very different answers, same clock — the deadline is a property of
+    // the request budget. The answer only sizes the output cap.
+    const short = provenanceBudgetFor(500, 50_000);
+    const long = provenanceBudgetFor(9000, 50_000);
+    expect(short.deadlineMs).toBe(long.deadlineMs);
+    expect(long.maxTokens).toBeGreaterThan(short.maxTokens);
   });
 });

@@ -27,6 +27,11 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
+// Value imports, not types: the deadline branch below distinguishes a pass cut
+// off by its own timeout from a genuine provider failure, and `instanceof` is
+// the SDK's own supported way to tell them apart (string-matching the message
+// is not).
+import { APIConnectionTimeoutError, APIUserAbortError } from "@anthropic-ai/sdk";
 
 import { logger } from "../../infra/logger.js";
 import {
@@ -68,13 +73,20 @@ export type ProvenanceResult = {
 const PROVENANCE_MAX_TOKENS = 4096;
 
 /**
- * Measured generation rate for the provenance pass on staging, tokens/second.
- * Used to convert "time left in the request" into "tokens we can afford".
+ * The least time worth starting a pass in. A floor, NOT a throughput estimate:
+ * below this even a short answer cannot come back, so starting only delays the
+ * answer. Above it the pass runs under a real deadline (see below) and the
+ * clock enforces itself.
  */
-const PROVENANCE_TOKENS_PER_SEC = 89;
+const PROVENANCE_MIN_DEADLINE_MS = 15_000;
 
-/** Below this, the pass cannot decompose even a short answer — don't start it. */
-const PROVENANCE_MIN_VIABLE_TOKENS = 1024;
+/**
+ * Fraction of the remaining request budget the pass may consume. The rest is
+ * headroom: finishing the tokens is not the same as the response reaching the
+ * client, and the answer still has to be serialized and written after the pass
+ * either returns or is cut off.
+ */
+const PROVENANCE_DEADLINE_FRACTION = 0.8;
 
 /** Never ask for more than this, however long the answer or the budget. */
 const PROVENANCE_MAX_TOKENS_CEILING = 16_384;
@@ -98,41 +110,54 @@ export function provenanceTokensNeededFor(answerChars: number): number {
 }
 
 /**
- * The budget this pass may actually spend, given the time left in the request.
+ * The budget this pass may spend, given the time left in the request.
  *
- * THE POINT: these two numbers are coupled, and 8621deec said so — "raising this
- * cap without raising the request timeout trades a silent failure for a 504."
- * Both walls are now real. A 8275-char answer needs ~9300 tokens ≈ 104s of
- * generation, and the request budget is 90s with Cloudflare killing the origin
- * at ~100s, so for a long answer the cap CANNOT be raised enough to help.
+ * WHY THIS NO LONGER PREDICTS. The previous version refused to start unless
+ * there was time to generate the ENTIRE cap, converting time to tokens at a
+ * hardcoded 89 tok/s. Two things were wrong with that, and staging showed both
+ * on 2026-08-14 at build 66204045:
  *
- * So the pass is bounded by the clock, not just by the answer, and returns null
- * when it cannot finish. Returning an uncited answer is not a new governance
- * posture — `runProvenancePass` already returns null for a turn with no
- * retrieval and for an unparseable payload, and the caller already renders that
- * as an answer whose provenance is undecomposed. What it replaces is a 504,
- * where the user got NOTHING and the pass kept billing after they were gone.
+ *   1. It compared a padded SAFETY CEILING against a throughput estimate. The
+ *      cap is deliberately generous — `answerTokens * 4 + 1024` — precisely so
+ *      the pass does not truncate. Requiring time for all of it double-counts
+ *      the padding: the pass declined work it could have finished.
+ *   2. Neither constant was ever validated. Nothing recorded what a pass
+ *      actually cost, so 89 tok/s and the 4x envelope were folklore that only
+ *      ever got more conservative.
  *
- * 0.8 is deliberate headroom: finishing the tokens is not the same as the
- * response reaching the client.
+ * The result was a refusal that BLAMED THE CLOCK while the clock was not the
+ * constraint: a 7,135-char answer was returned uncited with 45.5 SECONDS still
+ * left in the request, because 3,237 "affordable" tokens did not reach the
+ * 8,160-token cap.
+ *
+ * So the pass stops guessing. The deadline is now REAL — `deadlineMs` is passed
+ * to the SDK as a request timeout, so an over-running pass is aborted rather
+ * than allowed to consume the request budget. That is what made the prediction
+ * unnecessary: THIS PASS can no longer overrun the request and 504, which is
+ * the whole failure the forecast existed to avoid, so a wrong estimate is now
+ * a late uncited answer rather than a dead request. (It bounds this call only —
+ * orchestration upstream owns its own share of the budget.)
+ *
+ * What remains is a FLOOR, not a forecast: below `PROVENANCE_MIN_DEADLINE_MS`
+ * nothing can come back, so starting only delays the answer.
+ *
+ * The tradeoff is stated plainly: a pass that runs and is cut off costs the
+ * tokens it generated and delays the answer by up to the deadline. The answer
+ * still ships — the same uncited degradation as before, just later. That is the
+ * price of no longer refusing long answers that would in fact have finished.
  */
 export function provenanceBudgetFor(
   answerChars: number,
   msRemaining: number
-): { maxTokens: number; affordableTokens: number; viable: boolean } {
-  const needed = provenanceTokensNeededFor(answerChars);
-  const affordable = Math.floor((msRemaining / 1000) * PROVENANCE_TOKENS_PER_SEC * 0.8);
-
-  // ALL OR NOTHING, and that is the whole rule: a pass that runs with less than
-  // it needs hits its cap, and a truncated payload is DISCARDED WHOLE (see the
-  // max_tokens branch below — a partial claim set would silently delete the tail
-  // of the user's answer). So a partial budget buys nothing and costs the rest
-  // of the request, which is how the 504 happened. Either the pass can finish
-  // inside the time left, or it does not start and the answer ships uncited.
+): { maxTokens: number; deadlineMs: number; viable: boolean } {
   return {
-    maxTokens: needed,
-    affordableTokens: affordable,
-    viable: affordable >= needed && needed >= PROVENANCE_MIN_VIABLE_TOKENS,
+    // The cap still bounds the OUTPUT, and over-estimating here is harmless —
+    // it is a ceiling the model rarely reaches, not a reservation. A truncated
+    // payload is discarded whole (see the max_tokens branch below), so the cap
+    // wants headroom; it just must not be mistaken for a time cost.
+    maxTokens: provenanceTokensNeededFor(answerChars),
+    deadlineMs: Math.floor(msRemaining * PROVENANCE_DEADLINE_FRACTION),
+    viable: msRemaining >= PROVENANCE_MIN_DEADLINE_MS,
   };
 }
 
@@ -250,44 +275,61 @@ export async function runProvenancePass(args: {
 
   // Size to the answer AND to the clock. Explicit maxTokens (tests) still wins.
   let budgetedMaxTokens = args.maxTokens ?? PROVENANCE_MAX_TOKENS;
+  let deadlineMs: number | undefined;
   if (args.maxTokens === undefined && args.msRemaining !== undefined) {
     const budget = provenanceBudgetFor(answer.length, args.msRemaining);
     if (!budget.viable) {
-      // The 504 this replaces: the pass used to start regardless, blow through
-      // the request budget, and keep generating after the client was gone.
+      // Time genuinely IS the constraint on this branch — that is the whole
+      // reason the floor exists — so the message can say so without lying. The
+      // old message said this on a turn with 45s left; the numbers are logged
+      // alongside it now so the claim stays checkable.
       logger.warn(
         {
-          event: "ask_provenance_skipped_no_budget",
+          event: "ask_provenance_skipped_no_time",
           answerChars: answer.length,
           msRemaining: args.msRemaining,
-          tokensNeeded: budget.maxTokens,
-          tokensAffordable: budget.affordableTokens,
+          msRequired: PROVENANCE_MIN_DEADLINE_MS,
         },
-        "Not enough time left in the request to decompose this answer — returning it uncited"
+        "Too little time left in the request to start decomposing this answer — returning it uncited"
       );
       return null;
     }
     budgetedMaxTokens = budget.maxTokens;
+    deadlineMs = budget.deadlineMs;
   }
 
+  const startedAt = Date.now();
   try {
-    const response = await client.messages.create({
-      model,
-      max_tokens: budgetedMaxTokens,
-      system: systemPrompt,
-      tools: [SUBMIT_TOOL] as never,
-      // Forced: the model must produce the structure. Asking politely for JSON
-      // in prose and parsing it is the failure mode this avoids.
-      tool_choice: { type: "tool", name: SUBMIT_TOOL.name } as never,
-      messages: [
-        ...messages,
-        { role: "assistant" as const, content: answer },
-        {
-          role: "user" as const,
-          content: INSTRUCTION + describeInvocations(invocations),
-        },
-      ] as never,
-    });
+    const response = await client.messages.create(
+      {
+        model,
+        max_tokens: budgetedMaxTokens,
+        system: systemPrompt,
+        tools: [SUBMIT_TOOL] as never,
+        // Forced: the model must produce the structure. Asking politely for JSON
+        // in prose and parsing it is the failure mode this avoids.
+        tool_choice: { type: "tool", name: SUBMIT_TOOL.name } as never,
+        messages: [
+          ...messages,
+          { role: "assistant" as const, content: answer },
+          {
+            role: "user" as const,
+            content: INSTRUCTION + describeInvocations(invocations),
+          },
+        ] as never,
+      },
+      // THE DEADLINE IS THE SAFETY PROPERTY, and it is what lets the gate above
+      // be a floor instead of a forecast. Without it an over-running pass would
+      // eat the request budget and 504 — the failure the old prediction existed
+      // to avoid.
+      //
+      // `maxRetries: 0` is load-bearing, not tidiness: the SDK retries timeouts
+      // by default (2 retries), so a 30s timeout would become 90s of wall clock
+      // and reintroduce the 504 through the very mechanism meant to prevent it.
+      // A provenance pass is best-effort anyway — a retry costs the request
+      // budget to re-attempt work whose failure is already handled.
+      deadlineMs === undefined ? undefined : { timeout: deadlineMs, maxRetries: 0 }
+    );
 
     const blocks = (response.content ?? []) as unknown as Array<Record<string, unknown>>;
     const use = blocks.find((b) => b.type === "tool_use" && b.name === SUBMIT_TOOL.name);
@@ -338,6 +380,13 @@ export async function runProvenancePass(args: {
     // THE LOAD-BEARING LINE. Everything above is the model's proposal.
     const verified = verifyClaims(parsed, invocations);
 
+    // WHAT THE PASS ACTUALLY COST. The budget constants were unvalidated for as
+    // long as they existed because nothing recorded this: `usage.output_tokens`
+    // and the elapsed time were available on every completed pass and thrown
+    // away, so a wrong throughput assumption could only ever be argued about.
+    // Logged against answerChars and the cap, these make the model derivable
+    // from production data instead of folklore.
+    const usage = (response as { usage?: { output_tokens?: number } }).usage;
     logger.info(
       {
         event: "ask_provenance_complete",
@@ -345,6 +394,10 @@ export async function runProvenancePass(args: {
         observed: verified.claims.filter((c) => c.claim_class === "observed").length,
         downgraded: verified.issues.length,
         reasons: [...new Set(verified.issues.map((i) => i.reason))],
+        answerChars: answer.length,
+        maxTokens: budgetedMaxTokens,
+        outputTokens: usage?.output_tokens ?? null,
+        elapsedMs: Date.now() - startedAt,
       },
       "Ask provenance pass complete"
     );
@@ -356,6 +409,24 @@ export async function runProvenancePass(args: {
       clean: verified.clean,
     };
   } catch (err) {
+    // A pass cut off by its own deadline is a BUDGET outcome, not a fault, and
+    // conflating the two is what made the previous behaviour hard to read: the
+    // pass is expected to overrun sometimes now that it no longer refuses to
+    // start. Its own event carries the elapsed time and the answer size, which
+    // is the measurement that says whether the deadline is set right.
+    if (err instanceof APIConnectionTimeoutError || err instanceof APIUserAbortError) {
+      logger.warn(
+        {
+          event: "ask_provenance_deadline_exceeded",
+          answerChars: answer.length,
+          maxTokens: budgetedMaxTokens,
+          deadlineMs: deadlineMs ?? null,
+          elapsedMs: Date.now() - startedAt,
+        },
+        "Provenance pass hit its deadline — answer returned uncited, request budget preserved"
+      );
+      return null;
+    }
     // Fail open, loudly in the log and silently to the user.
     logger.warn({ event: "ask_provenance_failed", err }, "Provenance pass failed — falling back");
     return null;

@@ -18,6 +18,8 @@ vi.hoisted(() => {
   process.env.DATABASE_URL ||= "postgres://ask-provenance-test/unused";
 });
 
+import { APIConnectionTimeoutError } from "@anthropic-ai/sdk";
+
 import { runProvenancePass } from "../lib/ask/provenancePass.js";
 import { askProvenanceEnabled } from "../lib/ask/askProvenanceFeatureFlag.js";
 import { runAskOrchestration } from "../lib/ask/orchestrator.js";
@@ -472,5 +474,105 @@ describe("claim rendering carries provenance into text-only surfaces", () => {
       .map((c) => (c.claim_class === "inference" ? `Assessment: ${c.text}` : c.text))
       .join(" ");
     expect(rendered).toContain("Assessment:");
+  });
+});
+
+/**
+ * The deadline is what lets the gate be a floor instead of a forecast.
+ *
+ * The pass no longer predicts whether it will finish; it starts whenever there
+ * is meaningful time left and is CUT OFF if it overruns. That is only safe
+ * because the deadline is real — passed to the SDK as a request timeout — so
+ * these cases hold the wiring that makes it real.
+ */
+describe("provenance pass — the deadline is enforced, not predicted", () => {
+  const CLAIMS = [
+    {
+      text: "You have 12 open findings.",
+      claim_class: "observed",
+      citations: [{ invocation_index: 0, tool_name: "list_findings", field: "total", value: 12 }],
+    },
+  ];
+  const INVOCATIONS = [
+    { toolName: "list_findings", authorized: true, data: { total: 12, items: [] } },
+  ];
+
+  it("bounds the call with a timeout AND disables retries", async () => {
+    const client = clientReturning(CLAIMS);
+
+    await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: INVOCATIONS,
+      msRemaining: 50_000,
+    });
+
+    const [, options] = client.messages.create.mock.calls[0]!;
+    // Strictly inside the remaining budget — the answer still has to be written
+    // after the pass returns or is cut off.
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.timeout).toBeLessThan(50_000);
+    // Load-bearing: the SDK retries timeouts by default (2 retries), which would
+    // turn this deadline into 3x the wall clock and reintroduce the 504 through
+    // the very mechanism meant to prevent it.
+    expect(options.maxRetries).toBe(0);
+  });
+
+  it("runs the long answers the old prediction refused", async () => {
+    // 8,147 chars with 35.7s left: refused outright on staging 66204045, with
+    // the log blaming a clock that had 35 seconds on it.
+    const client = clientReturning(CLAIMS);
+
+    const result = await runProvenancePass({
+      ...BASE,
+      answer: "x".repeat(8147),
+      client: client as never,
+      invocations: INVOCATIONS,
+      msRemaining: 35_697,
+    });
+
+    expect(client.messages.create).toHaveBeenCalled();
+    expect(result?.claims).toHaveLength(1);
+  });
+
+  it("still declines when there is genuinely no time, without calling the model", async () => {
+    const client = clientReturning(CLAIMS);
+
+    const result = await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: INVOCATIONS,
+      msRemaining: 3_000,
+    });
+
+    expect(result).toBeNull();
+    expect(client.messages.create).not.toHaveBeenCalled();
+  });
+
+  it("returns the answer uncited when the deadline fires — never throws", async () => {
+    // The caller renders a null as the plain answer. A pass that threw here
+    // would take the whole request down with it.
+    const timeout = new APIConnectionTimeoutError({ message: "timed out" });
+    const client = {
+      messages: { create: vi.fn().mockRejectedValue(timeout) },
+    };
+
+    const result = await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: INVOCATIONS,
+      msRemaining: 50_000,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("passes no request options when it has no clock (tests, non-request callers)", async () => {
+    const client = clientReturning(CLAIMS);
+
+    await runProvenancePass({ ...BASE, client: client as never, invocations: INVOCATIONS });
+
+    const [, options] = client.messages.create.mock.calls[0]!;
+    expect(options).toBeUndefined();
   });
 });
