@@ -869,6 +869,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/vendor-assurance",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
       "path": "/vendor-assurance/[documentId]",
       "dynamic": true,
       "navLabel": null,
