@@ -191,6 +191,12 @@ export async function runAskOrchestration(args: {
    * a throwing callback must not kill the answer, so exceptions are swallowed.
    */
   onEvent?: (event: AskStreamEvent) => void;
+  /**
+   * Epoch ms at which the HTTP request will be killed by app.ts. Lets the
+   * provenance pass decide whether it can finish before the client is gone.
+   * Absent = no clock, and the pass falls back to its fixed cap.
+   */
+  deadlineAt?: number;
 }): Promise<OrchestrationResult> {
   const { client, model, systemPrompt, history, question, origin } = args;
 
@@ -502,6 +508,15 @@ export async function runAskOrchestration(args: {
         // on. Decomposing an answer costs more than writing it, so sharing one
         // number guaranteed the pass ran out first — the provenance pass owns
         // its own cap (PROVENANCE_MAX_TOKENS).
+        //
+        // What IS passed is the clock. Orchestration has already spent an
+        // unknown share of the request budget — 59s of 90s on the long turn
+        // that exposed this — and the pass must size itself to what is left, or
+        // decline. Without it the pass starts regardless and the user gets a
+        // 504 instead of the answer that was already written.
+        ...(typeof args.deadlineAt === "number"
+          ? { msRemaining: args.deadlineAt - Date.now() }
+          : {}),
       })
     : null;
 

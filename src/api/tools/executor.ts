@@ -247,6 +247,47 @@ export async function executeTool(
   const startedAt = Date.now();
   const captured: Captured = { status: 200, body: undefined, settled: false };
 
+  /**
+   * The single exit for every non-2xx outcome, and the ONLY place they are
+   * logged.
+   *
+   * Until now a failed tool produced no log line at all — only a row in the DB
+   * ledger. `tool_execution_failed` fires solely on a thrown exception, which a
+   * 400 or a 403 is not, so a degraded Ask was invisible in logs: the three
+   * defects fixed in 256015b7 and 1f8da416 all presented as an answer that was
+   * merely wrong, and each one needed a live reproduction to find. Two of them
+   * were nothing but non-2xx tool results the process never mentioned.
+   *
+   * `warn`, not `error`: a denial is a CORRECT outcome of the authorization
+   * model and must not page anyone. It is still logged, because "the model was
+   * refused data" is the first thing you need to know when an answer looks thin.
+   *
+   * What is deliberately absent: argument VALUES and the response body. Both
+   * carry customer risk data, and the ledger is already the system of record for
+   * the invocation. Argument KEYS are kept — they are what tells an
+   * invalid_arguments apart at a glance without disclosing anything.
+   */
+  const failure = (
+    result: Extract<ToolInvocationResult, { ok: false }>
+  ): ToolInvocationResult => {
+    logger.warn(
+      {
+        event: "ask_tool_result_failed",
+        tool: tool.name,
+        action_class: tool.actionClass,
+        status: result.status,
+        error: result.error,
+        // The route's own code (`invalid_status_filter`, `cannot_decide`, …)
+        // where it was safe to surface; null for denials, which stay collapsed.
+        route_error: describeError(captured.body),
+        arg_keys: Object.keys(args),
+        latency_ms: result.latencyMs,
+      },
+      "Ask tool call did not succeed"
+    );
+    return result;
+  };
+
   try {
     const req = buildToolRequest(origin, tool, args);
     const res = buildToolResponse(captured);
@@ -259,13 +300,13 @@ export async function executeTool(
       // The chain ran out without responding. Treat as unavailable rather than
       // inventing an empty success — a tool that silently returns nothing would
       // let the model narrate "you have no findings" from a plumbing bug.
-      return {
+      return failure({
         ok: false,
         error: "unavailable",
         status: 500,
         message: "The tool route did not produce a response.",
         latencyMs,
-      };
+      });
     }
 
     if (captured.status >= 200 && captured.status < 300) {
@@ -276,23 +317,23 @@ export async function executeTool(
     // posture returns 404 for a cross-org read; distinguishing it here would leak
     // existence through Ask that the API deliberately refuses to leak.
     if (captured.status === 401 || captured.status === 403 || captured.status === 404) {
-      return {
+      return failure({
         ok: false,
         error: "denied",
         status: captured.status,
         message: "Not found, or not accessible to this user.",
         latencyMs,
-      };
+      });
     }
 
     if (captured.status === 400 || captured.status === 422) {
-      return {
+      return failure({
         ok: false,
         error: "invalid_arguments",
         status: captured.status,
         message: describeError(captured.body) ?? "The tool arguments were rejected.",
         latencyMs,
-      };
+      });
     }
 
     // Surface the route's own error code for WORKFLOW refusals (409 state
@@ -301,13 +342,13 @@ export async function executeTool(
     // (cannot_decide, remediation incomplete, SoD), not just that it did.
     // Denials above stay collapsed and non-disclosing; nothing here runs for
     // 401/403/404.
-    return {
+    return failure({
       ok: false,
       error: "unavailable",
       status: captured.status,
       message: describeError(captured.body) ?? "The tool route reported an error.",
       latencyMs,
-    };
+    });
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
     logger.error(

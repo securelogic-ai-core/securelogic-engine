@@ -67,6 +67,75 @@ export type ProvenanceResult = {
  */
 const PROVENANCE_MAX_TOKENS = 4096;
 
+/**
+ * Measured generation rate for the provenance pass on staging, tokens/second.
+ * Used to convert "time left in the request" into "tokens we can afford".
+ */
+const PROVENANCE_TOKENS_PER_SEC = 89;
+
+/** Below this, the pass cannot decompose even a short answer — don't start it. */
+const PROVENANCE_MIN_VIABLE_TOKENS = 1024;
+
+/** Never ask for more than this, however long the answer or the budget. */
+const PROVENANCE_MAX_TOKENS_CEILING = 16_384;
+
+/**
+ * What decomposing THIS answer actually costs.
+ *
+ * The fixed 4096 above fixed medium answers and left long ones broken. Staging
+ * on 2026-08-14 logged `ask_provenance_truncated` for answers of 5939, 7067,
+ * 7091, 7911 and 8275 chars — every genuinely long answer, all discarded, all
+ * uncited. The cost is not constant because the claims echo the answer VERBATIM
+ * inside a JSON envelope, so it scales with the answer.
+ *
+ * ~4 chars/token for the answer, then ~4x that for the envelope (each claim
+ * repeats its sentence, plus claim_class, basis and the cited tool), plus
+ * headroom for the array scaffolding.
+ */
+export function provenanceTokensNeededFor(answerChars: number): number {
+  const answerTokens = Math.ceil(answerChars / 4);
+  return Math.min(PROVENANCE_MAX_TOKENS_CEILING, Math.max(PROVENANCE_MAX_TOKENS, answerTokens * 4 + 1024));
+}
+
+/**
+ * The budget this pass may actually spend, given the time left in the request.
+ *
+ * THE POINT: these two numbers are coupled, and 8621deec said so — "raising this
+ * cap without raising the request timeout trades a silent failure for a 504."
+ * Both walls are now real. A 8275-char answer needs ~9300 tokens ≈ 104s of
+ * generation, and the request budget is 90s with Cloudflare killing the origin
+ * at ~100s, so for a long answer the cap CANNOT be raised enough to help.
+ *
+ * So the pass is bounded by the clock, not just by the answer, and returns null
+ * when it cannot finish. Returning an uncited answer is not a new governance
+ * posture — `runProvenancePass` already returns null for a turn with no
+ * retrieval and for an unparseable payload, and the caller already renders that
+ * as an answer whose provenance is undecomposed. What it replaces is a 504,
+ * where the user got NOTHING and the pass kept billing after they were gone.
+ *
+ * 0.8 is deliberate headroom: finishing the tokens is not the same as the
+ * response reaching the client.
+ */
+export function provenanceBudgetFor(
+  answerChars: number,
+  msRemaining: number
+): { maxTokens: number; affordableTokens: number; viable: boolean } {
+  const needed = provenanceTokensNeededFor(answerChars);
+  const affordable = Math.floor((msRemaining / 1000) * PROVENANCE_TOKENS_PER_SEC * 0.8);
+
+  // ALL OR NOTHING, and that is the whole rule: a pass that runs with less than
+  // it needs hits its cap, and a truncated payload is DISCARDED WHOLE (see the
+  // max_tokens branch below — a partial claim set would silently delete the tail
+  // of the user's answer). So a partial budget buys nothing and costs the rest
+  // of the request, which is how the 504 happened. Either the pass can finish
+  // inside the time left, or it does not start and the answer ships uncited.
+  return {
+    maxTokens: needed,
+    affordableTokens: affordable,
+    viable: affordable >= needed && needed >= PROVENANCE_MIN_VIABLE_TOKENS,
+  };
+}
+
 const SUBMIT_TOOL = {
   name: "submit_claims",
   description:
@@ -165,6 +234,12 @@ export async function runProvenancePass(args: {
   answer: string;
   invocations: InvocationForVerification[];
   maxTokens?: number;
+  /**
+   * Milliseconds left before the HTTP request is killed. When supplied, the
+   * pass sizes itself to fit and declines to start if it cannot finish.
+   * Absent = no clock (tests, and any caller with no request behind it).
+   */
+  msRemaining?: number;
 }): Promise<ProvenanceResult | null> {
   const { client, model, systemPrompt, messages, answer, invocations } = args;
 
@@ -173,10 +248,32 @@ export async function runProvenancePass(args: {
   // user nothing they cannot see from the absence of citations.
   if (invocations.length === 0) return null;
 
+  // Size to the answer AND to the clock. Explicit maxTokens (tests) still wins.
+  let budgetedMaxTokens = args.maxTokens ?? PROVENANCE_MAX_TOKENS;
+  if (args.maxTokens === undefined && args.msRemaining !== undefined) {
+    const budget = provenanceBudgetFor(answer.length, args.msRemaining);
+    if (!budget.viable) {
+      // The 504 this replaces: the pass used to start regardless, blow through
+      // the request budget, and keep generating after the client was gone.
+      logger.warn(
+        {
+          event: "ask_provenance_skipped_no_budget",
+          answerChars: answer.length,
+          msRemaining: args.msRemaining,
+          tokensNeeded: budget.maxTokens,
+          tokensAffordable: budget.affordableTokens,
+        },
+        "Not enough time left in the request to decompose this answer — returning it uncited"
+      );
+      return null;
+    }
+    budgetedMaxTokens = budget.maxTokens;
+  }
+
   try {
     const response = await client.messages.create({
       model,
-      max_tokens: args.maxTokens ?? PROVENANCE_MAX_TOKENS,
+      max_tokens: budgetedMaxTokens,
       system: systemPrompt,
       tools: [SUBMIT_TOOL] as never,
       // Forced: the model must produce the structure. Asking politely for JSON
@@ -208,7 +305,7 @@ export async function runProvenancePass(args: {
       logger.warn(
         {
           event: "ask_provenance_truncated",
-          maxTokens: args.maxTokens ?? PROVENANCE_MAX_TOKENS,
+          maxTokens: budgetedMaxTokens,
           claimsReturned: Array.isArray(rawClaims) ? rawClaims.length : null,
           answerChars: answer.length,
         },

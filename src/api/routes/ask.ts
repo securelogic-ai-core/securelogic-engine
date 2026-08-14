@@ -309,6 +309,11 @@ async function runAskToolTurn(args: {
       origin: req,
       actionClasses,
       ...(args.onEvent ? { onEvent: args.onEvent } : {}),
+      // Stamped by the timeout middleware in app.ts. Absent only for a caller
+      // with no HTTP request behind it, where there is no clock to respect.
+      ...(typeof (req as { deadlineAt?: number }).deadlineAt === "number"
+        ? { deadlineAt: (req as { deadlineAt?: number }).deadlineAt as number }
+        : {}),
     });
 
     // The provenance pass re-renders the answer from VERIFIED claims, so a

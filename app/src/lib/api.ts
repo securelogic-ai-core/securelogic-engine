@@ -1297,15 +1297,46 @@ export type SsoDomainCheck = {
 // HELPERS
 // =========================================================
 
+/**
+ * Default client abort for engine reads. Right for the CRUD surface, which
+ * answers in well under a second; deliberately overridable, because one caller
+ * on this client is not a CRUD read (see ASK_CLIENT_TIMEOUT_MS).
+ */
+export const ENGINE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Ask is the exception, and it must OUTLIVE the engine's own budget.
+ *
+ * The engine bounds `/api/ask` at 90s (ASK_REQUEST_TIMEOUT_MS, raised in
+ * 1f8da416 once a real tool-path turn was measured at 38–52s). Aborting here
+ * at the 15s default meant the app gave up less than a third of the way in and
+ * reported `network_error` — rendered to the user as "Couldn't reach the
+ * server. Check your connection and try again." — for a server that was
+ * working correctly and about to answer.
+ *
+ * It also silently defeated that 90s fix on the ONE path that needed it. The
+ * page uses SSE when streaming is on (its proxy already allows 180s), so the
+ * non-streaming server action is exactly what runs where streaming is OFF —
+ * the production default. Engine-side probes never saw this because they call
+ * the engine directly and never cross this client.
+ *
+ * 95s is the engine's 90s PLUS margin, in that order and for that reason: the
+ * client must still be waiting when the engine gives up, so the user gets the
+ * engine's real 504 rather than a fabricated connection error. The ceiling is
+ * Cloudflare, which aborts the origin at ~100s.
+ */
+export const ASK_CLIENT_TIMEOUT_MS = 95_000;
+
 async function engineFetch(
   path: string,
   token: string,
-  options?: RequestInit
+  options?: RequestInit,
+  timeoutMs: number = ENGINE_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   // Supports both legacy API keys (sl_…) and JWT tokens (contains ".").
   // The engine's requireApiKey middleware accepts both via Authorization: Bearer.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(`${ENGINE_URL}${path}`, {
       ...options,
@@ -5434,15 +5465,21 @@ export async function askQuestion(
 ): Promise<AskResult> {
   let res: Response;
   try {
-    res = await engineFetch("/api/ask", token, {
-      method: "POST",
-      // conversation_id continues an existing thread on the tool path; the
-      // snapshot path (and an unknown/expired id) simply ignores it, so
-      // sending it is always safe.
-      body: JSON.stringify(
-        conversationId ? { question, conversation_id: conversationId } : { question }
-      ),
-    });
+    res = await engineFetch(
+      "/api/ask",
+      token,
+      {
+        method: "POST",
+        // conversation_id continues an existing thread on the tool path; the
+        // snapshot path (and an unknown/expired id) simply ignores it, so
+        // sending it is always safe.
+        body: JSON.stringify(
+          conversationId ? { question, conversation_id: conversationId } : { question }
+        ),
+      },
+      // NOT the 15s default. A tool-path turn takes longer than that to think.
+      ASK_CLIENT_TIMEOUT_MS
+    );
   } catch {
     return { ok: false, status: 0, code: "network_error" };
   }

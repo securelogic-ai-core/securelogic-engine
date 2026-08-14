@@ -190,6 +190,13 @@ export function createApp(opts: CreateAppOptions): express.Express {
     // budget here.
     const timeoutMs = resolveRequestTimeoutMs(req.path);
 
+    // Stamp WHEN this request dies, not just how long it had. A handler doing
+    // multi-second model work needs to know how much budget is left before
+    // starting the next expensive step — Ask's provenance pass declines to run
+    // rather than overrun it and turn a written answer into a 504. Set here, in
+    // the same place the timeout is armed, so the two can never disagree.
+    (req as unknown as { deadlineAt?: number }).deadlineAt = Date.now() + timeoutMs;
+
     res.setTimeout(timeoutMs, () => {
       logger.warn(
         {
