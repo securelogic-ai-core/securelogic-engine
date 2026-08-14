@@ -269,3 +269,24 @@ describe("deferred provenance — failure is visible, never silently uncited", (
     expect(queries.some((q) => /UPDATE jobs/i.test(q.sql))).toBe(true);
   });
 });
+
+describe("deferred provenance — the delivered answer is never rewritten", () => {
+  it("attaches claims without changing the stored answer text", async () => {
+    // The synchronous path re-renders the answer from verified claims, which is
+    // safe only because the user has not seen it yet. Here they have: the first
+    // staging run of this path shortened a 7,776-char answer to 7,198 — 578
+    // characters removed from a document someone may already have quoted.
+    const client = clientReturning(GOOD_CLAIMS);
+    await processClaimedProvenanceJob(JOB, { client: client as never });
+
+    const attach = queries.find((q) => /UPDATE ask_messages/i.test(q.sql) && /claims/i.test(q.sql));
+    expect(attach).toBeDefined();
+
+    // The content parameter must be null so COALESCE keeps the stored answer.
+    // (params: [messageId, orgId, claims, renderedAnswer, status])
+    expect(attach!.params[3]).toBeNull();
+    expect(attach!.sql).toMatch(/content\s*=\s*COALESCE/i);
+    // Claims still land — this is not "attach nothing".
+    expect(attach!.params[2]).not.toBeNull();
+  });
+});

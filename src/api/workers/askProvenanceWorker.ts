@@ -304,10 +304,21 @@ export async function processClaimedProvenanceJob(
     messageId,
     status,
     claims: result.claims,
-    // The synchronous path re-renders the answer from verified claims so an
-    // unsubstantiated sentence arrives prefixed "Assessment:". The deferred path
-    // owes the reader the same correction.
-    renderedAnswer: result.renderedAnswer,
+    // DELIBERATELY NOT result.renderedAnswer.
+    //
+    // The synchronous path re-renders the answer from verified claims, so an
+    // unsubstantiated sentence arrives prefixed "Assessment:" — safe there,
+    // because the user has not seen the answer yet when it happens.
+    //
+    // Here they have. Rewriting the stored content would mean an answer someone
+    // read at 12:04 says something different at 12:06, and it is not a
+    // cosmetic difference: the first staging run of this path shortened a
+    // 7,776-char answer to 7,198 — 578 characters, 7% of it, silently removed
+    // from a document a user may already have acted on or quoted. An answer
+    // that changes after delivery is a worse failure than one whose downgraded
+    // claims are labelled only in the provenance panel, which is where the
+    // `partial` state and every claim_class are shown anyway.
+    renderedAnswer: null,
   });
 
   logger.info(
