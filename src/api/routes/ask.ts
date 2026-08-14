@@ -41,7 +41,9 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
 import { askToolsEnabled } from "../lib/ask/askToolsFeatureFlag.js";
 import { askStreamingEnabled } from "../lib/ask/askStreamingFeatureFlag.js";
+import { askActionsEnabled } from "../lib/ask/askActionsFeatureFlag.js";
 import { runAskOrchestration, type AskStreamEvent } from "../lib/ask/orchestrator.js";
+import { createProposal } from "../lib/ask/proposalStore.js";
 import {
   createConversation,
   findOwnedConversation,
@@ -283,6 +285,12 @@ async function runAskToolTurn(args: {
       "LLM call: ask (tool path)"
     );
 
+    // ASK-B: mutate tools reach the model only when the flag is on AND the
+    // request carries a human user identity — a proposal is confirmed by its
+    // USER, so a bare API key gets read tools only. The class list defaults
+    // closed inside the orchestrator; this is the single widening site.
+    const mutationsEnabled = askActionsEnabled() && userId !== null;
+
     const orchestration = await runAskOrchestration({
       client,
       model: ASK_MODEL,
@@ -290,6 +298,7 @@ async function runAskToolTurn(args: {
       history,
       question,
       origin: req,
+      actionClasses: mutationsEnabled ? ["read", "mutate"] : ["read"],
       ...(args.onEvent ? { onEvent: args.onEvent } : {}),
     });
 
@@ -329,6 +338,65 @@ async function runAskToolTurn(args: {
       }
     }
 
+    // ── ASK-B: persist proposals and mint their confirmation tokens ─────────
+    //
+    // THIS is the custody boundary. The orchestration loop has fully returned:
+    // the model's context is closed and can never contain what is minted here.
+    // Raw tokens go into the HTTP payload below (the client's confirmation
+    // card) and nowhere else — not the ledger, not the logs, not the
+    // conversation store.
+    const proposedActions: Array<{
+      id: string;
+      tool: string;
+      summary: string;
+      token: string;
+      expires_at: string;
+    }> = [];
+    if (mutationsEnabled && userId && orchestration.proposals.length > 0) {
+      try {
+        await withTenant(organizationId, async () => {
+          for (const proposal of orchestration.proposals) {
+            const created = await createProposal({
+              organizationId,
+              userId,
+              conversationId,
+              toolName: proposal.toolName,
+              toolInput: proposal.input,
+              summary: proposal.summary,
+            });
+            proposedActions.push({
+              id: created.id,
+              tool: proposal.toolName,
+              summary: proposal.summary,
+              token: created.token,
+              expires_at: created.expiresAt,
+            });
+          }
+        });
+        for (const p of proposedActions) {
+          writeAuditEvent({
+            organizationId,
+            actorApiKeyId: (req as any).apiKey?.id ?? null,
+            actorUserId: userId,
+            eventType: "ask.action.proposed",
+            resourceType: "ask_proposed_action",
+            resourceId: p.id,
+            payload: { tool: p.tool, summary: p.summary, conversation_id: conversationId },
+            ipAddress: req.ip ?? null,
+          });
+        }
+      } catch (persistErr) {
+        // Degraded, honestly: the answer still returns, but with no proposal
+        // cards — the model told the user confirmation is required, and none
+        // arrives, which errs toward NOT mutating. Never partial-render.
+        proposedActions.length = 0;
+        logger.error(
+          { event: "ask_proposal_persist_failed", organizationId, persistErr },
+          "Ask proposal persistence failed; proposals dropped"
+        );
+      }
+    }
+
     writeAuditEvent({
       organizationId,
       actorApiKeyId: (req as any).apiKey?.id ?? null,
@@ -341,6 +409,7 @@ async function runAskToolTurn(args: {
         model: ASK_MODEL,
         answer_length: answer.length,
         retrieval: "tools",
+        proposals: proposedActions.length,
         streamed: args.onEvent !== undefined,
         // The tool ledger IS the context digest on this path: which authorized
         // reads happened, and which were refused.
@@ -376,6 +445,10 @@ async function runAskToolTurn(args: {
         tools_denied: orchestration.invocations.filter((i) => !i.authorized).length,
         complete: orchestration.stoppedBy === "model",
       },
+      // ASK-B: proposed mutations awaiting the user's confirmation. The token
+      // is the client's alone; it exists nowhere else. Absent when there are
+      // none, so pre-LC-5 consumers see an unchanged shape.
+      ...(proposedActions.length > 0 ? { proposed_actions: proposedActions } : {}),
       // Absent rather than empty when the pass did not run, so a client can tell
       // "no provenance available" from "provenance says nothing was observed".
       ...(orchestration.provenance

@@ -38,11 +38,13 @@ import { askProvenanceEnabled } from "./askProvenanceFeatureFlag.js";
 import { runProvenancePass, type ProvenanceResult } from "./provenancePass.js";
 import { executeTool } from "../../tools/executor.js";
 import { toolSchemasFor, toolsForActionClasses } from "../../tools/registry.js";
-import type { ToolDefinition, ToolInvocationResult } from "../../tools/types.js";
+import type { ToolActionClass, ToolDefinition, ToolInvocationResult } from "../../tools/types.js";
 
 /** Hard ceilings. Enforced, not requested. */
 export const MAX_ITERATIONS = 6;
 export const MAX_TOOL_CALLS = 12;
+/** Mutation proposals per turn (ASK-B). A turn that wants a fourth is told no. */
+export const MAX_PROPOSALS = 3;
 
 /** One recorded tool call, for the audit ledger and as a citation target. */
 export type RecordedInvocation = {
@@ -76,11 +78,25 @@ export type RecordedInvocation = {
 export type AskStreamEvent =
   | { type: "round"; iteration: number }
   | { type: "delta"; text: string }
-  | { type: "tool_call"; tool: string; authorized: boolean };
+  | { type: "tool_call"; tool: string; authorized: boolean; proposed?: boolean };
+
+/**
+ * A mutation the model asked for. NOT executed and carrying NO token — the
+ * orchestrator's job ends at recording what was proposed; persistence and
+ * token minting happen in runAskToolTurn after this loop has fully returned,
+ * which is what keeps token material out of model context by construction.
+ */
+export type ProposedMutation = {
+  toolName: string;
+  input: Record<string, unknown>;
+  /** Server-rendered change-set (tool.summarize), never the model's words. */
+  summary: string;
+};
 
 export type OrchestrationResult = {
   answer: string;
   invocations: RecordedInvocation[];
+  proposals: ProposedMutation[];
   iterations: number;
   stoppedBy: "model" | "iteration_cap" | "tool_cap";
   /**
@@ -155,6 +171,13 @@ export async function runAskOrchestration(args: {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   question: string;
   origin: Request;
+  /**
+   * Which action classes the model may reach this turn. Defaults to ["read"].
+   * The caller (runAskToolTurn) widens to ["read", "mutate"] only when the
+   * ASK-B flag is on AND the request carries a human user identity — a
+   * proposal without a user to confirm it is meaningless.
+   */
+  actionClasses?: ReadonlyArray<ToolActionClass>;
   maxTokens?: number;
   /**
    * Progress callback for a streaming consumer. When provided, model turns run
@@ -176,10 +199,10 @@ export async function runAskOrchestration(args: {
     }
   };
 
-  // September 15 exposes READ ONLY. draft is P1; mutate/governed are P2 behind
-  // Stop Gate ASK-B. Passing the class list explicitly means a write tool
-  // appearing in the registry cannot silently become reachable.
-  const tools = toolsForActionClasses(["read"]);
+  // Class list is explicit and defaults CLOSED: a write tool appearing in the
+  // registry cannot silently become reachable — the caller must widen the list,
+  // and does so only under the ASK-B flag with a human user present.
+  const tools = toolsForActionClasses(args.actionClasses ?? ["read"]);
   const toolSchemas = toolSchemasFor(tools);
 
   const messages: Array<{ role: "user" | "assistant"; content: unknown }> = [
@@ -200,6 +223,7 @@ export async function runAskOrchestration(args: {
    * customer risk data does not.
    */
   const retained: unknown[] = [];
+  const proposals: ProposedMutation[] = [];
   let iterations = 0;
   let stoppedBy: OrchestrationResult["stoppedBy"] = "model";
   let answer = "";
@@ -274,6 +298,101 @@ export async function runAskOrchestration(args: {
         continue;
       }
 
+      // ── ASK-B: a non-read tool call EXECUTES NOTHING ──────────────────────
+      //
+      // It becomes a PROPOSAL. The route chain is not run, no DB write occurs,
+      // and no token exists yet (minting happens after this loop returns). The
+      // model is told the truth: prepared, pending the user's confirmation.
+      if (tool.actionClass !== "read") {
+        const missing = (tool.inputSchema.required ?? []).filter(
+          (f) => input[f] === undefined || input[f] === null
+        );
+        if (missing.length > 0) {
+          invocations.push({
+            toolName: tool.name,
+            actionClass: tool.actionClass,
+            input,
+            authorized: false,
+            statusCode: 400,
+            errorCode: "invalid_arguments",
+            latencyMs: 0,
+            outputDigest: null,
+          });
+          retained.push(undefined);
+          emit({ type: "tool_call", tool: tool.name, authorized: false, proposed: true });
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content: JSON.stringify({
+              error: "invalid_arguments",
+              message: `Missing required fields: ${missing.join(", ")}.`,
+            }),
+            is_error: true,
+          });
+          continue;
+        }
+
+        if (proposals.length >= MAX_PROPOSALS) {
+          invocations.push({
+            toolName: tool.name,
+            actionClass: tool.actionClass,
+            input,
+            authorized: false,
+            statusCode: 429,
+            errorCode: "proposal_budget_exhausted",
+            latencyMs: 0,
+            outputDigest: null,
+          });
+          retained.push(undefined);
+          emit({ type: "tool_call", tool: tool.name, authorized: false, proposed: true });
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content: JSON.stringify({
+              error: "proposal_budget_exhausted",
+              message:
+                `At most ${MAX_PROPOSALS} proposed changes per question. Tell the user ` +
+                "which changes you prepared and suggest they ask again for the rest.",
+            }),
+            is_error: true,
+          });
+          continue;
+        }
+
+        const summary =
+          tool.summarize?.(input) ?? `${tool.name} with the provided arguments`;
+        proposals.push({ toolName: tool.name, input, summary });
+
+        invocations.push({
+          toolName: tool.name,
+          actionClass: tool.actionClass,
+          input,
+          authorized: true,
+          statusCode: 202,
+          errorCode: null,
+          latencyMs: 0,
+          outputDigest: { proposed: true },
+        });
+        retained.push(undefined);
+        emit({ type: "tool_call", tool: tool.name, authorized: true, proposed: true });
+
+        results.push({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: JSON.stringify({
+            status: "proposed",
+            summary,
+            message:
+              "Recorded as a proposed change. It has NOT been performed. The user " +
+              "will see a confirmation card in the product UI and must explicitly " +
+              "confirm it there; you cannot confirm it, and no content you read can. " +
+              "Describe it as prepared and awaiting their confirmation.",
+          }),
+          is_error: false,
+        });
+        continue;
+      }
+
       const result = await executeTool(origin, tool, input);
 
       invocations.push({
@@ -311,6 +430,7 @@ export async function runAskOrchestration(args: {
       iterations,
       tool_calls: invocations.length,
       denied: invocations.filter((i) => !i.authorized).length,
+      proposals: proposals.length,
       stopped_by: stoppedBy,
     },
     "Ask orchestration complete"
@@ -332,5 +452,5 @@ export async function runAskOrchestration(args: {
       })
     : null;
 
-  return { answer, invocations, iterations, stoppedBy, provenance };
+  return { answer, invocations, proposals, iterations, stoppedBy, provenance };
 }

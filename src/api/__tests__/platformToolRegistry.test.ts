@@ -159,15 +159,30 @@ describe("ASK-A — action classes", () => {
     buildRoutes({ isDev: false, publicApiDisabled: false }) as never
   );
 
-  it("September 15 ships READ ONLY", () => {
-    // draft is P1; mutate and governed are P2 behind Stop Gate ASK-B. A write
-    // tool arriving in this registry before that gate is a scope breach, and it
-    // should fail loudly here rather than reach a customer.
+  it("non-read tools are EXACTLY the ASK-B-approved set", () => {
+    // LC-5 opened `mutate` under Stop Gate ASK-B for precisely these two
+    // tools (docs/validation/ask-b-action-gate.md). A non-read tool outside
+    // this allowlist is a scope breach — governed is LC-5b, decision-gated,
+    // and draft remains unopened. Widening this list REQUIRES extending the
+    // gate evidence first.
     const nonRead = registry.filter((t) => t.actionClass !== "read");
-    expect(
-      nonRead.map((t) => t.name),
-      "Non-read tools require Stop Gate ASK-B (confirmation tokens + prompt-injection suite)."
-    ).toEqual([]);
+    expect(nonRead.map((t) => t.name).sort()).toEqual(["actions.create", "actions.update"]);
+    for (const tool of nonRead) {
+      expect(tool.actionClass, `${tool.name} must be mutate — governed is LC-5b`).toBe("mutate");
+    }
+  });
+
+  it("every mutate tool renders its own server-side summary and never binds DELETE", () => {
+    for (const tool of registry.filter((t) => t.actionClass === "mutate")) {
+      // The confirmation card shows what the SERVER rendered from the frozen
+      // input — a mutate tool without summarize would fall back to a generic
+      // line and weaken what the user is actually confirming.
+      expect(typeof tool.summarize, `${tool.name} must summarize`).toBe("function");
+      const summary = tool.summarize!({ title: "t", source_type: "manual", priority: "watch", id: "x" });
+      expect(summary.length).toBeGreaterThan(0);
+      // Bounded v1: create/update only. Destructive verbs need their own gate.
+      expect(["POST", "PATCH"]).toContain(tool.binding.method);
+    }
   });
 
   it("every read tool binds to a GET route", () => {

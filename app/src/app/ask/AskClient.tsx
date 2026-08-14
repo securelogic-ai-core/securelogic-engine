@@ -5,7 +5,10 @@ import {
   askAction,
   listConversationsAction,
   getConversationAction,
+  resolveProposalAction,
 } from "./actions";
+import { describeProposalOutcome, proposalExpired, type ProposalOutcome } from "./askProposals";
+import type { AskProposedAction } from "@/lib/api";
 import { streamAsk } from "./askStream";
 import {
   needsVoiceDisclosure,
@@ -305,6 +308,119 @@ type TranscriptTurn = {
 // Mic SVG
 // ─────────────────────────────────────────────────────────────
 
+const OUTCOME_COLORS: Record<ProposalOutcome["tone"], string> = {
+  success: "#00c4b4",
+  warning: "#f59e0b",
+  muted: "#64748b",
+  error: "#f87171",
+};
+
+/**
+ * Proposed-mutation cards (ASK-B). The summary shown is the SERVER-rendered
+ * change-set — what the user confirms is what the engine froze, not what the
+ * model narrated. Confirm and Discard both spend the single-use token; every
+ * outcome is terminal and replaces the buttons.
+ */
+function ProposalCards({
+  proposals,
+  outcomes,
+  onResolve,
+}: {
+  proposals: AskProposedAction[];
+  outcomes: Record<string, { working: boolean; outcome: ProposalOutcome | null }>;
+  onResolve: (proposal: AskProposedAction, decision: "confirm" | "decline") => void;
+}) {
+  if (proposals.length === 0) return null;
+  return (
+    <div>
+      {proposals.map((p) => {
+        const state = outcomes[p.id];
+        const outcome = state?.outcome ?? null;
+        const expired = !outcome && proposalExpired(p.expires_at);
+        return (
+          <div
+            key={p.id}
+            style={{
+              ...CARD,
+              padding: "16px 20px",
+              marginBottom: "12px",
+              borderColor: "rgba(245,158,11,0.4)",
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                fontSize: "10px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.5px",
+                color: "#f59e0b",
+                marginBottom: "6px",
+              }}
+            >
+              Proposed change — needs your confirmation
+            </span>
+            <p
+              style={{
+                margin: "0 0 12px",
+                fontSize: "14px",
+                lineHeight: "1.7",
+                color: "#e2e8f0",
+              }}
+            >
+              {p.summary}
+            </p>
+            {outcome ? (
+              <p style={{ margin: 0, fontSize: "13px", color: OUTCOME_COLORS[outcome.tone] }}>
+                {outcome.text}
+              </p>
+            ) : expired ? (
+              <p style={{ margin: 0, fontSize: "13px", color: OUTCOME_COLORS.muted }}>
+                Expired — ask again for a fresh proposal.
+              </p>
+            ) : (
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  onClick={() => onResolve(p, "confirm")}
+                  disabled={state?.working === true}
+                  style={{
+                    padding: "8px 18px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: "#f59e0b",
+                    color: "#0a0f1a",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    cursor: state?.working ? "wait" : "pointer",
+                    opacity: state?.working ? 0.6 : 1,
+                  }}
+                >
+                  {state?.working ? "Applying…" : "Confirm and apply"}
+                </button>
+                <button
+                  onClick={() => onResolve(p, "decline")}
+                  disabled={state?.working === true}
+                  style={{
+                    padding: "8px 18px",
+                    borderRadius: "8px",
+                    border: "1px solid #1e2d45",
+                    background: "transparent",
+                    color: "#94a3b8",
+                    fontSize: "13px",
+                    cursor: state?.working ? "wait" : "pointer",
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MicIcon() {
   return (
     <svg
@@ -393,6 +509,16 @@ export function AskClient({
   const [speakAnswers, setSpeakAnswers] = useState(false);
   const voiceOriginRef = useRef(false);
 
+  // ── Proposed mutations (ASK-B, LC-5) ──
+  //
+  // The LIVE turn's proposals only. The raw token lives inside these objects
+  // in memory and nowhere else; a new question clears them (the server-side
+  // TTL retires the rows regardless of what the client shows).
+  const [proposals, setProposals] = useState<AskProposedAction[]>([]);
+  const [proposalOutcomes, setProposalOutcomes] = useState<
+    Record<string, { working: boolean; outcome: ProposalOutcome | null }>
+  >({});
+
   // Voice capability detection (capability only — no browser/device name
   // gating). Starts null so the server render and the first client render agree
   // (no hydration mismatch); the real decision is made in a mount effect once
@@ -446,6 +572,9 @@ export function AskClient({
    *  shape and land in exactly this code. */
   const applyAskSuccess = useCallback(
     (q: string, data: AskResponse) => {
+      // Proposals belong to THIS answer; outcomes start clean.
+      setProposals(data.proposed_actions ?? []);
+      setProposalOutcomes({});
       if (data.conversation_id) {
         // Multi-turn: append both turns to the transcript and adopt the
         // thread. Citations for the live turn come from the provenance
@@ -491,6 +620,23 @@ export function AskClient({
     []
   );
 
+  /** Spend a proposal's single-use token. The outcome line replaces the
+   *  buttons — executed, refused, and declined are all terminal states. */
+  const resolveProposal = useCallback(
+    async (proposal: AskProposedAction, decision: "confirm" | "decline") => {
+      setProposalOutcomes((prev) => ({
+        ...prev,
+        [proposal.id]: { working: true, outcome: null },
+      }));
+      const result = await resolveProposalAction(proposal.token, decision);
+      setProposalOutcomes((prev) => ({
+        ...prev,
+        [proposal.id]: { working: false, outcome: describeProposalOutcome(result) },
+      }));
+    },
+    []
+  );
+
   const submitQuery = useCallback(
     (text: string) => {
       const q = text.trim();
@@ -500,6 +646,10 @@ export function AskClient({
       const fromVoice = voiceOriginRef.current;
       voiceOriginRef.current = false;
       stopSpeaking();
+      // A new question supersedes any unresolved proposal cards; the rows
+      // expire server-side, so clearing here loses nothing executable.
+      setProposals([]);
+      setProposalOutcomes({});
       const maybeSpeak = (answerText: string) => {
         if (fromVoice && readbackEnabled && speakAnswers) speakAnswer(answerText);
       };
@@ -575,6 +725,8 @@ export function AskClient({
     setAnswer(null);
     setError(null);
     setQuery("");
+    setProposals([]);
+    setProposalOutcomes({});
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
 
@@ -585,6 +737,8 @@ export function AskClient({
     setAnswer(null);
     setError(null);
     setQuery("");
+    setProposals([]);
+    setProposalOutcomes({});
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, []);
 
@@ -1252,6 +1406,16 @@ export function AskClient({
                 </div>
               ))}
 
+              {/* Proposed mutations from the LIVE turn (ASK-B) — rendered after
+                  the transcript, where the answer that proposed them ended. */}
+              {!isPending && (
+                <ProposalCards
+                  proposals={proposals}
+                  outcomes={proposalOutcomes}
+                  onResolve={resolveProposal}
+                />
+              )}
+
               {/* The in-flight question renders immediately; the answer bubble
                   follows when the engine responds. */}
               {isPending && pendingQuestion && (
@@ -1458,6 +1622,7 @@ export function AskClient({
 
           {/* ── Single-shot answer display (engines without conversations) ── */}
           {answer && !isPending && !inTranscriptMode && (
+            <>
             <div style={{ ...CARD, padding: "28px 28px 24px", marginBottom: "24px" }}>
               <p
                 style={{
@@ -1506,6 +1671,14 @@ export function AskClient({
                 </button>
               </div>
             </div>
+
+            {/* Proposed mutations from this answer (ASK-B). */}
+            <ProposalCards
+              proposals={proposals}
+              outcomes={proposalOutcomes}
+              onResolve={resolveProposal}
+            />
+            </>
           )}
         </div>
       </div>
