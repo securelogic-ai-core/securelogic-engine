@@ -14,7 +14,7 @@ without explicit authorization; prod-affecting flags ship dark.
 | 1 | B1 legacy VA demotion | `feat/lc1-b1-legacy-va-demotion` | **Built — validated** |
 | 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
 | 3 | Ask streaming | `feat/lc3-ask-streaming` (stacked on LC-2) | **Built — validated** |
-| 4 | Realtime voice | — | Not started |
+| 4 | Realtime voice | `feat/lc4-realtime-voice` (stacked on LC-3) | **Built — validated** |
 | 5 | Bounded agentic Ask | — | Not started |
 | 6 | Platform convergence | — | Blocked on 1–5 |
 
@@ -242,3 +242,91 @@ forwarding, unbuffered pipe-through, status passthrough, 502 on unreachable).
 One pre-existing test updated: `vendorEntitlementGate.test.ts`'s structural
 census of `requireEntitlement("premium")` sites in ask.ts (3 → 4) — the
 census caught the new gate exactly as designed.
+
+---
+
+## 4. Realtime voice
+
+**Scope ruling honored**: the ratified ASK-C gate deferred "realtime voice"
+defined as duplex transport + realtime provider integration. LC-4 ships the
+realtime conversation LOOP without crossing that line — explicit press-to-talk
+clip → Whisper (existing, sole, disclosed subprocessor) → LC-3 streamed answer
+→ **browser-local** spoken readback (SpeechSynthesis; no audio leaves the
+device; no new provider). Continuous/full-duplex provider streaming remains
+decision-gated outside this item. The gate itself is formalized as an
+eleven-dimension evidentiary checklist: `docs/validation/ask-c-voice-gate.md`.
+
+**Four governance gaps the formalization audit found, all closed here:**
+
+1. **C-1 tenant control** — no per-tenant voice switch existed. Now:
+   `organizations.voice_input_enabled` (migration `20261001`, NOT NULL
+   DEFAULT true — a false default would silently remove live behavior),
+   patchable via the existing org-settings allow-list (admin-only, audited
+   as `org.settings_changed`), enforced ENGINE-side on the transcribe route
+   (403 `voice_disabled_for_org` before multer ever parses audio). Loaded by
+   `attachOrganizationContext` in the same SELECT as `viewer_export_enabled`
+   — no added query.
+2. **C-7 authorization equivalence ×2** — the transcribe chain lacked
+   `askFeatureFlag` (the Ask kill switch did NOT kill voice) and
+   `denyContributor()` (a contributor seat could spend Whisper calls it could
+   never turn into a question). Chain now: askFeatureFlag → voiceFeatureFlag
+   → requireApiKey → attachOrganizationContext → requireEntitlement("premium")
+   → denyContributor() → requireOrgVoiceEnabled → org-keyed rate limit —
+   asserted structurally (in order) and behaviorally.
+3. **C-8 audit** — transcription left no ledger record. Now every success
+   writes `ask.voice.transcribed` (sizes, mime, transcript length, provider,
+   correlation id — never content, matching the Ask precedent).
+4. **C-9 kill switch** — no voice-specific lever existed (only removing
+   `OPENAI_API_KEY`). Now `SECURELOGIC_ASK_VOICE_ENABLED` — kill-switch
+   semantics (default ON, literal "false" disables), 404s the route,
+   un-advertises `/status`, hides the app mic. Killing Ask kills voice
+   (one-way implication by design).
+
+**C-2 disclosure closed app-side**: first mic press renders a disclosure card
+(audio → OpenAI for transcription only; not stored by SecureLogic; transcript
+becomes the Ask question) — capture cannot start until explicitly continued;
+latched per browser (`voiceGovernance.ts`, storage failures err toward MORE
+disclosure).
+
+**The realtime loop (dark)**: `SECURELOGIC_ASK_VOICE_REALTIME_ENABLED`
+(default OFF — new behavior, not a kill switch; two-switch model). When lit:
+a readback toggle appears; answers to VOICE-originated questions are spoken
+via browser-local SpeechSynthesis after the LC-3 stream finalizes. A new
+submit always silences in-flight readback; synthesis failure is silent (the
+text answer is already rendered). Voice-origin is a consumed-once marker, so
+typed questions are never spoken.
+
+**Fallback + honesty**: `voice_disabled_for_org` / kill-switch 404 map to
+friendly type-instead messages; the org-disabled note replaces (not joins)
+the capability note; `/status` reports `configured: false` when killed.
+
+**Rollback**: both flags; the migration is additive (one defaulted column)
+and needs no down-path for the flags to restore prior behavior exactly.
+
+One pre-existing test updated: `src/api/tests/transcribeRoute.test.ts` (the
+DB-less upload-pipeline suite) mocks the transcribe route's imports so the
+postgres pool never loads — LC-4's new `auditLog` import transitively throws
+`DATABASE_URL is not set` at collection, failing the file with zero tests.
+Fixed by mocking the two new dependencies (`auditLog`, `requireSeat`) exactly
+as `askVoiceGate.test.ts` does; gate behavior stays covered there.
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     485 files · 7907 passed · 3 skipped · 0 failed
+app        129 files · 1696 passed ·             0 failed
+isolation  147 files · 1135 passed ·             0 failed   (FRESH Postgres; full migration set incl.
+                                                             20261001_org_voice_enablement applied and
+                                                             exercised by the harness)
+typecheck  clean (engine + app)
+```
+
+New tests: 18 — `askVoiceGate.test.ts` 10 (kill-switch semantics,
+404-before-processing, Ask-kills-voice, /status honesty; tenant 403 with
+Whisper never called; chain parity structural-in-order + contributor-seat
+behavioral; audit event shape with content excluded, no record fabricated on
+failure) + `orgSettingsValidation` 1 (the new boolean round-trips alone; the
+truthy-non-boolean rejection loop extended to it) + `voiceGovernance.test.ts`
+7 (disclosure latch: no-storage/throwing-storage err toward MORE disclosure;
+readback: unavailable synthesis returns false and never throws — counted in
+both the root and app suites, which share the file).

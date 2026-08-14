@@ -2111,6 +2111,9 @@ export type OrgSettings = {
   handles_pii: boolean;
   safety_critical: boolean;
   scale: "Small" | "Medium" | "Enterprise";
+  // ASK-C C-1 (LC-4): tenant-level voice governance. Optional so the app
+  // tolerates an engine predating the column; absence means enabled.
+  voice_input_enabled?: boolean;
 };
 
 export async function getOrgSettings(token: string): Promise<OrgSettings | null> {
