@@ -57,12 +57,23 @@ import type { FrozenToolPayload, ProvenanceStatus } from "../lib/ask/provenanceJ
 export const ASK_PROVENANCE_JOB_TYPES = ["ask_provenance"] as const;
 
 /**
- * The worker's own budget. Generous compared with the interactive path — that
- * is the entire point of moving the work — but not unbounded: a job that cannot
- * finish in five minutes is not going to, and holding the lock longer only
- * delays the retry.
+ * The worker's own budget, sized against the two real constraints.
+ *
+ * Generous compared with the interactive path — that is the entire point of
+ * moving the work — but bounded BELOW `LOCK_TIMEOUT_MS` (15 min), because a job
+ * still running when its visibility timeout expires can be reclaimed by another
+ * worker and decomposed twice. The idempotency guard makes that harmless to
+ * correctness, but it is pure waste, so the deadline is set so it cannot
+ * normally happen.
+ *
+ * Five minutes was the first value here and it was too small, which staging
+ * proved immediately: an 8,543-char answer predicts ~23.5k output tokens ≈ 276s
+ * of generation, and 5 min × 0.8 afforded only 20.4k — so the deferred job
+ * refused for exactly the same reason the interactive path had, having moved
+ * the work precisely to escape that. Twelve minutes affords ~49k tokens, which
+ * matches the background output ceiling.
  */
-const WORKER_DEADLINE_MS = 5 * 60 * 1000;
+const WORKER_DEADLINE_MS = 12 * 60 * 1000;
 
 type JobRow = {
   id: string;
@@ -255,6 +266,11 @@ export async function processClaimedProvenanceJob(
       data: p.data,
     })),
     msRemaining: WORKER_DEADLINE_MS,
+    // Raises the output ceiling and streams the call. Without it the job
+    // inherits the INTERACTIVE limits it was created to escape — which is
+    // exactly how the first staging run failed, refusing an 8,543-char answer
+    // as "too costly" inside a five-minute budget.
+    background: true,
   });
 
   const elapsedMs = Date.now() - startedAt;

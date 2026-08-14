@@ -114,8 +114,29 @@ const PROVENANCE_MIN_DEADLINE_MS = 15_000;
  */
 const PROVENANCE_DEADLINE_FRACTION = 0.8;
 
-/** Never ask for more than this, however long the answer or the budget. */
+/**
+ * Never ask for more than this on the INTERACTIVE path, however long the answer.
+ * A request that could afford more than 16k of generation does not exist: at
+ * ~85 tok/s that is already ~193s, past the whole 90s budget.
+ */
 const PROVENANCE_MAX_TOKENS_CEILING = 16_384;
+
+/**
+ * The background ceiling. Deferred decomposition is not racing a user, so the
+ * only thing the interactive ceiling was protecting — the request budget — does
+ * not apply. It has to be higher or the feature does not work: an 8,543-char
+ * answer predicts ~23.5k output tokens, so capping it at 16k would truncate the
+ * payload, and a truncated payload is DISCARDED WHOLE (see the max_tokens
+ * branch below). That is exactly how the first staging run failed.
+ */
+const PROVENANCE_BACKGROUND_CEILING = 49_152;
+
+/**
+ * Above this, the request is streamed. Non-streaming calls hit SDK HTTP
+ * timeouts at high max_tokens regardless of how much wall clock the caller is
+ * willing to give — the deadline alone does not save it.
+ */
+const PROVENANCE_STREAM_THRESHOLD = 16_000;
 
 /**
  * What decomposing THIS answer actually costs, from the measurement above.
@@ -126,10 +147,10 @@ const PROVENANCE_MAX_TOKENS_CEILING = 16_384;
  * whole. The 1,162-char control needed 3,163 tokens against a 4,096 cap: it fit
  * only because the 4096 floor happened to be generous for a short answer.
  */
-export function provenanceTokensNeededFor(answerChars: number): number {
+export function provenanceTokensNeededFor(answerChars: number, ceiling?: number): number {
   const answerTokens = Math.ceil(answerChars / 4);
   return Math.min(
-    PROVENANCE_MAX_TOKENS_CEILING,
+    ceiling ?? PROVENANCE_MAX_TOKENS_CEILING,
     Math.max(PROVENANCE_MAX_TOKENS, answerTokens * PROVENANCE_OUTPUT_PER_ANSWER_TOKEN + 1024)
   );
 }
@@ -184,7 +205,8 @@ export function provenanceTokensNeededFor(answerChars: number): number {
  */
 export function provenanceBudgetFor(
   answerChars: number,
-  msRemaining: number
+  msRemaining: number,
+  opts: { ceiling?: number } = {}
 ): {
   maxTokens: number;
   deadlineMs: number;
@@ -198,7 +220,7 @@ export function provenanceBudgetFor(
   const affordable = Math.floor((deadlineMs / 1000) * PROVENANCE_TOKENS_PER_SEC);
 
   return {
-    maxTokens: provenanceTokensNeededFor(answerChars),
+    maxTokens: provenanceTokensNeededFor(answerChars, opts.ceiling),
     deadlineMs,
     predictedTokens: predicted,
     affordableTokens: affordable,
@@ -314,6 +336,14 @@ export async function runProvenancePass(args: {
    * Absent = no clock (tests, and any caller with no request behind it).
    */
   msRemaining?: number;
+  /**
+   * Background mode: a deferred job, not a user waiting. Raises the output
+   * ceiling (a long answer's decomposition does not fit under the interactive
+   * one, and a truncated payload is discarded whole) and streams the call above
+   * PROVENANCE_STREAM_THRESHOLD, because non-streaming requests hit SDK HTTP
+   * timeouts at high max_tokens no matter how generous the deadline is.
+   */
+  background?: boolean;
 }): Promise<ProvenanceResult | null> {
   const { client, model, systemPrompt, messages, answer, invocations } = args;
 
@@ -326,7 +356,9 @@ export async function runProvenancePass(args: {
   let budgetedMaxTokens = args.maxTokens ?? PROVENANCE_MAX_TOKENS;
   let deadlineMs: number | undefined;
   if (args.maxTokens === undefined && args.msRemaining !== undefined) {
-    const budget = provenanceBudgetFor(answer.length, args.msRemaining);
+    const budget = provenanceBudgetFor(answer.length, args.msRemaining, {
+      ...(args.background ? { ceiling: PROVENANCE_BACKGROUND_CEILING } : {}),
+    });
     if (!budget.viable) {
       // The message names what actually bound the decision. The old one said
       // "not enough time left in the request" on a turn with 45.5 SECONDS left,
@@ -356,36 +388,46 @@ export async function runProvenancePass(args: {
 
   const startedAt = Date.now();
   try {
-    const response = await client.messages.create(
-      {
-        model,
-        max_tokens: budgetedMaxTokens,
-        system: systemPrompt,
-        tools: [SUBMIT_TOOL] as never,
-        // Forced: the model must produce the structure. Asking politely for JSON
-        // in prose and parsing it is the failure mode this avoids.
-        tool_choice: { type: "tool", name: SUBMIT_TOOL.name } as never,
-        messages: [
-          ...messages,
-          { role: "assistant" as const, content: answer },
-          {
-            role: "user" as const,
-            content: INSTRUCTION + describeInvocations(invocations),
-          },
-        ] as never,
-      },
-      // THE DEADLINE IS THE SAFETY PROPERTY, and it is what lets the gate above
-      // be a floor instead of a forecast. Without it an over-running pass would
-      // eat the request budget and 504 — the failure the old prediction existed
-      // to avoid.
-      //
-      // `maxRetries: 0` is load-bearing, not tidiness: the SDK retries timeouts
-      // by default (2 retries), so a 30s timeout would become 90s of wall clock
-      // and reintroduce the 504 through the very mechanism meant to prevent it.
-      // A provenance pass is best-effort anyway — a retry costs the request
-      // budget to re-attempt work whose failure is already handled.
-      deadlineMs === undefined ? undefined : { timeout: deadlineMs, maxRetries: 0 }
-    );
+    const body = {
+      model,
+      max_tokens: budgetedMaxTokens,
+      system: systemPrompt,
+      tools: [SUBMIT_TOOL] as never,
+      // Forced: the model must produce the structure. Asking politely for JSON
+      // in prose and parsing it is the failure mode this avoids.
+      tool_choice: { type: "tool", name: SUBMIT_TOOL.name } as never,
+      messages: [
+        ...messages,
+        { role: "assistant" as const, content: answer },
+        {
+          role: "user" as const,
+          content: INSTRUCTION + describeInvocations(invocations),
+        },
+      ] as never,
+    };
+
+    // THE DEADLINE IS THE SAFETY PROPERTY, and it is what lets the gate above
+    // be a floor instead of a forecast. Without it an over-running pass would
+    // eat the request budget and 504 — the failure the old prediction existed
+    // to avoid.
+    //
+    // `maxRetries: 0` is load-bearing, not tidiness: the SDK retries timeouts
+    // by default (2 retries), so a 30s timeout would become 90s of wall clock
+    // and reintroduce the 504 through the very mechanism meant to prevent it.
+    // A provenance pass is best-effort anyway — a retry costs the request
+    // budget to re-attempt work whose failure is already handled.
+    const options =
+      deadlineMs === undefined ? undefined : { timeout: deadlineMs, maxRetries: 0 };
+
+    // A large-output call MUST stream. Non-streaming requests hit SDK HTTP
+    // timeouts at high max_tokens independently of the deadline, so a deferred
+    // job asking for 20k+ tokens would fail on transport rather than on budget —
+    // and `.finalMessage()` returns the identical shape, so nothing below has to
+    // know which path produced it.
+    const response =
+      budgetedMaxTokens > PROVENANCE_STREAM_THRESHOLD && typeof client.messages.stream === "function"
+        ? await client.messages.stream(body as never, options).finalMessage()
+        : await client.messages.create(body as never, options);
 
     const blocks = (response.content ?? []) as unknown as Array<Record<string, unknown>>;
     const use = blocks.find((b) => b.type === "tool_use" && b.name === SUBMIT_TOOL.name);

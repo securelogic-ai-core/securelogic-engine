@@ -138,3 +138,46 @@ describe("provenanceBudgetFor — calibrated forecast, deadline as backstop", ()
     expect(long.maxTokens).toBeGreaterThan(short.maxTokens);
   });
 });
+
+/**
+ * Background mode — the deferred path must not inherit the interactive limits
+ * it was created to escape.
+ *
+ * This is not hypothetical tuning. The first staging run of async provenance
+ * refused an 8,543-char answer with `ask_provenance_skipped_too_costly` inside
+ * a five-minute worker budget, because the job was still being measured against
+ * the interactive ceiling: predicted 23,496 tokens vs 20,400 affordable, and a
+ * 16,384 output cap that would have truncated the payload even if it had run.
+ */
+describe("provenanceBudgetFor — background mode", () => {
+  const BACKGROUND = { ceiling: 49_152 };
+  const WORKER_MS = 12 * 60 * 1000;
+
+  it("runs the exact answer the first deferred attempt refused", () => {
+    const budget = provenanceBudgetFor(8543, WORKER_MS, BACKGROUND);
+    expect(budget.viable).toBe(true);
+    // And the cap must actually cover the predicted output, or the payload is
+    // truncated and discarded whole — a silent way to fail after doing the work.
+    expect(budget.maxTokens).toBeGreaterThanOrEqual(budget.predictedTokens);
+  });
+
+  it("would still refuse that answer under the interactive ceiling", () => {
+    // The regression guard: this is the failure, reproduced.
+    const interactive = provenanceBudgetFor(8543, WORKER_MS);
+    expect(interactive.maxTokens).toBeLessThan(interactive.predictedTokens);
+  });
+
+  it("keeps the worker deadline inside the job visibility timeout", () => {
+    // A job still running when its lock expires can be reclaimed and decomposed
+    // twice. Harmless to correctness (the pending guard wins) but pure waste.
+    const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+    expect(provenanceBudgetFor(8543, WORKER_MS, BACKGROUND).deadlineMs).toBeLessThan(
+      LOCK_TIMEOUT_MS
+    );
+  });
+
+  it("does not raise the interactive ceiling as a side effect", () => {
+    // Background mode is opt-in. An interactive turn must be unaffected.
+    expect(provenanceBudgetFor(8543, 60_000).maxTokens).toBeLessThanOrEqual(16_384);
+  });
+});
