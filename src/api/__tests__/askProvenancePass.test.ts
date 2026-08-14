@@ -271,6 +271,119 @@ describe("provenance pass — it fails OPEN", () => {
   });
 });
 
+// ─── The output cap ─────────────────────────────────────────────────────────
+//
+// Found live on staging 2026-08-14, not by this suite: every stub above returns
+// a complete payload, so none of them could ever hit the cap. With the flag ON,
+// long answers logged ask_provenance_unparseable and stored claims: null —
+// citations silently disappeared while the feature still read as enabled.
+
+describe("provenance pass — the output cap", () => {
+  /** A response that ran out of room mid-payload. */
+  function truncatedClient(claims: unknown) {
+    return {
+      messages: {
+        create: vi.fn().mockResolvedValue({
+          stop_reason: "max_tokens",
+          content: [{ type: "tool_use", name: "submit_claims", id: "t1", input: { claims } }],
+        }),
+      },
+    };
+  }
+
+  it("budgets the pass separately from the answer it decomposes", async () => {
+    // The pass used to inherit the ANSWER's 2048, but decomposing an answer
+    // costs more than writing it — every sentence comes back verbatim inside a
+    // JSON envelope. Sharing one number guaranteed the pass ran out first.
+    const client = clientReturning([
+      { text: "You have 12 open findings.", claim_class: "inference", citations: [] },
+    ]);
+
+    await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: [{ toolName: "t", authorized: true, data: {} }],
+    });
+
+    const sent = client.messages.create.mock.calls[0]![0] as { max_tokens: number };
+    expect(sent.max_tokens).toBe(4096);
+    expect(sent.max_tokens).toBeGreaterThan(2048);
+  });
+
+  it("DISCARDS a truncated payload even when what arrived parses cleanly", async () => {
+    // The dangerous case, and the reason this is not merely a citation-quality
+    // concern: a cut landing on an element boundary yields a perfectly valid
+    // array that is missing its tail. renderedAnswer REPLACES the answer the
+    // user sees and the answer that gets stored, so accepting this would delete
+    // the end of their answer and look deliberate.
+    const client = truncatedClient([
+      {
+        text: "You have 12 open findings.",
+        claim_class: "observed",
+        citations: [{ invocation_index: 0, tool_name: "t", field: "total", value: 12 }],
+      },
+    ]);
+
+    const result = await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: [{ toolName: "t", authorized: true, data: { total: 12 } }],
+    });
+
+    // Null, not a partial result — the caller then renders the model's own
+    // prose unchanged.
+    expect(result).toBeNull();
+  });
+
+  it("discards a truncated payload that did not parse either", async () => {
+    const client = truncatedClient([{ text: "half a clai" }]);
+    const result = await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: [{ toolName: "t", authorized: true, data: {} }],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("still accepts a complete payload — the guard keys on truncation, not size", async () => {
+    const client = {
+      messages: {
+        create: vi.fn().mockResolvedValue({
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              name: "submit_claims",
+              id: "t1",
+              input: {
+                claims: [
+                  {
+                    text: "You have 12 open findings.",
+                    claim_class: "observed",
+                    citations: [
+                      { invocation_index: 0, tool_name: "t", field: "total", value: 12 },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      },
+    };
+
+    const result = await runProvenancePass({
+      ...BASE,
+      client: client as never,
+      invocations: [{ toolName: "t", authorized: true, data: { total: 12 } }],
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.claims).toHaveLength(1);
+    expect(result!.claims[0]!.claim_class).toBe("observed");
+  });
+});
+
 describe("the provenance flag", () => {
   const original = process.env["SECURELOGIC_ASK_PROVENANCE_ENABLED"];
   afterEach(() => {

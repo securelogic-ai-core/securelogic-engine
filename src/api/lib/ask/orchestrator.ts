@@ -498,7 +498,10 @@ export async function runAskOrchestration(args: {
           authorized: inv.authorized,
           data: retained[i],
         })),
-        ...(args.maxTokens !== undefined ? { maxTokens: args.maxTokens } : {}),
+        // args.maxTokens is the ANSWER's budget and is deliberately NOT passed
+        // on. Decomposing an answer costs more than writing it, so sharing one
+        // number guaranteed the pass ran out first — the provenance pass owns
+        // its own cap (PROVENANCE_MAX_TOKENS).
       })
     : null;
 

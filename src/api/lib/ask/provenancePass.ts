@@ -49,6 +49,24 @@ export type ProvenanceResult = {
   clean: boolean;
 };
 
+/**
+ * The provenance pass's OWN output budget, deliberately not the answer's.
+ *
+ * Decomposing an answer costs more tokens than writing it: every sentence comes
+ * back verbatim inside a JSON envelope, wrapped in a citation array. Measured on
+ * staging 2026-08-14, a 15-claim answer produced ~1600 tokens of claims — so the
+ * 2048 this used to inherit from the ANSWER's budget was below the cost of
+ * decomposing a merely ordinary answer. Long answers hit the cap, the payload
+ * came back truncated, and `ask_provenance_unparseable` swallowed it: citations
+ * silently vanished while the feature flag still read as on.
+ *
+ * 4096 is measured, not guessed. Generation ran ~89 tok/s, so this is ~46s of
+ * worst-case provenance on top of ~17s of orchestration — inside the 90s request
+ * budget in app.ts. That coupling is real: raising this without raising the
+ * request timeout trades a silent failure for a 504.
+ */
+const PROVENANCE_MAX_TOKENS = 4096;
+
 const SUBMIT_TOOL = {
   name: "submit_claims",
   description:
@@ -158,7 +176,7 @@ export async function runProvenancePass(args: {
   try {
     const response = await client.messages.create({
       model,
-      max_tokens: args.maxTokens ?? 2048,
+      max_tokens: args.maxTokens ?? PROVENANCE_MAX_TOKENS,
       system: systemPrompt,
       tools: [SUBMIT_TOOL] as never,
       // Forced: the model must produce the structure. Asking politely for JSON
@@ -176,14 +194,47 @@ export async function runProvenancePass(args: {
 
     const blocks = (response.content ?? []) as unknown as Array<Record<string, unknown>>;
     const use = blocks.find((b) => b.type === "tool_use" && b.name === SUBMIT_TOOL.name);
+    const stopReason = (response as { stop_reason?: string | null }).stop_reason ?? null;
+    const rawClaims = (use?.input as { claims?: unknown })?.claims;
+
+    // A TRUNCATED response is discarded whole, even when the part that arrived
+    // parses cleanly — which it does whenever the cut happens to land on an
+    // element boundary. This is not caution about citation quality; it is the
+    // answer itself. `renderedAnswer` REPLACES the prose the user sees and the
+    // prose that gets stored, so a claim set missing its tail would silently
+    // delete the end of their answer, and it would look deliberate. Better no
+    // provenance than a quietly shortened answer.
+    if (stopReason === "max_tokens") {
+      logger.warn(
+        {
+          event: "ask_provenance_truncated",
+          maxTokens: args.maxTokens ?? PROVENANCE_MAX_TOKENS,
+          claimsReturned: Array.isArray(rawClaims) ? rawClaims.length : null,
+          answerChars: answer.length,
+        },
+        "Provenance pass hit its output cap — claims discarded, answer left unchanged"
+      );
+      return null;
+    }
+
     if (!use) {
       logger.info({ event: "ask_provenance_no_tool_use" }, "Provenance pass produced no claims");
       return null;
     }
 
-    const parsed = parseClaims((use.input as { claims?: unknown })?.claims);
+    const parsed = parseClaims(rawClaims);
     if (!parsed || parsed.length === 0) {
-      logger.info({ event: "ask_provenance_unparseable" }, "Provenance claims did not parse");
+      // Distinct from the truncation case above, and carrying enough to tell
+      // them apart in a log search — the old message said only "did not parse",
+      // which is why the live failure took a reproduction to diagnose.
+      logger.info(
+        {
+          event: "ask_provenance_unparseable",
+          stopReason,
+          claimsReturned: Array.isArray(rawClaims) ? rawClaims.length : null,
+        },
+        "Provenance claims did not parse"
+      );
       return null;
     }
 
