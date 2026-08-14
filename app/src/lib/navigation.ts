@@ -191,7 +191,24 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Asset Registry",   href: "/assets",                   featureFlag: "asset_registry" },
       { label: "Vendors",          href: "/vendors",                  hiddenByFlag: "asset_registry" },
       { label: "AI Systems",       href: "/ai-systems",               hiddenByFlag: "asset_registry" },
-      { label: "Vendor Assurance", href: "/vendor-assurance/queue" },
+    ],
+  },
+  // Third-party assurance is one of the platform's top-level capabilities, not a
+  // kind of asset. It previously appeared as a SINGLE child under "Assets"
+  // pointing at /vendor-assurance/queue — the document review queue, which is one
+  // evidence step. The engagement spine (/vendor-engagements: intake and inherent
+  // risk → questionnaire → vendor portal → responses and evidence → internal
+  // review → findings → residual → decision → monitoring) was fully built and
+  // nav-orphaned in EVERY IA variant, so the workflow could only be reached by
+  // typing the URL. "Vendors" is repeated here because the asset_registry flag
+  // hides it under Assets, which otherwise leaves the vendor list — where an
+  // engagement is opened from — unreachable whenever that flag is on.
+  { type: "group", label: "Vendor Assurance", platform: true,
+    items: [
+      { label: "Overview",       href: "/vendor-assurance" },
+      { label: "Engagements",    href: "/vendor-engagements" },
+      { label: "Document Queue", href: "/vendor-assurance/queue" },
+      { label: "Vendors",        href: "/vendors" },
     ],
   },
   { type: "group", label: "Compliance", platform: true,

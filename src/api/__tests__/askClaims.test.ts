@@ -171,6 +171,24 @@ describe("provenance survives into plain text", () => {
   it("observed claims are rendered plainly, with no decoration", () => {
     expect(renderClaims([claim()])).toBe("You have 1 Critical finding.");
   });
+
+  it("puts each claim on its own line instead of one run-on paragraph", () => {
+    // renderClaims REPLACES the model's prose, and the Ask UI renders the answer
+    // `white-space: pre-wrap`. Space-joining collapsed a structured, bulleted
+    // answer into a single wall of text on the final streaming frame, so the
+    // answer visibly degraded at the moment it completed. Regression guard: the
+    // separator is a newline, and no two claims share a line.
+    const text = renderClaims([
+      claim(),
+      { text: "Exposure is concentrated.", claim_class: "inference", citations: [], derived_from: [0] },
+      { text: "Request an updated report.", claim_class: "recommendation", citations: [] },
+    ]);
+    expect(text.split("\n")).toEqual([
+      "You have 1 Critical finding.",
+      "Assessment: Exposure is concentrated.",
+      "Recommended: Request an updated report.",
+    ]);
+  });
 });
 
 // ─── Parsing ────────────────────────────────────────────────────────────────

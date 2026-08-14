@@ -210,6 +210,21 @@ export function verifyClaims(
  * Inference and recommendation are PREFIXED so the distinction survives into any
  * surface that only takes the string — email, a Brief excerpt, a voice reply.
  * A provenance model that only exists in a rich UI is not a provenance model.
+ *
+ * Claims are joined ONE PER LINE, not with a space. This rendering REPLACES the
+ * model's own prose (see provenancePass → renderedAnswer), and the model's prose
+ * is structured — bullets, blank lines, a lead-in sentence. Space-joining threw
+ * all of that away and returned a single wall of text: the Ask UI renders the
+ * answer `white-space: pre-wrap`, so the user watched a clean bulleted answer
+ * stream in and then get replaced, on the final frame, by one run-on paragraph
+ * ("...admin-level access to restricted data. Assessment: Last assessed June
+ * 2025."). That read as the feature breaking at the moment it completed.
+ *
+ * One claim per line is the structure that IS recoverable here — a Claim carries
+ * no offset back into the original prose, so the exact bullets cannot be rebuilt.
+ * It keeps every verified claim and every class prefix intact while restoring a
+ * scannable, executive-readable shape. Callers that need a single-line string
+ * (voice) should collapse newlines themselves.
  */
 export function renderClaims(claims: Claim[]): string {
   return claims
@@ -227,7 +242,7 @@ export function renderClaims(claims: Claim[]): string {
       // changed.
       return /[.!?:;]$/.test(text.trimEnd()) ? text : `${text}.`;
     })
-    .join(" ");
+    .join("\n");
 }
 
 /** Parse claim blocks from a model response, tolerating a plain-prose answer. */

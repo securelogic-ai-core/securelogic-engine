@@ -171,9 +171,11 @@ describe("provenance pass — the verifier decides, not the model", () => {
     });
 
     expect(result!.clean).toBe(true);
+    // One claim per LINE, not space-joined: renderedAnswer replaces the model's
+    // own structured prose, and the Ask UI renders it `white-space: pre-wrap`.
     expect(result!.renderedAnswer).toBe(
-      "You have 12 open findings. " +
-        "Assessment: that concentration suggests a process gap. " +
+      "You have 12 open findings.\n" +
+        "Assessment: that concentration suggests a process gap.\n" +
         "Recommended: review the intake workflow this quarter."
     );
   });

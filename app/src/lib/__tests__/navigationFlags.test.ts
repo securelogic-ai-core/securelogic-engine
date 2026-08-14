@@ -223,18 +223,40 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     ]);
   });
 
-  it("surfaces Vendor Assurance under Assets and preserves EAR asset-registry behavior", () => {
-    // Registry dark: legacy vendor/ai children + Vendor Assurance.
+  it("preserves EAR asset-registry behavior under Assets", () => {
+    // Registry dark: legacy vendor/ai children.
     expect(assetsGroupChildren(ws(true, false))).toEqual([
       "/vendors",
       "/ai-systems",
-      "/vendor-assurance/queue",
     ]);
-    // Registry on: Vendors/AI drop to the registry; Asset Registry + Vendor Assurance remain.
+    // Registry on: Vendors/AI drop to the registry.
     expect(assetsGroupChildren(ws(true, false, { asset_registry: true }))).toEqual([
       "/assets",
-      "/vendor-assurance/queue",
     ]);
+  });
+
+  it("gives Vendor Assurance its own group covering the whole engagement lifecycle", () => {
+    // Regression guard for the P0: Vendor Assurance used to be ONE child under
+    // Assets pointing at the document review queue, while the engagement spine
+    // (/vendor-engagements) was nav-orphaned in every IA — so the workflow was
+    // reachable only by typing the URL.
+    const group = ws(true, false).find(
+      (i): i is Extract<typeof i, { type: "group" }> =>
+        i.type === "group" && i.label === "Vendor Assurance",
+    );
+    expect(group?.items.map((c) => c.href)).toEqual([
+      "/vendor-assurance",
+      "/vendor-engagements",
+      "/vendor-assurance/queue",
+      "/vendors",
+    ]);
+  });
+
+  it("keeps the vendor list reachable when asset_registry hides it under Assets", () => {
+    // asset_registry on removes /vendors from Assets. The vendor detail page is
+    // where an engagement is opened from, so losing it would break the journey.
+    expect(assetsGroupChildren(ws(true, false, { asset_registry: true }))).not.toContain("/vendors");
+    expect(allHrefs(ws(true, false, { asset_registry: true }))).toContain("/vendors");
   });
 
   it("surfaces the Posture dashboard for platform users (D1 — no longer nav-orphaned)", () => {
@@ -269,7 +291,6 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
       "/assets",
       "/vendors",
       "/ai-systems",
-      "/vendor-assurance/queue",
     ]);
   });
 });
