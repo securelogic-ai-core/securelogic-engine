@@ -268,7 +268,8 @@ export async function executeTool(
    * invalid_arguments apart at a glance without disclosing anything.
    */
   const failure = (
-    result: Extract<ToolInvocationResult, { ok: false }>
+    result: Extract<ToolInvocationResult, { ok: false }>,
+    reason?: string
   ): ToolInvocationResult => {
     logger.warn(
       {
@@ -278,8 +279,17 @@ export async function executeTool(
         status: result.status,
         error: result.error,
         // The route's own code (`invalid_status_filter`, `cannot_decide`, …)
-        // where it was safe to surface; null for denials, which stay collapsed.
-        route_error: describeError(captured.body),
+        // where it was safe to surface; null for denials, which stay collapsed
+        // HERE TOO. A 404 from a canonical handler is the non-disclosure posture
+        // and its body still names the object it declined to admit exists
+        // (`finding_not_found`); the status alone diagnoses a denial, so there is
+        // nothing to buy by writing that name down.
+        route_error: result.error === "denied" ? null : describeError(captured.body),
+        // Which non-2xx exit this was, where the status cannot say. Only
+        // chain_exhausted sets it: "the route never responded" and "the route
+        // answered 500" are the same (500, unavailable) on the wire and are
+        // completely different faults to chase.
+        ...(reason ? { reason } : {}),
         arg_keys: Object.keys(args),
         latency_ms: result.latencyMs,
       },
@@ -300,13 +310,16 @@ export async function executeTool(
       // The chain ran out without responding. Treat as unavailable rather than
       // inventing an empty success — a tool that silently returns nothing would
       // let the model narrate "you have no findings" from a plumbing bug.
-      return failure({
-        ok: false,
-        error: "unavailable",
-        status: 500,
-        message: "The tool route did not produce a response.",
-        latencyMs,
-      });
+      return failure(
+        {
+          ok: false,
+          error: "unavailable",
+          status: 500,
+          message: "The tool route did not produce a response.",
+          latencyMs,
+        },
+        "chain_exhausted"
+      );
     }
 
     if (captured.status >= 200 && captured.status < 300) {

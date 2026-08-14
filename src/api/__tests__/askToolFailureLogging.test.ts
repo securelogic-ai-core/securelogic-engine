@@ -119,6 +119,32 @@ describe("executeTool — non-2xx results are logged", () => {
 
     expect(result).toMatchObject({ ok: false, error: "unavailable", status: 500 });
     expect(lastWarn()).toMatchObject({ event: "ask_tool_result_failed", status: 500 });
+    // "The route never responded" and "the route answered 500" are identical on
+    // the wire (500 / unavailable / no route_error) and are different faults to
+    // chase — a plumbing bug in the tool layer versus a handler that threw.
+    expect(lastWarn().reason).toBe("chain_exhausted");
+  });
+
+  it("distinguishes a route's own 500 from a chain that never responded", async () => {
+    const result = await executeTool(origin, toolReturning(500, { error: "db_unavailable" }), {});
+
+    expect(result).toMatchObject({ ok: false, error: "unavailable", status: 500 });
+    expect(lastWarn()).toMatchObject({ status: 500, route_error: "db_unavailable" });
+    expect(lastWarn().reason).toBeUndefined();
+  });
+
+  it("withholds the route's error code on a DENIAL, which the log claims and must do", async () => {
+    // A canonical handler returns 404 for a cross-org read — the platform's
+    // non-disclosure posture — and its body still names what it declined to
+    // admit exists. The status alone diagnoses a denial, so nothing is bought by
+    // writing that name into the log stream.
+    await executeTool(origin, toolReturning(404, { error: "vendor_not_found" }), {
+      vendor_id: "other-orgs-vendor",
+    });
+
+    const logged = lastWarn();
+    expect(logged).toMatchObject({ status: 404, error: "denied", route_error: null });
+    expect(JSON.stringify(logged)).not.toContain("vendor_not_found");
   });
 
   it("stays SILENT on success — the log is a failure channel, not a trace", async () => {
