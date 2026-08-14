@@ -40,7 +40,8 @@ import {
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
 import { askToolsEnabled } from "../lib/ask/askToolsFeatureFlag.js";
-import { runAskOrchestration } from "../lib/ask/orchestrator.js";
+import { askStreamingEnabled } from "../lib/ask/askStreamingFeatureFlag.js";
+import { runAskOrchestration, type AskStreamEvent } from "../lib/ask/orchestrator.js";
 import {
   createConversation,
   findOwnedConversation,
@@ -200,14 +201,25 @@ const askRateLimit = rateLimit({
 
 const TOOL_PROMPT_VERSION = "ask_tools_v1";
 
-async function handleWithTools(args: {
+/**
+ * One complete tool-path turn: conversation resolution, orchestration,
+ * persistence, audit — everything except writing the HTTP response. Shared by
+ * the JSON handler and the SSE handler (Launch Completion 3) so the two
+ * response shapes cannot drift: the SSE `final` event IS this return value,
+ * byte-shape-identical to the JSON body.
+ *
+ * `onEvent` streams orchestration progress (rounds, text deltas, tool calls);
+ * its presence changes nothing about retrieval, persistence, or audit except
+ * a `streamed: true` marker in the audit payload.
+ */
+async function runAskToolTurn(args: {
   req: Request;
-  res: Response;
   client: Anthropic;
   organizationId: string;
   question: string;
-}): Promise<void> {
-  const { req, res, client, organizationId, question } = args;
+  onEvent?: (event: AskStreamEvent) => void;
+}): Promise<Record<string, unknown>> {
+  const { req, client, organizationId, question } = args;
   const userId = (req as { userId?: string }).userId ?? null;
   // The requester's entitlement class picks the product-knowledge variant —
   // the prompt must not name surfaces this org's entitlement cannot reach.
@@ -278,6 +290,7 @@ async function handleWithTools(args: {
       history,
       question,
       origin: req,
+      ...(args.onEvent ? { onEvent: args.onEvent } : {}),
     });
 
     // The provenance pass re-renders the answer from VERIFIED claims, so a
@@ -328,6 +341,7 @@ async function handleWithTools(args: {
         model: ASK_MODEL,
         answer_length: answer.length,
         retrieval: "tools",
+        streamed: args.onEvent !== undefined,
         // The tool ledger IS the context digest on this path: which authorized
         // reads happened, and which were refused.
         tool_calls: orchestration.invocations.map((i) => ({
@@ -350,7 +364,7 @@ async function handleWithTools(args: {
       ipAddress: req.ip ?? null,
     });
 
-    res.status(200).json({
+    return {
       answer,
       question,
       conversation_id: conversationId,
@@ -381,16 +395,132 @@ async function handleWithTools(args: {
             },
           }
         : {}),
-    });
+    };
   } catch (err) {
     logger.error({ event: "ask_tools_failed", organizationId, err }, "Ask tool path failed");
+    throw err;
+  }
+}
+
+async function handleWithTools(args: {
+  req: Request;
+  res: Response;
+  client: Anthropic;
+  organizationId: string;
+  question: string;
+}): Promise<void> {
+  const { res, ...turnArgs } = args;
+  try {
+    const payload = await runAskToolTurn(turnArgs);
+    res.status(200).json(payload);
+  } catch {
+    // Already logged (with the org id) where it happened.
     res.status(502).json({ error: "ask_failed", message: "Unable to process query" });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SSE streaming handler (Launch Completion 3)
+//
+// Same turn, same authorization, same audit — the only difference is HOW the
+// answer travels: orchestration progress and text deltas as they happen, then
+// a `final` event carrying the exact payload the JSON route would have sent.
+//
+// Deltas are PREVIEW. The provenance pass may re-render the answer after the
+// last delta, so the client must replace streamed text with `final.answer`.
+// All request validation happens in the route handler BEFORE headers are
+// flushed; past that point every failure is an `error` event, never a status.
+//
+// DB discipline is inherited from runAskToolTurn: every withTenant scope
+// commits before the model round-trips, so no connection is ever held open
+// across the life of the stream (the failure mode that makes the asTenant
+// route wrap and streaming incompatible — this handler must never be wrapped).
+// ---------------------------------------------------------------------------
+
+function sseWrite(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+async function handleWithToolsStream(args: {
+  req: Request;
+  res: Response;
+  client: Anthropic;
+  organizationId: string;
+  question: string;
+}): Promise<void> {
+  const { res, ...turnArgs } = args;
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  // Defence against buffering proxies that respect it (nginx and friends).
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  try {
+    const payload = await runAskToolTurn({
+      ...turnArgs,
+      onEvent: (event) => {
+        // The requester may hang up mid-stream; keep orchestrating (the turn
+        // still persists and audits) but stop writing to a dead socket.
+        if (!res.writableEnded) sseWrite(res, event.type, event);
+      },
+    });
+    sseWrite(res, "final", payload);
+  } catch {
+    // Already logged in runAskToolTurn. Same outward wording as the JSON 502.
+    if (!res.writableEnded) {
+      sseWrite(res, "error", { error: "ask_failed", message: "Unable to process query" });
+    }
+  } finally {
+    if (!res.writableEnded) res.end();
   }
 }
 
 // ---------------------------------------------------------------------------
 // POST /api/ask
 // ---------------------------------------------------------------------------
+
+/**
+ * Shared request validation for both Ask endpoints. Writes the error response
+ * and returns null when the request is unusable; extraction (rather than
+ * duplication in the stream route) is what keeps the two routes' status
+ * semantics from drifting. All of this runs BEFORE any SSE upgrade, so the
+ * stream route still answers plain JSON statuses for bad requests.
+ */
+function validateAskRequest(
+  req: Request,
+  res: Response
+): { organizationId: string; question: string; client: Anthropic } | null {
+  const organizationContext = (req as any).organizationContext ?? null;
+  const organizationId = organizationContext?.organizationId ?? null;
+
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return null;
+  }
+
+  const { question } = req.body ?? {};
+
+  if (!question || typeof question !== "string" || question.trim().length === 0) {
+    res.status(400).json({ error: "question_required", message: "question is required and must be a non-empty string" });
+    return null;
+  }
+
+  if (question.trim().length > 500) {
+    res.status(400).json({ error: "question_too_long", message: "question must be 500 characters or fewer" });
+    return null;
+  }
+
+  const client = getClient();
+  if (!client) {
+    res.status(503).json({ error: "ask_unavailable", message: "AI query is not configured" });
+    return null;
+  }
+
+  return { organizationId, question: question.trim(), client };
+}
 
 router.post(
   "/ask",
@@ -402,35 +532,15 @@ router.post(
   askRateLimit,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
-    const organizationId = organizationContext?.organizationId ?? null;
     // The requester's entitlement class picks the product-knowledge variant —
     // the prompt must not name surfaces this org's entitlement cannot reach.
     const requesterClass: EntitlementClass = collapseEntitlementLevel(
       organizationContext?.entitlementLevel
     );
 
-    if (!organizationId) {
-      res.status(403).json({ error: "organization_context_missing" });
-      return;
-    }
-
-    const { question } = req.body ?? {};
-
-    if (!question || typeof question !== "string" || question.trim().length === 0) {
-      res.status(400).json({ error: "question_required", message: "question is required and must be a non-empty string" });
-      return;
-    }
-
-    if (question.trim().length > 500) {
-      res.status(400).json({ error: "question_too_long", message: "question must be 500 characters or fewer" });
-      return;
-    }
-
-    const client = getClient();
-    if (!client) {
-      res.status(503).json({ error: "ask_unavailable", message: "AI query is not configured" });
-      return;
-    }
+    const validated = validateAskRequest(req, res);
+    if (!validated) return;
+    const { organizationId, client, question } = validated;
 
     // ── Retrieval path switch ────────────────────────────────────────────
     //
@@ -445,7 +555,7 @@ router.post(
     // a transition, not a steady state, and the snapshot path retires with the
     // flag once staging validates the tool path.
     if (askToolsEnabled()) {
-      await handleWithTools({ req, res, client, organizationId, question: question.trim() });
+      await handleWithTools({ req, res, client, organizationId, question });
       return;
     }
 
@@ -913,6 +1023,38 @@ router.post(
       logger.error({ event: "ask_failed", err }, "POST /api/ask failed");
       res.status(500).json({ error: "ask_failed", message: "Unable to process query" });
     }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// POST /api/ask/stream — the same turn over SSE (Launch Completion 3)
+//
+// Identical gate chain INCLUDING the rate limiter instance, so the streaming
+// and JSON endpoints draw from one 20/min per-org budget rather than doubling
+// it. Requires BOTH flags: the tool path (streaming is not built for the
+// retiring snapshot path) and the streaming dark-launch flag. Off = 404 with
+// the same body a nonexistent route would produce, matching askFeatureFlag.
+// ---------------------------------------------------------------------------
+
+router.post(
+  "/ask/stream",
+  askFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  askRateLimit,
+  async (req, res) => {
+    if (!askStreamingEnabled() || !askToolsEnabled()) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    const validated = validateAskRequest(req, res);
+    if (!validated) return;
+    const { organizationId, client, question } = validated;
+
+    await handleWithToolsStream({ req, res, client, organizationId, question });
   }
 );
 

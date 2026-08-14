@@ -6,6 +6,7 @@ import {
   listConversationsAction,
   getConversationAction,
 } from "./actions";
+import { streamAsk } from "./askStream";
 import {
   detectVoiceSupport,
   readVoiceEnv,
@@ -319,12 +320,29 @@ function MicIcon() {
 // Main component
 // ─────────────────────────────────────────────────────────────
 
-export function AskClient() {
+export function AskClient({
+  streamingEnabled = false,
+}: {
+  /** Server-rendered from SECURELOGIC_ASK_STREAMING_ENABLED (two-switch model).
+   *  Off = this component is byte-for-byte the pre-LC-3 behaviour. */
+  streamingEnabled?: boolean;
+} = {}) {
   const [query, setQuery]           = useState("");
   const [answer, setAnswer]         = useState<AskResponse | null>(null);
   const [error, setError]           = useState<StructuredError | null>(null);
   const [isPending, startTransition] = useTransition();
   const textareaRef                 = useRef<HTMLTextAreaElement | null>(null);
+
+  // ── Streaming preview state (LC-3) ──
+  //
+  // `streamText` is the delta accumulation for the CURRENT model round; it is
+  // preview only and is always replaced by the `final` payload (the provenance
+  // pass may re-render prose after the last delta). `streamTools` is the
+  // retrieval activity line. `streamUnsupportedRef` latches when the endpoint
+  // turns out to be dark so we only pay the probe once per page load.
+  const [streamText, setStreamText]   = useState<string | null>(null);
+  const [streamTools, setStreamTools] = useState<Array<{ tool: string; authorized: boolean }>>([]);
+  const streamUnsupportedRef = useRef(false);
 
   // ── Multi-turn state (Ask A3) ──
   //
@@ -394,6 +412,56 @@ export function AskClient() {
     }
   }, []);
 
+  /** Success handling shared by the streaming and non-streaming paths, so the
+   *  two cannot drift: the `final` SSE payload and the JSON body are the same
+   *  shape and land in exactly this code. */
+  const applyAskSuccess = useCallback(
+    (q: string, data: AskResponse) => {
+      if (data.conversation_id) {
+        // Multi-turn: append both turns to the transcript and adopt the
+        // thread. Citations for the live turn come from the provenance
+        // captured with this answer.
+        const stamp = Date.now();
+        setTranscript((prev) => [
+          ...(prev ?? []),
+          { key: `u-${stamp}`, role: "user", content: q, claims: null },
+          {
+            key: `a-${stamp}`,
+            role: "assistant",
+            content: data.answer,
+            claims: data.provenance ? normalizeClaims(data.provenance.claims) : null,
+            contextUsed: data.context_used,
+          },
+        ]);
+        setSelectedId(data.conversation_id);
+        setThreadsAvailable(true);
+        setQuery("");
+        void refreshConversations();
+      } else {
+        // No conversation_id — the engine ran single-shot. Behave exactly
+        // like today's Ask.
+        setAnswer(data);
+      }
+    },
+    [refreshConversations]
+  );
+
+  const applyAskFailure = useCallback(
+    (failure: { status: number; code?: string; message?: string }) => {
+      // Surface the raw failure to the browser console so support can
+      // pull it without asking the user to repro. The user-facing
+      // message is mapped from the code in the JSX render below.
+      // eslint-disable-next-line no-console
+      console.error("Ask request failed:", {
+        status: failure.status,
+        code:   failure.code,
+        message:failure.message,
+      });
+      setError({ status: failure.status, code: failure.code, message: failure.message });
+    },
+    []
+  );
+
   const submitQuery = useCallback(
     (text: string) => {
       const q = text.trim();
@@ -405,50 +473,45 @@ export function AskClient() {
       // new one and we adopt the id it returns.
       const conversationId = selectedId;
       startTransition(async () => {
+        // ── Streaming path (LC-3) ──
+        // Enabled at render time from the server env; falls back to the
+        // action permanently for this page load if the endpoint is dark.
+        if (streamingEnabled && !streamUnsupportedRef.current) {
+          const outcome = await streamAsk(q, conversationId, {
+            onRound: () => {
+              setStreamText("");
+              setStreamTools([]);
+            },
+            onDelta: (t) => setStreamText((prev) => (prev ?? "") + t),
+            onToolCall: (tool, authorized) =>
+              setStreamTools((prev) => [...prev, { tool, authorized }]),
+          });
+          setStreamText(null);
+          setStreamTools([]);
+          if (outcome.kind === "final") {
+            setPendingQuestion(null);
+            applyAskSuccess(q, outcome.data);
+            return;
+          }
+          if (outcome.kind === "error") {
+            setPendingQuestion(null);
+            applyAskFailure(outcome);
+            return;
+          }
+          // fallback: remember, and continue into the non-streaming path.
+          streamUnsupportedRef.current = true;
+        }
+
         const result = await askAction(q, conversationId);
         setPendingQuestion(null);
         if (result.ok) {
-          const data = result.data;
-          if (data.conversation_id) {
-            // Multi-turn: append both turns to the transcript and adopt the
-            // thread. Citations for the live turn come from the provenance
-            // captured with this answer.
-            const stamp = Date.now();
-            setTranscript((prev) => [
-              ...(prev ?? []),
-              { key: `u-${stamp}`, role: "user", content: q, claims: null },
-              {
-                key: `a-${stamp}`,
-                role: "assistant",
-                content: data.answer,
-                claims: data.provenance ? normalizeClaims(data.provenance.claims) : null,
-                contextUsed: data.context_used,
-              },
-            ]);
-            setSelectedId(data.conversation_id);
-            setThreadsAvailable(true);
-            setQuery("");
-            void refreshConversations();
-          } else {
-            // No conversation_id — the engine ran single-shot. Behave exactly
-            // like today's Ask.
-            setAnswer(data);
-          }
+          applyAskSuccess(q, result.data);
         } else {
-          // Surface the raw failure to the browser console so support can
-          // pull it without asking the user to repro. The user-facing
-          // message is mapped from the code in the JSX render below.
-          // eslint-disable-next-line no-console
-          console.error("Ask request failed:", {
-            status: result.status,
-            code:   result.code,
-            message:result.message,
-          });
-          setError({ status: result.status, code: result.code, message: result.message });
+          applyAskFailure(result);
         }
       });
     },
-    [isPending, selectedId, refreshConversations]
+    [isPending, selectedId, streamingEnabled, applyAskSuccess, applyAskFailure]
   );
 
   const handleKeyDown = useCallback(
@@ -1054,6 +1117,51 @@ export function AskClient() {
                   </div>
                 </div>
               )}
+
+              {/* ── Streaming preview (LC-3) ──
+                   Deltas for the current model round, replaced by the final
+                   answer when it lands (the transcript turn supersedes this
+                   bubble). Retrieval activity renders as it happens so a
+                   multi-tool turn reads as progress, not a stall. */}
+              {isPending && (streamText !== null || streamTools.length > 0) && (
+                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "12px" }}>
+                  <div style={{ ...CARD, maxWidth: "92%", padding: "16px 20px" }}>
+                    <span
+                      style={{
+                        display: "block",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.5px",
+                        color: "#64748b",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      SecureLogic
+                    </span>
+                    {streamTools.length > 0 && (
+                      <p style={{ margin: "0 0 8px", fontSize: "11px", color: "#334155" }}>
+                        Checked:{" "}
+                        {streamTools
+                          .map((t) => (t.authorized ? t.tool : `${t.tool} (not accessible)`))
+                          .join(", ")}
+                      </p>
+                    )}
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "14px",
+                        lineHeight: "1.7",
+                        color: "#e2e8f0",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {streamText}
+                      <span style={{ color: "#00c4b4" }}>▍</span>
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1144,6 +1252,31 @@ export function AskClient() {
               <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
                 Analyzing your posture data…
               </p>
+              {/* Streaming preview (LC-3) — first question on a fresh page runs
+                  before transcript mode exists, so the preview lives here too. */}
+              {streamTools.length > 0 && (
+                <p style={{ margin: "12px 0 0", fontSize: "11px", color: "#334155" }}>
+                  Checked:{" "}
+                  {streamTools
+                    .map((t) => (t.authorized ? t.tool : `${t.tool} (not accessible)`))
+                    .join(", ")}
+                </p>
+              )}
+              {streamText !== null && streamText.length > 0 && (
+                <p
+                  style={{
+                    margin: "16px 0 0",
+                    fontSize: "14px",
+                    lineHeight: "1.7",
+                    color: "#e2e8f0",
+                    whiteSpace: "pre-wrap",
+                    textAlign: "left",
+                  }}
+                >
+                  {streamText}
+                  <span style={{ color: "#00c4b4" }}>▍</span>
+                </p>
+              )}
             </div>
           )}
 

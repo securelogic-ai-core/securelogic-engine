@@ -57,6 +57,27 @@ export type RecordedInvocation = {
   outputDigest: Record<string, unknown> | null;
 };
 
+/**
+ * Progress events for a streaming consumer (Launch Completion 3).
+ *
+ *   round      a model turn is starting — the consumer should reset its delta
+ *              buffer, because a turn that ends in tool_use produces interim
+ *              prose ("Let me check…") that the NEXT turn supersedes.
+ *   delta      a text fragment of the current turn, in order.
+ *   tool_call  one tool invocation completed. Name and authorization only —
+ *              the payload is customer risk data and stays out of the stream
+ *              for the same reason it stays out of the audit ledger.
+ *
+ * The FINAL answer is not an event: it is the function's return value, and on
+ * the provenance-enabled path it may differ from the concatenated deltas (the
+ * pass re-renders unverifiable assertions as "Assessment:"). Consumers must
+ * treat the return value as authoritative and the deltas as preview.
+ */
+export type AskStreamEvent =
+  | { type: "round"; iteration: number }
+  | { type: "delta"; text: string }
+  | { type: "tool_call"; tool: string; authorized: boolean };
+
 export type OrchestrationResult = {
   answer: string;
   invocations: RecordedInvocation[];
@@ -135,8 +156,25 @@ export async function runAskOrchestration(args: {
   question: string;
   origin: Request;
   maxTokens?: number;
+  /**
+   * Progress callback for a streaming consumer. When provided, model turns run
+   * through the SDK's streaming API and text arrives as `delta` events; when
+   * absent, behaviour is byte-identical to before this parameter existed
+   * (single `messages.create` per turn). Events are best-effort UI signal —
+   * a throwing callback must not kill the answer, so exceptions are swallowed.
+   */
+  onEvent?: (event: AskStreamEvent) => void;
 }): Promise<OrchestrationResult> {
   const { client, model, systemPrompt, history, question, origin } = args;
+
+  const emit = (event: AskStreamEvent): void => {
+    if (!args.onEvent) return;
+    try {
+      args.onEvent(event);
+    } catch {
+      // A UI-progress listener must never be able to fail the orchestration.
+    }
+  };
 
   // September 15 exposes READ ONLY. draft is P1; mutate/governed are P2 behind
   // Stop Gate ASK-B. Passing the class list explicitly means a write tool
@@ -168,14 +206,26 @@ export async function runAskOrchestration(args: {
 
   while (iterations < MAX_ITERATIONS) {
     iterations += 1;
+    emit({ type: "round", iteration: iterations });
 
-    const response = await client.messages.create({
+    const requestParams = {
       model,
       max_tokens: args.maxTokens ?? 2048,
       system: systemPrompt,
       tools: toolSchemas as never,
       messages: messages as never,
-    });
+    };
+
+    let response: { content?: unknown };
+    if (args.onEvent) {
+      // The SDK stream helper resolves to the same Message shape create()
+      // returns, so the loop below is identical on both paths.
+      const stream = client.messages.stream(requestParams);
+      stream.on("text", (textDelta: string) => emit({ type: "delta", text: textDelta }));
+      response = await stream.finalMessage();
+    } else {
+      response = await client.messages.create(requestParams);
+    }
 
     const blocks = (response.content ?? []) as unknown as Array<Record<string, unknown>>;
 
@@ -236,6 +286,7 @@ export async function runAskOrchestration(args: {
         latencyMs: result.latencyMs,
         outputDigest: result.ok ? digestToolOutput(result.data) : null,
       });
+      emit({ type: "tool_call", tool: tool.name, authorized: result.ok });
 
       retained.push(result.ok ? result.data : undefined);
 
