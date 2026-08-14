@@ -30,6 +30,15 @@ import { buildToolRegistry, TOOL_SPECS, toolSchemasFor } from "../tools/registry
 import { flattenRoutes, resolveRouteChain, ToolRouteNotFoundError } from "../tools/routeResolver.js";
 import { buildRoutes } from "../routes/index.js";
 
+// The routes' OWN validated status vocabularies. Imported rather than re-typed:
+// a tool that declares a value its route rejects costs a full extra model round
+// trip, and one that declares nothing lets the model guess.
+import { VALID_STATUSES as FINDING_STATUSES } from "../routes/findings.js";
+import { VALID_STATUSES as ACTION_STATUSES } from "../routes/actions.js";
+import { VALID_FINDING_STATUSES as VENDOR_FINDING_STATUSES } from "../routes/vendors.js";
+import { VALID_STATUS_FILTERS as OBLIGATION_STATUSES } from "../routes/obligations.js";
+import { VALID_STATUSES as RISK_STATUSES } from "../lib/riskValidation.js";
+
 const TOOLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../tools");
 
 function toolSourceFiles(): string[] {
@@ -287,5 +296,52 @@ describe("ASK-A — what the model is shown", () => {
     const sev = spec.inputSchema.properties.severity as { enum?: string[] };
     expect(sev.enum).toEqual(["Critical", "High", "Moderate", "Low"]);
     expect(spec.description).toMatch(/PascalCase/);
+  });
+
+  // The same defect as the severity case above, found live on staging
+  // 2026-08-14: `status` was declared as a bare string on every search tool, so
+  // the model guessed 'active' (a word findings.search's OWN description used),
+  // the route answered 400 invalid_status_filter, and the turn burned an entire
+  // extra round trip before retrying. Four routes, four DIFFERENT vocabularies —
+  // guessing cannot work, so the schema has to say.
+  const STATUS_ENUM_SOURCES: ReadonlyArray<[string, ReadonlySet<string>]> = [
+    ["findings.search", FINDING_STATUSES],
+    ["vendors.findings", VENDOR_FINDING_STATUSES],
+    ["risks.search", RISK_STATUSES],
+    ["actions.search", ACTION_STATUSES],
+  ];
+
+  it.each(STATUS_ENUM_SOURCES)(
+    "%s declares exactly the status values its route accepts",
+    (toolName, routeSet) => {
+      const spec = TOOL_SPECS.find((t) => t.name === toolName)!;
+      const status = spec.inputSchema.properties.status as { enum?: string[] };
+
+      expect(status.enum).toBeDefined();
+      // Set-equal, order-insensitive: every declared value is accepted by the
+      // route, and every value the route accepts is offered to the model.
+      expect([...status.enum!].sort()).toEqual([...routeSet].sort());
+    }
+  );
+
+  it("obligations.search declares its route's set plus the 'all' sentinel", () => {
+    // GET /obligations is the one list route that accepts a value outside its
+    // VALID_ set, and that defaults to 'active' when the param is absent.
+    const spec = TOOL_SPECS.find((t) => t.name === "obligations.search")!;
+    const status = spec.inputSchema.properties.status as { enum?: string[] };
+
+    expect([...status.enum!].sort()).toEqual([...OBLIGATION_STATUSES, "all"].sort());
+    // The default is a filter the model must know about, or it will report an
+    // active-only list as the entire obligation register.
+    expect(spec.description).toMatch(/status='all'/);
+  });
+
+  it("no read tool declares a filter its route does not read", () => {
+    // obligations.search used to declare `priority`, which GET /obligations
+    // never reads. That is worse than a 400: the route returns an UNFILTERED
+    // list and the model narrates it as filtered. Silent wrong answers are the
+    // failure mode this asserts against.
+    const spec = TOOL_SPECS.find((t) => t.name === "obligations.search")!;
+    expect(Object.keys(spec.inputSchema.properties).sort()).toEqual(["limit", "status"]);
   });
 });

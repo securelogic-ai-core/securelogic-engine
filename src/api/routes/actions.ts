@@ -33,7 +33,9 @@ const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
 const VALID_PRIORITIES = new Set(["immediate", "near_term", "planned", "watch"]);
-const VALID_STATUSES = new Set(["open", "in_progress", "blocked", "closed", "accepted"]);
+// Exported so the Ask tool registry's declared `status` enum can be asserted
+// against this set rather than a hand-copied duplicate of it.
+export const VALID_STATUSES = new Set(["open", "in_progress", "blocked", "closed", "accepted"]);
 
 // ----------------------------------------------------------------
 // Route-level helpers (not exported — use actionValidation for create validation)

@@ -1173,7 +1173,11 @@ router.get(
    source types so both workflows are represented.
    ========================================================= */
 
-const VALID_FINDING_STATUSES = new Set(["open", "in_progress", "resolved", "accepted"]);
+// Exported so the Ask tool registry's declared `status` enum can be asserted
+// against this set rather than a hand-copied duplicate of it. NOTE the
+// divergence from routes/findings.ts, which accepts 'closed' and rejects
+// 'resolved' for the same underlying object.
+export const VALID_FINDING_STATUSES = new Set(["open", "in_progress", "resolved", "accepted"]);
 
 router.get(
   "/vendors/:id/findings",

@@ -65,7 +65,9 @@ const TOOL_SPECS: ToolSpec[] = [
       "Search this organization's findings. Returns the same rows, and the same " +
       "ACTIVE-vs-closed population, that the Findings surface shows this user. Use it " +
       "for open work, severity breakdowns, or findings from a particular source. " +
-      "Severity values are PascalCase: Critical, High, Moderate, Low.",
+      "Severity values are PascalCase: Critical, High, Moderate, Low. Note that " +
+      "'active' is NOT a status value — to get open work pass status='open', or " +
+      "omit status entirely to search every lifecycle state.",
     actionClass: "read",
     method: "GET",
     path: "/findings",
@@ -73,7 +75,14 @@ const TOOL_SPECS: ToolSpec[] = [
       type: "object",
       properties: {
         severity: { type: "string", enum: ["Critical", "High", "Moderate", "Low"] },
-        status: { type: "string", description: "Lifecycle status filter." },
+        // Mirrors VALID_STATUSES in routes/findings.ts. Anything else is a 400,
+        // which costs a whole extra model round trip; platformToolRegistry.test.ts
+        // asserts this list against the route's own set.
+        status: {
+          type: "string",
+          enum: ["open", "in_progress", "closed", "accepted"],
+          description: "Lifecycle status filter.",
+        },
         source_type: {
           type: "string",
           description:
@@ -160,7 +169,14 @@ const TOOL_SPECS: ToolSpec[] = [
       type: "object",
       properties: {
         id: { type: "string", description: "Vendor UUID." },
-        status: { type: "string" },
+        // Mirrors VALID_FINDING_STATUSES in routes/vendors.ts. Deliberately NOT
+        // the same set as findings.search: this route accepts 'resolved' and
+        // rejects 'closed', the reverse of /findings. See the divergence note in
+        // platformToolRegistry.test.ts.
+        status: {
+          type: "string",
+          enum: ["open", "in_progress", "resolved", "accepted"],
+        },
         limit: { type: "number" },
       },
       required: ["id"],
@@ -179,7 +195,12 @@ const TOOL_SPECS: ToolSpec[] = [
     inputSchema: {
       type: "object",
       properties: {
-        status: { type: "string" },
+        // Mirrors VALID_STATUSES in lib/riskValidation.ts — a risk register has
+        // its own lifecycle ('mitigated', 'transferred') that no other object uses.
+        status: {
+          type: "string",
+          enum: ["open", "accepted", "mitigated", "closed", "transferred"],
+        },
         domain: { type: "string" },
         risk_rating: { type: "string", enum: ["Critical", "High", "Moderate", "Low"] },
         limit: { type: "number" },
@@ -198,7 +219,12 @@ const TOOL_SPECS: ToolSpec[] = [
     inputSchema: {
       type: "object",
       properties: {
-        status: { type: "string" },
+        // Mirrors VALID_STATUSES in routes/actions.ts — actions add 'blocked',
+        // which no other object's lifecycle carries.
+        status: {
+          type: "string",
+          enum: ["open", "in_progress", "blocked", "closed", "accepted"],
+        },
         priority: { type: "string", enum: ["immediate", "near_term", "planned", "watch"] },
         limit: { type: "number" },
       },
@@ -235,13 +261,25 @@ const TOOL_SPECS: ToolSpec[] = [
     name: "obligations.search",
     description:
       "List regulatory obligations with jurisdiction, priority and due date. Use for " +
-      "questions about regulatory exposure and upcoming compliance deadlines.",
+      "questions about regulatory exposure and upcoming compliance deadlines. " +
+      "Returns ACTIVE obligations unless you pass status explicitly; pass " +
+      "status='all' to include waived and not-applicable ones.",
     actionClass: "read",
     method: "GET",
     path: "/obligations",
     inputSchema: {
       type: "object",
-      properties: { status: { type: "string" }, priority: { type: "string" }, limit: { type: "number" } },
+      properties: {
+        // Mirrors VALID_STATUS_FILTERS in routes/obligations.ts, plus the 'all'
+        // sentinel that route accepts alongside the set. Absence of the param
+        // means 'active' there, which the description states so the model does
+        // not report a filtered list as the whole register.
+        status: {
+          type: "string",
+          enum: ["active", "waived", "not_applicable", "all"],
+        },
+        limit: { type: "number" },
+      },
       additionalProperties: false,
     },
   },

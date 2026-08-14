@@ -83,7 +83,9 @@ const MAX_LIMIT = 100;
 // Cap OFFSET so a hostile ?offset can't force an unbounded deep scan.
 const MAX_OFFSET = 100_000;
 
-const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
+// Exported so the Ask tool registry's declared `status` enum can be asserted
+// against this set rather than a hand-copied duplicate of it.
+export const VALID_STATUSES = new Set(["open", "in_progress", "closed", "accepted"]);
 const VALID_SEVERITIES = new Set(["Critical", "High", "Moderate", "Low"]);
 // Filter vocabulary: the canonical, DB-CHECK-aligned set (D-15 — a route-local
 // copy here silently dropped the engine-written source types, making automated
