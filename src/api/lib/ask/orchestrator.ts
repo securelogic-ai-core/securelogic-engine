@@ -37,7 +37,11 @@ import { logger } from "../../infra/logger.js";
 import { askProvenanceEnabled } from "./askProvenanceFeatureFlag.js";
 import { runProvenancePass, type ProvenanceResult } from "./provenancePass.js";
 import { executeTool } from "../../tools/executor.js";
-import { toolSchemasFor, toolsForActionClasses } from "../../tools/registry.js";
+import {
+  resolveWireToolName,
+  toolSchemasFor,
+  toolsForActionClasses,
+} from "../../tools/registry.js";
 import type { ToolActionClass, ToolDefinition, ToolInvocationResult } from "../../tools/types.js";
 
 /** Hard ceilings. Enforced, not requested. */
@@ -281,7 +285,11 @@ export async function runAskOrchestration(args: {
 
     const results: Array<Record<string, unknown>> = [];
     for (const use of toolUses) {
-      const name = String(use.name ?? "");
+      // The model answers with the WIRE name (`findings__search`). Map it back to
+      // the canonical dotted name before anything else sees it, so the ledger,
+      // citations, and proposals keep recording `findings.search`.
+      const wireName = String(use.name ?? "");
+      const name = resolveWireToolName(wireName, tools) ?? wireName;
       const input = (use.input ?? {}) as Record<string, unknown>;
       const tool = tools.find((t) => t.name === name);
 

@@ -654,14 +654,83 @@ export function toolsForActionClasses(
   return platformTools().filter((t) => classes.includes(t.actionClass));
 }
 
+// ─── Wire names (Anthropic tool-name boundary) ────────────────────────────────
+//
+// The Anthropic API constrains tool names to `^[a-zA-Z0-9_-]{1,128}$`. Our
+// canonical names are dotted (`findings.search`) because the dot carries real
+// meaning — it is the resource.verb pairing that the audit ledger, citation
+// targets, proposal rows, and the governed-action vocabulary all key on.
+//
+// So the dot is translated at the API boundary ONLY: schemas go out with `__`
+// where the canonical name has `.`, and an inbound `tool_use.name` is mapped
+// back before anything else in the platform sees it. Nothing downstream of
+// `resolveWireToolName` ever observes a wire name — ask_tool_invocations,
+// citations, and proposals keep storing `findings.search`.
+//
+// Sending a dotted name was a live P0: EVERY tool-path Ask request 400'd at the
+// provider, and because the rejection escaped the orchestrator's catch it took
+// the process into drain mode. `assertWireNamesValid` makes that class of defect
+// a boot failure instead of a runtime one.
+
+// Anthropic's documented constraint on a tool `name`. The 64-char ceiling is
+// the real one — an earlier draft of this guard used 128, which would have let a
+// too-long name pass boot and 400 at the provider, exactly the failure this is
+// here to prevent. Longest name in the registry today is 19 chars.
+const WIRE_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/** Canonical (`findings.search`) → wire (`findings__search`). */
+export function toWireToolName(name: string): string {
+  return name.replace(/\./g, "__");
+}
+
+/**
+ * Wire → canonical, by lookup against the registry rather than by string
+ * surgery, so a name that round-trips ambiguously can never silently resolve to
+ * the wrong tool. Returns null for anything not in the registry — the caller
+ * already handles "the model invented a tool".
+ */
+export function resolveWireToolName(wireName: string, tools: ToolDefinition[]): string | null {
+  for (const t of tools) {
+    if (t.name === wireName || toWireToolName(t.name) === wireName) return t.name;
+  }
+  return null;
+}
+
+/**
+ * Fail at boot if any tool cannot be represented on the wire, or if two
+ * canonical names collapse to the same wire name (which would make the inbound
+ * mapping ambiguous).
+ */
+function assertWireNamesValid(tools: ToolDefinition[]): void {
+  const seen = new Map<string, string>();
+  for (const t of tools) {
+    const wire = toWireToolName(t.name);
+    if (!WIRE_NAME_PATTERN.test(wire)) {
+      throw new Error(
+        `Tool "${t.name}" produces wire name "${wire}", which violates the provider ` +
+          `tool-name pattern ${WIRE_NAME_PATTERN}. Rename the tool.`,
+      );
+    }
+    const prior = seen.get(wire);
+    if (prior) {
+      throw new Error(
+        `Tools "${prior}" and "${t.name}" both map to wire name "${wire}". ` +
+          `Wire names must be unique.`,
+      );
+    }
+    seen.set(wire, t.name);
+  }
+}
+
 /** The model-facing declaration. Never exposes the chain. */
 export function toolSchemasFor(tools: ToolDefinition[]): Array<{
   name: string;
   description: string;
   input_schema: ToolInputSchema;
 }> {
+  assertWireNamesValid(tools);
   return tools.map((t) => ({
-    name: t.name,
+    name: toWireToolName(t.name),
     description: t.description,
     input_schema: t.inputSchema,
   }));

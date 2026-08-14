@@ -18,6 +18,7 @@ import {
   digestToolOutput,
   runAskOrchestration,
 } from "../lib/ask/orchestrator.js";
+import { toWireToolName, toolsForActionClasses } from "../tools/registry.js";
 
 /** A fake Anthropic client driven by a scripted sequence of responses. */
 function scriptedClient(script: Array<Array<Record<string, unknown>>>) {
@@ -201,8 +202,14 @@ describe("Ask orchestration — only READ tools are offered", () => {
     const declared = (seen[0] as { tools?: Array<{ name: string }> }).tools ?? [];
     expect(declared.length).toBeGreaterThan(0);
     const names = declared.map((t) => t.name);
-    // Every offered tool is one of the read tools in the registry.
-    expect(names.every((n) => /\.(search|get|summary|current|findings)$/.test(n))).toBe(true);
+    // Every offered tool is one of the read tools in the registry. Compared
+    // against the registry itself rather than a name-shape regex: the declared
+    // names are WIRE names (dots translated for the provider), and a regex over
+    // the canonical form silently stopped matching when that boundary landed.
+    const readWireNames = new Set(
+      toolsForActionClasses(["read"]).map((t) => toWireToolName(t.name)),
+    );
+    expect(names.filter((n) => !readWireNames.has(n))).toEqual([]);
   });
 
   it("tool schemas never leak the middleware chain to the model", async () => {

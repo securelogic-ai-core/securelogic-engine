@@ -24,6 +24,7 @@ beforeEach(() => {
 });
 
 import { MAX_PROPOSALS, runAskOrchestration } from "../lib/ask/orchestrator.js";
+import { toWireToolName } from "../tools/registry.js";
 import { executeTool } from "../tools/executor.js";
 
 function scriptedClient(script: Array<Array<Record<string, unknown>>>) {
@@ -231,9 +232,12 @@ describe("ASK-B governed (LC-5b) — spec-pinned transitions and validated ratio
     expect(r.proposals).toHaveLength(1);
     expect(vi.mocked(executeTool)).not.toHaveBeenCalled();
     // mutate tools are NOT declared when only governed is enabled…
+    // Declared schemas carry WIRE names (`findings__close`) because the provider
+    // rejects dots; assert in that vocabulary, or the negative assertion below
+    // passes vacuously against a name that is never emitted in either case.
     const declared = JSON.stringify(seen[0]!.tools);
-    expect(declared).not.toContain("actions.create");
-    expect(declared).toContain("findings.close");
+    expect(declared).not.toContain(toWireToolName("actions.create"));
+    expect(declared).toContain(toWireToolName("findings.close"));
   });
 
   it("the transition literal is the SPEC's: model attempts to repoint are overwritten", async () => {
