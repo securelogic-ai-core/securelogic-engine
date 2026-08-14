@@ -28,6 +28,8 @@ type ToolSpec = {
   /** Path exactly as the route file registers it (no /api prefix). */
   path: string;
   pathParams?: string[];
+  /** Required for non-read tools — see ToolDefinition.summarize. */
+  summarize?: (input: Record<string, unknown>) => string;
 };
 
 /**
@@ -231,6 +233,103 @@ const TOOL_SPECS: ToolSpec[] = [
       additionalProperties: false,
     },
   },
+  // ── mutate (Stop Gate ASK-B, Launch Completion 5) ─────────────────────────
+  //
+  // A mutate tool call EXECUTES NOTHING. The orchestrator records a proposal;
+  // the user confirms (or declines) it on a server-rendered card, and only the
+  // confirm route — presenting a server-issued token the model never sees —
+  // runs this binding's chain. Descriptions must say so, so the model narrates
+  // "I've prepared this for your confirmation", never "done".
+  //
+  // v1 is deliberately bounded to the actions domain, create/update only, no
+  // DELETE verbs, and excludes fields with side-channel reach (owner_user_id
+  // assignment) or dependent-field semantics (the `blocked` status pair).
+  {
+    name: "actions.create",
+    description:
+      "PROPOSE creating a remediation action. Nothing is created until the user " +
+      "explicitly confirms the proposal in the product UI — describe it as prepared " +
+      "and awaiting their confirmation, never as done. Use when the user asks to " +
+      "create, track, or schedule remediation work. source_type describes what " +
+      "prompted the action; pass source_id only when you have the UUID of that " +
+      "finding/risk/signal from a previous tool result.",
+    actionClass: "mutate",
+    method: "POST",
+    path: "/actions",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short imperative title." },
+        description: { type: "string", description: "What needs to be done and why." },
+        source_type: {
+          type: "string",
+          enum: ["assessment", "finding", "signal", "manual", "risk"],
+          description: "What prompted this action. Use 'manual' when the user simply asked.",
+        },
+        source_id: {
+          type: "string",
+          description: "UUID of the prompting object, from a prior tool result.",
+        },
+        priority: { type: "string", enum: ["immediate", "near_term", "planned", "watch"] },
+        due_date: { type: "string", description: "YYYY-MM-DD." },
+      },
+      required: ["title", "source_type", "priority"],
+      additionalProperties: false,
+    },
+    summarize: (input) => {
+      const parts = [
+        `Create remediation action: "${String(input.title ?? "")}"`,
+        `priority ${String(input.priority ?? "")}`,
+        `source ${String(input.source_type ?? "")}`,
+      ];
+      if (typeof input.due_date === "string") parts.push(`due ${input.due_date}`);
+      if (typeof input.description === "string" && input.description.trim())
+        parts.push(`— ${input.description.trim()}`);
+      return parts.join(", ");
+    },
+  },
+  {
+    name: "actions.update",
+    description:
+      "PROPOSE updating an existing remediation action (status, priority, or due " +
+      "date). Nothing changes until the user explicitly confirms in the product UI — " +
+      "describe the update as prepared and awaiting their confirmation, never as " +
+      "done. Use the action's UUID from a previous actions.search result. Closing " +
+      "an action sets status 'closed'; a completion_note becomes part of the audit " +
+      "record of the closure.",
+    actionClass: "mutate",
+    method: "PATCH",
+    path: "/actions/:id",
+    pathParams: ["id"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Action UUID." },
+        status: {
+          type: "string",
+          enum: ["open", "in_progress", "closed", "accepted"],
+          description: "New lifecycle status. ('blocked' requires details Ask does not manage.)",
+        },
+        priority: { type: "string", enum: ["immediate", "near_term", "planned", "watch"] },
+        due_date: { type: "string", description: "YYYY-MM-DD." },
+        completion_note: {
+          type: "string",
+          description: "Optional note recorded on the audit event when closing.",
+        },
+      },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    summarize: (input) => {
+      const changes: string[] = [];
+      if (typeof input.status === "string") changes.push(`status → ${input.status}`);
+      if (typeof input.priority === "string") changes.push(`priority → ${input.priority}`);
+      if (typeof input.due_date === "string") changes.push(`due date → ${input.due_date}`);
+      if (typeof input.completion_note === "string" && input.completion_note.trim())
+        changes.push(`completion note: "${input.completion_note.trim()}"`);
+      return `Update action ${String(input.id ?? "")}: ${changes.length ? changes.join("; ") : "no changes specified"}`;
+    },
+  },
   {
     name: "evidence.search",
     description:
@@ -279,6 +378,7 @@ export function buildToolRegistry(routerOverride?: Router): ToolDefinition[] {
       path: spec.path,
       ...(spec.pathParams ? { pathParams: spec.pathParams } : {}),
     },
+    ...(spec.summarize ? { summarize: spec.summarize } : {}),
     // Resolved from the router — throws at boot if the route is gone.
     chain: resolveRouteChain(routes, spec.method, spec.path),
   }));

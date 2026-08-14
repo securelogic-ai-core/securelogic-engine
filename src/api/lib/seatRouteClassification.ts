@@ -44,6 +44,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "aiSystemVendorDependencies.ts",
   "aiSystemsExport.ts",
   "ask.ts",
+  // ASK-B confirm/decline (LC-5): denyContributor() on both routes, and the
+  // executed mutation re-runs the target route's own chain, so a Contributor
+  // could never reach execution anyway — deny-all is belt over braces.
+  "askActions.ts",
   "assess.ts",
   "assetAssessments.ts",
   "auditLog.ts",

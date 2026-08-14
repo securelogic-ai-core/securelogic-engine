@@ -5,8 +5,10 @@ import {
   askQuestion,
   listAskConversations,
   getAskConversation,
+  confirmAskAction,
   type AskResponse,
   type AskResult,
+  type AskConfirmResult,
   type AskConversationSummary,
   type AskConversationDetail,
 } from "@/lib/api";
@@ -65,5 +67,23 @@ export async function getConversationAction(
   return getAskConversation(token, conversationId);
 }
 
+/**
+ * Confirm or decline a proposed mutation (ASK-B). The proposal token is
+ * passed through verbatim and never logged — it is the single-use credential
+ * that executes (or retires) the exact server-frozen change.
+ */
+export async function resolveProposalAction(
+  proposalToken: string,
+  decision: "confirm" | "decline"
+): Promise<AskConfirmResult> {
+  const session = await getSession();
+  const token = session.jwtToken ?? null;
+  if (!token) {
+    return { ok: false, status: 401, code: "unauthorized", message: "Not authenticated" };
+  }
+  return confirmAskAction(token, proposalToken, decision);
+}
+
 export type { AskResponse };
 export type { AskConversationSummary, AskConversationDetail };
+export type { AskConfirmResult };

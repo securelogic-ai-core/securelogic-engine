@@ -68,6 +68,7 @@ vi.mock("../lib/ask/orchestrator.js", () => ({
         { toolName: "vendors.get", actionClass: "read", input: { id: "x" }, authorized: false, statusCode: 404, errorCode: "denied", latencyMs: 2, outputDigest: null },
       ],
       iterations: 2,
+      proposals: [],
       stoppedBy: "model",
     };
   }),

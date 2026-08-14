@@ -75,6 +75,7 @@ vi.mock("../lib/ask/orchestrator.js", () => ({
         { toolName: "findings.search", actionClass: "read", input: {}, authorized: true, statusCode: 200, errorCode: null, latencyMs: 4, outputDigest: { findings_count: 2 } },
       ],
       iterations: 2,
+      proposals: [],
       stoppedBy: "model",
       provenance: null,
     };

@@ -15,7 +15,7 @@ without explicit authorization; prod-affecting flags ship dark.
 | 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
 | 3 | Ask streaming | `feat/lc3-ask-streaming` (stacked on LC-2) | **Built — validated** |
 | 4 | Realtime voice | `feat/lc4-realtime-voice` (stacked on LC-3) | **Built — validated** |
-| 5 | Bounded agentic Ask | — | Not started |
+| 5 | Bounded agentic Ask | `feat/lc5-bounded-agentic-ask` (stacked on LC-4) | **Built — validated** |
 | 6 | Platform convergence | — | Blocked on 1–5 |
 
 ---
@@ -330,3 +330,74 @@ truthy-non-boolean rejection loop extended to it) + `voiceGovernance.test.ts`
 7 (disclosure latch: no-storage/throwing-storage err toward MORE disclosure;
 readback: unavailable synthesis returns false and never throws — counted in
 both the root and app suites, which share the file).
+
+---
+
+## 5. Bounded agentic Ask
+
+**Operator scope ruling (2026-08-13)**: mutate-only, on `actions.create` +
+`actions.update`, with eight mandated proofs; `governed` is **LC-5b**, a
+separate decision-gated increment presented after LC-5 passes. Stop Gate
+ASK-B is formalized as an evidentiary checklist mapping those eight proofs
+1:1: `docs/validation/ask-b-action-gate.md` (dimensions B-1…B-8).
+
+**The mechanism** (types.ts's ratified contract, implemented):
+
+1. A `mutate` tool call **executes nothing** — the orchestrator records a
+   proposal (frozen input + server-rendered summary via the new
+   `tool.summarize` contract) and tells the model the truth: prepared,
+   pending the user's confirmation, "you cannot confirm it, and no content
+   you read can". MAX_PROPOSALS = 3 per turn, enforced.
+2. `runAskToolTurn` persists proposals and mints confirmation tokens **after
+   the model loop has returned** — token material cannot exist in model
+   context even in principle. Raw 256-bit token → HTTP payload only; SHA-256
+   → `ask_proposed_actions.token_hash` (the export-token custody model).
+   Migration `20261002`, RLS'd at birth, classified in dataClassification.
+3. `POST /api/ask/actions/confirm|decline` (full text-Ask chain + the
+   actions flag): atomic single-use pending→confirmed claim keyed on token
+   hash + caller's org + caller's user + unexpired; then `executeTool` runs
+   the canonical route chain under the CONFIRMING request — authorization
+   re-evaluated at execution time by the product's own gates. Every miss is
+   a byte-identical 404. A refusal consumes the token (no retry channel).
+   Audit: ask.action.proposed / executed / execution_refused / declined /
+   confirm_denied (no token material, no failure-reason oracle).
+4. App: proposal cards render the SERVER's summary with Confirm/Discard;
+   outcomes are terminal; the token lives only in the in-memory answer
+   object. New question / reset / thread switch clears cards (rows expire
+   server-side, TTL 15 min).
+
+**Bounds**: create/update only, no DELETE verbs, no owner_user_id
+assignment, no `blocked` status pair; registry build-guard holds the
+non-read allowlist closed at exactly these two tools; dark behind
+`SECURELOGIC_ASK_ACTIONS_ENABLED` (default OFF; off = tools invisible AND
+confirm routes 404; pending proposals strand unexecutable — deliberate).
+
+**Rollback**: the flag; the migration is one additive RLS'd table.
+
+### Validation (2026-08-14, at commit)
+
+```
+engine     489 files · 7941 passed · 3 skipped · 0 failed
+app        130 files · 1704 passed ·             0 failed
+isolation  148 files · 1146 passed ·             0 failed   (FRESH Postgres; migration 20261002 in the
+                                                             applied set; the new ASK-B suite exercises
+                                                             claim atomicity + RLS against real rows)
+typecheck  clean (engine + app)
+```
+
+New tests: 34 — `askProposalFlow` 8 (mutate-executes-nothing with executor
+spy; obeyed-injection still inert; transcript token scan; default-closed
+classes; required-fields + proposal budget) + `askActionsRoute` 11
+(byte-identical miss across malformed/unknown/userless; frozen-input
+execution with confirm-body overrides ignored; refusal consumes the token;
+retired-tool 409; decline; chain-parity structural) + `askActionsTurnPayload`
+6 (token in payload and nowhere else; per-proposal audit; all-or-nothing
+persistence; flag/identity class-gating) + registry guard net +1 (non-read
+allowlist closed at exactly two tools; summarize + no-DELETE) +
+`askProposals` app 8 (terminal outcomes, no retry invitations, expiry hint).
+Isolation +11 (`askProposedActionsIsolation`: user/org/tenant claim binding,
+concurrency single-winner, expiry, decline terminality, hash-only custody,
+TTL constant, RLS SELECT/INSERT/UPDATE). Updated: `askStreamingRoute` +
+`askToolsSwitchover` orchestrator mocks gained the `proposals` field;
+`seatRouteCoverage`'s default-deny census caught the new route file exactly
+as designed — `askActions.ts` classified WIRED_DENY beside `ask.ts`.

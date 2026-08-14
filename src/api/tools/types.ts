@@ -46,8 +46,12 @@
  *         mutate + mandatory rationale + audit evidence + the existing SoD and
  *         approval gates (risk acceptance, vendor decision, finding closure).
  *
- * September 15 ships READ only. draft is P1; mutate and governed are P2 behind
- * Stop Gate ASK-B.
+ * September 15 shipped READ only. Launch Completion 5 opened `mutate` under
+ * Stop Gate ASK-B (docs/validation/ask-b-action-gate.md): a mutate tool call
+ * EXECUTES NOTHING — it records a proposal, and the confirmation token that
+ * can execute it is minted only after the model loop ends and issued only to
+ * the client. `draft` and `governed` remain unopened; governed is LC-5b,
+ * decision-gated on its own review of the SoD-bearing transitions.
  */
 
 import type { RequestHandler } from "express";
@@ -90,6 +94,15 @@ export type ToolDefinition = {
   inputSchema: ToolInputSchema;
   actionClass: ToolActionClass;
   binding: ToolBinding;
+  /**
+   * Render the human-readable change-set the user is asked to confirm.
+   *
+   * REQUIRED for every non-read tool (the registry test enforces it): what the
+   * user confirms is what the SERVER rendered from the frozen input — never
+   * the model's own narration, which is not trustworthy about its own
+   * proposal. Pure function of the input; no I/O.
+   */
+  summarize?: (input: Record<string, unknown>) => string;
   /**
    * The FULL middleware chain, in order, exactly as the route registers it.
    *

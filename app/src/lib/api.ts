@@ -5269,7 +5269,84 @@ export type AskResponse = {
     verified: boolean;
     claims: AskClaim[];
   };
+  /**
+   * ASK-B (LC-5): mutations the assistant PREPARED, awaiting this user's
+   * explicit confirmation. `token` is the server-issued confirmation
+   * credential — it exists only in this response and must never be logged
+   * or persisted client-side beyond the card that uses it.
+   */
+  proposed_actions?: AskProposedAction[];
 };
+
+export type AskProposedAction = {
+  id: string;
+  tool: string;
+  /** Server-rendered change-set — what the user is actually confirming. */
+  summary: string;
+  token: string;
+  expires_at: string;
+};
+
+/** Outcome of confirming a proposal. The token is single-use either way. */
+export type AskConfirmResult =
+  | { ok: true; status: "executed"; summary: string; action?: unknown }
+  | { ok: true; status: "refused"; summary: string; message: string }
+  | { ok: true; status: "declined"; summary: string }
+  | { ok: false; status: number; code: string; message: string };
+
+export async function confirmAskAction(
+  token: string,
+  proposalToken: string,
+  decision: "confirm" | "decline"
+): Promise<AskConfirmResult> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/ask/actions/${decision === "confirm" ? "confirm" : "decline"}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ token: proposalToken }),
+        cache: "no-store",
+      }
+    );
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: typeof body?.error === "string" ? body.error : "confirm_failed",
+        message:
+          typeof body?.message === "string" ? body.message : "Unable to process confirmation",
+      };
+    }
+    const status = body?.status;
+    if (status === "executed") {
+      return {
+        ok: true,
+        status: "executed",
+        summary: String(body?.summary ?? ""),
+        action: body?.action,
+      };
+    }
+    if (status === "refused") {
+      return {
+        ok: true,
+        status: "refused",
+        summary: String(body?.summary ?? ""),
+        message: String(body?.message ?? "The platform declined this change."),
+      };
+    }
+    if (status === "declined") {
+      return { ok: true, status: "declined", summary: String(body?.summary ?? "") };
+    }
+    return { ok: false, status: res.status, code: "unexpected_response", message: "Unexpected response" };
+  } catch {
+    return { ok: false, status: 0, code: "network_error", message: "Could not reach the server" };
+  }
+}
 
 // ─── Ask conversations (multi-turn) ─────────────────────────
 
