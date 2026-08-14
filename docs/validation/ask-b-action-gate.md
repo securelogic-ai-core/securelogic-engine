@@ -166,20 +166,68 @@ tool fails the suite until this document is extended.
 - **Proposal TTL 15 minutes**; proposals are turn-scoped (a reload loses the
   card; the row expires server-side; asking again is the recovery path).
 
-## LC-5b ruling — governed stays decision-gated
+## LC-5b — the governed class (opened 2026-08-14, operator-ordered)
 
-The deferred P2 item named `mutate` AND `governed`. LC-5 ships mutate only.
-`governed` (mutate + mandatory rationale + audit evidence + the existing SoD
-and approval gates: risk acceptance, vendor decision, finding closure) binds
-Ask to the platform's highest-stakes transitions and is deliberately held
-behind its own review — LC-5b — exactly as the ratified ASK-C gate held
-duplex voice behind its own review. The confirmation infrastructure built
-here is class-agnostic: LC-5b is additive (new registry entries + per-tool
-controls), not a rework. The operator presentation owed at LC-5b: the
-proposed governed tool set, and the additional controls each requires beyond
-B-1…B-8.
+Operator directive: implement `findings.close` → `vendors.decide` →
+(program stop gate) → `risks.accept` LAST, reusing the LC-5 infrastructure
+without weakening or duplicating B-1…B-8. Flags stay INDEPENDENT:
+`SECURELOGIC_ASK_GOVERNED_ENABLED` gates exactly the governed class, default
+OFF; the confirm surface opens under either flag; a claimed proposal whose
+class flag has been dropped is honestly unexecutable (409, token consumed).
 
-**Gate determination for LC-5**: every dimension B-1…B-8 is closed by
-construction and proven by re-runnable evidence at unit, route, and
-real-Postgres layers. No operator-owed item is introduced by this gate; the
-flag flip is the standing GATE-B-style operator decision it always is.
+**Governed contract additions** (all enforced by the registry build-guard):
+
+- `fixedInput` — spec-pinned transition literals. findings.close can only
+  ever request `decision_state: "resolved"`; no model output can repoint a
+  governed tool at a different transition (accepted_risk is structurally
+  unreachable through closure — it is the acceptance workflow's output).
+- `validateInput` — server-validated rationale SUBSTANCE (trimmed ≥ 10,
+  ≤ 2000) at proposal time; the route revalidates at execution.
+- Summary enrichment (`governedSummaries.ts`) — org-scoped, server-sourced
+  object identity on the card (finding title + severity; vendor name +
+  engagement status + residual; owner by name). An object the org cannot
+  see DROPS the proposal: no row, no token, no card.
+- `auditContext` — proposal + confirmer + transition + rationale + resulting
+  object state on ONE audit event; workflow refusals carry the route's own
+  reason (`refusal_detail` — the stop-gate fidelity fix).
+- `applyDefaults` — proposal-time, spec-owned identity-free defaulting
+  (risks.accept pins the accountable owner to the proposing user,
+  overwriting anything the model emits; the ASK-A no-identity-arguments
+  guard stays absolute).
+
+**The three governed tools:**
+
+1. `findings.close` → PATCH /findings/:id (`decision_state → resolved` +
+   mandatory `decision_note`). Execution re-runs the decision-state machine,
+   the remediation gate, the false-positive closure ruling, and org-policy
+   SoD (remediator ≠ closer) — all proven firing through the tool path on
+   real Postgres. Requires SECURELOGIC_DECISION_WORKSPACE_ENABLED in the
+   target environment (fail-closed without it).
+2. `vendors.decide` → POST /vendor-engagements/:id/decision. Engagement
+   state machine (decision_pending only), residual-measurement precondition,
+   rationale ≥ 10 route-enforced, `decided_by_user_id` = the EXECUTING
+   (confirming) user only — identity injection proven inert — and the
+   decision never touches the measured residual (echoed unchanged, asserted).
+3. `risks.accept` → POST /findings/:id/risk-acceptance — deliberately the
+   PROPOSE step of the signed acceptance workflow. Approver/authority
+   semantics preserved in full: the proposal leaves the finding fully
+   active; approval — the only act that closes it — remains in-product,
+   where the route (and a DB CHECK) refuse the proposer approving their own
+   acceptance. Proven end-to-end on real Postgres: tool proposes →
+   self-approval 403 separation_of_duties → second user approves →
+   accepted_risk, with severity unchanged throughout. 5-minute TTL
+   (operator ruling); mandatory rationale AND expiry (no permanent
+   pardons); at-most-one live acceptance per finding enforced by the
+   route's partial unique index.
+
+**Program stop gate (executed 2026-08-14, before risks.accept)**: one
+weakness found and closed — workflow-refusal reasons were opaque in the
+audit trail (generic `unavailable`); the executor now surfaces the route's
+own error code for non-denial failures and the confirm route records it as
+`refusal_detail`/digest `detail`. Denials remain reason-free
+(non-disclosing). No weakness found in the confirmation, SoD, rationale, or
+execution-time authorization models. Verdict: CLEAN; risks.accept bound.
+
+**Gate determination**: B-1…B-8 hold for both classes, proven by re-runnable
+evidence at unit, route, turn, and real-Postgres layers. Both flags remain
+OFF everywhere; staging/production activation is an operator decision.

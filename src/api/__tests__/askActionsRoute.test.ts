@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
     latencyMs: 5,
   } as Record<string, unknown>,
   toolAvailable: true,
+  toolClass: "mutate" as string,
+  withAuditContext: false,
   userId: "22222222-2222-4222-8222-222222222222" as string | null,
   outcomes: [] as Array<Record<string, unknown>>,
   claimCalls: [] as Array<Record<string, unknown>>,
@@ -84,7 +86,27 @@ vi.mock("../tools/executor.js", () => ({
 vi.mock("../tools/registry.js", () => ({
   getTool: vi.fn(() =>
     h.toolAvailable
-      ? { name: "actions.create", actionClass: "mutate", inputSchema: {}, binding: {}, chain: [] }
+      ? {
+          name: "actions.create",
+          actionClass: h.toolClass,
+          inputSchema: {},
+          binding: {},
+          chain: [],
+          ...(h.withAuditContext
+            ? {
+                auditContext: (
+                  input: Record<string, unknown>,
+                  resultData: unknown
+                ) => ({
+                  transition: "decision_state → resolved",
+                  rationale: input.decision_note ?? null,
+                  resulting_state: resultData
+                    ? { decision_state: "resolved" }
+                    : null,
+                }),
+              }
+            : {}),
+        }
       : null
   ),
 }));
@@ -118,16 +140,19 @@ beforeEach(() => {
   h.claimResult = null;
   h.declineResult = null;
   h.toolAvailable = true;
+  h.toolClass = "mutate";
+  h.withAuditContext = false;
   h.userId = USER;
   h.executeResult = { ok: true, status: 201, data: { id: "act-1" }, latencyMs: 5 };
   process.env.SECURELOGIC_ASK_ACTIONS_ENABLED = "true";
+  delete process.env.SECURELOGIC_ASK_GOVERNED_ENABLED;
   delete process.env.SECURELOGIC_ASK_ENABLED;
 });
 
 // ─── Flags ──────────────────────────────────────────────────────────────────
 
 describe("ASK-B routes — flags", () => {
-  it("dark by default: without the flag both routes 404 as not_found", async () => {
+  it("dark by default: with NEITHER class flag both routes 404 as not_found", async () => {
     delete process.env.SECURELOGIC_ASK_ACTIONS_ENABLED;
     for (const path of ["/api/ask/actions/confirm", "/api/ask/actions/decline"]) {
       const res = await post(path, { token: TOKEN });
@@ -140,6 +165,60 @@ describe("ASK-B routes — flags", () => {
     process.env.SECURELOGIC_ASK_ENABLED = "false";
     const res = await post("/api/ask/actions/confirm", { token: TOKEN });
     expect(res.status).toBe(404);
+  });
+
+  it("the governed flag alone opens the surface (independence, LC-5b)", async () => {
+    delete process.env.SECURELOGIC_ASK_ACTIONS_ENABLED;
+    process.env.SECURELOGIC_ASK_GOVERNED_ENABLED = "true";
+    // Surface open; miss semantics unchanged.
+    const res = await post("/api/ask/actions/confirm", { token: TOKEN });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual(expect.objectContaining({ error: "proposal_not_found" }));
+  });
+
+  it("a MUTATE proposal cannot execute when only the governed flag is on — 409, token consumed", async () => {
+    delete process.env.SECURELOGIC_ASK_ACTIONS_ENABLED;
+    process.env.SECURELOGIC_ASK_GOVERNED_ENABLED = "true";
+    h.claimResult = RECORD; // claim happens (surface open), tool is mutate-class
+    const res = await post("/api/ask/actions/confirm", { token: TOKEN });
+    expect(res.status).toBe(409);
+    expect(h.executeCalls).toHaveLength(0);
+    expect(h.outcomes[0]).toMatchObject({ id: "prop-1", httpStatus: 503 });
+  });
+
+  it("a GOVERNED proposal cannot execute when only the actions flag is on — 409, token consumed", async () => {
+    h.toolClass = "governed";
+    h.claimResult = RECORD;
+    const res = await post("/api/ask/actions/confirm", { token: TOKEN });
+    expect(res.status).toBe(409);
+    expect(h.executeCalls).toHaveLength(0);
+  });
+
+  it("a governed proposal executes under its own flag, with the governed audit context", async () => {
+    process.env.SECURELOGIC_ASK_GOVERNED_ENABLED = "true";
+    h.toolClass = "governed";
+    h.withAuditContext = true;
+    h.claimResult = {
+      ...RECORD,
+      tool_name: "findings.close",
+      tool_input: {
+        id: "55555555-5555-4555-8555-555555555555",
+        decision_state: "resolved",
+        decision_note: "False positive: host decommissioned.",
+      },
+    };
+    const res = await post("/api/ask/actions/confirm", { token: TOKEN });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("executed");
+
+    // B-8 (governed): proposal + confirmer + transition + rationale +
+    // resulting state on ONE audit event.
+    const ev = h.auditEvents.find((e) => e.eventType === "ask.action.executed")!;
+    expect(ev).toMatchObject({ resourceId: "prop-1", actorUserId: USER });
+    const payload = ev.payload as Record<string, unknown>;
+    expect(payload.transition).toBe("decision_state → resolved");
+    expect(payload.rationale).toBe("False positive: host decommissioned.");
+    expect(payload.resulting_state).toEqual({ decision_state: "resolved" });
   });
 });
 
@@ -223,9 +302,33 @@ describe("ASK-B routes — execution is bound to the frozen proposal", () => {
 
     // The consumed claim is never reversed — there is no unclaim in the store.
     expect(h.outcomes[0]).toMatchObject({ id: "prop-1", httpStatus: 403 });
-    expect(
-      h.auditEvents.some((e) => e.eventType === "ask.action.execution_refused")
-    ).toBe(true);
+    const refusedEv = h.auditEvents.find(
+      (e) => e.eventType === "ask.action.execution_refused"
+    )!;
+    expect(refusedEv).toBeTruthy();
+    // Denials stay reason-free in the ledger (non-disclosing by construction).
+    expect((refusedEv.payload as Record<string, unknown>).refusal_detail).toBeUndefined();
+  });
+
+  it("a WORKFLOW refusal's reason lands in the audit event and the outcome digest", async () => {
+    h.claimResult = RECORD;
+    h.executeResult = {
+      ok: false,
+      error: "unavailable",
+      status: 409,
+      message: "cannot_decide",
+      latencyMs: 2,
+    };
+    const res = await post("/api/ask/actions/confirm", { token: TOKEN });
+    expect(res.body.status).toBe("refused");
+
+    expect(h.outcomes[0]).toMatchObject({
+      id: "prop-1",
+      httpStatus: 409,
+      digest: { error: "unavailable", detail: "cannot_decide" },
+    });
+    const ev = h.auditEvents.find((e) => e.eventType === "ask.action.execution_refused")!;
+    expect((ev.payload as Record<string, unknown>).refusal_detail).toBe("cannot_decide");
   });
 
   it("a tool retired between proposal and confirm is honestly unexecutable (409)", async () => {

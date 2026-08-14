@@ -60,6 +60,8 @@ export async function createProposal(args: {
   toolName: string;
   toolInput: Record<string, unknown>;
   summary: string;
+  /** Per-tool TTL override (LC-5b: risks.accept uses 5 min). */
+  ttlMs?: number;
 }): Promise<{ id: string; token: string; expiresAt: string }> {
   const token = crypto.randomBytes(32).toString("hex");
   const result = await pg.query<{ id: string; expires_at: string }>(
@@ -76,7 +78,7 @@ export async function createProposal(args: {
       JSON.stringify(args.toolInput),
       args.summary,
       hashToken(token),
-      String(PROPOSAL_TTL_MS),
+      String(args.ttlMs ?? PROPOSAL_TTL_MS),
     ]
   );
   return {

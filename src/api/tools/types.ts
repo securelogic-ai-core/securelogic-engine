@@ -104,6 +104,52 @@ export type ToolDefinition = {
    */
   summarize?: (input: Record<string, unknown>) => string;
   /**
+   * Spec-owned arguments merged OVER the model's input at proposal time
+   * (LC-5b). This is how a governed tool pins its transition literal: the
+   * model cannot choose a different target state, because the spec's value
+   * wins unconditionally — e.g. findings.close fixes
+   * `decision_state: "resolved"` and no model output can turn the tool into
+   * a different transition.
+   */
+  fixedInput?: Record<string, unknown>;
+  /**
+   * Server-side input defaulting for non-read proposals, applied AFTER
+   * fixedInput and BEFORE validation, with the proposing user's identity —
+   * e.g. risks.accept defaults the accountable owner to the proposing (and
+   * therefore confirming) user when the model names none. The result is
+   * FROZEN in the proposal row like any other input: defaults are a
+   * proposal-time act, never an execution-time one (B-4). Pure; no I/O.
+   */
+  applyDefaults?: (
+    input: Record<string, unknown>,
+    ctx: { userId: string | null }
+  ) => Record<string, unknown>;
+  /**
+   * Server-side content validation for non-read proposals, run by the
+   * orchestrator AFTER the required-fields check and BEFORE a proposal is
+   * recorded. Returns an error string (→ invalid_arguments, no proposal) or
+   * null. This is where mandatory-rationale rules live: schema `required`
+   * proves presence; this proves substance (trimmed length bounds etc.).
+   * Pure function; no I/O.
+   */
+  validateInput?: (input: Record<string, unknown>) => string | null;
+  /**
+   * Extra audit-payload fields for an EXECUTED proposal (LC-5b): rationale,
+   * the transition performed, and the resulting object state extracted from
+   * the route's own response. Pure function of (frozen input, route response
+   * data); no I/O. Required for governed tools (registry test).
+   */
+  auditContext?: (
+    input: Record<string, unknown>,
+    resultData: unknown
+  ) => Record<string, unknown>;
+  /**
+   * Per-tool confirmation TTL override in milliseconds. Defaults to the
+   * store's PROPOSAL_TTL_MS (15 min). risks.accept uses 5 minutes by
+   * operator ruling.
+   */
+  proposalTtlMs?: number;
+  /**
    * The FULL middleware chain, in order, exactly as the route registers it.
    *
    * This is the load-bearing field. It must be the same array reference (or a

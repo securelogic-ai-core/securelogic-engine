@@ -41,9 +41,12 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
 import { askToolsEnabled } from "../lib/ask/askToolsFeatureFlag.js";
 import { askStreamingEnabled } from "../lib/ask/askStreamingFeatureFlag.js";
-import { askActionsEnabled } from "../lib/ask/askActionsFeatureFlag.js";
+import { askActionsEnabled, askGovernedEnabled } from "../lib/ask/askActionsFeatureFlag.js";
 import { runAskOrchestration, type AskStreamEvent } from "../lib/ask/orchestrator.js";
 import { createProposal } from "../lib/ask/proposalStore.js";
+import { enrichProposalSummary } from "../lib/ask/governedSummaries.js";
+import { getTool } from "../tools/registry.js";
+import type { ToolActionClass } from "../tools/types.js";
 import {
   createConversation,
   findOwnedConversation,
@@ -285,11 +288,17 @@ async function runAskToolTurn(args: {
       "LLM call: ask (tool path)"
     );
 
-    // ASK-B: mutate tools reach the model only when the flag is on AND the
-    // request carries a human user identity — a proposal is confirmed by its
-    // USER, so a bare API key gets read tools only. The class list defaults
+    // ASK-B: non-read classes reach the model only under their OWN flags AND
+    // a human user identity — a proposal is confirmed by its USER, so a bare
+    // API key gets read tools only. The two flags are INDEPENDENT by operator
+    // ruling (LC-5b): each gates exactly its class. The class list defaults
     // closed inside the orchestrator; this is the single widening site.
-    const mutationsEnabled = askActionsEnabled() && userId !== null;
+    const actionClasses: ToolActionClass[] = ["read"];
+    if (userId !== null) {
+      if (askActionsEnabled()) actionClasses.push("mutate");
+      if (askGovernedEnabled()) actionClasses.push("governed");
+    }
+    const proposalsPossible = actionClasses.length > 1;
 
     const orchestration = await runAskOrchestration({
       client,
@@ -298,7 +307,7 @@ async function runAskToolTurn(args: {
       history,
       question,
       origin: req,
-      actionClasses: mutationsEnabled ? ["read", "mutate"] : ["read"],
+      actionClasses,
       ...(args.onEvent ? { onEvent: args.onEvent } : {}),
     });
 
@@ -352,22 +361,46 @@ async function runAskToolTurn(args: {
       token: string;
       expires_at: string;
     }> = [];
-    if (mutationsEnabled && userId && orchestration.proposals.length > 0) {
+    if (proposalsPossible && userId && orchestration.proposals.length > 0) {
       try {
         await withTenant(organizationId, async () => {
           for (const proposal of orchestration.proposals) {
+            // LC-5b: governed summaries carry SERVER-sourced object identity
+            // (org-scoped lookup). An object this org cannot see — a
+            // hallucinated id or a cross-tenant probe — DROPS the proposal:
+            // no row, no token, no card. Fails toward not mutating.
+            const enriched = await enrichProposalSummary(
+              organizationId,
+              proposal.toolName,
+              proposal.input,
+              proposal.summary
+            );
+            if (!enriched.ok) {
+              logger.warn(
+                {
+                  event: "ask_proposal_object_not_visible",
+                  organizationId,
+                  tool: proposal.toolName,
+                },
+                "Ask proposal dropped: target object not visible to this org"
+              );
+              continue;
+            }
             const created = await createProposal({
               organizationId,
               userId,
               conversationId,
               toolName: proposal.toolName,
               toolInput: proposal.input,
-              summary: proposal.summary,
+              summary: enriched.summary,
+              ...(getTool(proposal.toolName)?.proposalTtlMs !== undefined
+                ? { ttlMs: getTool(proposal.toolName)!.proposalTtlMs! }
+                : {}),
             });
             proposedActions.push({
               id: created.id,
               tool: proposal.toolName,
-              summary: proposal.summary,
+              summary: enriched.summary,
               token: created.token,
               expires_at: created.expiresAt,
             });
