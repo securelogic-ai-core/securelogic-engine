@@ -131,6 +131,14 @@ export type AskMessage = {
   content: string;
   /** Verified-claims structure from the provenance pass; null on user turns. */
   claims: unknown;
+  /**
+   * Provenance lifecycle: NULL (never applicable) | pending | complete |
+   * partial | failed. The UI needs this to distinguish "no citations because
+   * decomposition is still running" from "no citations because none were
+   * possible" — rendering both as a bare uncited answer is what lets an
+   * unverified answer look verified.
+   */
+  provenance_status: string | null;
   created_at: string;
 };
 
@@ -149,8 +157,8 @@ export async function loadMessages(args: {
 }): Promise<AskMessage[]> {
   const limit = Math.min(args.limit ?? 100, 200);
   const result = await pg.query<AskMessage>(
-    `SELECT id, role, content, claims, created_at FROM (
-       SELECT id, role, content, claims, created_at
+    `SELECT id, role, content, claims, provenance_status, created_at FROM (
+       SELECT id, role, content, claims, provenance_status, created_at
          FROM ask_messages
         WHERE conversation_id = $1 AND organization_id = $2
         ORDER BY created_at DESC, id DESC
@@ -194,11 +202,18 @@ export async function recordAssistantMessage(args: {
   promptVersion: string;
   claims?: unknown;
   invocations: RecordedInvocation[];
+  /**
+   * Provenance lifecycle for this turn. NULL means never applicable (no
+   * retrieval, or the feature is off) — it is not a state, and must not render
+   * as one. 'pending' means decomposition was deferred to the async worker.
+   */
+  provenanceStatus?: "pending" | "complete" | "partial" | null;
 }): Promise<string> {
   const messageResult = await pg.query<{ id: string }>(
     `INSERT INTO ask_messages
-       (organization_id, conversation_id, user_id, role, content, claims, model_id, prompt_version)
-     VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, $6, $7)
+       (organization_id, conversation_id, user_id, role, content, claims, model_id,
+        prompt_version, provenance_status)
+     VALUES ($1, $2, $3, 'assistant', $4, $5::jsonb, $6, $7, $8)
      RETURNING id`,
     [
       args.organizationId,
@@ -208,6 +223,7 @@ export async function recordAssistantMessage(args: {
       args.claims === undefined ? null : JSON.stringify(args.claims),
       args.modelId,
       args.promptVersion,
+      args.provenanceStatus ?? null,
     ]
   );
   const messageId = messageResult.rows[0]!.id;

@@ -57,6 +57,7 @@ import {
   recordUserMessage,
   type AskTurn,
 } from "../lib/ask/conversationStore.js";
+import { enqueueProvenanceJob } from "../lib/ask/provenanceJobs.js";
 import { toDisplayScore } from "../lib/postureDisplay.js";
 
 const router = Router();
@@ -328,7 +329,7 @@ async function runAskToolTurn(args: {
 
     if (conversationId) {
       try {
-        await withTenant(organizationId, () =>
+        const messageId = await withTenant(organizationId, () =>
           recordAssistantMessage({
             organizationId,
             conversationId: conversationId!,
@@ -342,8 +343,36 @@ async function runAskToolTurn(args: {
             // column always NULL and every reloaded thread citation-less.
             claims: orchestration.provenance?.claims,
             invocations: orchestration.invocations,
+            // Stamped at insert so a turn is never briefly stateless. The
+            // deferred case is written as 'pending' here and by the enqueue
+            // below; doing it in both places means a crash between them still
+            // leaves the UI telling the truth.
+            provenanceStatus: orchestration.deferredProvenance
+              ? "pending"
+              : orchestration.provenance
+                ? orchestration.provenance.clean
+                  ? "complete"
+                  : "partial"
+                : null,
           })
         );
+
+        // ── Deferred provenance ────────────────────────────────────────────
+        // Outside the persist transaction on purpose: Postgres aborts a whole
+        // transaction on any failed statement, so enqueuing inside it would let
+        // a queue problem roll back the ANSWER. Citations are what degrades
+        // here, never the answer — and a failed enqueue leaves the turn as an
+        // ordinary uncited one rather than a permanently "processing" one.
+        if (orchestration.deferredProvenance) {
+          await enqueueProvenanceJob({
+            organizationId,
+            userId,
+            messageId,
+            answer,
+            modelId: ASK_MODEL,
+            payloads: orchestration.deferredProvenance.payloads,
+          });
+        }
       } catch (persistErr) {
         logger.warn(
           { event: "ask_answer_persist_failed", organizationId, persistErr },
@@ -487,6 +516,18 @@ async function runAskToolTurn(args: {
       // is the client's alone; it exists nowhere else. Absent when there are
       // none, so pre-LC-5 consumers see an unchanged shape.
       ...(proposedActions.length > 0 ? { proposed_actions: proposedActions } : {}),
+      // The lifecycle state, so the client can render "Sources processing…"
+      // instead of silently showing an uncited answer that is about to gain
+      // citations. Absent when provenance was never applicable to this turn.
+      ...(orchestration.deferredProvenance
+        ? { provenance_status: "pending" as const }
+        : orchestration.provenance
+          ? {
+              provenance_status: (orchestration.provenance.clean
+                ? "complete"
+                : "partial") as "complete" | "partial",
+            }
+          : {}),
       // Absent rather than empty when the pass did not run, so a client can tell
       // "no provenance available" from "provenance says nothing was observed".
       ...(orchestration.provenance

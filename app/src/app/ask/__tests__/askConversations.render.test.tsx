@@ -422,3 +422,92 @@ describe("single-shot degradation", () => {
     expect(screen.queryByRole("navigation", { name: "Conversations" })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Deferred provenance — the lifecycle must be visible, and honest.
+ *
+ * A long answer is delivered before its citations exist, so the UI carries an
+ * obligation it did not have when every answer was decomposed inline: it must
+ * distinguish "citations are coming", "citations are incomplete", and "nobody
+ * verified this" from each other AND from a clean, fully-cited answer. Showing
+ * a bare uncited answer for any of them is the one unacceptable rendering.
+ */
+describe("provenance lifecycle rendering", () => {
+  const turn = (provenance_status: string | null, claims: unknown = null) => ({
+    conversation: CONVERSATIONS[0]!,
+    messages: [
+      { id: "m-1", role: "user" as const, content: "posture report?", claims: null, created_at: "2026-08-14T10:00:00Z" },
+      {
+        id: "m-2",
+        role: "assistant" as const,
+        content: "Here is the report.",
+        claims,
+        provenance_status,
+        created_at: "2026-08-14T10:00:05Z",
+      },
+    ],
+  });
+
+  it("says sources are processing — without implying anything is wrong", async () => {
+    mockList.mockResolvedValue({ conversations: CONVERSATIONS });
+    mockGet.mockResolvedValue(turn("pending"));
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByText("What are my critical findings?"));
+
+    expect(await screen.findByText("Sources processing…")).toBeInTheDocument();
+    // The answer is usable NOW — that has to be said, or "processing" reads as
+    // "incomplete answer".
+    expect(screen.getByText(/This answer is complete/)).toBeInTheDocument();
+    expect(screen.getByText("Here is the report.")).toBeInTheDocument();
+  });
+
+  it("marks a failed decomposition as uncited rather than staying silent", async () => {
+    mockList.mockResolvedValue({ conversations: CONVERSATIONS });
+    mockGet.mockResolvedValue(turn("failed"));
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByText("What are my critical findings?"));
+
+    expect(await screen.findByText("Sources unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/Treat it as uncited/)).toBeInTheDocument();
+  });
+
+  it("distinguishes a partially-verified answer from a clean one", async () => {
+    mockList.mockResolvedValue({ conversations: CONVERSATIONS });
+    mockGet.mockResolvedValue(turn("partial", CLAIMS_FIXTURE));
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByText("What are my critical findings?"));
+
+    expect(await screen.findByText("Sources partially verified")).toBeInTheDocument();
+    // Cited AND flagged — the claims still render.
+    expect(screen.getByText("Provenance · 2 claims")).toBeInTheDocument();
+  });
+
+  it("adds no banner to a clean answer — the citations are the display", async () => {
+    mockList.mockResolvedValue({ conversations: CONVERSATIONS });
+    mockGet.mockResolvedValue(turn("complete", CLAIMS_FIXTURE));
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByText("What are my critical findings?"));
+
+    expect(await screen.findByText("Provenance · 2 claims")).toBeInTheDocument();
+    expect(screen.queryByText("Sources processing…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sources unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sources partially verified")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing when provenance never applied — absence is not a state", async () => {
+    // A turn with no retrieval was never decomposable. Rendering a lifecycle
+    // banner would invent a status the engine did not report.
+    mockList.mockResolvedValue({ conversations: CONVERSATIONS });
+    mockGet.mockResolvedValue(turn(null));
+    render(<AskClient />);
+
+    fireEvent.click(await screen.findByText("What are my critical findings?"));
+
+    await screen.findByText("Here is the report.");
+    expect(screen.queryByText(/^Sources /)).not.toBeInTheDocument();
+  });
+});

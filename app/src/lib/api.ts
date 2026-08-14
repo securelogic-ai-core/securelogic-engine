@@ -5301,6 +5301,19 @@ export type AskResponse = {
     claims: AskClaim[];
   };
   /**
+   * Provenance lifecycle for this turn.
+   *
+   * `pending` is the one that changes the UI's obligations: the answer is
+   * complete and correct, but its claims are still being decomposed by the
+   * background worker because the answer was too long to decompose inside the
+   * interactive budget. Citations will arrive on the stored turn.
+   *
+   * Absent means provenance was never applicable (no retrieval). It must NOT be
+   * rendered as "verified" — an answer nobody decomposed and an answer verified
+   * clean are different things.
+   */
+  provenance_status?: "pending" | "complete" | "partial" | "failed";
+  /**
    * ASK-B (LC-5): mutations the assistant PREPARED, awaiting this user's
    * explicit confirmation. `token` is the server-issued confirmation
    * credential — it exists only in this response and must never be logged
@@ -5400,6 +5413,12 @@ export type AskConversationMessage = {
   role: "user" | "assistant";
   content: string;
   claims: unknown;
+  /**
+   * Provenance lifecycle, replayed from the record. `pending` means a deferred
+   * decomposition is still running for this turn — the reason a reloaded
+   * thread may show an answer with no citations that later gains them.
+   */
+  provenance_status?: "pending" | "complete" | "partial" | "failed" | null;
   created_at: string;
 };
 

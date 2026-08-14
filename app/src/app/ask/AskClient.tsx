@@ -243,6 +243,78 @@ function citationLabel(cit: AskClaim["citations"][number]): string {
   return parts.join(" · ");
 }
 
+/**
+ * The provenance lifecycle, rendered honestly.
+ *
+ * Three of the four states need to be visible, and for different reasons:
+ *
+ *   pending — the answer is complete; its sources are still being worked out
+ *     because it was too long to decompose while the user waited. Said plainly
+ *     and without alarm: nothing is wrong, and the answer is usable now.
+ *   partial — cited, but the verifier could not substantiate every claim. That
+ *     is materially different from a clean decomposition and must not look
+ *     identical to one.
+ *   failed — nobody verified this answer. The whole point of the provenance
+ *     feature is that an unverified answer must never be presented as a
+ *     verified one, so silence here would be the one unacceptable option.
+ *
+ * `complete` renders nothing of its own: the claims list below IS the display.
+ */
+function ProvenanceState({ status }: { status: string | null | undefined }) {
+  if (status !== "pending" && status !== "partial" && status !== "failed") return null;
+
+  const copy = {
+    pending: {
+      label: "Sources processing…",
+      detail: "This answer is complete. Its citations are still being compiled and will appear here shortly.",
+      color: "#94a3b8",
+    },
+    partial: {
+      label: "Sources partially verified",
+      detail: "Some statements could not be matched to the data they cite — those are marked as assessments below.",
+      color: "#f59e0b",
+    },
+    failed: {
+      label: "Sources unavailable",
+      detail: "Citations could not be compiled for this answer. Treat it as uncited: the underlying data has not been re-checked against these statements.",
+      color: "#f87171",
+    },
+  }[status];
+
+  return (
+    <div
+      style={{
+        marginTop: "14px",
+        padding: "8px 12px",
+        borderRadius: "8px",
+        border: `1px solid ${copy.color}33`,
+        background: `${copy.color}0f`,
+      }}
+    >
+      <div style={{ fontSize: "11px", fontWeight: 600, color: copy.color }}>
+        {status === "pending" && (
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: copy.color,
+              marginRight: "7px",
+              verticalAlign: "middle",
+            }}
+          />
+        )}
+        {copy.label}
+      </div>
+      <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "3px", lineHeight: 1.5 }}>
+        {copy.detail}
+      </div>
+    </div>
+  );
+}
+
 function ClaimsDetails({ claims }: { claims: AskClaim[] }) {
   return (
     <details style={{ marginTop: "14px" }}>
@@ -313,6 +385,8 @@ type TranscriptTurn = {
   role: "user" | "assistant";
   content: string;
   claims: AskClaim[] | null;
+  /** Provenance lifecycle for an assistant turn; see ProvenanceState. */
+  provenanceStatus?: string | null;
   contextUsed?: AskContextUsed;
 };
 
@@ -622,6 +696,7 @@ export function AskClient({
             role: "assistant",
             content: data.answer,
             claims: data.provenance ? normalizeClaims(data.provenance.claims) : null,
+            provenanceStatus: data.provenance_status ?? null,
             contextUsed: data.context_used,
           },
         ]);
@@ -800,12 +875,55 @@ export function AskClient({
             role: m.role,
             content: m.content,
             claims: m.role === "assistant" ? normalizeClaims(m.claims) : null,
+            provenanceStatus: m.role === "assistant" ? (m.provenance_status ?? null) : null,
           }))
         );
       });
     },
     [threadLoading, isPending]
   );
+
+  /**
+   * Refresh a thread whose provenance is still being compiled.
+   *
+   * Long answers hand their decomposition to a background worker, so a turn can
+   * be on screen as `pending` and gain citations a minute later. Reload always
+   * shows them — this makes the common case not require one.
+   *
+   * Deliberately modest: it polls only while something is actually pending, on
+   * the SELECTED thread, and stops on the first refresh that finds nothing
+   * pending. It never polls a thread the user is not looking at, and it never
+   * touches the composer or the live answer card, so a refresh landing
+   * mid-typing changes nothing the user can feel.
+   */
+  const pendingInTranscript = useMemo(
+    () => (transcript ?? []).some((t) => t.provenanceStatus === "pending"),
+    [transcript]
+  );
+
+  useEffect(() => {
+    if (!pendingInTranscript || !selectedId) return;
+    let cancelled = false;
+
+    const timer = setInterval(async () => {
+      const detail = await getConversationAction(selectedId);
+      if (cancelled || !detail) return;
+      setTranscript(
+        detail.messages.map((m) => ({
+          key: m.id,
+          role: m.role,
+          content: m.content,
+          claims: m.role === "assistant" ? normalizeClaims(m.claims) : null,
+          provenanceStatus: m.role === "assistant" ? (m.provenance_status ?? null) : null,
+        }))
+      );
+    }, 15_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [pendingInTranscript, selectedId]);
 
   const toggleRecording = useCallback(async () => {
     if (isRecording) {
@@ -1462,6 +1580,9 @@ export function AskClient({
                         {contextCaption(turn.contextUsed)}
                       </p>
                     )}
+                    {turn.role === "assistant" && (
+                      <ProvenanceState status={turn.provenanceStatus} />
+                    )}
                     {turn.role === "assistant" && turn.claims && (
                       <ClaimsDetails claims={turn.claims} />
                     )}
@@ -1699,6 +1820,7 @@ export function AskClient({
                 {answer.answer}
               </p>
 
+              <ProvenanceState status={answer.provenance_status} />
               {answer.provenance && normalizeClaims(answer.provenance.claims) && (
                 <ClaimsDetails claims={normalizeClaims(answer.provenance.claims)!} />
               )}

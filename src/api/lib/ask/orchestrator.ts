@@ -35,7 +35,11 @@ import type { Request } from "express";
 
 import { logger } from "../../infra/logger.js";
 import { askProvenanceEnabled } from "./askProvenanceFeatureFlag.js";
-import { runProvenancePass, type ProvenanceResult } from "./provenancePass.js";
+import {
+  runProvenancePass,
+  provenanceBudgetFor,
+  type ProvenanceResult,
+} from "./provenancePass.js";
 import { executeTool } from "../../tools/executor.js";
 import {
   resolveWireToolName,
@@ -110,7 +114,20 @@ export type OrchestrationResult = {
    * that its provenance is undecomposed.
    */
   provenance: ProvenanceResult | null;
+  /**
+   * Set when the answer was too long to decompose inside the interactive
+   * budget. Carries the AUTHORIZED tool results the answer was built from, so
+   * the caller can freeze them for the async worker — which then needs no
+   * canonical read of its own, and so cannot out-read the user who asked.
+   *
+   * `null` whenever provenance ran inline, was not applicable, or there was no
+   * retrieval to cite against.
+   */
+  deferredProvenance: { payloads: DeferredToolPayload[] } | null;
 };
+
+/** One authorized tool result, positionally aligned with `invocations`. */
+export type DeferredToolPayload = { toolName: string; authorized: boolean; data: unknown };
 
 /**
  * Summarise a tool result into a digest: row counts, returned ids, and scalar
@@ -492,18 +509,46 @@ export async function runAskOrchestration(args: {
     "Ask orchestration complete"
   );
 
-  const provenance = askProvenanceEnabled()
+  const provenanceInvocations = invocations.map((inv, i) => ({
+    toolName: inv.toolName,
+    authorized: inv.authorized,
+    data: retained[i],
+  }));
+
+  // ── Sync or defer ─────────────────────────────────────────────────────────
+  //
+  // Decomposition costs ~11x the answer in output tokens at ~85-100 tok/s
+  // (measured). For a long answer that is minutes of generation, so the
+  // interactive path cannot produce citations for it at any budget — the only
+  // question was whether it failed by refusing or by being cut off.
+  //
+  // Now it does neither: the same budget rule decides, and when it says no the
+  // turn is handed to the async worker instead of abandoned. The rule is
+  // unchanged and still owned by provenancePass — this only reads its verdict
+  // BEFORE paying for the call, so the deferral can be recorded.
+  const msRemaining =
+    typeof args.deadlineAt === "number" ? args.deadlineAt - Date.now() : undefined;
+
+  const canRunInline =
+    msRemaining === undefined ||
+    provenanceBudgetFor(answer.length, msRemaining).viable;
+
+  // Deferral needs something to cite against and something to attach to. With
+  // no retrieval there is no observed claim to make, and the caller has no
+  // conversation to write back into.
+  const deferProvenance =
+    askProvenanceEnabled() &&
+    !canRunInline &&
+    provenanceInvocations.length > 0;
+
+  const provenance = askProvenanceEnabled() && canRunInline
     ? await runProvenancePass({
         client,
         model,
         systemPrompt,
         messages: messages as Array<{ role: "user" | "assistant"; content: unknown }>,
         answer,
-        invocations: invocations.map((inv, i) => ({
-          toolName: inv.toolName,
-          authorized: inv.authorized,
-          data: retained[i],
-        })),
+        invocations: provenanceInvocations,
         // args.maxTokens is the ANSWER's budget and is deliberately NOT passed
         // on. Decomposing an answer costs more than writing it, so sharing one
         // number guaranteed the pass ran out first — the provenance pass owns
@@ -514,11 +559,32 @@ export async function runAskOrchestration(args: {
         // that exposed this — and the pass must size itself to what is left, or
         // decline. Without it the pass starts regardless and the user gets a
         // 504 instead of the answer that was already written.
-        ...(typeof args.deadlineAt === "number"
-          ? { msRemaining: args.deadlineAt - Date.now() }
-          : {}),
+        ...(msRemaining === undefined ? {} : { msRemaining }),
       })
     : null;
 
-  return { answer, invocations, proposals, iterations, stoppedBy, provenance };
+  if (deferProvenance) {
+    logger.info(
+      {
+        event: "ask_provenance_deferred",
+        answerChars: answer.length,
+        msRemaining: msRemaining ?? null,
+        invocations: provenanceInvocations.length,
+      },
+      "Answer too long to decompose inline — deferring provenance to the async worker"
+    );
+  }
+
+  return {
+    answer,
+    invocations,
+    proposals,
+    iterations,
+    stoppedBy,
+    provenance,
+    // The frozen input the deferred job needs, handed up rather than written
+    // here: the caller owns persistence and is the only layer that knows the
+    // message id these payloads belong to.
+    deferredProvenance: deferProvenance ? { payloads: provenanceInvocations } : null,
+  };
 }
