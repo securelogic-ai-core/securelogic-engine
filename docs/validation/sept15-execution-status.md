@@ -262,7 +262,15 @@ the launch program; keep Phase 7 to demoting the `vendor_assessments` /
 `vendor_reviews` writers, which is the part that delivers one authoritative path.
 Retiring a public API route is a separate decision with its own notice period.
 
-**Operator decision required before Phase 7.**
+**RESOLVED 2026-08-13** by the Launch Completion directive (item 1), executed
+per this recommendation: the `vendor_assessments`/`vendor_reviews` writers are
+demoted behind `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` (ships dark; staging
+runs the demoted state); `POST /api/assess` is preserved as a compatibility
+path. Two corrections to this record from the full writer sweep: the vendor
+writers DO have first-party UI callers (the vendor page's assess/review flows
+— now flag-swapped to the engagement intake), and the GDPR account-deletion
+reaper is a sanctioned `vendor_reviews` writer preserved by allowlist. Full
+disposition + proof: `launch-completion-status.md` §1.
 
 ### B2 — Production R2 configuration (D2)
 

@@ -17,13 +17,21 @@ import type { VendorEngagementIntakeInput } from "@/lib/api";
 
 type Props = {
   vendors: Array<{ id: string; name: string }>;
+  /** Preselects the vendor (deep links from the vendor page's demoted legacy
+   * CTAs). Ignored unless it names a vendor in the list — an arbitrary query
+   * value must not smuggle in an id the picker wouldn't offer. */
+  defaultVendorId?: string;
 };
 
 const UNANSWERED = "";
 
-export default function CreateEngagementForm({ vendors }: Props): JSX.Element {
+export default function CreateEngagementForm({ vendors, defaultVendorId }: Props): JSX.Element {
   const router = useRouter();
-  const [vendorId, setVendorId] = useState(UNANSWERED);
+  const [vendorId, setVendorId] = useState(
+    defaultVendorId && vendors.some((v) => v.id === defaultVendorId)
+      ? defaultVendorId
+      : UNANSWERED
+  );
   const [engagementType, setEngagementType] = useState<
     "initial" | "periodic" | "targeted" | "event_driven"
   >("initial");

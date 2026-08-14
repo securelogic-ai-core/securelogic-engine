@@ -12,7 +12,11 @@ import CreateEngagementForm from "@/components/vendorEngagements/CreateEngagemen
  * every field: the engine deliberately refuses a defaulted intake (a confident
  * score from answers nobody gave), and this page mirrors that stance.
  */
-export default async function NewVendorEngagementPage() {
+export default async function NewVendorEngagementPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | undefined>>;
+}) {
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
@@ -21,6 +25,11 @@ export default async function NewVendorEngagementPage() {
 
   const vendorsResp = await getVendors(token, "active", { limit: 100 });
   const vendors = (vendorsResp?.vendors ?? []).map((v) => ({ id: v.id, name: v.name }));
+
+  // Deep links from the vendor page's demoted legacy CTAs carry ?vendorId=;
+  // the form validates it against the fetched vendor list before honoring it.
+  const sp = searchParams ? await searchParams : {};
+  const defaultVendorId = sp.vendorId;
 
   return (
     <main style={{ padding: "32px", maxWidth: 860, margin: "0 auto", color: "#e5e7eb" }}>
@@ -41,7 +50,10 @@ export default async function NewVendorEngagementPage() {
           No active vendors on record. <Link href="/vendors/new" style={{ color: "#93c5fd" }}>Add a vendor</Link> first.
         </div>
       ) : (
-        <CreateEngagementForm vendors={vendors} />
+        <CreateEngagementForm
+          vendors={vendors}
+          {...(defaultVendorId !== undefined ? { defaultVendorId } : {})}
+        />
       )}
     </main>
   );

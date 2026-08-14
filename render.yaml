@@ -305,6 +305,14 @@ services:
       # Off = every /api/ask request 404s BEFORE any DB read or provider call.
       - key: SECURELOGIC_ASK_ENABLED
         value: "true"
+      # B1 demotion (Launch Completion 1): the legacy Vendor Assurance write
+      # routes (POST /api/vendor-assessments, POST/PATCH /api/vendor-reviews).
+      # "true" = legacy writes still accepted (current prod behavior, GATE B —
+      # ship dark). The demoted state ("false" -> 410 Gone + engagement
+      # pointer) is validated on staging first; the prod flip is an operator
+      # cutover step. Only the literal "false" disables. Reads are unaffected.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "true"
 
       # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
       # POST /api/ask from the eight-query snapshot to the platform tool
@@ -650,6 +658,12 @@ services:
       # Off = every /api/ask request 404s BEFORE any DB read or provider call.
       - key: SECURELOGIC_ASK_ENABLED
         value: "true"
+      # B1 demotion (Launch Completion 1): staging runs the DEMOTED state —
+      # legacy vendor writes 410 with the engagement pointer — so the cutover
+      # is validated here before any prod flip. Prod stays "true" until the
+      # operator flips it.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "false"
 
       # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
       # POST /api/ask from the eight-query snapshot to the platform tool
@@ -1486,6 +1500,13 @@ services:
       # belongs to the Intelligence Brief product flags; do not shorten.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
         value: "false"
+      # B1 demotion (Launch Completion 1), app half of the two-switch: "true"
+      # keeps the legacy assess/review CTAs and forms; "false" swaps every
+      # legacy write CTA for the engagement workflow entry point. Keep in
+      # lockstep with the engine's flag — the UI must never offer a write the
+      # engine 410s.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "true"
 
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
@@ -1635,6 +1656,11 @@ services:
       # RUNTIME env — a restart applies, no rebuild.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
         value: "true"
+      # B1 demotion (Launch Completion 1), app half: staging renders the
+      # DEMOTED state (engagement CTAs, retired legacy forms) to match the
+      # staging engine's "false".
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "false"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
       - key: SESSION_SECRET

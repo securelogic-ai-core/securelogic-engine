@@ -884,7 +884,7 @@ describe("/vendors/[id] — framework assessment progress", () => {
 describe("/vendors/[id] — remaining empty states explain what to do", () => {
   it("Active Findings empty state explains where findings come from and offers the assess flow", async () => {
     const { container } = await renderPage(VendorDetailPage, props("v-1"));
-    expect(screen.getByText(/findings appear here when an assessment or review cycle identifies an issue/)).toBeInTheDocument();
+    expect(screen.getByText(/findings appear here when an assessment, review cycle, or engagement identifies an issue/)).toBeInTheDocument();
     expect(hrefOf(container, "Run an assessment")).toBe("/vendors/v-1/assess");
   });
 
