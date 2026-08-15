@@ -13,8 +13,9 @@
 > **§3 (agentic) remains UNEXECUTED.** Execution surfaced one P1 (**W-3**, in
 > the promotion delta: a one-character constraint-name typo means the vendor
 > questionnaire hard-blocks on any requirement the vendor already answered),
-> one spec-vs-code conflict needing an operator ruling (**W-2**, invite links
-> are replayable for 30 days by design), and one P2 (**W-1**). The walkthrough
+> one spec-vs-code conflict (**W-2**, invite links are replayable for 30 days by
+> design — **RULED 2026-08-15: keep the behaviour, §1.4 corrected to match**),
+> and one P2 (**W-1**). The walkthrough
 > is NOT READY-complete: §3, the fail-path finding promotion, and the §4 human
 > gates remain.
 >
@@ -354,7 +355,7 @@ BEFORE triggering the deploy, or same-SHA rebuild after setting them.
 | 1.1 | Create vendor → start engagement (intake, `engagement_type=initial`) | Engagement in `draft→scoping`; inherent risk computed from intake (9 dims) | `vendor_engagements` row; `audit` events on create |
 | 1.2 | Inherent override (if exercised) | `residual_basis` provenance kept | `inherent_understated` trace |
 | 1.3 | Scope resolution → questionnaire issued | Frozen scope items; state `issued`; invite created | `vendor_engagement_scope_items` frozen; invite row with token_hash only |
-| 1.4 | **External vendor** opens invite link (portal flag on) | One-time exchange → httpOnly session; invite link dead afterward | `vendor_portal_sessions` row; byte-identical 401 on reuse |
+| 1.4 | **External vendor** opens invite link (portal flag on) | Exchange → httpOnly session. The link stays usable until it expires or is revoked, so a vendor can return to it from the same email; each exchange is counted and audited | `vendor_portal_sessions` row per exchange; `vendor_engagement_invites.exchange_count` incremented with `first_exchanged_at`/`last_exchanged_at`; `410 portal_link_expired` after expiry, `401 portal_link_invalid` once revoked |
 | 1.5 | Vendor answers requirements, uploads evidence, submits | Per-engagement byte/file budgets enforced; `submitted` | `requirement_response_revisions` (responder_type=vendor); evidence rows with `uploaded_via_invite_id` |
 | 1.6 | Reviewer: begin review → evidence analysis → clarification round trip | `clarification_requested→in_progress` reachable; comment `visibility` respected (internal never portal-visible) | comments rows; analysis worker output |
 | 1.7 | Promote engagement findings; create remediation actions | Findings born with correct source_type; actions linked | `vendor_engagement_findings`; `finding.created`/`action.created` |
@@ -434,7 +435,7 @@ real state change on staging, not a probe:
 |---|---|---|
 | 1.1 | — | engagement pre-existed in `draft` |
 | 1.3 | **PASS** | `POST /scope` → 3 scoped, 0 excluded, `tier_2_high`, rule v1.0.0; `POST /issue` → `issued`, 64-char raw token returned **once** (SHA-256 only persisted), expiry +30d |
-| 1.4 | **PASS, with a spec conflict — see W-2** | `POST /vendor-portal/session` with the token alone → 200, `sl_vendor_portal` cookie **httpOnly + Secure + path-scoped to `/api/vendor-portal`**; status auto-advanced `issued → in_progress` |
+| 1.4 | **PASS** | `POST /vendor-portal/session` with the token alone → 200, `sl_vendor_portal` cookie **httpOnly + Secure + path-scoped to `/api/vendor-portal`**; status auto-advanced `issued → in_progress`. One token minted three live sessions — **correct as ruled (W-2)**, and §1.4 above now says so |
 | 1.4a | **PASS** | Vendor's own view exposes only `organization_name, vendor_name, title, status, due_date, accepting_responses` — **no inherent score, no internal fields** |
 | 1.5 | **PASS** | 3 answers saved (`pass`/`pass`/`pass`); `POST /submit` → `submitted`. An earlier submit correctly refused `422 incomplete, unanswered_required: 1` |
 | 1.6 | **PASS** | `begin-review` → `in_review`; `complete-analysis` → `analysis_complete`, `analysis_coverage: deterministic_only` |
@@ -490,18 +491,25 @@ executable by the same method — including 3.8's separation-of-duties leg, sinc
   Fix is a new migration dropping the correctly-named constraint. NOT applied
   in this session.
 
-- **W-2 (ruling needed, not a code defect) — §1.4's "one-time exchange" is not
-  what shipped.** This plan says the invite link is "dead afterward" with a
-  "byte-identical 401 on reuse". Observed: the same token minted **three
-  distinct sessions**, all live. That is deliberate — `20260923` states
+- **W-2 — RULED 2026-08-15: invites stay replayable. §1.4 corrected above.**
+  This plan had specified a one-time invite ("dead afterward", "byte-identical
+  401 on reuse"). Execution found one token minting **three distinct live
+  sessions**. The code is deliberate and the SPEC was stale: `20260923` states
   "Re-exchange is permitted until expiry so the vendor can return via the same
-  email; each one is audited", and the compensating controls are real
-  (`exchange_count` incremented, first/last timestamps, `writeAuditEvent` on
-  every exchange, httpOnly+Secure+path-scoped cookie, 30-day expiry,
-  revocation). So the SPEC is stale, not the code — but the security
-  characteristic deserves explicit acceptance before portal enablement: **an
-  emailed invite is a bearer credential, replayable for 30 days by anyone who
-  sees the mail.** Operator ruling owed; do not silently edit §1.4.
+  email; each one is audited", and every compensating control it implies is
+  real — `exchange_count` incremented, `first_exchanged_at`/`last_exchanged_at`
+  stamped, `writeAuditEvent` on each exchange, httpOnly + Secure +
+  path-scoped cookie, 30-day expiry, revocation supported, and the vendor's own
+  view exposes no inherent score or internal fields.
+
+  **Accepted with the ruling, and stated so it is not rediscovered as a
+  surprise:** an emailed invite is a **bearer credential, replayable for up to
+  30 days by anyone who can read the mail** — forwarded copies, shared
+  mailboxes, archives and mail-scanning appliances included. Revocation is the
+  control that answers this, and it is manual. Two things follow, neither
+  blocking: revocation should be the documented response to a mis-sent invite,
+  and if a shorter window is ever wanted it is an expiry change, not a
+  single-use change. **No code change. §1.4 rewritten to match what ships.**
 
 - **W-1 (P2) — Ask's navigation guidance is not requester-aware.** Asked for the
   audit log, the **analyst** was told "Navigate to **Audit Log** in the top
