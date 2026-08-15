@@ -121,7 +121,13 @@ failure, identical migration, exit 1.** Byte-identical behaviour.
 Production is unaffected today because its migrations accreted incrementally.
 The exposure is **disaster recovery and new-environment provisioning**: neither
 can currently be done with the supported command. Not fixed here — this commit is
-scoped to the timeout hardening — but it should not stay unrecorded.
+scoped to the timeout hardening.
+
+**Written up separately, with full scope and options:
+`docs/validation/migrate-from-scratch-defect.md`.** Measured there: exactly ONE
+migration of 222 is misordered, and the misnamed file is the dependency
+(`20260522_alert_preferences.sql`, committed 2026-04-17 with a filename dated
+five weeks later), not the dependent.
 
 ---
 
