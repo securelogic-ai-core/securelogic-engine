@@ -204,6 +204,11 @@ scales linearly and the lock-queue exposure scales with traffic, not row count.
 
 ### Recommended hardening — not a BL-1 blocker
 
+> **IMPLEMENTED 2026-08-15 at `b363e144`**, as its own commit exactly as this
+> section required. Defaults `lock_timeout=5s` / `statement_timeout=300s`, with
+> 22 unit + 6 real-Postgres regression tests. Evidence:
+> `docs/validation/migration-timeout-hardening.md`.
+
 Set `lock_timeout` (2–5 s) and a `statement_timeout` in `scripts/runMigrations.ts`.
 Measured benefit: converts an unbounded read stall into a fast, retryable deploy
 failure — 7,989 ms of blocked reads became 123 ms. The trade is that a contended

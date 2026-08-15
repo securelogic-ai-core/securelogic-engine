@@ -374,6 +374,12 @@ migration risk; R2–R4 are flag flips with cheap rollbacks.
 > both require a human, not a test run. Evidence:
 > `docs/validation/bl1-migration-lock-exposure.md`,
 > `docs/validation/bl3-suite-verification.md`.
+>
+> **The promotion candidate has since moved to `b363e144`** (migration
+> lock/statement timeout hardening, BL-1's recommended follow-up landed as its
+> own commit). That SHA carries its own independent eight-job evidence in
+> `docs/validation/migration-timeout-hardening.md`. The `59d85b18` numbers are
+> NOT transferred to it — check which SHA you are promoting.
 
 | # | Criterion | GO condition | Status |
 |---|---|---|---|
