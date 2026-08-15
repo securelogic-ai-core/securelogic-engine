@@ -527,7 +527,7 @@ direction. What is NOT proven — and cannot be, in the product as it stands —
 LC-2's per-class corpus filtering, because no non-premium request ever reaches
 the code that performs it.
 
-#### W-6 (P2) — LC-2's requester-aware corpus filter is unreachable for the classes it was built for
+#### W-6 (P2) — CLOSED 2026-08-15 at `c3d1d613` — the filter was unreachable for the classes it was built for
 
 `ask.ts` computes `requesterClass` from the org's entitlement and selects one of
 **three** memoized system prompts (`starter`, `professional`, `premium`), so that
@@ -543,13 +543,20 @@ an active control, cannot fire, and would pass any review that reads the code
 rather than exercising it. Two readings, and the choice is a product decision,
 not an engineering one:
 
-- **Ask is intentionally platform-only** → the lower-tier variants should be
-  deleted or explicitly documented as unreachable, and §2.5 rewritten, because
-  it currently describes a behaviour the product does not have.
-- **Ask is intended for Brief Pro / Brief Team** → the premium gate on those four
-  routes is too strict and is denying paying customers a feature they bought.
+**RULED: Ask is platform-only.** Fixed at `c3d1d613`, and NOT by deleting the
+variants. `renderProductKnowledge` is shared and independently tested, and the
+filtering itself was never the broken part; hard-coding the premium variant
+would turn a future gate change into a silent leak of platform surface names
+into a lower tier's prompt — a live risk, since Brief Pro and Brief Team are
+sold tiers. What was wrong is that it LOOKED active while being unable to fire.
+It is now a guarded invariant: `resolveRequesterClass()` logs
+`ask_entitlement_class_unexpected` at error level if a non-premium class ever
+arrives, and `src/api/tests/askRoutesArePlatformOnly.test.ts` pins the gate at
+source level. That test was verified to FAIL when one premium guard is removed,
+naming the offending route. Verified live: the alarm is silent in normal
+operation (0 occurrences) and a platform user's Ask call still returns 200.
 
-#### W-7 (P2) — the app serves the full Ask UI to a tier the API refuses
+#### W-7 (P2) — CLOSED 2026-08-15 at `c3d1d613` — the app served the full Ask UI to a tier the API refuses
 
 `GET /ask` returns **200** to the professional user and renders the complete
 interface: the textarea, "Ask anything about your risk posture in plain
@@ -560,9 +567,15 @@ Every question typed into it will 403.
 
 The nav is filtered correctly (`Briefing · Intelligence · Audit Log`) and the
 other platform pages 307, so this is specifically `/ask` disagreeing with its own
-API. A Professional customer is invited into a dead end. Fix is either an
-entitlement gate on the page or an honest upgrade state; both are product
-decisions tied to W-6's ruling.
+API. A Professional customer is invited into a dead end.
+
+**FIXED at `c3d1d613`**: `/ask` now applies `isPlatformEntitled` and redirects,
+matching `vendor-assurance`, `vendor-engagements`, `findings` and `risks`. A
+one-off upsell panel on this page alone would have been a second, inconsistent
+answer to a question the app has already settled. Verified live on staging in
+BOTH directions — professional user `/ask` → **307**, followed to the dashboard
+with **zero** textareas; platform user `/ask` → **200**, unchanged. A gate that
+broke the entitled case would be worse than the defect it fixed.
 
 #### W-5 (P2) — a governance control that cannot be evidenced from its own audit record
 
