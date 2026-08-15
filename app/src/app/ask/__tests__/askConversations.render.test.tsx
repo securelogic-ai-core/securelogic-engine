@@ -23,6 +23,7 @@ import {
   listConversationsAction,
   getConversationAction,
 } from "../actions";
+import type { AskConversationMessage } from "@/lib/api";
 
 // The server actions are "use server" — jsdom cannot cross that boundary.
 // These tests assert what is RENDERED and what the client PASSES to them.
@@ -433,7 +434,14 @@ describe("single-shot degradation", () => {
  * a bare uncited answer for any of them is the one unacceptable rendering.
  */
 describe("provenance lifecycle rendering", () => {
-  const turn = (provenance_status: string | null, claims: unknown = null) => ({
+  // Typed to the real contract rather than `string | null`: a widened string is
+  // not assignable to AskConversationMessage["provenance_status"], and typing it
+  // loosely here would let a misspelled status ("complet") pass the type check
+  // and fail only at assertion time.
+  const turn = (
+    provenance_status: AskConversationMessage["provenance_status"],
+    claims: unknown = null
+  ) => ({
     conversation: CONVERSATIONS[0]!,
     messages: [
       { id: "m-1", role: "user" as const, content: "posture report?", claims: null, created_at: "2026-08-14T10:00:00Z" },
