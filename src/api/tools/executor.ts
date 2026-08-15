@@ -382,10 +382,44 @@ export async function executeTool(
  * Surface a route's own `error` code for argument faults only. Deliberately not
  * used for denials: those must stay indistinguishable.
  */
+/**
+ * The route's own machine-readable explanation of a refusal, for the audit
+ * trail and the confirmation card.
+ *
+ * WHY BOTH FIELDS (W-5)
+ * ---------------------
+ * This read only `body.error`, so a route that reports a generic code plus a
+ * specific cause lost the cause. Walkthrough §3.6 caught it on the control that
+ * matters most: separation of duties on finding closure IS enforced, but
+ * `PATCH /api/findings/:id` answers
+ *
+ *   { "error": "invalid_decision_transition", "reason": "separation_of_duties", … }
+ *
+ * and only the generic half reached the user and the `refusal_detail` audit
+ * field. An auditor asked to evidence separation of duties got the same string
+ * for an SoD block as for any other illegal transition — a control that works
+ * but cannot be shown working fails its review.
+ *
+ * NEITHER FIELD IS RELIABLY THE SPECIFIC ONE, which is why this composes rather
+ * than picking a winner:
+ *
+ *   findings          error "invalid_decision_transition"  reason "separation_of_duties"  → reason is specific
+ *   vendorEngagements error "cannot_decide"                reason "illegal_transition"    → ERROR is specific
+ *
+ * Preferring either field would discard the more informative half in the other
+ * case. Composing keeps both, and keeps the generic code FIRST so anything
+ * already matching on it by prefix continues to.
+ *
+ * Bodies carrying only `error` (the common case, e.g. `cannot_decide`,
+ * `close_requires_remediation_complete`) are unchanged.
+ */
 function describeError(body: unknown): string | null {
-  if (body && typeof body === "object" && "error" in body) {
-    const e = (body as { error?: unknown }).error;
-    if (typeof e === "string") return e;
-  }
-  return null;
+  if (!body || typeof body !== "object") return null;
+  const e = (body as { error?: unknown }).error;
+  const r = (body as { reason?: unknown }).reason;
+  const error = typeof e === "string" && e.length > 0 ? e : null;
+  const reason = typeof r === "string" && r.length > 0 ? r : null;
+
+  if (error && reason && reason !== error) return `${error}: ${reason}`;
+  return error ?? reason;
 }
