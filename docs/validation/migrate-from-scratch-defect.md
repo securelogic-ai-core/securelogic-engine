@@ -4,8 +4,13 @@
 hardening (`docs/validation/migration-timeout-hardening.md` §4). **This defect is
 pre-existing and was not caused by that change** — proof in §2.
 
-**Status: OPEN. Not fixed.** A fix requires a decision between three options
-(§7). Nothing here has been changed in the runner.
+**Status: FIXED 2026-08-15.** Option B was taken, with the regression test the
+recommendation called for. `20260522_alert_preferences.sql` is renamed to
+`20260417_alert_preferences.sql` (its real commit date) and
+`test/isolation/migrationFilenameOrder.test.ts` now proves the whole set applies
+to a fresh database in strict filename order. **No retry was added to
+`scripts/runMigrations.ts`** — see §9 for the measured result and §7 Option A
+for why retry stays out.
 
 **Severity: P2.** No customer impact today, no production impact today. It
 breaks disaster recovery, new-environment provisioning, and the documented
@@ -173,9 +178,75 @@ next future-dated filename reintroduces this silently.
 
 ---
 
-## 8. Explicitly not done
+## 8. What was done
 
-No runner change, no rename, no new test. This document exists so the defect is
-recorded rather than carried in one session's head, and the option choice is the
-operator's. It is **not** a promotion blocker: it does not affect the
-`develop → main` gate, whose two open blockers remain BL-2 and BL-4.
+Option **B + a regression test**, exactly as recommended. Option A (retry in the
+runner) was explicitly **not** taken and remains available as a follow-on.
+
+1. `db/migrations/20260522_alert_preferences.sql` →
+   `db/migrations/20260417_alert_preferences.sql`. Content unchanged apart from
+   a header recording the rename and why the file must stay re-appliable.
+2. `test/isolation/migrationFilenameOrder.test.ts` — creates its own scratch
+   database on the harness server and applies all 222 migrations with the
+   deploy's own `listMigrationFilenames` order and `applyMigration` transaction
+   body, **no retry**. Runs in the existing `cross-org-isolation` CI job; no
+   workflow change was needed.
+3. `src/api/lib/migrationRunner.ts` gained `listMigrationFilenames`,
+   `ensureMigrationTable`, `SCHEMA_MIGRATIONS_DDL` and `migrationsDirFrom`,
+   lifted out of `scripts/runMigrations.ts` so the test cannot sort or bootstrap
+   differently from the deploy. This also moves that logic into the typechecked
+   tree — `scripts/**` is typechecked by nothing (§6.4), and the omission bit
+   during this very change: an unused-import cleanup dropped `import path` while
+   `path.join` was still live, and only running the script surfaced it.
+4. `test/isolation/testDb.ts` — the retry passes are kept as harness tolerance
+   but the comment no longer presents them as the ordering guarantee. `deferred`
+   should now always be empty.
+
+---
+
+## 9. Measured result
+
+Postgres 16, throwaway Docker harness, 2026-08-15.
+
+### From scratch, strict filename order
+
+| | Before rename | After rename |
+|---|---|---|
+| `npm run migrate` on an empty DB | **failed at file 53 of 222** — `relation "user_alert_preferences" does not exist` | **exit 0, 222/222 applied**, "Migrations complete", 5.2s |
+| Regression test | fails, naming file 53 | passes — `[migration-order] 222/222 migrations applied to a fresh database in strict filename order in 4711ms (no retry, no deferrals)` |
+
+The regression test was written and run **before** the rename to confirm it
+reproduces the documented failure, then re-run after.
+
+### Re-application against an existing environment
+
+The scratch database was fully migrated, then its bookkeeping rewound to look
+like staging/prod — the `20260417` row deleted, a `20260522_alert_preferences.sql`
+row inserted — and rows seeded into both affected tables with a
+**non-default** value (`daily_digest = FALSE`) so a silent recreate would show.
+Running the real runner then performed exactly the upgrade a deploy will perform:
+
+- applied **one** migration, `20260417_alert_preferences.sql`; exit 0
+- `pg_dump --schema-only` before vs after: **no difference** (the only delta is
+  pg_dump's own random `\restrict` nonce)
+- `user_alert_preferences` still 1 row with `daily_digest = false`;
+  `alert_sends` still 1 row — no data loss
+- `schema_migrations` ends at 223 rows carrying **both** filenames, as F-1
+  predicts. Benign, and now deliberate rather than accidental.
+
+A further run with nothing pending applied 0 migrations and exited 0.
+
+### Operator note
+
+On the next deploy, staging and prod will each apply
+`20260417_alert_preferences.sql` once and permanently carry both rows in
+`schema_migrations`. That is expected and proven harmless above. No operator
+action is required, and no backfill or re-stamp is needed.
+
+---
+
+## 10. Still open
+
+Nothing from this defect. It was **not** a promotion blocker before the fix and
+is not one now: it does not affect the `develop → main` gate, whose two open
+blockers remain BL-2 and BL-4.

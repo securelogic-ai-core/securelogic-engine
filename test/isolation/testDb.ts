@@ -83,19 +83,24 @@ async function applyOne(pool: Pool, file: string): Promise<void> {
 }
 
 /**
- * Apply every migration. Files are tried in filename order, but a from-scratch
- * rebuild cannot rely on filename order alone: some migrations carry a
- * filename date that predates the migration they depend on (e.g.
- * 20260504_user_alert_preferences_org_scope.sql ALTERs a table that
- * 20260522_alert_preferences.sql CREATEs). Production is unaffected — it
- * accreted migrations in commit order and schema_migrations recorded that —
- * but a clean rebuild fails. So this runner makes repeated passes: any
- * migration that fails is retried after the rest. If a pass applies nothing,
- * the remaining failures are a genuine error and are surfaced.
+ * Apply every migration, in filename order, with retry passes: any migration
+ * that fails is retried after the rest, and a pass that applies nothing means
+ * the remaining failures are genuine and are surfaced.
  *
- * `deferred` lists migrations that only applied on a retry pass — i.e. those
- * whose filename order is wrong. It is logged so the harness surfaces the
- * ordering defect rather than silently papering over it.
+ * The retry is NOT the ordering guarantee, and must not be mistaken for one.
+ * It existed because one migration genuinely was misordered — a file dated
+ * 20260522 that CREATEs `user_alert_preferences`, which
+ * 20260504_user_alert_preferences_org_scope.sql ALTERs — and this harness
+ * quietly routed around it for months while `npm run migrate` died at file 53
+ * on any empty database. That file has since been renamed to
+ * 20260417_alert_preferences.sql, and strict filename order is now proven on a
+ * fresh database by test/isolation/migrationFilenameOrder.test.ts, which uses
+ * the deploy's own applier with NO retry.
+ *
+ * The retry is kept only as harness tolerance, so one new inversion breaks one
+ * targeted test rather than every isolation suite at once. `deferred` should
+ * therefore be EMPTY. A non-empty list means a new filename inversion has been
+ * introduced; migrationFilenameOrder.test.ts is the failure that explains it.
  */
 async function applyMigrations(
   pool: Pool,

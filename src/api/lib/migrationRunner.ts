@@ -24,6 +24,9 @@
  * unbounded.
  */
 
+import fs from "fs";
+import path from "path";
+
 /** Minimal shape of a pg client. Structural so tests can pass a fake. */
 export interface MigrationQueryClient {
   query(sql: string, values?: unknown[]): Promise<unknown>;
@@ -34,6 +37,54 @@ export interface MigrationTimeouts {
   lockTimeout: string;
   /** Max runtime of a single statement. Backstop against a runaway migration. */
   statementTimeout: string;
+}
+
+/**
+ * The `schema_migrations` bookkeeping table. Lives here rather than inline in
+ * scripts/runMigrations.ts so that anything rebuilding a schema — the deploy
+ * runner and the from-scratch regression test alike — creates the identical
+ * table. A test that invented its own DDL would be proving something about
+ * itself, not about the deploy.
+ */
+export const SCHEMA_MIGRATIONS_DDL = `
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id SERIAL PRIMARY KEY,
+    filename TEXT NOT NULL UNIQUE,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`;
+
+export async function ensureMigrationTable(
+  client: MigrationQueryClient
+): Promise<void> {
+  await client.query(SCHEMA_MIGRATIONS_DDL);
+}
+
+/**
+ * The apply order, defined in exactly one place.
+ *
+ * `.sort()` is a plain lexicographic sort of the filenames — there is no
+ * dependency resolution, no retry, and no second pass. A migration that
+ * depends on a later-sorting file therefore FAILS THE DEPLOY, which is why
+ * db/migrations filenames must be monotonic with respect to their
+ * dependencies. test/isolation/migrationFilenameOrder.test.ts enforces that
+ * on a fresh database so the rule is checked by CI rather than by an author
+ * remembering it.
+ *
+ * Exported so the regression test sorts with the same function the deploy
+ * uses; if these two ever diverged, the test would be green about the wrong
+ * order.
+ */
+export function listMigrationFilenames(migrationsDir: string): string[] {
+  return fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+}
+
+/** Canonical location of the migration set, relative to the repo root. */
+export function migrationsDirFrom(repoRoot: string): string {
+  return path.join(repoRoot, "db", "migrations");
 }
 
 /**

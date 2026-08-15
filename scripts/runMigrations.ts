@@ -6,6 +6,9 @@ import path from "path";
 import {
   applyMigration,
   describeMigrationFailure,
+  ensureMigrationTable,
+  listMigrationFilenames,
+  migrationsDirFrom,
   resolveMigrationTimeouts,
 } from "../src/api/lib/migrationRunner.js";
 
@@ -27,17 +30,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-const migrationsDir = path.join(process.cwd(), "db", "migrations");
-
-async function ensureMigrationTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id SERIAL PRIMARY KEY,
-      filename TEXT NOT NULL UNIQUE,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-}
+const migrationsDir = migrationsDirFrom(process.cwd());
 
 async function getAppliedMigrations(): Promise<Set<string>> {
   const res = await pool.query(
@@ -48,14 +41,14 @@ async function getAppliedMigrations(): Promise<Set<string>> {
 }
 
 async function run() {
-  await ensureMigrationTable();
+  await ensureMigrationTable(pool);
 
   const applied = await getAppliedMigrations();
 
-  const files = fs
-    .readdirSync(migrationsDir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
+  // Strict filename order, no retry, no dependency resolution — see
+  // listMigrationFilenames. test/isolation/migrationFilenameOrder.test.ts
+  // proves this exact order rebuilds the schema from empty.
+  const files = listMigrationFilenames(migrationsDir);
 
   console.log(
     `Migration timeouts: lock_timeout=${timeouts.lockTimeout}, ` +
