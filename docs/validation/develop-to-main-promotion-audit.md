@@ -6,6 +6,12 @@ flipped or modified to produce this document.
 **Verdict up front: NO-GO for a promotion today.** Four blockers, listed in §10.
 None is "needs more testing" hand-waving; each is a specific, checkable fact.
 
+> **Status 2026-08-15 — still NO-GO, now on two blockers.** BL-1 (migration lock
+> exposure) and BL-3 (suite verification at `59d85b18`) are CLOSED. **BL-2**
+> (staging walkthrough legs) and **BL-4** (Vendor Assurance nav decision) remain
+> OPEN. Neither can be closed by anything this repository can run — BL-2 needs a
+> human in a browser, BL-4 needs an operator ruling. See §10.
+
 ---
 
 ## 1. Current SHAs
@@ -362,13 +368,18 @@ migration risk; R2–R4 are flag flips with cheap rollbacks.
 
 ## 10. PRE-PRODUCTION RELEASE GATE — explicit GO/NO-GO
 
-### Blockers — ALL must clear. Currently **4 open → NO-GO**
+### Blockers — ALL must clear. Currently **2 open → NO-GO**
+
+> **Update 2026-08-15.** BL-1 and BL-3 are CLOSED; BL-2 and BL-4 remain open and
+> both require a human, not a test run. Evidence:
+> `docs/validation/bl1-migration-lock-exposure.md`,
+> `docs/validation/bl3-suite-verification.md`.
 
 | # | Criterion | GO condition | Status |
 |---|---|---|---|
-| **BL-1** | **Migration lock exposure quantified** | `count(*)` measured on `evidence`, `findings`, `requirements`; `20260925`/`20260928` timed against a production-sized restore; a `lock_timeout` set for the migration run **or** a declared maintenance window accepted | **OPEN** — unmeasurable from this session (no prod DB credential) |
+| **BL-1** | **Migration lock exposure quantified** | `count(*)` measured on `evidence`, `findings`, `requirements`; `20260925`/`20260928` timed against a production-sized restore; a `lock_timeout` set for the migration run **or** a declared maintenance window accepted | **CLOSED — GO** (`0a3f647b`). ~220 ms total `ACCESS EXCLUSIVE` across all 15 migrations; 2.56 s boot-blocking. **Valid only while production remains empty** — re-measure if promotion slips past the first real data load |
 | **BL-2** | **Staging walkthrough executed** | §1–§3 legs completed by a human in a browser, **including under `RISK_WORKSPACE_ENABLED=false`** to match production nav | **OPEN** — REOPENED, legs unexecuted |
-| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **OPEN** — not verifiable from this session |
+| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **CLOSED** at **`59d85b18`**. All 8 CI jobs reproduced locally: engine 8,052 / app 1,738 / isolation 1,158 / lint 0 errors / both builds clean. `audit` red **verified inherited** — `undici` + `postcss` unchanged from `main`. Limitation: local reproduction, not the GitHub Actions run (no `gh` in session) |
 | **BL-4** | **VA nav decision made and recorded** | Operator rules explicitly: VA URL-only in prod, **or** flip the workspace nav with its own validation | **OPEN** |
 
 ### Conditions — must hold at promotion time
