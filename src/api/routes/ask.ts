@@ -139,6 +139,52 @@ export function buildAskSystemPrompt(cls?: EntitlementClass): string {
 }
 
 /**
+ * The requester's entitlement class, for the product-knowledge prompt variant.
+ *
+ * ASK IS A PLATFORM SURFACE (ruling 2026-08-15). All four Ask routes — /ask,
+ * /ask/stream, /ask/conversations and /ask/conversations/:id — sit behind the
+ * premium entitlement guard, so by the time any handler runs this, the class
+ * can only be `premium`. The `starter` and `professional` prompt variants are
+ * therefore UNREACHABLE in production today.
+ *
+ * (Written without the literal guard expression on purpose: vendorEntitlementGate
+ * .test.ts counts occurrences of it in this file to assert how many routes are
+ * gated, and a mention in prose would inflate that count into a false pass.)
+ *
+ * They are retained rather than deleted, deliberately, and this function exists
+ * so the reason is written down instead of inferred:
+ *
+ *   1. renderProductKnowledge(cls) is shared and independently tested; the
+ *      filtering itself is correct and is not what was wrong.
+ *   2. If the premium gate is ever loosened — the live question behind W-6,
+ *      since Brief Pro and Brief Team are sold tiers — the correct prompt must
+ *      already be selected. Hard-coding the premium variant here would turn a
+ *      future gate change into a silent leak of platform surface names into a
+ *      lower tier's prompt.
+ *
+ * What was actually wrong (W-6) is that this looked like an ACTIVE filter while
+ * being unable to fire, so nobody would learn if the invariant broke. Hence the
+ * alarm below: if a non-premium class ever reaches Ask, that is a gate change or
+ * a gate defect, and it is logged at error level rather than quietly working.
+ * askRoutesArePlatformOnly.test.ts pins the invariant at the source level so the
+ * two cannot drift apart unnoticed.
+ */
+function resolveRequesterClass(entitlementLevel: unknown): EntitlementClass {
+  const cls = collapseEntitlementLevel(
+    typeof entitlementLevel === "string" ? entitlementLevel : null
+  );
+  if (cls !== "premium") {
+    logger.error(
+      { event: "ask_entitlement_class_unexpected", requesterClass: cls },
+      "Ask reached by a non-premium entitlement class — the premium gate on the " +
+        "Ask routes has changed or failed. The filtered prompt variant is being " +
+        "used, but this path is not supposed to be reachable."
+    );
+  }
+  return cls;
+}
+
+/**
  * Requester-aware system prompts (Launch Completion 2 — Ask access truth):
  * one per entitlement class, memoized so each renders once per process and
  * provider-side prompt caching stays effective. A class's prompt OMITS every
@@ -227,9 +273,8 @@ async function runAskToolTurn(args: {
 }): Promise<Record<string, unknown>> {
   const { req, client, organizationId, question } = args;
   const userId = (req as { userId?: string }).userId ?? null;
-  // The requester's entitlement class picks the product-knowledge variant —
-  // the prompt must not name surfaces this org's entitlement cannot reach.
-  const requesterClass: EntitlementClass = collapseEntitlementLevel(
+  // Platform-only surface; see resolveRequesterClass. Always `premium` today.
+  const requesterClass: EntitlementClass = resolveRequesterClass(
     (req as any).organizationContext?.entitlementLevel
   );
   const requestedConversationId =
@@ -684,9 +729,8 @@ router.post(
   askRateLimit,
   async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
-    // The requester's entitlement class picks the product-knowledge variant —
-    // the prompt must not name surfaces this org's entitlement cannot reach.
-    const requesterClass: EntitlementClass = collapseEntitlementLevel(
+    // Platform-only surface; see resolveRequesterClass. Always `premium` today.
+    const requesterClass: EntitlementClass = resolveRequesterClass(
       organizationContext?.entitlementLevel
     );
 
