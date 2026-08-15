@@ -19,6 +19,7 @@ without explicit authorization; prod-affecting flags ship dark.
 | 5b | Governed agentic Ask | `feat/lc5b-governed-ask` (stacked on LC-5) | **Built — validated** |
 | 6 | Platform convergence | — | Blocked on 1–5 |
 | 7 | UX/IA: global utilities | `develop` (`c13a6cbc`, `66204045`) | **Shipped to staging — verified from the authenticated UI** |
+| 8 | Ask answer-truth defects (found by the walkthrough, not planned) | `develop` (`ac4b8898` → `05625d02`) | **Shipped to staging — both P1s closed on live evidence** |
 
 ---
 
@@ -204,7 +205,8 @@ rounds and retrieval; the answer arrived as one JSON blob at the end.
 4. `AskClient` — `streamAsk()` fetch-reader consumer (chunk-boundary-safe SSE
    parser, separately unit-tested) rendering a preview bubble: retrieval
    activity line + accumulating deltas, reset per `round`, always REPLACED by
-   `final` (the provenance pass may re-render prose after the last delta). A
+   `final` (the INLINE provenance pass may re-render prose after the last
+   delta; as of `05625d02` the DEFERRED pass deliberately does not — see §8). A
    stream that ends without `final` is an error, never a success — a
    half-delivered preview cannot be mistaken for an answer.
 
@@ -509,3 +511,109 @@ callers to a menu entry that is no longer in the menu they are looking at.
   the platform gate they carried as nav items.
 - No page was merged, renamed, or retired.
 - Vendor Assurance packaging is untouched (decision 4).
+
+---
+
+## 8. Ask answer-truth defects — found by walkthrough execution, 2026-08-14 → 15
+
+Not a planned LC item. These were surfaced by actually opening the product as a
+signed-in user, after flags, migrations, health checks and 401-probes had all
+reported the stack ready. They are recorded here because the fixes changed the
+Ask architecture, not just its behaviour.
+
+| Defect | Raised | Closed | Fix |
+|---|---|---|---|
+| Verified claims space-joined into one paragraph, REPLACING the model's prose on the final frame | `66204045` walkthrough | `ac4b8898` | one claim per line; class prefixes unchanged |
+| Non-streaming `POST /api/ask` 504s at 90s on heavy multi-tool questions | `66204045` walkthrough | `ac4b8898` | verified 2026-08-14: 8,147-char / 6-tool answer returns 200 in 54.4s; zero 504s since |
+| Answers over ~4,000 chars lose **every** citation — permanently, in storage | `66204045` walkthrough | `05625d02` | asynchronous provenance (below) |
+
+### The long-answer defect was a design limit, not a tuning error
+
+The measurement that settled it: decomposition costs **~11x the answer in
+output tokens at ~85–100 tok/s**. A 3,000-char answer therefore needs ~97s —
+past the entire 90s interactive budget before orchestration has spent anything.
+Long answers were never citable on the request path. Tuning the synchronous
+budget could only choose *how* they failed: refuse early and ship uncited
+(`ask_provenance_skipped_no_budget`), or run and be cut off
+(`ask_provenance_truncated`). Both ship an answer nobody verified.
+
+**This design question is settled and closed. Do not reopen the synchronous
+provenance design.**
+
+### What shipped (`2833a0ea`, `602965c4`, `05625d02`)
+
+- **Hybrid on the existing budget rule.** `provenanceBudgetFor()` still decides;
+  the orchestrator now reads its verdict *before* paying for the call, so a "no"
+  **defers** instead of abandoning. Short answers are untouched — same inline
+  pass, same deadline, same telemetry (live control: 516 chars → 12 inline
+  claims in 15.9s).
+- **The authorization property.** The worker issues **no canonical query at
+  all**. It decomposes `ask_provenance_contexts`, which froze the authorized
+  tool results the answer was built from, *after* they passed the ASK-A gate for
+  the asking user under that user's seat scope. There is no second
+  authorization decision, so there is none to get wrong: the worker cannot widen
+  scope, cannot see rows created after the turn, and cannot see anything the
+  user was denied. A worker that re-ran the reads would need an identity able to
+  serve every tenant's jobs — broader than any asking user, by construction.
+  `withTenant` wraps every statement so RLS enforces on top. Held by a test that
+  watches every statement the worker runs.
+- **The freeze is temporary by design.** It is a second copy of customer risk
+  data — precisely what `ask_tool_invocations` refuses to store — so payloads
+  are nulled and `purged_at` stamped in the same transaction that attaches the
+  claims, on **every** terminal path including failure. Steady state is an empty
+  table. Category C, high PII risk, excluded from data-rights export with a
+  stated reason.
+- **Explicit lifecycle**: `pending` / `complete` / `partial` / `failed`, NULL =
+  never applicable. Inferring verification from a non-empty claims column cannot
+  distinguish "decomposition failed" from "nothing to say", and would render the
+  first as verified. The UI renders three of the four; a clean answer gets no
+  banner.
+- **Deferred ≠ interactive limits** (`602965c4`). The first staging run deferred
+  correctly and was then refused *by the worker* — the interactive ceiling and
+  budget had followed the work off the request path. Background mode raises the
+  ceiling to 49,152 and the deadline to 12 minutes, kept deliberately below the
+  15-minute job visibility timeout so a job cannot normally be reclaimed and
+  decomposed twice. Large-output calls stream, because non-streaming requests hit
+  SDK HTTP timeouts at high `max_tokens` regardless of deadline.
+- **A delivered answer must not change after the fact** (`05625d02`). The first
+  successful deferred run attached 70 claims to a 7,776-char answer and silently
+  shortened it by 578 characters — 7% of a document the user had already read.
+  The synchronous path re-renders prose from verified claims, which is safe only
+  *because* the user has not seen the answer yet. The deferred path had inherited
+  that symmetry. Claims still attach; the content rewrite is dropped, held by a
+  test on the COALESCE parameter so a future symmetry-restoring refactor fails
+  instead of silently editing customers' answers.
+- **Fail-open throughout.** The enqueue runs in its own tenant scope, because
+  Postgres aborts a whole transaction on any failed statement — enqueuing inside
+  the message's transaction would let a queue problem roll back the **answer**. A
+  failed enqueue leaves an ordinary uncited turn. Ask is fully usable with the
+  worker down.
+- **No new infrastructure.** Rides the vendor-extraction worker (the model key
+  lives on that service and it carries the serial-instance spend cap) and the
+  existing `jobs` table for bounded retry and dead-lettering. One migration:
+  `20261010_ask_async_provenance.sql`.
+
+### Validation
+
+```
+engine   8052 passed · typecheck clean · lint 0 errors
+app      133 files · 1738 passed
+```
+
+Live on staging `05625d02` (engine + app + vendor-extraction worker all Live on
+the SHA), 2026-08-15 00:20–00:27Z, as `[SEED] Walkthrough Org`: a 7,521-char /
+9-tool answer delivered **200 in 52.1s** with `provenance_status: "pending"`,
+and carried **62 claims** at `partial` ~100s later, with the delivered text
+**byte-identical** at every observation. `ask_provenance_skipped_no_budget` has
+not fired since 2026-08-14 21:27:44Z (pre-deploy); zero engine errors and zero
+5xx since the deploy. Full evidence in
+`lc-integrated-staging-walkthrough.md` § "Re-verification against deployed
+`05625d02`".
+
+### What is NOT closed by this
+
+- The purge behaviour is test-covered, **not** live-observed.
+- The provenance banners are confirmed in the **deployed chunk**, not in a
+  browser. Operator-owed.
+- Production is untouched. `SECURELOGIC_ASK_PROVENANCE_ENABLED` remains off in
+  production; nothing here is on `main`.

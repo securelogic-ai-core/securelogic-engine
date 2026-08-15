@@ -2,6 +2,12 @@
 
 > ## Status: REOPENED — the READY claim below was FALSIFIED (2026-08-14)
 >
+> **Update 2026-08-15 (deployed `05625d02`): both defect P1s raised by this
+> reopening are now CLOSED on live evidence. The walkthrough is still NOT
+> READY-complete — the §1–§3 execution legs (vendor portal, SoD, agentic) and
+> the operator-owed browser observations remain UNEXECUTED. Defects closing is
+> not the same as the walkthrough being executed.**
+>
 > The operator, signed into `securelogic-app-staging` as `[SEED] Walkthrough
 > Org`, reported that neither Vendor Assurance nor Ask was usable. Both
 > reproduced from the browser-facing surface. The READY assessment below was
@@ -51,19 +57,27 @@
 >
 > ### Still open — do NOT mark this walkthrough READY
 >
-> *(Reconciled 2026-08-14 21:20–21:30Z against deployed `66204045` — see
-> "Re-verification" below. One of these two is now CLOSED on live evidence; the
-> other REMAINS OPEN, narrowed. The entries below are preserved as written.)*
+> *(Reconciled twice. **2026-08-14 21:20–21:30Z** against deployed `66204045`:
+> the 504 CLOSED, long-answer provenance REMAINED OPEN, narrowed.
+> **2026-08-15 00:20–00:27Z** against deployed `05625d02`: long-answer
+> provenance is now **CLOSED on live evidence** — see "Re-verification against
+> deployed `05625d02`" below. **Both P1s below are now closed.** The entries are
+> preserved as written; nothing here is retracted, only superseded.)*
 >
-> - **P1: answers over ~4,000 characters lose every citation.** Reproduced on
+> - **P1 — CLOSED 2026-08-15 on `05625d02`** (as written: answers over ~4,000
+>   characters lose every citation). Reproduced on
 >   `ac4b8898`: a 4,060-char answer returned `claims: 0`. Engine logs show two
 >   branches — `ask_provenance_truncated` (`maxTokens: 4096`) for 5.9k–8.3k-char
 >   answers, and `ask_provenance_skipped_no_budget`
 >   (`tokensNeeded: 5308` vs `tokensAffordable: 4121`, with 57.9s still left in
 >   the request). Criterion G therefore holds for ordinary answers and fails for
 >   long ones. Being worked in a parallel session (`ac4b8898`) — do not
->   duplicate.
-> - **P1: non-streaming `POST /api/ask` 504s at 90s** on heavy multi-tool
+>   duplicate. **Resolved by asynchronous provenance (`2833a0ea`, `602965c4`,
+>   `05625d02`): a 7,521-char answer now delivers in 52.1s and carries 62 claims
+>   ~100s later, with the delivered text unchanged. Criterion G now holds for
+>   long answers too.**
+> - **P1 — CLOSED 2026-08-14 on `66204045`** (as written: non-streaming
+>   `POST /api/ask` 504s at 90s) on heavy multi-tool
 >   questions (`responseTimeMS=90012`). The browser uses SSE
 >   (`streamingEnabled: true` on staging) so the primary path is unaffected,
 >   but the fallback — and any environment with streaming off — is not.
@@ -91,7 +105,7 @@
 > through the real login on both the engine (`POST /api/auth/login`) and the app
 > (`POST /api/auth-login`, `sl_session` cookie). Production untouched.
 >
-> ### A. Long-answer provenance / citations — **REMAINS OPEN** (narrowed)
+> ### A. Long-answer provenance / citations — **REMAINS OPEN** (narrowed) — *superseded 2026-08-15: now CLOSED, see the `05625d02` re-verification below*
 >
 > Two independent reproductions on the deployed SHA. Both returned **HTTP 200
 > with no `provenance` key at all** — not `claims: null`, the field is absent:
@@ -147,6 +161,97 @@
 > with `err_status: 401` from the upstream provider — voice transcription was
 > failing on an upstream credential rejection **before** this deploy. Not
 > re-tested here; tracked as a separate open item.
+>
+> ---
+>
+> ## Re-verification against deployed `05625d02` (2026-08-15 00:20–00:27Z)
+>
+> Executed against the CURRENT staging deployment. This section closes defect
+> **A** above; it does not execute any walkthrough leg.
+>
+> **Deployed SHA — confirmed two ways, on all THREE services.** Render deploy
+> records show `05625d02` Live on `securelogic-engine-staging`
+> (finished 23:36:17Z), `securelogic-app-staging` (23:38:40Z) and
+> `securelogic-vendor-extraction-worker-staging` (23:35:55Z) — the worker
+> matters because the deferred decomposition runs there. The app self-reports
+> `GET /api/version` → `{"commit":"05625d02…","branch":"develop"}`; engine
+> `/health` → `status: ok`, `db: connected`.
+>
+> **Executor**: `walkthrough-analyst@seed.securelogicai.test` in `[SEED]
+> Walkthrough Org` (`295b989a-…`), `entitlementLevel: platform`,
+> `seat.readScope: tenant`, via the real engine and app logins. Production
+> untouched.
+>
+> ### A′. Long-answer provenance — **CLOSED on live evidence**
+>
+> | Probe | Answer chars | HTTP | Delivery | `provenance_status` at delivery | Terminal state | Claims |
+> |---|---|---|---|---|---|---|
+> | Long (board-level posture report, 9 tool invocations) | 7,521 | **200** | **52.1s** | `pending` | `partial` within ~100s | **62** |
+> | Short control ("how many active findings?") | 516 | **200** | **15.9s** | `partial` (inline, unchanged path) | — | **12** |
+>
+> Engine telemetry for the long probe:
+> `ask_provenance_deferred answerChars:7521 msRemaining:38020 invocations:9`,
+> then on the worker
+> `ask_provenance_complete claims:62 observed:28 downgraded:33 maxTokens:21715
+> outputTokens:7612 elapsedMs:94457` and
+> `ask_provenance_job_complete status:"partial" applied:true`.
+>
+> Three things this establishes that the earlier reconciliation could not:
+>
+> 1. **The refusal branch is gone.** `ask_provenance_skipped_no_budget` last
+>    fired at **21:27:44Z on 2026-08-14**, before the async deploy went Live at
+>    23:10:50Z. Zero occurrences since, including under the long probe above.
+>    It is replaced by `ask_provenance_deferred` (4 occurrences, all post-deploy).
+> 2. **The raised background ceiling is real, not just configured.**
+>    `maxTokens: 21715` on the worker call — above the 16,384 interactive cap
+>    that would have discarded this payload whole (the `602965c4` defect).
+> 3. **The delivered answer did not change.** The answer was captured at
+>    delivery (7,521 chars) and compared byte-for-byte against the stored
+>    message on every poll, before and after the claims attached: **identical at
+>    every observation**. This is the `05625d02` property holding in production
+>    conditions, not only in the unit test.
+>
+> The state is durable, not transient: `GET /api/ask/conversations/{id}`
+> replays the assistant turn with its 62 claims and `provenance_status:
+> "partial"`. Contrast the `66204045` behaviour — `claims: null` permanently.
+>
+> **`partial`, not `complete`, is the correct outcome here** and is not a
+> defect: 28 of 62 claims were observed in tool output and 33 were downgraded
+> (`inference_without_basis`, `value_not_in_tool_output`) — the model asserting
+> more than the retrieval supports, which is exactly what the pass exists to
+> surface. Rising `downgraded` is already a documented runbook signal.
+>
+> ### A″. UI states — deployed-artifact evidence only
+>
+> The Ask surface renders provenance state client-side, so this is **chunk
+> evidence, not a rendered-UI observation**. The deployed
+> `/_next/static/chunks/app/ask/page-194b11afecdc8d5e.js` contains all three
+> non-clean banner strings — `Sources processing…`, `Sources partially
+> verified`, and `Citations could not be compiled for this answer. Treat it as
+> uncited…` — plus the `provenance_status` field read. **Operator-owed: open
+> `/ask` in a browser and confirm a long answer shows "Sources processing…" and
+> then flips to the partially-verified banner.** Folded into the existing
+> browser-observation item below.
+>
+> ### B′. Runtime log sweep since the `05625d02` deploy
+>
+> Engine: **zero** errors and **zero** 5xx since 23:36Z, including across both
+> probes above. The most recent entries in the error stream
+> (`POST /ask` 504 at 13:42/14:10Z; three `transcription_failed` /
+> `POST /ask/transcribe 500` with upstream `err_status: 401` at 16:03–16:08Z)
+> all predate this deploy. The transcription failure remains a **separate open
+> item** — an upstream credential rejection, not re-tested here.
+>
+> ### What this section does NOT claim
+>
+> - No walkthrough leg (§1–§3) was executed. Reachability and defect closure
+>   are not execution.
+> - The `ask_provenance_contexts` purge (payloads nulled, `purged_at` stamped
+>   on every terminal path) is **test-covered, not live-observed** — no
+>   authenticated read of that table was performed from here.
+> - Only the JSON `POST /api/ask` path was exercised for the long probe. The
+>   SSE path shares `runAskToolTurn` and is byte-shape-identical by test, but
+>   was not separately driven at length on this SHA.
 >
 > ---
 >

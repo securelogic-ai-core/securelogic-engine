@@ -233,7 +233,7 @@ session 2 — see §0.)
 | Control-effectiveness ladder, residual, decision workflow | 5 | DONE (`17dbde2`+) |
 | Monitoring sweeps, intelligence staleness chain | 6 | DONE (`e37aa985`) |
 | Legacy demotion of `vendor_assessments` / `vendor_reviews` writers | 7 | **Blocked on operator decision B1** |
-| Provenance / citation verification | A2 | DONE (`e600ac8f`, `83832f15`) |
+| Provenance / citation verification | A2 | DONE (`e600ac8f`, `83832f15`) — **this row was over-claimed.** It was true only for short answers; the 2026-08-14 walkthrough found answers over ~4,000 chars lost every citation permanently. Genuinely DONE as of `05625d02` (asynchronous provenance), verified live 2026-08-15 — see `launch-completion-status.md` §8 |
 | Multi-turn conversation UI | A3 | DONE (engine `b1702b45`, app UI `93802d8f`) |
 | Streaming answers | A3 | Open (P1-adjacent polish; not gate-blocking) |
 | Realtime voice | A5 (P1) | Open — standing cut rule applies; ASK-C gate not designed |

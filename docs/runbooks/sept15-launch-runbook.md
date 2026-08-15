@@ -20,7 +20,7 @@ Every new capability is dark. Nothing changes behaviour on deploy.
 | `SECURELOGIC_VENDOR_PORTAL_ENABLED` | **off everywhere, incl. non-prod** | The entire external vendor surface | Flag off → 404 before any handler. **Does NOT revoke live sessions — see §6** |
 | `SECURELOGIC_ASK_ENABLED` | **on** (kill switch for a live feature) | `POST /api/ask` | Flag off → 404. Removes a shipped capability; use only in anger |
 | `SECURELOGIC_ASK_TOOLS_ENABLED` | **off** | Ask's retrieval path: tools vs the A0 snapshot | Flag off → snapshot path. No migration, no data change |
-| `SECURELOGIC_ASK_PROVENANCE_ENABLED` | **off** | The claim-verification pass | Flag off → plain answer. Costs one extra model round trip per answer |
+| `SECURELOGIC_ASK_PROVENANCE_ENABLED` | **off** | The claim-verification pass | Flag off → plain answer. Short answers cost one extra model round trip inline; **answers too long to decompose inline are deferred to the vendor-extraction worker** (`05625d02`) — that worker must be running on the same SHA or long answers sit at `pending`. Flag off also stops the deferral |
 
 The portal flag is the one that matters. It is the only flag in the platform
 guarding an **unauthenticated write path**, and it is deliberately off even
@@ -164,7 +164,11 @@ something it shouldn't have".
 
 **Ask giving wrong answers.** Turn off `SECURELOGIC_ASK_PROVENANCE_ENABLED`
 first if the complaint is latency; turn off `SECURELOGIC_ASK_TOOLS_ENABLED` if
-the complaint is accuracy. Do not turn off `SECURELOGIC_ASK_ENABLED` — that
+the complaint is accuracy. Note since `05625d02`: provenance is no longer a
+latency cause for LONG answers — those are deferred off the request path and
+the answer ships immediately. If the complaint is "citations never appear on
+long answers", that is the worker, not the flag: check
+`securelogic-vendor-extraction-worker` is Live on the same SHA. Do not turn off `SECURELOGIC_ASK_ENABLED` — that
 removes a capability customers already have.
 
 ---
@@ -174,6 +178,10 @@ removes a capability customers already have.
 | Signal | Where | What a bad number means |
 |---|---|---|
 | `ask_provenance_complete.downgraded` | logs | Rising = the model is asserting things the data does not support |
+| `ask_provenance_job_complete.status = failed` | worker logs | Deferred decomposition is dead-lettering. The answer was still delivered; it renders "unavailable — treat as uncited" |
+| Turns stuck at `provenance_status = 'pending'` | `ask_messages` | The vendor-extraction worker is down, dark, or on the wrong SHA. Answers are unaffected; only citations are missing |
+| `ask_provenance_contexts` row count | DB | Should be ~empty in steady state. A growing table means terminal-path purges are not running — this is a **second copy of customer risk data** |
+| `ask_provenance_skipped_no_budget` | logs | Should be **extinct** since `05625d02`. Any occurrence means the deferral path is not engaging |
 | `authorized = false` rate | `ask_tool_invocations` | Rising = Ask is repeatedly attempting reads the caller cannot make |
 | `portal_invite_rejected` | logs | Bursts = someone is guessing tokens; the counter is DB-backed and holds with Redis down |
 | `storage_unavailable` | logs | R2 is not configured (see B2) |
