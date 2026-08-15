@@ -6,6 +6,10 @@ run recorded here.
 
 **Ruling: BL-3 CLEARED, with one stated limitation (§5).**
 
+> **Re-cleared at `7692c9e6` — see §7.** The candidate moved twice after this
+> document was written. §1–§6 belong to `59d85b18`; §7 is the independent re-run
+> at the current candidate and is the section to read before promoting.
+
 ---
 
 ## 1. The SHA these results belong to
@@ -134,3 +138,136 @@ separately by `docs/validation/bl1-migration-lock-exposure.md` (ruling GO,
 
 **Promotion verdict remains NO-GO on BL-2 and BL-4.** Two of four blockers are now
 clear; the two that remain need a human, not a test run.
+
+---
+
+## 7. Re-verification at `7692c9e6` — the current promotion candidate
+
+**Produced**: 2026-08-15, later the same day. §1 forbids carrying the `59d85b18`
+numbers to any other commit, and the candidate has moved twice since:
+`b363e144` (migration lock/statement-timeout hardening) and `7692c9e6` (the
+`20260522_alert_preferences.sql` → `20260417_…` rename plus its fresh-database
+regression test). Both touch the migration runner — the single least forgiving
+thing in this promotion — so the suite was re-run in full rather than inferred.
+
+| | |
+|---|---|
+| **Promotion SHA** | **`7692c9e6f65c6b41f9e19bfcca8e8bb6b973471b`** (`7692c9e6`) |
+| Subject | `fix(migrations): the migration set must rebuild an empty database` |
+| Branch | `develop` — **5 commits ahead of `origin/develop`, unpushed** |
+| `git status` at run time | clean — no tracked modifications |
+| Node / npm | v20.20.2 (matches `.nvmrc`: 20) / npm 10.8.2 |
+
+### Results — all eight CI jobs, re-executed
+
+| CI job | Command | Result | Exit | vs `59d85b18` |
+|---|---|---|---|---|
+| `typecheck` (engine) | `npm run typecheck` | no diagnostics | **0** | same |
+| `typecheck` (app) | `cd app && npm run typecheck` | no diagnostics | **0** | same |
+| `lint` | `npm run lint` | **0 errors**, 1 warning (unused eslint-disable directive) | **0** | same |
+| `url-drift` | `node scripts/check-env-url-drift.mjs` | no staging→production URL drift | **0** | same |
+| `test` (engine) | `npx vitest run` | **496 files / 8,074 passed, 3 skipped, 0 failed** (210s) | **0** | **+1 file, +22 tests** |
+| `test` (app) | `cd app && npx vitest run` | **133 files / 1,738 passed, 0 failed** (251s) | **0** | identical |
+| `build` (engine) | `npm run build` | dist emitted | **0** | same |
+| `build` (intelligence-worker) | `npx tsc -p services/intelligence-worker/tsconfig.json` | clean | **0** | same |
+| `cross-org-isolation` | `npm run test:isolation` (fresh Docker Postgres 16) | **151 files / 1,169 passed, 0 failed** (1,052s) | **0** | **+2 files, +11 tests** |
+| `tenant-coverage` | `bash scripts/check-tenant-coverage.sh` | 260 warnings, warn-only by design | **0** | identical |
+| `audit` | `npm audit --audit-level=high` | **7 high — RED** | **1** | same count, §7.2 |
+
+The engine delta is fully accounted for: `src/api/lib/__tests__/migrationRunner.test.ts`
+is the one new file, contributing the 22 additional tests. No test was removed,
+skipped or retitled to achieve green.
+
+### 7.1 Harness provisioning — deliberately destroyed first
+
+The stale `securelogic-harness-pg` container **and its anonymous volume** were
+removed (`docker rm -f` + `docker volume rm`) and recreated before the isolation
+run. A reused harness database is the known cause of ~39 files fake-failing, and
+§4 above records disk exhaustion producing a 140-file fake failure on this same
+host. Disk was checked before and during: 74% used, 8.0 GB free throughout, and
+the run log contains **zero** `ENOSPC`, `no space left` or
+`Connection terminated` occurrences. The other two stopped Postgres containers
+on the host were left untouched.
+
+### 7.2 The audit red — §3's account was under-inclusive, now corrected
+
+§3 named `undici` and `postcss`. That is not the whole set. `npm audit` reports
+**seven** high advisories, and one of the omitted packages is a **direct**
+dependency:
+
+| Package | Direct? | HEAD version | `main` version |
+|---|---|---|---|
+| `brace-expansion` | no | 1.1.16 / 2.1.2 / 5.0.7 | 1.1.14 / 2.1.0 / 5.0.6 |
+| `fast-uri` | no | 3.1.2 | 3.1.2 |
+| `ip-address` | no | 10.2.0 | 10.2.0 |
+| **`js-yaml`** | **yes** | 4.3.0 / 5.2.1 | 4.3.0 / 5.2.0 |
+| `nanoid` | no | 3.3.12 | 3.3.12 |
+| `postcss` | no | 8.5.15 | 8.5.15 |
+| **`undici`** | **yes** | 7.28.0 | 7.28.0 |
+
+Inheritance was therefore re-established a stronger way than package-by-package
+comparison: `main`'s own `package.json` + `package-lock.json` were extracted to a
+scratch directory and audited with `npm audit --package-lock-only`. **`main`
+returns the identical seven high advisories** (11 total: 1 low, 3 moderate, 7
+high), exit 1.
+
+Two packages *were* bumped by this delta — `brace-expansion` 1.1.14 → 1.1.16 and
+`js-yaml` 5.2.0 → 5.2.1 — but both remain **inside the advisory's vulnerable
+range** (`<=1.1.17`, `5.0.0 - 5.2.1`). The delta neither introduces a new
+vulnerable package nor resolves an existing one. The red is inherited; the ruling
+in §3 stands, but the debt is larger than §3 described and now includes a second
+direct runtime dependency.
+
+### 7.3 `cross-org-isolation` — landed
+
+| | |
+|---|---|
+| Command | `npm run test:isolation` (`vitest run --config vitest.isolation.config.ts`) |
+| Database | freshly created `securelogic-harness-pg` (Postgres 16-alpine), per §7.1 |
+| Result | **151 files / 1,169 passed, 0 failed, 0 skipped** |
+| Exit | **0** |
+| Duration | 1,051.91 s (17 m 32 s), started 15:35:00 Z |
+| vs `59d85b18` | 149 files / 1,158 tests → **+2 files, +11 tests** |
+
+**The delta is fully accounted for, not assumed.** The two new files were then
+run alone against the same harness:
+
+```
+npx vitest run --config vitest.isolation.config.ts \
+  test/isolation/migrationFilenameOrder.test.ts \
+  test/isolation/migrationRunnerTimeouts.test.ts
+→ Test Files 2 passed (2) | Tests 11 passed (11) | 13.20s | exit 0
+```
+
+**2 files, 11 tests — exactly the increase.** Nothing elsewhere in the suite was
+lost, renamed or skipped to absorb it.
+
+**No file was silently skipped**: `test/isolation/` contains **151** `*.test.ts`
+files on disk and vitest reported **151** test files. The run log contains zero
+occurrences of `FAIL`, `ENOSPC`, `no space left` or `Connection terminated`.
+Disk stayed between 74% and 76% used (7.2–8.1 GB free) for the whole run.
+
+**One discarded attempt, disclosed.** A first invocation was killed at exactly
+10 minutes by the tool-level command timeout — **not** by any test failure and
+not by the harness. No results were read from it. The container and its volume
+were destroyed and recreated again (§7.1) and the run was re-executed in the
+background, which is the run recorded above.
+
+**One limitation on this subsection specifically:** the isolation reporter
+suppresses test-level console output, so the
+`[migration-order] 222/222 migrations applied …` line quoted in
+`docs/validation/migrate-from-scratch-defect.md` does not appear in this run's
+log. The assertion passing is the evidence here; that console line is not
+re-quoted from a run that did not print it.
+
+### 7.4 Ruling at `7692c9e6`
+
+**BL-3 CLOSED at `7692c9e6`.** All eight CI jobs re-executed; every one passes
+except `audit`, red and verified inherited by §7.2. The §5 limitation carries
+over unchanged and is not weakened by this re-run: this is local reproduction of
+every command CI runs, on the Node version `.nvmrc` pins, with `node_modules`
+reused rather than a clean `npm ci`, and with the harness provisioned by
+`scripts/harness-db-up.sh` rather than a GitHub service container. It is not the
+GitHub Actions run for this SHA — and it cannot be, because the SHA is not
+pushed. **`gh run list --branch develop --json headSha,conclusion` after the push
+is what converts this into "CI was green."**

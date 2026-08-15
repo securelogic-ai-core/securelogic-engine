@@ -7,10 +7,12 @@ flipped or modified to produce this document.
 None is "needs more testing" hand-waving; each is a specific, checkable fact.
 
 > **Status 2026-08-15 — still NO-GO, now on two blockers.** BL-1 (migration lock
-> exposure) and BL-3 (suite verification at `59d85b18`) are CLOSED. **BL-2**
-> (staging walkthrough legs) and **BL-4** (Vendor Assurance nav decision) remain
-> OPEN. Neither can be closed by anything this repository can run — BL-2 needs a
-> human in a browser, BL-4 needs an operator ruling. See §10.
+> exposure) is CLOSED. BL-3 (suite verification) is CLOSED — **re-run in full at
+> the current candidate `7692c9e6`**, all eight CI jobs, evidence in
+> `docs/validation/bl3-suite-verification.md` §7. **BL-2** (staging walkthrough
+> legs) and **BL-4** (Vendor Assurance nav decision) remain OPEN. Neither can be
+> closed by anything this repository can run — BL-2 needs a human in a browser,
+> BL-4 needs an operator ruling. See §10.
 
 ---
 
@@ -49,7 +51,7 @@ values, so promotion does not revert them.
 | **Agentic Ask** | Medium | LC-5 bounded mutate class, LC-5b governed transitions — **both dark** |
 | **Navigation / UX** | Medium | Search + Ask promoted to global utilities (`c13a6cbc`), conversation rail (`66204045`), `/vendor-assurance` landing page |
 | **Entitlement / access** | Small | Ask access truth (LC-2), portal session model, seat interactions |
-| **Schema / migrations** | **15 migrations** | §3 |
+| **Schema / migrations** | **15 migrations** (**16 applied** — see §3) | §3 |
 | **Workers / jobs** | Medium | `askProvenanceWorker`, `vendorEvidenceAnalysisWorker`, `vendorAssuranceMonitoringWorker`; `jobs.job_type` CHECK widened |
 | **Intelligence** | Minimal | No pipeline changes in this delta |
 | **Security / auth / RLS** | Medium | RLS on 9 previously-unprotected vendor tables, portal token hashing, tenant-wrap structural guards |
@@ -62,10 +64,30 @@ values, so promotion does not revert them.
 
 ## 3. Database impact — 15 migrations production does not have
 
+> **Superseded in two places by later commits on this branch — 2026-08-15.**
+>
+> 1. **The "no timeouts" claim below is no longer true.** `b363e144` moved the
+>    transaction body to `src/api/lib/migrationRunner.ts` and now issues
+>    `SET LOCAL lock_timeout` (default **5s**) and `SET LOCAL statement_timeout`
+>    (default **300s**) inside every migration transaction. Neither is set in
+>    `render.yaml`, so the defaults apply on arrival in production. The unbounded
+>    wait described below is bounded as of that commit. Evidence:
+>    `docs/validation/migration-timeout-hardening.md`.
+> 2. **The count is effectively 16, not 15.** `7692c9e6` renamed
+>    `20260522_alert_preferences.sql` to `20260417_alert_preferences.sql` (its
+>    real commit date) so the set applies to an empty database in strict filename
+>    order. Production's `schema_migrations` records the **old** filename, so the
+>    renamed file is unapplied by that bookkeeping and **prod will apply it once
+>    at this promotion**, ending with both filenames recorded. Proven harmless
+>    against a rewound scratch database: one migration applied, exit 0,
+>    `pg_dump --schema-only` byte-identical before/after, no row loss and a
+>    non-default column value preserved. No operator action, no backfill, no
+>    re-stamp. Evidence: `docs/validation/migrate-from-scratch-defect.md`.
+
 **Execution model (this is the risk multiplier):** the prod engine's
 `startCommand` is `npm run migrate && npm start`. Migrations run **at deploy,
-blocking service start**, each in its own `BEGIN`/`COMMIT`. **No `lock_timeout`
-and no `statement_timeout` are set anywhere in the runner.**
+blocking service start**, each in its own `BEGIN`/`COMMIT`. ~~**No `lock_timeout`
+and no `statement_timeout` are set anywhere in the runner.**~~ — corrected above.
 
 **No migration uses `NOT VALID`. No index is built `CONCURRENTLY`.** Every CHECK
 is added fully validated (full table scan under `ACCESS EXCLUSIVE`); every index
@@ -375,17 +397,26 @@ migration risk; R2–R4 are flag flips with cheap rollbacks.
 > `docs/validation/bl1-migration-lock-exposure.md`,
 > `docs/validation/bl3-suite-verification.md`.
 >
-> **The promotion candidate has since moved to `b363e144`** (migration
+> **The promotion candidate has since moved twice** — to `b363e144` (migration
 > lock/statement timeout hardening, BL-1's recommended follow-up landed as its
-> own commit). That SHA carries its own independent eight-job evidence in
-> `docs/validation/migration-timeout-hardening.md`. The `59d85b18` numbers are
-> NOT transferred to it — check which SHA you are promoting.
+> own commit; independent evidence in
+> `docs/validation/migration-timeout-hardening.md`) and then to **`7692c9e6`**
+> (the `20260522_alert_preferences.sql` → `20260417_…` rename plus its
+> fresh-database regression test; defect write-up in
+> `docs/validation/migrate-from-scratch-defect.md`). **The full eight-job suite
+> was re-executed at `7692c9e6`** — evidence in
+> `docs/validation/bl3-suite-verification.md` §7. The `59d85b18` numbers are NOT
+> transferred to it; the re-run stands on its own. Check which SHA you are
+> promoting.
+>
+> **`develop` is 5 commits ahead of `origin/develop` and unpushed.** Everything
+> BL-1 and BL-3 now rest on is local only. Push is operator-owned.
 
 | # | Criterion | GO condition | Status |
 |---|---|---|---|
 | **BL-1** | **Migration lock exposure quantified** | `count(*)` measured on `evidence`, `findings`, `requirements`; `20260925`/`20260928` timed against a production-sized restore; a `lock_timeout` set for the migration run **or** a declared maintenance window accepted | **CLOSED — GO** (`0a3f647b`). ~220 ms total `ACCESS EXCLUSIVE` across all 15 migrations; 2.56 s boot-blocking. **Valid only while production remains empty** — re-measure if promotion slips past the first real data load |
 | **BL-2** | **Staging walkthrough executed** | §1–§3 legs completed by a human in a browser, **including under `RISK_WORKSPACE_ENABLED=false`** to match production nav | **OPEN** — REOPENED, legs unexecuted |
-| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **CLOSED** at **`59d85b18`**. All 8 CI jobs reproduced locally: engine 8,052 / app 1,738 / isolation 1,158 / lint 0 errors / both builds clean. `audit` red **verified inherited** — `undici` + `postcss` unchanged from `main`. Limitation: local reproduction, not the GitHub Actions run (no `gh` in session) |
+| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **CLOSED at `7692c9e6`** — the current candidate, re-run in full. Engine **8,074** (496 files) / app **1,738** (133 files) / **isolation 1,169** (151 files) / lint 0 errors / url-drift clean / both builds clean / tenant-coverage 260 warn-only. The isolation increase over `59d85b18` (+2 files, +11 tests) was **accounted for, not assumed** — the two new migration test files run alone give exactly 2 files / 11 tests. `audit` red **verified inherited the stronger way**: `main`'s own lockfile audited via `--package-lock-only` returns the **identical seven** high advisories — and the set is `brace-expansion`, `fast-uri`, `ip-address`, **`js-yaml` (direct)**, `nanoid`, `postcss`, **`undici` (direct)**, not the two named at `59d85b18`. Limitation unchanged: local reproduction, not the GitHub Actions run — and it cannot be, because **the SHA is not pushed** |
 | **BL-4** | **VA nav decision made and recorded** | Operator rules explicitly: VA URL-only in prod, **or** flip the workspace nav with its own validation | **OPEN** |
 
 ### Conditions — must hold at promotion time
