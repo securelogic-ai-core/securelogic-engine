@@ -228,45 +228,36 @@ export function Header({
           </div>
         </Link>
 
-        {/* Desktop Nav — WORKSPACES only. Search and Ask are global utilities and
-            render in the upper-right cluster below, not here. */}
-        <nav className="hidden lg:flex items-center gap-6">
-          {isAuthenticated ? (
-            visibleNav.map(item =>
-              item.type === "link" ? (
-                <NavLink key={item.label} href={item.href} label={item.label} />
-              ) : (
-                <NavGroup key={item.label} label={item.label} items={item.items} />
-              ),
-            )
-          ) : (
-            <>
-              <a href={SITE_URL} className="text-slate-400 hover:text-white text-sm transition-colors">
-                securelogicai.com
-              </a>
-              <Link href="/login" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
-                Sign In
-              </Link>
-              <a
-                href="/signup"
-                className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
-              >
-                Get Started
-              </a>
-            </>
-          )}
-        </nav>
+        {/* Signed-out links stay in ROW 1 — the two-row structure below is the
+            authenticated workspace header. A signed-out visitor has no workspace
+            nav, so a second row would render empty. */}
+        {!isAuthenticated && (
+          <nav className="hidden md:flex items-center gap-6">
+            <a href={SITE_URL} className="text-slate-400 hover:text-white text-sm transition-colors">
+              securelogicai.com
+            </a>
+            <Link href="/login" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
+              Sign In
+            </Link>
+            <a
+              href="/signup"
+              className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
+            >
+              Get Started
+            </a>
+          </nav>
+        )}
 
-        {/* Global utilities + profile — upper right, every breakpoint.
-            The utilities are deliberately OUTSIDE the `hidden lg:flex` nav so
-            they survive the tablet/mobile collapse; the profile control keeps
-            its desktop-only placement (the mobile drawer already carries the
-            account links, and two account entry points would be redundant). */}
+        {/* Global utilities + profile — ROW 1, upper right, every breakpoint.
+            The utilities are deliberately outside the workspace nav (now ROW 2)
+            so they survive the tablet/mobile collapse; the profile control
+            appears from `md` up, where the drawer — which also carries the
+            account links — is no longer the only nav path. */}
         <div className="flex items-center gap-2 lg:gap-3">
           {showGlobalUtilities && <GlobalUtilities showSearch showAsk />}
 
           {isAuthenticated && (
-            <div className="hidden lg:flex items-center gap-6">
+            <div className="hidden md:flex items-center gap-6">
               {userName ? (
                 <UserMenu
                   name={userName}
@@ -287,9 +278,10 @@ export function Header({
             </div>
           )}
 
-          {/* Mobile hamburger */}
+          {/* Mobile hamburger — below `md` only, where ROW 2 is not rendered and
+              the drawer is the sole path to the workspace nav. */}
           <button
-            className="lg:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
+            className="md:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
             onClick={() => setMobileOpen(o => !o)}
             aria-label="Toggle menu"
             style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
@@ -299,10 +291,45 @@ export function Header({
         </div>
       </div>
 
-      {/* Mobile drawer */}
+      {/* ─── ROW 2 — the workspace nav band ────────────────────────────────────
+          A real second row: a sibling block below the ROW 1 container, NOT a
+          margin/padding offset on the header. Nothing from ROW 1 (logo, Search,
+          Ask, avatar) moves down — those stay in the h-14 container above.
+
+          The header keeps its own `border-b`, so the header's bottom border sits
+          below THIS row. The hairline `border-t` here separates the two rows.
+
+          `flex-wrap` rather than `overflow-x-auto` is deliberate: an
+          overflow container would become a clipping context and cut off the
+          NavGroup dropdowns, which render `absolute top-full` inside it. The
+          item count is not fixed either — it varies with entitlement, admin
+          role and four feature flags — so a gap tuned to today's nine items
+          would overflow for a different tenant. Wrapping degrades safely for
+          any width and any item count.
+
+          Rendered from `md` up, matching the ROW 1 avatar and the hamburger
+          breakpoint: below `md` the drawer remains the single nav path. */}
+      {isAuthenticated && (
+        <div className="hidden md:block border-t border-slate-800/60">
+          <div className="max-w-6xl mx-auto px-6">
+            <nav className="flex flex-wrap items-center gap-x-6 gap-y-1 py-2.5">
+              {visibleNav.map(item =>
+                item.type === "link" ? (
+                  <NavLink key={item.label} href={item.href} label={item.label} />
+                ) : (
+                  <NavGroup key={item.label} label={item.label} items={item.items} />
+                ),
+              )}
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile drawer — `top-full` so it hangs below the whole header rather
+          than a hardcoded single-row height. */}
       {mobileOpen && (
         <div
-          className="lg:hidden absolute top-14 left-0 right-0 z-50 border-b"
+          className="md:hidden absolute top-full left-0 right-0 z-50 border-b"
           style={{ background: "#0a0f1a", borderColor: "#1e293b" }}
         >
           <nav className="flex flex-col px-4 py-3 gap-1">
