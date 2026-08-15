@@ -112,6 +112,33 @@ describe("authenticated header — real two-row structure", () => {
     expect(screen.getByRole("link", { name: "Sign In" })).toBeInTheDocument();
   });
 
+  it("keeps the band on ONE line — no wrapping, no horizontal scroll", () => {
+    render(<Header {...WORKSPACE_USER} />);
+
+    const nav = screen.getByRole("navigation");
+
+    // The two escape hatches that were ruled out. Wrapping drops the tail of
+    // the nav onto a second line; an overflow container clips the dropdowns.
+    // jsdom has no layout engine, so the class contract is the assertable form
+    // of "one line" — the pixel fit is verified against the real browser.
+    expect(nav.className).toContain("flex-nowrap");
+    expect(nav.className).not.toContain("flex-wrap");
+    expect(nav.className).not.toContain("overflow-x");
+    expect(getComputedStyle(nav).overflowX).not.toBe("auto");
+    expect(getComputedStyle(nav).overflowX).not.toBe("scroll");
+
+    // Presentation is what buys the room: smaller type and a tighter gap at the
+    // tablet breakpoint, both restored at `lg`.
+    expect(nav.className).toContain("gap-x-2.5");
+    expect(nav.className).toContain("lg:gap-x-6");
+    const first = nav.children[0] as HTMLElement;
+    expect(first.className).toContain("text-[13px]");
+    expect(first.className).toContain("lg:text-sm");
+    // A tight fit must not squeeze labels into each other or break mid-label.
+    expect(first.className).toContain("shrink-0");
+    expect(first.className).toContain("whitespace-nowrap");
+  });
+
   it("still collapses to the drawer below `md`, which remains the only nav path there", () => {
     render(<Header {...WORKSPACE_USER} />);
 

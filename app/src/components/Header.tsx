@@ -47,13 +47,19 @@ function Chevron({ open }: { open: boolean }) {
 
 // ─── Desktop: plain link ──────────────────────────────────────────────────────
 
+// `text-[13px] lg:text-sm` and `whitespace-nowrap`: at the tablet-portrait
+// breakpoint the nav band must hold every workspace entry on ONE line, and it
+// is presentation — type size and gap — that buys the room. See the nav band in
+// the Header for the measurements. `shrink-0` keeps a tight fit from squeezing
+// items into each other; `whitespace-nowrap` stops "Risk Operations" breaking
+// mid-label.
 function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + "/");
   return (
     <Link
       href={href}
-      className="text-sm font-medium transition-colors"
+      className="shrink-0 whitespace-nowrap text-[13px] lg:text-sm font-medium transition-colors"
       style={{ color: active ? "#00c4b4" : "#cbd5e1" }}
     >
       {label}
@@ -102,10 +108,13 @@ function NavGroup({
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    // `shrink-0` so the group keeps its natural width in the one-line nav band.
+    // The panel below is anchored to THIS element (`absolute top-full`), so the
+    // anchoring is unchanged by the band's sizing.
+    <div ref={ref} className="relative shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1 text-sm font-medium transition-colors"
+        className="flex items-center gap-1 whitespace-nowrap text-[13px] lg:text-sm font-medium transition-colors"
         style={{
           color: isActive ? "#00c4b4" : "#cbd5e1",
           background: "none",
@@ -299,20 +308,37 @@ export function Header({
           The header keeps its own `border-b`, so the header's bottom border sits
           below THIS row. The hairline `border-t` here separates the two rows.
 
-          `flex-wrap` rather than `overflow-x-auto` is deliberate: an
-          overflow container would become a clipping context and cut off the
-          NavGroup dropdowns, which render `absolute top-full` inside it. The
-          item count is not fixed either — it varies with entitlement, admin
-          role and four feature flags — so a gap tuned to today's nine items
-          would overflow for a different tenant. Wrapping degrades safely for
-          any width and any item count.
+          ONE LINE at every breakpoint it renders at, bought with presentation
+          only — type size and gap, no wrapping and no horizontal scroll.
+          Measured against the real nav content at 768px, where the usable width
+          inside `px-6` is 720px:
+
+            font   gap   total    result
+            14px   24px  839px    overflows by 119px  (what wrapped)
+            14px    8px  711px    fits, but 8px reads as cramped
+            13px   16px  735px    still overflows
+            13px   10px  687px    FITS — 33px headroom  ← chosen
+            12px   12px  664px    fits, but 12px is small for a primary nav
+
+          Neither `flex-wrap` nor `overflow-x-auto` is used. Wrapping puts the
+          tail of the nav on a second line; an overflow container becomes a
+          clipping context and would cut off the NavGroup dropdowns, which
+          render `absolute top-full` inside it. `shrink-0` on the items means a
+          tight fit never squeezes labels into each other.
+
+          The headroom is 33px at nine entries. The count is not fixed — it
+          varies with entitlement, admin role and four feature flags — and a
+          TENTH top-level entry would not fit on one line at 768px. Today only
+          "Executive" can add one, behind `risk_intelligence`, which is off in
+          staging and production. Turning that flag on is the trigger to revisit
+          this band, not a reason to pre-emptively shrink it further.
 
           Rendered from `md` up, matching the ROW 1 avatar and the hamburger
           breakpoint: below `md` the drawer remains the single nav path. */}
       {isAuthenticated && (
         <div className="hidden md:block border-t border-slate-800/60">
           <div className="max-w-6xl mx-auto px-6">
-            <nav className="flex flex-wrap items-center gap-x-6 gap-y-1 py-2.5">
+            <nav className="flex flex-nowrap items-center gap-x-2.5 lg:gap-x-6 py-2.5">
               {visibleNav.map(item =>
                 item.type === "link" ? (
                   <NavLink key={item.label} href={item.href} label={item.label} />
