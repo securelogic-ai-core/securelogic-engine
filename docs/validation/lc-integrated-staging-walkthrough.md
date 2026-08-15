@@ -10,9 +10,15 @@
 > `draft → … → decided → monitoring` on a real engagement, including the
 > external-vendor portal legs driven with the invite token alone. §2 ran all
 > six Ask steps, including voice, which previously failed on an upstream 401.
-> **§3 (agentic) remains UNEXECUTED.** Execution surfaced one P1 (**W-3**, in
-> the promotion delta: a one-character constraint-name typo means the vendor
-> questionnaire hard-blocks on any requirement the vendor already answered),
+> **§3 (agentic) is now EXECUTED — ALL 10 legs PASS**, including both
+> separation-of-duties chains (risk acceptance and finding closure), the latter
+> reached by satisfying the evidence gate legitimately rather than disabling it.
+> It surfaced **W-5**: SoD is enforced but its refusal is recorded as a generic
+> `invalid_decision_transition`, so the control cannot be evidenced from its own
+> audit record. Execution surfaced one P1 (**W-3**, in the
+> promotion delta: a one-character constraint-name typo means the vendor
+> questionnaire hard-blocks on any requirement the vendor already answered —
+> **since FIXED and verified live at `168c8b73`**),
 > one spec-vs-code conflict (**W-2**, invite links are replayable for 30 days by
 > design — **RULED 2026-08-15: keep the behaviour, §1.4 corrected to match**),
 > and one P2 (**W-1**). The walkthrough
@@ -461,13 +467,74 @@ advisory.
 | 2.5 | **NOT EXERCISED — see W-1** | The probe used (analyst asks for audit log) does not test LC-2 corpus filtering: **there is no audit tool in the registry** (17 tools, none audit), so no gated surface could have been reached. A true test needs a starter/professional-entitlement user, which this org does not have |
 | 2.6 | **PASS — previously blocked** | `POST /api/ask/transcribe` → **200 in 2.4s** with a WAV payload. This was 500ing on an upstream OpenAI 401; the credential separation fixed it. Unauth → 401, confirming the kill-switch code is deployed |
 
-#### §3 Agentic Ask — NOT EXECUTED this session
+#### §3 Agentic Ask — EXECUTED, ALL 10 legs
 
-Time-boxed out after §1 and §2. Both flags were set true on 2026-08-14 and the
-services have redeployed since (env persists across deploys), so §3 is
-executable by the same method — including 3.8's separation-of-duties leg, since
-**both** seeded users hold `risk:accept` and SoD is enforced on differing
-`user_id`, not on role.
+Both agentic flags confirmed live on the running process by observing real
+proposals, not by reading config. Every leg below mutated the walkthrough org.
+
+| Step | Result | Evidence |
+|---|---|---|
+| 3.1 | **PASS** | `actions.create` proposal carries a **server-generated** summary, a 64-hex token and a 15-minute TTL. Confirm → `executed`; action `3568c69f` "Triage critical findings backlog" exists, priority immediate, due 2026-08-27 |
+| 3.2 | **PASS** | Decline → `declined`, terminal. **Nothing created** — a 100-action sweep finds no "concentration" action — and confirming the declined token afterwards → 404 |
+| 3.3 | **PASS** | `actions.update` on the 3.1 action → `in_progress`, verified on the same id |
+| 3.4 | **PASS** | `findings.close` on a finding with no open remediation → `closed` / `decision_state: resolved`, **severity unchanged**. Rationale persisted in the lifecycle event `finding.decision.resolved` with `metadata.note`, actor email, from/to states and IP |
+| 3.5 | **PASS** | `findings.close` on a finding WITH an open action → `status: refused`, `close_requires_remediation_complete`. **Token consumed** (re-confirm → 404) and the finding did **not** move (still `open` / `needs_review`) |
+| 3.6 | **PASS — enforcement proven by identity, see W-5 for the reporting gap** | Prerequisite reached **legitimately, with both controls left enforced**: the analyst closed all linked actions, then attached real evidence (`POST /api/evidence`, `source_type: finding`, `test_result`) which satisfied `require_evidence_gate` and let `operational_status` derive to **`remediated`** — the gate was never disabled, and `remediated` is never settable directly. `finding.remediated` audit names the **analyst** as remediator of record. Then, on the SAME finding in the SAME state with the SAME rationale, only the identity differing: **analyst (= remediator) → `refused`**, **approver (≠ remediator) → `executed`**. Final state `closed` / `resolved`, severity still Critical. Audit carries the pair: `ask.action.execution_refused` (analyst, 18:22:17) then `ask.action.executed` (approver, 18:22:48) |
+| 3.7 | **PASS** | `vendors.decide` on the `decision_pending` Microsoft engagement → `decided`, decision `approved`, `decided_by` set to the CONFIRMING user, **residual unchanged at 64 High** |
+| 3.8 | **PASS — the full separation-of-duties chain** | Analyst proposes `risks.accept` (expiry 2026-12-31) → acceptance `proposed`, finding still ACTIVE. TTL is **5 minutes** (18:12:15 → 18:17:15), the short window this class requires, not the 15-minute default. **Same user approving → `403 separation_of_duties`.** Approver approves → 200. Finding → `accepted_risk`, **severity still Critical**. Audit shows two distinct actors: `finding.risk_acceptance.proposed` (analyst, 18:12:15) then `.approved` (approver, 18:12:48) |
+| 3.9 | **PASS** | Replaying a spent token → 404 `proposal_not_found`, **byte-identical** to a never-existed token. No oracle |
+| 3.10 | **PASS** | A `risks.accept` card issued 18:13:41Z with `expires_at` 18:18:41Z was left to lapse and confirmed at **18:19:32Z** → 404 `proposal_not_found`, **byte-identical** to a never-existed token. Real elapsed time, not a clock manipulation |
+
+**Two behaviours worth recording because they are the product working, not
+failing.** Asked to accept a risk without an expiry date, the model **refused
+to guess**: it returned no proposal and asked for the date, while correctly
+stating that acceptance needs a different approver, cannot be self-approved,
+and does not change measured severity. And the confirm response wraps the
+target route's own body (`action.action`), so the card reports what the real
+endpoint returned rather than what the model claimed.
+
+#### Observation — provenance class inflation in agentic answers (P3, quality)
+
+Agentic answers prefix **every** sentence with "Assessment:", including plainly
+tool-derived facts ("Severity: Critical", "Due date: 20 August 2026") that §2.2
+showed are normally classed `observed` with field-level citations. The answer is
+correct and the mechanism is sound; the rendering reads as noise and
+under-sells the citations the system actually has. Cousin of the `renderClaims`
+defect this walkthrough's reopening already fixed once. Not blocking.
+
+#### W-5 (P2) — a governance control that cannot be evidenced from its own audit record
+
+Separation of duties on finding closure IS enforced (3.6 proves it by identity).
+But the refusal is reported — to the user AND in the audit event's
+`refusal_detail` — as the generic **`invalid_decision_transition`**, never as
+`separation_of_duties`.
+
+The reason is not missing upstream. `findingLifecycleMachine` computes
+`reason: "separation_of_duties"`, and `PATCH /api/findings/:id` returns BOTH:
+
+```json
+{ "error": "invalid_decision_transition", "reason": "separation_of_duties",
+  "from": "...", "to": "...", "operational_status": "..." }
+```
+
+It is discarded one layer up: `describeError()` in `src/api/tools/executor.ts`
+reads only `body.error` and never `body.reason`, and `askActions.ts` records
+that flattened string as `refusal_detail`.
+
+Consequences, in order of who is hurt:
+1. **The blocked user is told nothing useful** — "invalid decision transition"
+   does not say "you remediated this; someone else must close it".
+2. **An auditor cannot prove the control fired.** Asked to evidence separation
+   of duties, the audit log returns the same string for an SoD block as for any
+   other illegal transition. A control that works but cannot be shown working is
+   a control that fails its review.
+3. It applies to every governed refusal through the agentic path, not just SoD —
+   any route reporting a specific `reason` alongside a generic `error` loses it.
+
+Not a bypass and not blocking: enforcement is correct and 3.5's refusal
+(`close_requires_remediation_complete`) reaches the user intact because that
+route puts its detail in `error`. Fix is to prefer `reason` over `error` (or
+carry both) in `describeError`. **Not applied — out of scope for this run.**
 
 #### Defects found by this execution
 
