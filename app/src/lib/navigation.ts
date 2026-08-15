@@ -105,6 +105,28 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "AI Systems",     href: "/ai-systems",  hiddenByFlag: "asset_registry" },
     ],
   },
+  // Third-party assurance is a first-class Platform workspace, not a kind of
+  // asset (operator ruling, BL-4, 2026-08-15). It was previously present ONLY in
+  // WORKSPACE_NAV_ITEMS, so with `risk_workspace` off — the PRODUCTION flag state
+  // — the whole engagement spine (/vendor-assurance, /vendor-engagements,
+  // /vendor-assurance/queue) was nav-orphaned and reachable only by typing the
+  // URL, while the engine's SECURELOGIC_VENDOR_ASSURANCE_ENABLED had it live.
+  // It is declared here as well so the capability is reachable in BOTH nav
+  // models, and so the Application Knowledge Index — generated from NAV_ITEMS
+  // only — can finally give Ask a real navigation path to it instead of
+  // `navLabel: null`.
+  //
+  // NOT repeated here: "Vendors". The workspace nav carries it inside this group
+  // because `asset_registry` hides it under Assets; in the legacy nav with that
+  // flag off it is still reachable at Assets → Vendors, and duplicating it would
+  // put the same destination in two menus at once.
+  { type: "group", label: "Vendor Assurance", platform: true,
+    items: [
+      { label: "Overview",       href: "/vendor-assurance" },
+      { label: "Engagements",    href: "/vendor-engagements" },
+      { label: "Document Queue", href: "/vendor-assurance/queue" },
+    ],
+  },
   // Enterprise Context Layer — DARK: featureFlag keeps this hidden until the
   // app-side SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED env is true (GATE B for prod).
   { type: "link", label: "Context", href: "/enterprise-context", platform: true, featureFlag: "enterprise_context" },

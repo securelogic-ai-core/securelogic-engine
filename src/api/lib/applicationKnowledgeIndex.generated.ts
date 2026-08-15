@@ -49,6 +49,25 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       ]
     },
     {
+      "type": "group",
+      "label": "Vendor Assurance",
+      "access": "platform",
+      "children": [
+        {
+          "label": "Overview",
+          "href": "/vendor-assurance"
+        },
+        {
+          "label": "Engagements",
+          "href": "/vendor-engagements"
+        },
+        {
+          "label": "Document Queue",
+          "href": "/vendor-assurance/queue"
+        }
+      ]
+    },
+    {
       "type": "link",
       "label": "Context",
       "href": "/enterprise-context",
@@ -145,6 +164,24 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "href": "/ai-systems",
       "access": "platform",
       "group": "Assets"
+    },
+    {
+      "label": "Overview",
+      "href": "/vendor-assurance",
+      "access": "platform",
+      "group": "Vendor Assurance"
+    },
+    {
+      "label": "Engagements",
+      "href": "/vendor-engagements",
+      "access": "platform",
+      "group": "Vendor Assurance"
+    },
+    {
+      "label": "Document Queue",
+      "href": "/vendor-assurance/queue",
+      "access": "platform",
+      "group": "Vendor Assurance"
     },
     {
       "label": "Context",
@@ -847,7 +884,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/vendor-assurance",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Overview",
       "access": "platform"
     },
     {
@@ -859,13 +896,13 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/vendor-assurance/queue",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Document Queue",
       "access": "platform"
     },
     {
       "path": "/vendor-engagements",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Engagements",
       "access": "platform"
     },
     {

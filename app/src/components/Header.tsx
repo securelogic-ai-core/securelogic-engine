@@ -339,11 +339,29 @@ export function Header({
           render `absolute top-full` inside it.
 
           The headroom is 18.5px at nine entries. The count is not fixed — it
-          varies with entitlement, admin role and four feature flags — and a
-          TENTH top-level entry would not fit on one line at 768px. Today only
-          "Executive" can add one, behind `risk_intelligence`, which is off in
-          staging and production. Turning that flag on is the trigger to revisit
-          this band.
+          varies with entitlement, admin role and four feature flags.
+
+          That 18.5px is the WORKSPACE nav (risk_workspace on), whose labels are
+          long: "Risk Operations", "Vendor Assurance", "Intelligence". A tenth
+          entry does not fit THERE — "Executive", behind `risk_intelligence`,
+          is the only one that can add one, and turning that flag on is the
+          trigger to revisit this band.
+
+          The budget is a WIDTH budget, not an entry COUNT, and the legacy nav
+          (risk_workspace off — the production flag state) is far cheaper per
+          entry. Re-measured at 768px with the same method that produced the
+          table above, which reproduces the 701.5px row exactly:
+
+            nav model / audience                        entries   content   headroom
+            workspace, platform admin (calibration)         9      701.5px   +18.5px
+            legacy, platform admin  (prod flag state)       8      542.4px  +177.6px
+            legacy, platform analyst                        7      477.6px  +242.4px
+            legacy, every app flag on + admin (worst)      10      663.8px   +56.2px
+
+          So the legacy band holds TEN entries with 56.2px to spare. That is why
+          BL-4 — surfacing "Vendor Assurance" as a top-level group in NAV_ITEMS
+          so the engagement spine is not URL-only in production — cost 128.2px
+          and still left ~10x the headroom the workspace nav ships with.
 
           Rendered from `md` up, matching the ROW 1 avatar and the hamburger
           breakpoint: below `md` the drawer remains the single nav path. */}
