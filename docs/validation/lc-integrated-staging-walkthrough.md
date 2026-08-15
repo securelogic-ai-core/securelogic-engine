@@ -1,3 +1,4 @@
+| 2.5 | **EXECUTED — see the §2.5 ruling below** | A dedicated `professional`-tier tenant was seeded (`scripts/validation/seed-professional-org.ts`) because none existed. Result: **Ask is wholesale premium-gated**, so the filtering this step describes cannot occur. Full evidence and ruling below |
 # Launch Completion — Integrated Staging Walkthrough Plan
 
 > ## Status: REOPENED — the READY claim below was FALSIFIED (2026-08-14)
@@ -501,6 +502,67 @@ showed are normally classed `observed` with field-level citations. The answer is
 correct and the mechanism is sound; the rendering reads as noise and
 under-sells the citations the system actually has. Cousin of the `renderClaims`
 defect this walkthrough's reopening already fixed once. Not blocking.
+
+#### §2.5 — entitlement filtering: RULING
+
+Executed 2026-08-15 against deployed `3c9298c6` with a purpose-seeded tenant,
+`[SEED] Professional Tier Org` (`seed-professional`), `entitlement_level =
+professional` on both the organization and its `api_keys` row, one **org-admin**
+user (admin deliberately: a member refused a platform surface proves nothing,
+since the refusal could be the role gate), 2 vendors and 4 findings of its own.
+
+| Proof | Result | Evidence |
+|---|---|---|
+| **1. Ask retrieves professional-authorized information** | **FAIL as specified — but not a filtering failure** | `POST /api/ask/stream` → **403** `{"error":"insufficient_entitlement","required":"premium","current":"professional"}`. There is no authorized Ask surface at this tier at all. The tenant's own `/api/findings/summary` and `/api/vendors` also 403 |
+| **2. Ask withholds platform-only information/routes/tools** | **Vacuously satisfied** | Ask is unreachable, so it cannot expose or recommend anything. The *mechanism* this step was written to test is never exercised — see W-6 |
+| **3. Direct access independently denied** | **PASS** | Not relying on Ask's answer: `/api/vendor-engagements`, `/api/findings`, `/api/risks`, `/api/actions`, `/api/controls`, `/api/evidence`, `/api/ask/conversations` all → **403 insufficient_entitlement** with the required/current pair named. App pages `/vendor-assurance`, `/vendor-engagements`, `/findings`, `/risks` → **307** (gated). Nav renders only `Briefing · Intelligence · Audit Log` — no platform entries |
+| **4. Cross-tenant isolation intact** | **PASS — both directions** | Professional user reading the walkthrough org's conversation → 403. Premium walkthrough user sees **0** of the professional tenant's 4 findings and **0** of its 2 vendors (`Northwind Payments`, `Contoso Analytics` absent from a 100-finding / 50-vendor sweep) |
+
+**Ruling: the SECURITY PROPERTY §2.5 protects HOLDS, and more strongly than the
+step assumed — but §2.5 as written cannot be executed, because it presumes a
+lower-tier user can reach Ask. They cannot.** Every platform surface, Ask
+included, is denied at the route layer with an explicit, specific error, and
+that denial was verified independently of Ask. Nothing leaks in either
+direction. What is NOT proven — and cannot be, in the product as it stands — is
+LC-2's per-class corpus filtering, because no non-premium request ever reaches
+the code that performs it.
+
+#### W-6 (P2) — LC-2's requester-aware corpus filter is unreachable for the classes it was built for
+
+`ask.ts` computes `requesterClass` from the org's entitlement and selects one of
+**three** memoized system prompts (`starter`, `professional`, `premium`), so that
+"the prompt must not name surfaces this org's entitlement cannot reach". But all
+four Ask routes — `/ask`, `/ask/stream`, `/ask/conversations`,
+`/ask/conversations/:id` — sit behind `requireEntitlement("premium")`. Any
+request that reaches the class computation has already cleared the premium gate,
+so `requesterClass` can only ever evaluate to `premium`. **The `starter` and
+`professional` prompt variants are dead code in production.**
+
+This is the `admin-ip-allowlist-unwired` shape again: machinery that looks like
+an active control, cannot fire, and would pass any review that reads the code
+rather than exercising it. Two readings, and the choice is a product decision,
+not an engineering one:
+
+- **Ask is intentionally platform-only** → the lower-tier variants should be
+  deleted or explicitly documented as unreachable, and §2.5 rewritten, because
+  it currently describes a behaviour the product does not have.
+- **Ask is intended for Brief Pro / Brief Team** → the premium gate on those four
+  routes is too strict and is denying paying customers a feature they bought.
+
+#### W-7 (P2) — the app serves the full Ask UI to a tier the API refuses
+
+`GET /ask` returns **200** to the professional user and renders the complete
+interface: the textarea, "Ask anything about your risk posture in plain
+English", and example prompts including "Show me my critical active findings".
+There is no upgrade state and no entitlement messaging anywhere on the page —
+`grep` for `upgrade`, `not available`, `Platform Professional` all return zero.
+Every question typed into it will 403.
+
+The nav is filtered correctly (`Briefing · Intelligence · Audit Log`) and the
+other platform pages 307, so this is specifically `/ask` disagreeing with its own
+API. A Professional customer is invited into a dead end. Fix is either an
+entitlement gate on the page or an honest upgrade state; both are product
+decisions tied to W-6's ruling.
 
 #### W-5 (P2) — a governance control that cannot be evidenced from its own audit record
 
