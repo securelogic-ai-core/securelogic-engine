@@ -3,10 +3,20 @@
 > ## Status: REOPENED — the READY claim below was FALSIFIED (2026-08-14)
 >
 > **Update 2026-08-15 (deployed `05625d02`): both defect P1s raised by this
-> reopening are now CLOSED on live evidence. The walkthrough is still NOT
-> READY-complete — the §1–§3 execution legs (vendor portal, SoD, agentic) and
-> the operator-owed browser observations remain UNEXECUTED. Defects closing is
-> not the same as the walkthrough being executed.**
+> reopening are now CLOSED on live evidence.**
+>
+> **Update 2026-08-15, later (deployed `42004547`): §1 and §2 are now EXECUTED
+> end to end — see §5.** §1 ran the full spine
+> `draft → … → decided → monitoring` on a real engagement, including the
+> external-vendor portal legs driven with the invite token alone. §2 ran all
+> six Ask steps, including voice, which previously failed on an upstream 401.
+> **§3 (agentic) remains UNEXECUTED.** Execution surfaced one P1 (**W-3**, in
+> the promotion delta: a one-character constraint-name typo means the vendor
+> questionnaire hard-blocks on any requirement the vendor already answered),
+> one spec-vs-code conflict needing an operator ruling (**W-2**, invite links
+> are replayable for 30 days by design), and one P2 (**W-1**). The walkthrough
+> is NOT READY-complete: §3, the fail-path finding promotion, and the §4 human
+> gates remain.
 >
 > The operator, signed into `securelogic-app-staging` as `[SEED] Walkthrough
 > Org`, reported that neither Vendor Assurance nor Ask was usable. Both
@@ -403,5 +413,108 @@ deploys `dep-d9v8n2e7bikc739nmvsg` / `dep-d9v8n2jl550s7380dacg` (both live
 at `3d1a3705`); probes above confirm the running processes carry the flags.
 `DECISION_WORKSPACE` and `RISK_ACCEPTANCE` were already true and untouched.
 
-Walkthrough steps: to be filled during execution — step → pass/fail →
-evidence link.
+### Execution 2026-08-15 (agent, authenticated, deployed `42004547`)
+
+Executed against `securelogic-engine-staging` / `securelogic-app-staging`, both
+live at `42004547`, as `[SEED] Walkthrough Org` using the two seeded logins
+(`walkthrough-approver` = admin, `walkthrough-analyst` = analyst). A real
+browser (Playwright, authenticated session cookie) was used for the rendered-UI
+observations; the API legs were driven with the engine JWT and, for the portal,
+with **no credential at all** — the invite token only, as an external vendor
+holds it.
+
+**This is the first execution of the §1–§2 legs. They are no longer unexecuted.**
+
+#### §1 Vendor Assurance — COMPLETE end to end
+
+Driven on `c35041bf` (Cisco, periodic, inherent 61 High). Every transition is a
+real state change on staging, not a probe:
+
+| Step | Result | Evidence |
+|---|---|---|
+| 1.1 | — | engagement pre-existed in `draft` |
+| 1.3 | **PASS** | `POST /scope` → 3 scoped, 0 excluded, `tier_2_high`, rule v1.0.0; `POST /issue` → `issued`, 64-char raw token returned **once** (SHA-256 only persisted), expiry +30d |
+| 1.4 | **PASS, with a spec conflict — see W-2** | `POST /vendor-portal/session` with the token alone → 200, `sl_vendor_portal` cookie **httpOnly + Secure + path-scoped to `/api/vendor-portal`**; status auto-advanced `issued → in_progress` |
+| 1.4a | **PASS** | Vendor's own view exposes only `organization_name, vendor_name, title, status, due_date, accepting_responses` — **no inherent score, no internal fields** |
+| 1.5 | **PASS** | 3 answers saved (`pass`/`pass`/`pass`); `POST /submit` → `submitted`. An earlier submit correctly refused `422 incomplete, unanswered_required: 1` |
+| 1.6 | **PASS** | `begin-review` → `in_review`; `complete-analysis` → `analysis_complete`, `analysis_coverage: deterministic_only` |
+| 1.7 | **PASS (vacuously)** | `promote-findings` → `promoted: 0` — correct, all answers were `pass`; findings are born from `fail`/`partial`. **A fail-path promotion remains unexercised** |
+| 1.8 | **PASS** | `recompute` → effectiveness 50 (`vendor_effectiveness_v1`, coverage 1.0), residual **40 Moderate** from inherent 61 High; status advanced `analysis_complete → decision_pending` |
+| 1.9 | **PASS** | Rationale guard fires (`rationale_required` on a 2-char rationale); `decision: approved` → `decided`, `decided_by` set, residual **unchanged** at 40 |
+| 1.10 | **PASS** | `monitoring` → `monitoring`, `next_review_due: 2027-02-11` (cadence 180d). Refused first with `review_date_required` — "Monitoring without a review date is not monitoring" |
+
+State machine refused every illegal transition attempted: `decision` from
+`in_review` → `409 illegal_transition`, `monitoring` from `in_review` → `409`,
+re-`issue` of an in-flight engagement → `409 cannot_issue`. The
+`in_review → analysis_complete → decision_pending` ordering is enforced, not
+advisory.
+
+#### §2 Ask — COMPLETE
+
+| Step | Result | Evidence |
+|---|---|---|
+| 2.1 | **PASS — exact match** | Ask returned 607 active / 29 critical / 505 high / 73 medium / 0 low / 29 overdue / 598 unassigned; `/api/findings/summary` returns the identical seven numbers. Tool ledger shows `findings.summary`, `tools_denied: 0` |
+| 2.2 | **PASS** | Claims decompose with FIELD-level citations (`{tool: "findings__summary", field: "summary.active_total"}`); the one unverifiable sentence is `claim_class: "inference"` with `citations: []` and renders as "Assessment:" |
+| 2.3 | **PASS** | Thread persists (4 messages after a follow-up); the anaphoric "Of those, how many are overdue?" resolved correctly to 29. The **analyst** reading the approver's conversation gets `404 conversation_not_found` — user-scoped and fails closed without leaking existence |
+| 2.4 | **PASS** | Non-streaming `POST /api/ask` → **200 in 5.9s** (this path 504'd at 90s before), key shape identical to the SSE `final` frame. SSE emits `round`/`tool_call`/`delta`/`final` |
+| 2.5 | **NOT EXERCISED — see W-1** | The probe used (analyst asks for audit log) does not test LC-2 corpus filtering: **there is no audit tool in the registry** (17 tools, none audit), so no gated surface could have been reached. A true test needs a starter/professional-entitlement user, which this org does not have |
+| 2.6 | **PASS — previously blocked** | `POST /api/ask/transcribe` → **200 in 2.4s** with a WAV payload. This was 500ing on an upstream OpenAI 401; the credential separation fixed it. Unauth → 401, confirming the kill-switch code is deployed |
+
+#### §3 Agentic Ask — NOT EXECUTED this session
+
+Time-boxed out after §1 and §2. Both flags were set true on 2026-08-14 and the
+services have redeployed since (env persists across deploys), so §3 is
+executable by the same method — including 3.8's separation-of-duties leg, since
+**both** seeded users hold `risk:accept` and SoD is enforced on differing
+`user_id`, not on role.
+
+#### Defects found by this execution
+
+- **W-3 (P1, in the promotion delta) — the vendor questionnaire cannot save an
+  answer for a requirement the vendor already has a response row for.**
+  Symptom: `PUT /api/vendor-portal/questions/:id` → `500 portal_unavailable`,
+  deterministic, for one requirement while others succeed; `/submit` then
+  refuses `422 incomplete`, so the vendor is hard-blocked with no usable
+  message. Root cause: migration `20260924` intends to replace the old
+  4-column unique key with one including `engagement_id` ("strictly WIDER"),
+  but drops `requirement_responses_organization_id_requirement_id_asses_key`
+  (62 chars) while Postgres generated
+  `requirement_responses_organization_id_requirement_id_assess_key` (63) —
+  **one character**. `DROP CONSTRAINT IF EXISTS` no-ops silently. Verified on a
+  fresh database after the FULL migration set: the old constraint SURVIVES
+  alongside `idx_requirement_responses_unique_scoped`. Because `ON CONFLICT`
+  names only the new index's expression, a collision on the old constraint
+  raises 23505 rather than upserting. **Consequence beyond the 500: two
+  engagements with the same vendor cannot both hold answers for the same
+  requirement — the exact capability the migration was written to enable.**
+  Fix is a new migration dropping the correctly-named constraint. NOT applied
+  in this session.
+
+- **W-2 (ruling needed, not a code defect) — §1.4's "one-time exchange" is not
+  what shipped.** This plan says the invite link is "dead afterward" with a
+  "byte-identical 401 on reuse". Observed: the same token minted **three
+  distinct sessions**, all live. That is deliberate — `20260923` states
+  "Re-exchange is permitted until expiry so the vendor can return via the same
+  email; each one is audited", and the compensating controls are real
+  (`exchange_count` incremented, first/last timestamps, `writeAuditEvent` on
+  every exchange, httpOnly+Secure+path-scoped cookie, 30-day expiry,
+  revocation). So the SPEC is stale, not the code — but the security
+  characteristic deserves explicit acceptance before portal enablement: **an
+  emailed invite is a bearer credential, replayable for 30 days by anyone who
+  sees the mail.** Operator ruling owed; do not silently edit §1.4.
+
+- **W-1 (P2) — Ask's navigation guidance is not requester-aware.** Asked for the
+  audit log, the **analyst** was told "Navigate to **Audit Log** in the top
+  navigation". That user's rendered nav is
+  `Briefing · Posture · Intelligence · Risk Operations · Assets · Vendor
+  Assurance · Compliance · Context` — no Audit Log — and `/audit-log`
+  307-redirects for them. LC-2's requester-awareness holds for DATA but not for
+  navigation instructions.
+
+#### Observation, not a defect
+
+The walkthrough org is documented as human-scale (8 findings). It now holds
+**607 active findings, 603 vendor-sourced**. Ask's numbers are exactly right,
+but "human-scale" no longer describes this tenant, and a reviewer expecting 8
+will misread every posture surface. Worth a reseed decision before the org is
+used for demo-adjacent validation.
