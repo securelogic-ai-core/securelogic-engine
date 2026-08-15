@@ -239,8 +239,19 @@
 > probes above. The most recent entries in the error stream
 > (`POST /ask` 504 at 13:42/14:10Z; three `transcription_failed` /
 > `POST /ask/transcribe 500` with upstream `err_status: 401` at 16:03–16:08Z)
-> all predate this deploy. The transcription failure remains a **separate open
-> item** — an upstream credential rejection, not re-tested here.
+> all predate this deploy.
+>
+> **The transcription failure was re-tested and REPRODUCES on `05625d02`.** A
+> 1-second 16 kHz WAV posted to `POST /api/ask/transcribe` as the walkthrough
+> analyst returned **500** `{"error":"openai_error","message":"Failed to
+> transcribe audio."}`, with `transcription_failed err_status: 401` in the
+> engine log at 00:31:03Z. This is an upstream credential rejection, not a
+> code defect and not a regression from this work — but it means **voice input
+> is broken on staging right now**, not merely unvalidated. Correcting the
+> earlier "not re-tested here" note. Tracked as a separate open item; the fix
+> is an `OPENAI_API_KEY` rotation on `securelogic-engine-staging`, an operator
+> act. Note the app-side `voice configured:true` probe passes regardless — it
+> checks key PRESENCE, never that the key works.
 >
 > ### What this section does NOT claim
 >
