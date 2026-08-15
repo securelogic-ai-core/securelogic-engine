@@ -205,7 +205,7 @@ async function ensureProfessionalUser(
 /** Minimum realistic tenant-scoped data, so a refusal is filtering, not emptiness. */
 async function seedTenantData(c: PoolClient, orgId: string, userId: string): Promise<void> {
   const vendors: Array<[string, string, string, string, string, number]> = [
-    ["Northwind Payments", "Payments", "high", "confidential", "limited", 58],
+    ["Northwind Payments", "Payments", "high", "confidential", "read_write", 58],
     ["Contoso Analytics", "Analytics", "medium", "internal", "read_only", 34],
   ];
   const vendorIds: string[] = [];
@@ -244,7 +244,7 @@ async function seedTenantData(c: PoolClient, orgId: string, userId: string): Pro
          (organization_id, title, severity, description, recommendation, source_type, source_id,
           domain, priority, likelihood, confidence, time_sensitivity, owner_user_id, due_date,
           decision_state, status)
-       SELECT $1, $2, $3, $4, $5, 'vendor_assessment', $6, $7, 'near_term', 'likely',
+       SELECT $1, $2, $3, $4, $5, 'vendor_review', $6, $7, 'near_term', 'high',
               'high', 'near_term', $8, CURRENT_DATE + ($9)::int, 'needs_review', 'open'
         WHERE NOT EXISTS (
           SELECT 1 FROM findings WHERE organization_id = $1 AND title = $2
