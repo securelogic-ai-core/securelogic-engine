@@ -25,22 +25,42 @@ import { renderWorkflows } from "./workflowRegistry.js";
 import type { EntitlementClass } from "./entitlementClass.js";
 
 /**
- * Whether a requester of the given entitlement class can actually USE a
- * destination with the given declared access (Launch Completion 2 — Ask
- * access truth).
+ * Whether a requester can actually USE a destination with the given declared
+ * access (Launch Completion 2 — Ask access truth).
  *
- * The class comes from collapseEntitlementLevel() — the SAME canonical
- * collapse requireEntitlement applies — so this answers exactly "would the
- * page's own guard admit this org". `admin` is a ROLE gate inside an org of
- * any entitlement, which entitlement cannot decide; admin items therefore
- * stay visible with their "[admin only]" annotation rather than being
- * filtered on a signal we don't have.
+ * The class comes from collapseEntitlementLevel() — the SAME canonical collapse
+ * requireEntitlement applies — so this answers exactly "would the page's own
+ * guard admit this org".
+ *
+ * `admin` is a ROLE gate inside an org of any entitlement, so entitlement alone
+ * cannot decide it. This originally returned true for admin items on the
+ * grounds that the requester's role was "a signal we don't have", leaving them
+ * in the prompt with an "[admin only]" annotation. That produced W-1: asked
+ * about the audit log, a non-admin analyst was told to "navigate to Audit Log
+ * in the top navigation" — an entry admin-gated OUT of that user's rendered
+ * menu, on a route that 307s for them. The annotation told the model the item
+ * was restricted; it did not stop the model describing a path the user does not
+ * have.
+ *
+ * The signal does exist: requireApiKey assigns req.userRole and req.userSeatType
+ * on every authenticated request, and seatScope.scopeFromRequest() collapses
+ * them to the canonical isAdmin. So admin items are now filtered for a requester
+ * known NOT to be an admin.
+ *
+ * `isAdmin` is optional and only an EXPLICIT false filters: callers that cannot
+ * resolve a role (the knowledge-index generator, corpus-wide tests) keep
+ * rendering the full annotated set exactly as before.
  */
-export function accessibleTo(access: NavAccess, cls: EntitlementClass): boolean {
+export function accessibleTo(
+  access: NavAccess,
+  cls: EntitlementClass,
+  isAdmin?: boolean
+): boolean {
   switch (access) {
     case "all":
-    case "admin":
       return true;
+    case "admin":
+      return isAdmin !== false;
     case "premium":
       return cls !== "starter";
     case "platform":
@@ -81,10 +101,11 @@ function accessNote(access: NavAccess): string {
  */
 function renderNavigation(
   index: ApplicationKnowledgeIndex,
-  cls?: EntitlementClass
+  cls?: EntitlementClass,
+  isAdmin?: boolean
 ): string {
   return index.navigation
-    .filter((item) => cls === undefined || accessibleTo(item.access, cls))
+    .filter((item) => cls === undefined || accessibleTo(item.access, cls, isAdmin))
     .map((item) => {
       if (item.type === "group") {
         const children = item.children
@@ -106,10 +127,11 @@ function renderNavigation(
  */
 function renderSecondaryNavigation(
   index: ApplicationKnowledgeIndex,
-  cls?: EntitlementClass
+  cls?: EntitlementClass,
+  isAdmin?: boolean
 ): string {
   const items = (index.secondaryNavigation ?? []).filter(
-    (item) => cls === undefined || accessibleTo(item.access, cls)
+    (item) => cls === undefined || accessibleTo(item.access, cls, isAdmin)
   );
   if (items.length === 0) return "";
   const groupsInOrder: string[] = [];
@@ -135,10 +157,11 @@ function renderSecondaryNavigation(
  */
 function renderGlobalUtilities(
   index: ApplicationKnowledgeIndex,
-  cls?: EntitlementClass
+  cls?: EntitlementClass,
+  isAdmin?: boolean
 ): string {
   const items = (index.globalUtilities ?? []).filter(
-    (item) => cls === undefined || accessibleTo(item.access, cls)
+    (item) => cls === undefined || accessibleTo(item.access, cls, isAdmin)
   );
   if (items.length === 0) return "";
   return items
@@ -162,19 +185,27 @@ export const NOT_USER_ACTIONS: ReadonlyArray<string> = [
  * Deterministic (the index + registry are sorted) so prompt caching and tests
  * are stable.
  */
-export function renderProductKnowledge(requesterClass?: EntitlementClass): string {
+export function renderProductKnowledge(
+  requesterClass?: EntitlementClass,
+  isAdmin?: boolean
+): string {
   // Requester-aware (Launch Completion 2): with a class given, every
   // destination and workflow the requester's entitlement cannot actually use
   // is OMITTED from the prompt — the assistant cannot recommend a surface it
   // has never been told about. Without a class (older callers, tests of the
   // full corpus), the complete annotated knowledge renders as before.
-  const nav = renderNavigation(KNOWLEDGE_INDEX, requesterClass);
-  const globalUtilities = renderGlobalUtilities(KNOWLEDGE_INDEX, requesterClass);
-  const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX, requesterClass);
+  //
+  // `isAdmin` extends that same principle to the ROLE gate (W-1): an explicit
+  // false also omits admin-only destinations, so the assistant cannot send a
+  // non-admin to a menu entry their own role hides. Left undefined, admin items
+  // render annotated exactly as before.
+  const nav = renderNavigation(KNOWLEDGE_INDEX, requesterClass, isAdmin);
+  const globalUtilities = renderGlobalUtilities(KNOWLEDGE_INDEX, requesterClass, isAdmin);
+  const secondaryNav = renderSecondaryNavigation(KNOWLEDGE_INDEX, requesterClass, isAdmin);
   const flows = renderWorkflows(
     requesterClass === undefined
       ? WORKFLOW_REGISTRY
-      : WORKFLOW_REGISTRY.filter((w) => accessibleTo(w.permissions, requesterClass))
+      : WORKFLOW_REGISTRY.filter((w) => accessibleTo(w.permissions, requesterClass, isAdmin))
   );
   const limits = NOT_USER_ACTIONS.map((s) => `- ${s}`).join("\n");
 

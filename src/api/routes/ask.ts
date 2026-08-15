@@ -30,6 +30,7 @@ import {
   type EntitlementClass,
 } from "../lib/entitlementClass.js";
 import { renderProductKnowledge } from "../lib/productKnowledge.js";
+import { scopeFromRequest } from "../lib/seatScope.js";
 import {
   sqlFindingActive,
   sqlFindingClosed,
@@ -134,8 +135,8 @@ Format rules:
 CRITICAL — applies to ORGANIZATION DATA only: never invent, assume, or generate proper nouns about this customer's environment — vendor names, domain names, team names, person names, or specific risk titles — that are not explicitly present in the org context data. If a list is empty or a field is null, state that no data is available rather than providing examples (e.g. if the vendor list is empty, say "no vendors have been added yet" — do not name hypothetical vendors). This rule does NOT restrict the PRODUCT KNOWLEDGE section: the feature names, navigation labels, and URL paths there are real and you should use them freely to answer how-to questions.
 `.trim();
 
-export function buildAskSystemPrompt(cls?: EntitlementClass): string {
-  return `${BASE_INSTRUCTIONS}\n\n---\n\n${renderProductKnowledge(cls)}`;
+export function buildAskSystemPrompt(cls?: EntitlementClass, isAdmin?: boolean): string {
+  return `${BASE_INSTRUCTIONS}\n\n---\n\n${renderProductKnowledge(cls, isAdmin)}`;
 }
 
 /**
@@ -191,12 +192,17 @@ function resolveRequesterClass(entitlementLevel: unknown): EntitlementClass {
  * destination and workflow that class cannot actually use, so the assistant
  * cannot route a customer to a page whose guard would bounce them.
  */
-const SYSTEM_PROMPT_BY_CLASS = new Map<EntitlementClass, string>();
-function systemPromptFor(cls: EntitlementClass): string {
-  let p = SYSTEM_PROMPT_BY_CLASS.get(cls);
+// Keyed on class AND admin-ness. Keying on class alone would serve the first
+// requester's prompt to everyone after them — an admin's prompt to a non-admin
+// re-opens W-1, and a non-admin's prompt to an admin silently hides real
+// destinations.
+const SYSTEM_PROMPT_BY_AUDIENCE = new Map<string, string>();
+function systemPromptFor(cls: EntitlementClass, isAdmin: boolean): string {
+  const key = `${cls}:${isAdmin ? "admin" : "non-admin"}`;
+  let p = SYSTEM_PROMPT_BY_AUDIENCE.get(key);
   if (p === undefined) {
-    p = buildAskSystemPrompt(cls);
-    SYSTEM_PROMPT_BY_CLASS.set(cls, p);
+    p = buildAskSystemPrompt(cls, isAdmin);
+    SYSTEM_PROMPT_BY_AUDIENCE.set(key, p);
   }
   return p;
 }
@@ -277,6 +283,10 @@ async function runAskToolTurn(args: {
   const requesterClass: EntitlementClass = resolveRequesterClass(
     (req as any).organizationContext?.entitlementLevel
   );
+  // Role gate (W-1). scopeFromRequest is the canonical collapse of seat type +
+  // role, so the prompt agrees with what the menu actually renders for this
+  // user rather than re-deriving the rule here.
+  const requesterIsAdmin: boolean = scopeFromRequest(req as never).isAdmin;
   const requestedConversationId =
     typeof (req.body as Record<string, unknown>)?.conversation_id === "string"
       ? ((req.body as Record<string, string>).conversation_id ?? null)
@@ -349,7 +359,7 @@ async function runAskToolTurn(args: {
     const orchestration = await runAskOrchestration({
       client,
       model: ASK_MODEL,
-      systemPrompt: systemPromptFor(requesterClass),
+      systemPrompt: systemPromptFor(requesterClass, requesterIsAdmin),
       history,
       question,
       origin: req,
@@ -733,6 +743,8 @@ router.post(
     const requesterClass: EntitlementClass = resolveRequesterClass(
       organizationContext?.entitlementLevel
     );
+    // Role gate (W-1) — see the streaming handler for why scopeFromRequest.
+    const requesterIsAdmin: boolean = scopeFromRequest(req as never).isAdmin;
 
     const validated = validateAskRequest(req, res);
     if (!validated) return;
@@ -1158,7 +1170,7 @@ router.post(
         const response = await client.messages.create({
           model: ASK_MODEL,
           max_tokens: 1024,
-          system: systemPromptFor(requesterClass),
+          system: systemPromptFor(requesterClass, requesterIsAdmin),
           messages: [{ role: "user", content: userMessage }],
         });
 

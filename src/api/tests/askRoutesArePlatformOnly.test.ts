@@ -87,8 +87,11 @@ describe("Ask routes are platform-only", () => {
   it("still selects the prompt by class rather than hard-coding premium", () => {
     // Hard-coding the premium variant would make a future gate change leak
     // platform surface names into a lower tier's prompt. The class must keep
-    // flowing through to systemPromptFor().
-    expect(ASK_SRC).toMatch(/systemPromptFor\(requesterClass\)/);
-    expect(ASK_SRC).not.toMatch(/systemPromptFor\("premium"\)/);
+    // flowing through to systemPromptFor(). Matched loosely on the first
+    // argument: the call also carries the requester's admin-ness (W-1), and
+    // pinning the arity would fail on every future audience dimension without
+    // saying anything about the property under test.
+    expect(ASK_SRC).toMatch(/systemPromptFor\(requesterClass[,)]/);
+    expect(ASK_SRC).not.toMatch(/systemPromptFor\("premium"/);
   });
 });
