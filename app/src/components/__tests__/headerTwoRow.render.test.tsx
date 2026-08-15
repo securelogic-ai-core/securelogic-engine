@@ -129,10 +129,10 @@ describe("authenticated header — real two-row structure", () => {
 
     // Presentation is what buys the room: smaller type and a tighter gap at the
     // tablet breakpoint, both restored at `lg`.
-    expect(nav.className).toContain("gap-x-2.5");
+    expect(nav.className).toContain("gap-x-2");
     expect(nav.className).toContain("lg:gap-x-6");
     const first = nav.children[0] as HTMLElement;
-    expect(first.className).toContain("text-[13px]");
+    expect(first.className).toContain("text-xs");
     expect(first.className).toContain("lg:text-sm");
     // A tight fit must not squeeze labels into each other or break mid-label.
     expect(first.className).toContain("shrink-0");

@@ -22,12 +22,16 @@ const SITE_URL = getSiteBaseUrl();
 
 // ─── Inline chevron (no icon-lib dependency) ──────────────────────────────────
 
+// 10px in the tablet nav band, 14px from `lg`. The width/height attributes are
+// the pre-CSS fallback; the classes win. Five groups carry a chevron, so 4px off
+// each is 20px off the band — a real lever at 768px, not a detail.
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
       width="14"
       height="14"
       viewBox="0 0 24 24"
+      className="w-2.5 h-2.5 lg:w-3.5 lg:h-3.5"
       fill="none"
       stroke="currentColor"
       strokeWidth="2.5"
@@ -47,19 +51,20 @@ function Chevron({ open }: { open: boolean }) {
 
 // ─── Desktop: plain link ──────────────────────────────────────────────────────
 
-// `text-[13px] lg:text-sm` and `whitespace-nowrap`: at the tablet-portrait
+// `text-xs lg:text-sm` and `whitespace-nowrap`: at the tablet-portrait
 // breakpoint the nav band must hold every workspace entry on ONE line, and it
-// is presentation — type size and gap — that buys the room. See the nav band in
-// the Header for the measurements. `shrink-0` keeps a tight fit from squeezing
-// items into each other; `whitespace-nowrap` stops "Risk Operations" breaking
-// mid-label.
+// is presentation — type size, chevron size and gap — that buys the room. See
+// the nav band in the Header for the measurements. `shrink-0` is load-bearing:
+// without it the flex items SHRINK to fit and the labels squeeze into each
+// other, which measures as "fits" while looking broken. `whitespace-nowrap`
+// stops "Risk Operations" breaking mid-label.
 function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + "/");
   return (
     <Link
       href={href}
-      className="shrink-0 whitespace-nowrap text-[13px] lg:text-sm font-medium transition-colors"
+      className="shrink-0 whitespace-nowrap text-xs lg:text-sm font-medium transition-colors"
       style={{ color: active ? "#00c4b4" : "#cbd5e1" }}
     >
       {label}
@@ -114,7 +119,7 @@ function NavGroup({
     <div ref={ref} className="relative shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1 whitespace-nowrap text-[13px] lg:text-sm font-medium transition-colors"
+        className="flex items-center gap-0.5 lg:gap-1 whitespace-nowrap text-xs lg:text-sm font-medium transition-colors"
         style={{
           color: isActive ? "#00c4b4" : "#cbd5e1",
           background: "none",
@@ -309,36 +314,43 @@ export function Header({
           below THIS row. The hairline `border-t` here separates the two rows.
 
           ONE LINE at every breakpoint it renders at, bought with presentation
-          only — type size and gap, no wrapping and no horizontal scroll.
-          Measured against the real nav content at 768px, where the usable width
-          inside `px-6` is 720px:
+          only — type size, chevron size and gap. No wrapping, no horizontal
+          scroll, no restructuring of the dropdowns.
 
-            font   gap   total    result
-            14px   24px  839px    overflows by 119px  (what wrapped)
-            14px    8px  711px    fits, but 8px reads as cramped
-            13px   16px  735px    still overflows
-            13px   10px  687px    FITS — 33px headroom  ← chosen
-            12px   12px  664px    fits, but 12px is small for a primary nav
+          Measured against the real nav content at 768px, where the usable width
+          inside `px-6` is 720px and the nine entries have a NATURAL width of
+          715.6px at 13px type — i.e. they do not fit at 13px on any gap at all:
+
+            type  chevron  chev gap  item gap   total    headroom
+            13px    14px      4px      10px     795.6px   −75.6px  (overflowed)
+            12px    14px      4px       8px     731.5px    −11.5px
+            12px    10px      2px       8px     701.5px    +18.5px  ← chosen
+            11.5px  10px      2px       8px     677.5px    +42.5px  (type too small)
+
+          `shrink-0` on the items is load-bearing and easy to remove by
+          accident: without it the flex items shrink to fit, so the band always
+          "fits" while the labels squeeze into each other. It also means a
+          measurement taken WITHOUT it reports the container width rather than
+          the content width — which is how 13px was picked, wrongly, first time.
 
           Neither `flex-wrap` nor `overflow-x-auto` is used. Wrapping puts the
           tail of the nav on a second line; an overflow container becomes a
           clipping context and would cut off the NavGroup dropdowns, which
-          render `absolute top-full` inside it. `shrink-0` on the items means a
-          tight fit never squeezes labels into each other.
+          render `absolute top-full` inside it.
 
-          The headroom is 33px at nine entries. The count is not fixed — it
+          The headroom is 18.5px at nine entries. The count is not fixed — it
           varies with entitlement, admin role and four feature flags — and a
           TENTH top-level entry would not fit on one line at 768px. Today only
           "Executive" can add one, behind `risk_intelligence`, which is off in
           staging and production. Turning that flag on is the trigger to revisit
-          this band, not a reason to pre-emptively shrink it further.
+          this band.
 
           Rendered from `md` up, matching the ROW 1 avatar and the hamburger
           breakpoint: below `md` the drawer remains the single nav path. */}
       {isAuthenticated && (
         <div className="hidden md:block border-t border-slate-800/60">
           <div className="max-w-6xl mx-auto px-6">
-            <nav className="flex flex-nowrap items-center gap-x-2.5 lg:gap-x-6 py-2.5">
+            <nav className="flex flex-nowrap items-center gap-x-2 lg:gap-x-6 py-2.5">
               {visibleNav.map(item =>
                 item.type === "link" ? (
                   <NavLink key={item.label} href={item.href} label={item.label} />
