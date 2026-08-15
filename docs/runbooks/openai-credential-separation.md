@@ -1,8 +1,8 @@
 # OpenAI Credential Separation — map, staging rotation, prod/demo plan
 
-Status as of 2026-08-15: **staging rotation PREPARED, not executed** (blocked on
-replacement key material). **Prod/demo separation PREPARED ONLY — not authorized,
-not executed.** The shared key is **not revoked** and must not be until §5 passes.
+Status as of 2026-08-15: **staging rotation EXECUTED and VALIDATED** (§7).
+**Prod/demo separation PREPARED ONLY — not authorized, not executed.** The shared
+key is **not revoked** and must not be until BOTH gates in §5 pass — G2 is open.
 
 ---
 
@@ -198,3 +198,79 @@ The `configured` probe returning `true` for a dead credential is the reason this
 went unnoticed. A liveness check (as opposed to a presence check) would have
 caught it. Not proposed here — it is new work and belongs in scoping, not in a
 credential rotation.
+
+---
+
+## 7. Execution record — staging rotation, 2026-08-15
+
+**Authorized**: operator, Option 2 (split staging now; prod/demo prepared only;
+do not revoke). **Executed**: agent.
+
+### What changed
+
+| Act | Detail |
+|---|---|
+| Credential set | `OPENAI_API_KEY` on `securelogic-engine-staging` — **by the operator**, in the Render dashboard |
+| Deploy | `dep-d9vs31rl550s73c078k0`, same SHA `595ea317`, **engine-staging only**, Live 01:33:19Z |
+| Services NOT redeployed | app-staging (last deploy 00:54:09Z) and vendor-extraction-worker-staging (00:51:23Z) — unchanged, and neither reads the credential |
+| Production / demo | **untouched**; both still hold the old shared key, confirmed by equality |
+| Revocation | **not performed** |
+
+### Distinctness
+
+Verified by equality comparison only — no value, hash, prefix or length was
+computed or displayed at any point. The staging key is distinct from both the
+production and demo values. **0 staging services hold the old shared key**; only
+`securelogic-engine-staging` holds an OpenAI credential at all.
+
+### Validation — final run vs baseline
+
+| Check | Pre-rotation baseline | Post-rotation |
+|---|---|---|
+| V1 voice transcription | **FAIL** 500 / upstream 401 | **PASS** 200, `{"text":"Oh"}` |
+| V2 normal Ask, inline provenance | PASS (367 ch, 10 claims) | **PASS** (495 ch, 12 claims) |
+| V3 long answer deferred | PASS | **PASS** (8,362 ch → `pending`) |
+| V3 claims attached | PASS (74) | **PASS** (82) |
+| V3 delivered text unchanged | PASS | **PASS** (identical at every poll) |
+| V5 worker ticking | PASS | **PASS** (2 ticks) |
+| V4/V5 worker errors | PASS (0) | **PASS** (0) |
+| engine `transcription_failed` since cutoff | **FAIL** (3) | 1 — the transient below |
+| | **6 pass / 2 fail** | **7 pass / 1 fail** |
+
+### The one remaining line, and why it is not a defect
+
+`transcription_failed` fired **once** after the redeploy — `rot-v1-40378` at
+01:33:42Z, **23 seconds** after the deploy went Live — with upstream
+**`err_status: 429`**, not 401.
+
+The change in failure mode is itself the proof the rotation worked: 401 is
+invalid authentication, 429 is an authenticated caller being rate-limited. The new
+key authenticates. Discriminated by three spaced retries (75s apart) plus two
+further probes — **five consecutive `outcome: "ok"`** at 01:44:20, 01:45:36,
+01:46:53, 01:51:45, 01:52:12, and **zero** failures of any kind since 01:33:42Z.
+A cold rate limit on a newly issued key, immediately after two back-to-back
+validation runs.
+
+### Harness defect found and fixed during execution
+
+The final check originally grepped recent error lines *regardless of age*, so it
+counted pre-rotation failures and would have reported FAIL permanently — a
+stale-evidence trap that reads as a live signal. It now takes a
+`ROTATION_CUTOFF` and counts only entries after it. Worth noting because the
+first post-rotation run reported 6/2 partly on that stale basis.
+
+### Limits of this validation — stated, not glossed
+
+- The probe clip is a **440 Hz sine tone**, not speech; no TTS is available in
+  this environment. Whisper returned `"Oh"`. This proves the **credential, upload,
+  provider round trip and response parsing** — it does **not** prove transcription
+  accuracy, which is a provider property. A human speaking into the browser
+  remains the confirming observation, and is already an operator-owed item.
+- V2–V5 are Anthropic-backed regression cover. They cannot be *fixed* by an
+  OpenAI rotation and passing them is not evidence about the credential.
+
+### Revocation status — DO NOT REVOKE
+
+**G1 (staging) PASSED. G2 (prod + demo separated) OPEN.** Production and demo
+still hold the old shared key, and production voice is still broken by it.
+Revoking now would change nothing for the better and would break demo as well.
