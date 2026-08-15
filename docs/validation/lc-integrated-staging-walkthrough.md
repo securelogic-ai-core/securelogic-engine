@@ -675,13 +675,34 @@ so the refusal remains real.
   and if a shorter window is ever wanted it is an expiry change, not a
   single-use change. **No code change. §1.4 rewritten to match what ships.**
 
-- **W-1 (P2) — Ask's navigation guidance is not requester-aware.** Asked for the
+- **W-1 (P2) — CLOSED 2026-08-15 at `1aba4903` — Ask's navigation guidance was not requester-aware.** Asked for the
   audit log, the **analyst** was told "Navigate to **Audit Log** in the top
   navigation". That user's rendered nav is
   `Briefing · Posture · Intelligence · Risk Operations · Assets · Vendor
   Assurance · Compliance · Context` — no Audit Log — and `/audit-log`
-  307-redirects for them. LC-2's requester-awareness holds for DATA but not for
+  307-redirects for them. LC-2's requester-awareness held for DATA but not for
   navigation instructions.
+
+  **FIXED at `1aba4903`.** The corpus filter omitted destinations an org's
+  ENTITLEMENT could not reach but returned true for admin items, on the stated
+  grounds that the requester's role was "a signal we don't have". That premise
+  was wrong: `requireApiKey` sets `req.userRole` and `req.userSeatType`, and
+  `seatScope.scopeFromRequest()` collapses them to the canonical `isAdmin` —
+  the same rule `/api/me` reports, so the prompt now agrees with the rendered
+  menu instead of drifting from it. The `[admin only]` annotation was never the
+  fix: the original answer DID say admin-only and gave nav directions anyway.
+  Only removing the item from the corpus works.
+
+  The prompt memo is re-keyed on class AND admin-ness — keyed on class alone it
+  would serve the first requester's prompt to everyone after them, re-opening
+  this defect as a cache bug.
+
+  **Verified live, both directions.** Analyst (non-admin): no `/audit-log`, no
+  nav instruction, and genuinely useful alternatives they CAN reach (API keys,
+  webhooks, Team & Users). Approver (admin): unchanged — still given
+  `/audit-log` and the nav path. The test also pins that the non-admin corpus
+  stays substantial, because over-filtering to an empty prompt would satisfy the
+  headline assertion while breaking the product.
 
 #### Observation, not a defect
 
