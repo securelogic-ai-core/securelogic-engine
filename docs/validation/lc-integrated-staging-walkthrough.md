@@ -577,7 +577,7 @@ BOTH directions — professional user `/ask` → **307**, followed to the dashbo
 with **zero** textareas; platform user `/ask` → **200**, unchanged. A gate that
 broke the entitled case would be worse than the defect it fixed.
 
-#### W-5 (P2) — a governance control that cannot be evidenced from its own audit record
+#### W-5 (P2) — CLOSED 2026-08-15 at `26c11f99` — a governance control that could not be evidenced from its own audit record
 
 Separation of duties on finding closure IS enforced (3.6 proves it by identity).
 But the refusal is reported — to the user AND in the audit event's
@@ -606,10 +606,32 @@ Consequences, in order of who is hurt:
 3. It applies to every governed refusal through the agentic path, not just SoD —
    any route reporting a specific `reason` alongside a generic `error` loses it.
 
-Not a bypass and not blocking: enforcement is correct and 3.5's refusal
-(`close_requires_remediation_complete`) reaches the user intact because that
-route puts its detail in `error`. Fix is to prefer `reason` over `error` (or
-carry both) in `describeError`. **Not applied — out of scope for this run.**
+Not a bypass: enforcement was always correct, and 3.5's refusal
+(`close_requires_remediation_complete`) reached the user intact because that
+route puts its detail in `error`.
+
+**FIXED at `26c11f99` by composing both halves, not by preferring one** —
+neither field is reliably the specific one:
+
+| Route | `error` | `reason` | carries the detail |
+|---|---|---|---|
+| `findings` | `invalid_decision_transition` | `separation_of_duties` | **reason** |
+| `vendorEngagements` | `cannot_decide` | `illegal_transition` | **error** |
+
+Preferring `reason` would have downgraded `cannot_decide` to
+`illegal_transition`; preferring `error` was the original defect. The generic
+code stays first so prefix matching keeps working, and single-field bodies are
+returned byte-identically, so no existing audit row changes shape.
+
+**Verified live on staging.** The precondition was rebuilt legitimately — the
+analyst attached evidence AND closed a linked action, so the finding *derived*
+`remediated` with the analyst as remediator (evidence alone is not enough:
+`deriveOperationalStatus` needs at least one terminal action, and returns `open`
+with none). The remediator's closure was then refused, and both the user message
+and the audit `refusal_detail` now read
+**`invalid_decision_transition: separation_of_duties`** where §3.6 recorded only
+the generic half. An auditor can now filter for SoD. The finding did not move,
+so the refusal remains real.
 
 #### Defects found by this execution
 
