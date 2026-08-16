@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { resolve, join } from "node:path";
 
 import {
   GOVERNED_DATA_CLASSES,
@@ -25,7 +25,12 @@ import {
   type EffectivePolicy
 } from "../lib/governance/retentionPolicy.js";
 import { canPlaceHold, canReleaseHold, statusForHoldReason } from "../lib/governance/legalHoldAuthority.js";
-import { holdCovering, isHeld, type ActiveHold } from "../lib/governance/holdPredicate.js";
+import {
+  holdCovering,
+  isHeld,
+  holdCoveringSubject,
+  type ActiveHold
+} from "../lib/governance/holdPredicate.js";
 import {
   tenantDataGovernanceEnabled,
   tdgEffectiveFrom,
@@ -513,5 +518,88 @@ describe("the five lifecycle events are distinguished, not collapsed", () => {
   it("every deletion trigger the audit ledger can record maps to a declared event", () => {
     const triggers = LIFECYCLE_EVENTS.map((e) => e.deletionTrigger).filter(Boolean);
     expect(triggers.sort()).toEqual(["administrator", "owner_request", "retention_expiry"]);
+  });
+});
+
+/* ─────────── The single deletion path (legal-hold reachability) ───────────── */
+
+/**
+ * A legal hold can only prevent a deletion it stands in front of. That is a
+ * property of the CODE SHAPE, not of any one function: the moment a second
+ * place deletes governed data, the hold check becomes something a developer has
+ * to remember. These tests fail the build if that ever happens.
+ */
+describe("governed data has exactly ONE deletion path", () => {
+  const GOVERNED_TABLES = listDataClasses().flatMap((c) => c.tables).concat([
+    // cascade children of a governed table — destroyed by the same act
+    "ask_provenance_contexts",
+    "ask_proposed_actions"
+  ]);
+
+  function shippedSources(dir: string, acc: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        if (entry === "node_modules" || entry === "__tests__" || entry === "tests") continue;
+        shippedSources(full, acc);
+      } else if (entry.endsWith(".ts") && !entry.includes(".test.")) {
+        acc.push(full);
+      }
+    }
+    return acc;
+  }
+
+  it("no shipped module deletes a governed table except the class handlers", () => {
+    const offenders: string[] = [];
+    for (const file of [
+      ...shippedSources(resolve(process.cwd(), "src")),
+      ...shippedSources(resolve(process.cwd(), "services"))
+    ]) {
+      if (file.endsWith("classHandlers.ts")) continue;
+      const src = readFileSync(file, "utf8");
+      for (const table of GOVERNED_TABLES) {
+        // Match the statement, not prose in a comment.
+        if (new RegExp(`DELETE\\s+FROM\\s+${table}\\b`).test(src)) {
+          offenders.push(`${file} deletes ${table}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the Art.17 reaper's explicit delete list contains no governed table", () => {
+    for (const table of GOVERNED_TABLES) {
+      expect(CATEGORY_B_DELETE_TABLES).not.toContain(table);
+    }
+  });
+
+  it("the reaper consults legal holds before erasing a subject", () => {
+    const reaper = readFileSync(
+      resolve(process.cwd(), "src/api/workers/accountDeletionReaper.ts"),
+      "utf8"
+    );
+    expect(reaper).toMatch(/holdCoveringSubject\(/);
+    // And the hold check must precede the destructive statements, or it is
+    // decoration: assert ordering by source position.
+    const holdAt = reaper.indexOf("holdCoveringSubject(");
+    const scrubAt = reaper.indexOf("SET reviewer_id = NULL");
+    const tombstoneAt = reaper.indexOf("buildTombstoneUpdate(");
+    expect(holdAt).toBeGreaterThan(0);
+    expect(holdAt).toBeLessThan(scrubAt);
+    expect(holdAt).toBeLessThan(tombstoneAt);
+  });
+
+  it("a subject hold covers the person; a class or object hold does not", () => {
+    const orgHold: ActiveHold = { id: "h-org", scopeType: "organization", dataClass: null, subjectUserId: null, objectId: null };
+    const subjHold: ActiveHold = { id: "h-sub", scopeType: "subject_user", dataClass: null, subjectUserId: "u-1", objectId: null };
+    const classHold: ActiveHold = { id: "h-cls", scopeType: "data_class", dataClass: "ask_conversation", subjectUserId: null, objectId: null };
+    const objHold: ActiveHold = { id: "h-obj", scopeType: "object", dataClass: "ask_conversation", subjectUserId: null, objectId: "c-1" };
+
+    expect(holdCoveringSubject([orgHold], "u-1")).toBe("h-org");
+    expect(holdCoveringSubject([subjHold], "u-1")).toBe("h-sub");
+    expect(holdCoveringSubject([subjHold], "u-2")).toBeNull();
+    // A hold on a THING must not become a hold on a person's right to erasure.
+    expect(holdCoveringSubject([classHold], "u-1")).toBeNull();
+    expect(holdCoveringSubject([objHold], "u-1")).toBeNull();
   });
 });

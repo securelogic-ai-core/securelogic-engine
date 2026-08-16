@@ -56,3 +56,28 @@ export function holdCovering(
 export function isHeld(holds: readonly ActiveHold[], target: HoldTarget): boolean {
   return holdCovering(holds, target) !== null;
 }
+
+/**
+ * Does a hold cover this DATA SUBJECT — the person, rather than one of their
+ * objects?
+ *
+ * A separate predicate from holdCovering() on purpose. The scopes that protect
+ * a person are `organization` and `subject_user`; a `data_class` or `object`
+ * hold protects a THING, and must not incidentally block an unrelated erasure
+ * of the human it happens to mention. Collapsing the two questions into one
+ * function is how a hold on one conversation quietly becomes a hold on someone's
+ * right to be forgotten.
+ *
+ * Used by the Art.17 account-deletion reaper: a held subject is not erased, and
+ * the request stays pending until the hold is released.
+ */
+export function holdCoveringSubject(
+  holds: readonly ActiveHold[],
+  subjectUserId: string
+): string | null {
+  for (const h of holds) {
+    if (h.scopeType === "organization") return h.id;
+    if (h.scopeType === "subject_user" && h.subjectUserId === subjectUserId) return h.id;
+  }
+  return null;
+}
