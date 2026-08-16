@@ -54,6 +54,11 @@ import { createDataExportWriteStream } from "../lib/dataExportStorage.js";
 import { mintDownloadToken } from "../lib/dataExportDownloadToken.js";
 import { exportEmailEnabled, sendExportReadyEmail } from "../lib/exportReadyEmail.js";
 import { processReapJob } from "./accountDeletionReaper.js";
+import { processRetentionSweepJob } from "./retentionSweepJob.js";
+import {
+  tenantDataGovernanceEnabled,
+  RETENTION_SWEEP_JOB_TYPE,
+} from "../lib/governance/tdgPolicy.js";
 import {
   accountDeletionReaperEnabled,
   claimedJobTypes,
@@ -133,9 +138,15 @@ export async function claimNextJob(workerId: string): Promise<JobRow | null> {
   // The reap job type is claimed ONLY when the reaper flag is on (the gated
   // enqueuer also produces none while off), so reap jobs are never drained
   // while the feature is disabled — the export behaviour is unchanged.
+  // Retention sweeps are claimed on the same terms: only while the TDG flag is
+  // on, and the gated enqueuer produces none while it is off — so the type is
+  // doubly inert rather than merely unproduced.
+  const jobTypes = [...claimedJobTypes(accountDeletionReaperEnabled())];
+  if (tenantDataGovernanceEnabled()) jobTypes.push(RETENTION_SWEEP_JOB_TYPE);
+
   const { rows } = await pgElevated.query(CLAIM_SQL, [
     workerId,
-    claimedJobTypes(accountDeletionReaperEnabled()),
+    jobTypes,
     LOCK_TIMEOUT_MS,
   ]);
   return (rows[0] as JobRow | undefined) ?? null;
@@ -270,6 +281,13 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
   // claim filter only yields these when the reaper flag is on.
   if (job.job_type === ACCOUNT_DELETION_REAP_JOB_TYPE) {
     await processReapJob(job, deps.now ? { now: deps.now } : {});
+    return;
+  }
+
+  // TDG retention expiry: same lifecycle family, same claim/retry machinery, no
+  // sink and no export. Only claimable while the TDG flag is on.
+  if (job.job_type === RETENTION_SWEEP_JOB_TYPE) {
+    await processRetentionSweepJob(job, deps.now ? { now: deps.now } : {});
     return;
   }
 
