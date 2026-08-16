@@ -634,3 +634,86 @@ must hold:
 The next develop→main promotion removes protection (1). Before that promotion,
 either Wave 1 must be authorized, or the Blueprint must be confirmed paused with
 an explicit owner. Do not treat "it is only IaC" as safe here.
+
+---
+
+## 13. Stage 1 closeout — verified 2026-08-16 11:15Z
+
+Stage 1 landed. This section records the outcome; it does not restate the plan.
+
+**Deployed SHA: `38eb535f`.** `main` advanced past the release commit `924abbdf`
+by two IaC/doc commits (`5d41ec46` → `924abbdf` → `38eb535f`), so the SHA
+production actually runs is `38eb535f`, not the release commit. All prior
+`98e97098` deploys are `deactivated`.
+
+### The six promoted services — all `live` on `38eb535f`
+
+| Service | 924abbdf deploy | 38eb535f deploy (live) |
+|---|---|---|
+| `securelogic-engine` | 05:43:43Z | **06:56:44Z** |
+| `securelogic-vendor-extraction-worker` | 05:45:44Z | **06:56:19Z** |
+| `securelogic-posture-worker` | 05:47:19Z | **06:56:28Z** |
+| `securelogic-intelligence-worker` | 05:48:43Z | **06:56:22Z** |
+| `securelogic-data-rights-worker` | 05:50:05Z | **06:56:20Z** |
+| `securelogic-app` | 05:53:45Z | **06:58:26Z** |
+
+**C-4 (deploy order) is verified by the 924abbdf timestamps, not asserted**:
+engine → vendor-extraction worker → remaining workers → app, engine first by
+2m01s and app last by 3m40s. C-5 is satisfied — the vendor worker is on the
+promotion SHA, so `ask_provenance` jobs are serviced.
+
+### Migrations
+
+**Applied successfully.** The engine's `startCommand` is
+`npm run migrate && npm start`, so a `live` engine is direct evidence that the
+migration chain exited 0; a failure would have held the service out of service,
+not degraded it. `/health` returns `{"status":"ok","db":"connected"}`.
+
+**B-6 did not fire.** The operator pre-flight returned 0 rows for
+`source_type IN ('asset_assessment','finding_risk_acceptance')` before the merge,
+which is the condition under which `20260925` applies cleanly; the live engine
+confirms it did.
+
+*Not measured:* the resulting `schema_migrations` count. No production database
+credential exists in this environment, so the expected 223 was not read back.
+
+### Probe results
+
+| Probe | Result |
+|---|---|
+| engine `/health` | `{"status":"ok","db":"connected"}` |
+| app `/api/version` | `commit: 38eb535f…`, `branch: main` |
+| engine `/api/vendor-portal/session` | **404** — portal unreachable, as designed |
+
+### Stage-2 capability remains dark
+
+No flag was changed at any point in Stage 1. The portal 404 above is the one
+piece of behavioural evidence collected; the new dashboard/workspace experience,
+Ask agentic actions, governed actions and realtime voice were not probed.
+
+*Limitation, stated rather than glossed:* production environment variables were
+**not read back** in this session, so "flags dark" rests on (a) no flag having
+been set and (b) that single 404 — not on a config read. A direct read remains
+the stronger check and is owed before Stage 2.
+
+### Held services — holds intact
+
+`securelogic-website`, `securelogic-demo-engine`, `securelogic-demo-app` and
+`securelogic-intelligence-api` all confirmed `autoDeploy: no` today. No drift
+against §11. Their SHAs were not re-probed. Ownership of the three
+Blueprint-invisible services is tracked as INF-1 in
+`docs/backlog/INFRASTRUCTURE_BACKLOG.md`.
+
+### Rollback status
+
+**Not exercised — and not needed.** Rollback Point A stands as defined in the
+release commit: revert code to `98e97098`, leave the additive migrations in
+place, change no flag. The rehearsed schema procedure remains at
+`db/rollback/20260924_20260925_20260928_rollback.sql`; a schema rollback still
+requires separate authorization.
+
+### What Stage 1 does NOT close
+
+B-5 governs Stage 2 and is unchanged by this closeout. Wave 1's target state is
+declared in §12 on `develop` only — read §12's hazard note before the next
+promotion.
