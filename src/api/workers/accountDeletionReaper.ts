@@ -28,6 +28,12 @@ import {
   REVIEWER_TEXT_TABLES,
 } from "../lib/accountDeletionReaperPolicy.js";
 import type { JobRow } from "./dataRightsWorker.js";
+import { listActiveHolds } from "../lib/governance/governanceStore.js";
+import { holdCoveringSubject } from "../lib/governance/holdPredicate.js";
+import {
+  recordGovernanceEvent,
+  GOVERNANCE_EVENT_TYPES,
+} from "../lib/governance/governanceAudit.js";
 
 function payloadUserId(job: JobRow): string {
   const userId = typeof job.payload?.userId === "string" ? job.payload.userId : null;
@@ -42,11 +48,11 @@ function payloadUserId(job: JobRow): string {
  * Returns "erased" when the user was tombstoned, "skipped" when the
  * idempotency gate fired (already reaped / cancelled / gone).
  */
-async function eraseAccount(job: JobRow, now: Date): Promise<"erased" | "skipped"> {
+async function eraseAccount(job: JobRow, now: Date): Promise<"erased" | "skipped" | "held"> {
   const orgId = job.organization_id;
   const userId = payloadUserId(job);
 
-  return withTenant(orgId, async (): Promise<"erased" | "skipped"> => {
+  return withTenant(orgId, async (): Promise<"erased" | "skipped" | "held"> => {
     // 1. Gate + capture the still-live email (needed for the TEXT scrub before
     //    the tombstone rewrites it). FOR UPDATE pins the row against a racing
     //    cancel. Idempotency: only 'pending_deletion' is reapable.
@@ -59,6 +65,39 @@ async function eraseAccount(job: JobRow, now: Date): Promise<"erased" | "skipped
       return "skipped";
     }
     const email = row.email;
+
+    // 1b. LEGAL HOLD (TDG E-1). A hold covering this SUBJECT outranks erasure.
+    //     Art.17(3)(e) contemplates exactly this: the right to erasure yields
+    //     where the data is needed for the establishment, exercise or defence of
+    //     legal claims. Only `organization` and `subject_user` scopes bite here
+    //     — a hold on one conversation protects a THING and must not silently
+    //     become a hold on a person's right to be forgotten.
+    //
+    //     The request is NOT failed and NOT completed: the user stays in
+    //     'pending_deletion', so the enqueuer produces a fresh job on its next
+    //     tick and the erasure happens by itself once the hold is released. The
+    //     suppression is written to the immutable audit log, because "we
+    //     received an erasure request and did not action it" is precisely what
+    //     a regulator or an opposing party will ask us to evidence.
+    const heldBy = holdCoveringSubject(await listActiveHolds(orgId), userId);
+    if (heldBy) {
+      await recordGovernanceEvent({
+        organizationId: orgId,
+        actorUserId: null,
+        resourceType: "account_deletion",
+        resourceId: userId,
+        event: {
+          type: GOVERNANCE_EVENT_TYPES.erasureSuppressed,
+          data: {
+            lifecycleEvent: "account_deletion",
+            subjectUserId: userId,
+            holdId: heldBy,
+            suppressedAction: "users_tombstone_and_category_b_delete",
+          },
+        },
+      });
+      return "held";
+    }
 
     // 2. TEXT-anonymize the deprecated free-text reviewer_id columns by email
     //    (org-scoped). The FK reviewer_uuid is left — anonymized transitively
@@ -154,7 +193,7 @@ async function purgeExportBundles(job: JobRow, now: Date): Promise<void> {
 
 async function recordReapSuccess(
   job: JobRow,
-  outcome: "erased" | "skipped",
+  outcome: "erased" | "skipped" | "held",
   now: Date
 ): Promise<void> {
   await withTenant(job.organization_id, async () => {
@@ -197,13 +236,28 @@ export async function processReapJob(
   try {
     const outcome = await eraseAccount(job, now());
     // Phase 2 runs even on "skipped" — it cleans up any export rows left
-    // un-purged by an earlier crashed run (purged_at IS NULL guard).
-    await purgeExportBundles(job, now());
+    // un-purged by an earlier crashed run (purged_at IS NULL guard). It does
+    // NOT run on "held": a subject under legal hold keeps their export bundles
+    // too. Purging them would destroy the subject's own data under the very
+    // hold that exists to preserve it.
+    if (outcome !== "held") {
+      await purgeExportBundles(job, now());
+    }
     await recordReapSuccess(job, outcome, now());
-    logger.info(
-      { event: "account_deletion_reap_succeeded", job_id: job.id, org_id: orgId, outcome },
-      "account-deletion reap succeeded"
-    );
+    if (outcome === "held") {
+      // NOT a success. The job completed; the erasure did not. Logging this as
+      // "succeeded" would make a suppressed right-to-erasure indistinguishable
+      // from a performed one in the operational record.
+      logger.warn(
+        { event: "account_deletion_reap_suppressed_by_legal_hold", job_id: job.id, org_id: orgId },
+        "account-deletion reap suppressed: the subject is under a legal hold; the request stays pending"
+      );
+    } else {
+      logger.info(
+        { event: "account_deletion_reap_succeeded", job_id: job.id, org_id: orgId, outcome },
+        "account-deletion reap succeeded"
+      );
+    }
   } catch (err) {
     await recordReapFailure(job, err, now());
     logger.error(

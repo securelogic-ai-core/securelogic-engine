@@ -120,6 +120,7 @@ import billingRouter from "./billing.js";
 import customerAuthRouter from "./customerAuth.js";
 import mfaRouter from "./mfa.js";
 import orgSettingsRouter from "./orgSettings.js";
+import dataGovernanceRouter from "./dataGovernance.js";
 import publicBriefSignupRouter from "./publicBriefSignup.js";
 import intelligenceBriefsRouter from "./intelligenceBriefs.js";
 import adminBriefsRouter from "./adminBriefs.js";
@@ -256,6 +257,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
 
   // Org-level security settings — JWT-protected
   router.use("/api", orgSettingsRouter);
+
+  // Tenant Data Governance (E-1). Dark behind
+  // SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED: every path 404s while off.
+  router.use("/api", dataGovernanceRouter);
 
   // SAML 2.0 SSO — public endpoints (check-domain, login, acs, metadata) + protected config endpoints
   router.use("/api", ssoRouter);

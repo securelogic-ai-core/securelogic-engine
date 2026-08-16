@@ -117,7 +117,11 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "gapReport.ts": 1,
   "auditPackage.ts": 2,
   // AI features
-  "ask.ts": 4, // POST /ask + POST /ask/stream (LC-3) + the two A3 conversation reads
+  // POST /ask + POST /ask/stream (LC-3) + the two A3 conversation reads + the
+  // owner's DELETE /ask/conversations/:id (TDG E-1). The delete carries the
+  // same entitlement and seat gates as the reads beside it on purpose: a thread
+  // you cannot read is a thread you cannot delete.
+  "ask.ts": 5,
   "transcribe.ts": 1,
   // cyber signals (customer CRUD + fetch + reprocess)
   "cyberSignals.ts": 13,
