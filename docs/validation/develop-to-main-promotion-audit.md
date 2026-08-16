@@ -918,3 +918,194 @@ The Wave 1 target is **not discarded**. It remains in §12 as the approved
 candidate configuration, to be applied when — and only when — Wave 1 receives
 explicit activation authorization. It is documentation, not live IaC, which is
 precisely the distinction §12's hazard note asked for.
+
+---
+
+## 16. E-1 + E-2 dark production promotion — RELEASE PLAN (prepared 2026-08-16, NOT executed)
+
+**Scope:** E-1 (already in production) plus **E-2 Increments 1–3**, their
+supporting fixes, rollbacks and documentation. **Wave 1 remains unauthorized and
+is not in this release.**
+
+### 1. Content delta — the commit log is misleading, the tree is not
+
+`git log origin/main..origin/develop` shows **12 commits**, but four of them
+(`01a99a70`, `c2179e60`, `bddc984d`, `27cfcf40`) reached `main` by **cherry-pick
+during the E-1 dark promotion**, so their content is already there under
+different SHAs. `f19f7059` (Wave 1) is present in the log and **must never be
+promoted**.
+
+The ancestry-independent truth is the tree diff: **25 files, +5,496 / −17.**
+`render.yaml` appears in it, but its **values are identical to `main`** —
+the change is trailing comments only (proven: 311 env keys compared across 14
+services, zero differences).
+
+### 2. Migrations production would actually execute — FOUR
+
+`main` carries 228 migration files; `develop` carries 232. The runner keys on
+**filename**, and no existing migration was renamed, edited or removed —
+verified with `git diff --name-status`, which returns additions only.
+
+| # | Migration | What it does |
+|---|---|---|
+| 1 | `20261017_worm_guard_consolidation` | Nine WORM tables onto one shared guard; six superseded functions dropped |
+| 2 | `20261018_erasure_authorization` | `erasure_agent` (NOLOGIN), `erasure_certificates`, the guard's exception |
+| 3 | `20261019_erasure_execution_state` | Scope binding, expiry, attempt state, three SECURITY DEFINER helpers, RLS fail-open fix |
+| 4 | `20261020_erasure_actor_revalidation` | Actor revalidation + the platform-row anonymisation exception |
+
+Measured from a rebuilt 228-migration baseline that mirrors production:
+**61.6 ms total** (19.8 / 25.4 / 13.6 / 2.7). `schema_migrations` ends at **232**.
+
+### 3. Per-migration risk
+
+| Migration | Locking | Rewrite | Constraints / indexes | Existing-data assumptions | Rollback |
+|---|---|---|---|---|---|
+| `20261017` | **`AccessExclusiveLock` on 9 tables** for the trigger swap — measured, and the only real lock exposure in this release. Includes `security_audit_log`, which every request writes | None | No index; triggers only | The six named functions and their triggers exist (true — all applied) | `20261017_…_rollback.sql`, rehearsed clean-room |
+| `20261018` | New empty table only. **`GRANT` takes no table lock** (measured). `CREATE ROLE` is cluster-level | None | Triggers + CHECKs on a new empty table | `CREATEROLE` privilege (proven — `20260618` created `app_request` the same way, and this applied on staging); `worm_guard_mutation` exists from 17 | `20261018_…_rollback.sql`, refuses while any certificate exists |
+| `20261019` | `AccessExclusive` on `erasure_certificates` only — **empty by construction**, created minutes earlier by 18 | None (`ADD COLUMN … NOT NULL DEFAULT 0` is metadata-only in PG11+) | One validated CHECK — full scan of an empty table | `erasure_certificates` exists and is empty | `20261019_20261020_…_rollback.sql` **(new)** |
+| `20261020` | `CREATE OR REPLACE FUNCTION` — **no table lock** (measured) | None | None | `users` has `status` and `role` | as above |
+
+**The lock-timeout position:** the runner sets `lock_timeout = 5s` and
+`statement_timeout = 300s` per migration transaction. `20261017` therefore
+**aborts rather than hangs** if it cannot acquire `AccessExclusiveLock` — the
+deploy fails loudly and the old instance keeps serving. Production has had no
+organic traffic since 2026-07-03, so contention is unlikely, but the timeout is
+the control, not the traffic assumption.
+
+**Rollback chain, rehearsed end to end:** Increment **3 → 2 → 1**, and it
+**refuses in both wrong orders** ("2 trigger(s) still reference it";
+"role cannot be dropped because some objects depend on it"). After the full
+chain, every erasure function is gone, the role is gone, and org deletion raises
+again exactly as before E-2.
+
+### 4. Production pre-flight SQL (read-only)
+
+```sql
+-- P1. Confirm the baseline: expect 228, and none of the four pending.
+SELECT count(*) AS applied FROM schema_migrations;
+SELECT filename FROM schema_migrations
+ WHERE filename IN ('20261017_worm_guard_consolidation.sql',
+                    '20261018_erasure_authorization.sql',
+                    '20261019_erasure_execution_state.sql',
+                    '20261020_erasure_actor_revalidation.sql');   -- expect 0 rows
+
+-- P2. The six functions 20261017 replaces must exist, or the DROPs are no-ops
+--     and a trigger could be left pointing at nothing.
+SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='public' AND proname IN
+   ('applicability_forbid_mutation','security_audit_log_forbid_mutation',
+    'finding_lifecycle_events_forbid_mutation','risk_lifecycle_events_forbid_mutation',
+    'retention_policies_forbid_mutation','finding_risk_acceptances_forbid_delete')
+ ORDER BY 1;                                                       -- expect 6 rows
+
+-- P3. CREATE ROLE privilege — 20261018 needs it.
+SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user;   -- expect true
+SELECT 1 FROM pg_roles WHERE rolname='erasure_agent';              -- expect 0 rows
+
+-- P4. Lock contention on the tables 20261017 will swap triggers on.
+SELECT c.relname, count(*) AS blockers
+  FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
+ WHERE c.relname IN ('security_audit_log','finding_lifecycle_events','risk_lifecycle_events',
+                     'applicability_assessments','applicability_evidence',
+                     'applicability_affected_entities','finding_risk_acceptances',
+                     'legal_holds','retention_policies')
+   AND l.granted GROUP BY 1 ORDER BY 2 DESC;                       -- expect empty or trivial
+
+-- P5. E-1 is still dark, and nothing has drifted.
+SELECT count(*) FROM retention_policies;                            -- expect 0
+SELECT count(*) FROM legal_holds;                                   -- expect 0
+SELECT count(*) FROM ask_tool_invocations WHERE message_id IS NULL;  -- expect 0
+```
+
+**Decision rule:** P1 must show 228 applied and 0 of the pending four; P2 must
+return 6; P3 must show `rolcreaterole = true` and no existing role. Any
+deviation is a **STOP**.
+
+### 5. Candidate verification
+
+CI on the exact candidate `3b929bf5`: **lint, typecheck, build, test,
+cross-org-isolation, tenant-coverage, url-drift all green**; `audit` red and
+inherited (no dependency file is in the delta). Locally: unit **503 files /
+8,193 passed**, isolation **191 passed**, fresh Postgres **232 migrations** in
+strict order, three rollback rehearsals passed, `[SEED]` lifecycle rehearsal
+passed.
+
+### 6. Configuration safety
+
+Wave 1 flags **false or absent on every service**; `LEGACY_VENDOR_WRITES` still
+`"true"`; TDG flag `"false"` and `SECURELOGIC_TDG_EFFECTIVE_FROM` `""`; **no
+erasure key exists in IaC at all**; `autoDeploy` holds unchanged; 14 services
+with the three dashboard-only ones still unowned. A Blueprint sync against this
+file could not activate anything unauthorized.
+
+### 7. Erasure remains impossible after migration
+
+Verified on the migrated baseline: **`erasure_agent.rolcanlogin = false`**. No
+erasure credential exists in `render.yaml`, `.env.example`, or any code path —
+nothing reads an erasure DSN. Increment 4 is the only thing that changes this,
+and it needs its own authorization.
+
+### 8. Controlled deployment order
+
+**A plain `develop` → `main` merge CONFLICTS** — five files, because the E-1
+content reached `main` by cherry-pick and git sees independent adds. Use the
+proven release-branch approach:
+
+```
+git checkout -b release/e1-e2-dark origin/main
+git checkout origin/develop -- $(git diff --name-only origin/main origin/develop)
+git commit    # verify: git diff --cached origin/develop  ->  EMPTY
+```
+
+This was executed as a dry run: the resulting tree is **byte-identical to
+`develop`**, and the diff against `main` is exactly the 25-file delta.
+
+Then, per Stage-1 discipline:
+
+1. `autoDeploy=false` on **all ten** `main`-tracking services; **re-read from the
+   API** to confirm 6 of 6 off and the four holds intact.
+2. Merge the release PR (squash). Confirm it deployed nothing.
+3. **Engine first** — it migrates. Validate: `/health` db connected; governance
+   routes 404; `POST /api/ask` 401; `erasure_agent` still NOLOGIN.
+4. Workers: vendor-extraction → posture → intelligence → **data-rights last**
+   (it is the only worker carrying E-2 code).
+5. **App last.** Dependency analysis: E-2 adds no app code and no new app→engine
+   call, so no other order is required.
+6. Restore `autoDeploy` on the six; **re-read from the API** to confirm.
+7. Post-deploy proof: SHA on all six, migrations applied, TDG dark, erasure
+   unreachable, Wave 1 unchanged, no new P0/P1.
+
+**Stop rule:** if any service fails validation, stop at that service. Do not
+continue deploying downstream to complete the release.
+
+### 9. Rollback
+
+**Rollback Point A (code).** Revert the six promoted services to `5e108365`,
+leave all four migrations applied, change no flag. Safe because every one is
+additive and the capability is inert: the WORM consolidation is
+behaviour-identical, and the erasure mechanism cannot act without a credential.
+**This is the expected rollback.**
+
+**Schema rollback is a different act and is NOT part of an operational
+rollback.** It requires separate authorization, runs `3 → 2 → 1`, and each script
+refuses out of order or while evidence exists (certificates, sweep jobs,
+orphaned ledger rows). Rehearsed clean-room, never against production-shaped
+data.
+
+**Not reversible at all:** nothing in this release destroys data, so there is no
+data rollback to define. That property is what makes Rollback Point A
+sufficient.
+
+### 10. What would make this NO-GO
+
+| Condition | Status |
+|---|---|
+| Any pre-flight query deviates (§4 decision rule) | **Operator-owed — not yet run** |
+| `rolcreaterole = false` on the production database user | Unverified; `20260618` precedent suggests true |
+| Wave 1 values present in the candidate | **Clear** — 311 keys compared, zero differences |
+| `SECURELOGIC_TDG_EFFECTIVE_FROM` non-empty anywhere | **Clear** |
+| An erasure credential existing in IaC or env | **Clear** — none exists |
+| CI red on the candidate beyond inherited `audit` | **Clear** |
+| Lock contention on the nine WORM tables at deploy time | Unverified until pre-flight P4 |
+| A migration edited or renamed rather than added | **Clear** — additions only |
+| Demo or the four `autoDeploy` holds disturbed | **Clear** — untouched |

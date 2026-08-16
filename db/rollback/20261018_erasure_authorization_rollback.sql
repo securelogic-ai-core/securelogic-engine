@@ -41,6 +41,13 @@ DROP TRIGGER IF EXISTS guard_erasure_certificates_update ON erasure_certificates
 DROP TABLE IF EXISTS erasure_certificates;
 DROP FUNCTION IF EXISTS erasure_certificates_guard();
 
+-- erasure_active_hold_count() is introduced by 20261019, not by this migration,
+-- but it is dropped HERE and not by the Increment 3 rollback: that rollback
+-- restores the Increment 2 guard, which calls this function. Dropping it there
+-- would leave the restored guard referencing a function that no longer exists.
+-- This is the first point in the chain at which nothing depends on it.
+DROP FUNCTION IF EXISTS erasure_active_hold_count(UUID);
+
 -- ---------------------------------------------------------------
 -- 2. Return the guard to its unconditional (Increment 1) form
 -- ---------------------------------------------------------------
