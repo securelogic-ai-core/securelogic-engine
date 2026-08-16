@@ -12,6 +12,7 @@
   "include": [
     "src",
     "../../src/api/infra",
+    "../../src/api/types",
     "../../src/api/lib",
     "../../src/engine",
     "../../src/reporting"

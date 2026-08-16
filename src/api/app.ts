@@ -65,20 +65,11 @@ import { buildRoutes } from "./routes/index.js";
    TYPE AUGMENTATION
    ========================================================= */
 
-declare global {
-  namespace Express {
-    interface Request {
-      rawBody?: string | Buffer;
-    }
-  }
-}
-
-// The express.json() verify callback receives http.IncomingMessage, not Express.Request
-declare module "http" {
-  interface IncomingMessage {
-    rawBody?: string | Buffer;
-  }
-}
+// `req.rawBody` (Express.Request and http.IncomingMessage) is declared in
+// src/api/types/express-raw-body.d.ts. It was moved out of this file on
+// 2026-08-16: declaring it here made the type available only to builds that
+// compile app.ts, so any tsconfig that reached a consumer without it failed
+// with TS2339. This file still owns the ASSIGNMENT of both fields below.
 
 /* =========================================================
    MODULE-LEVEL PATH HELPERS
