@@ -581,3 +581,56 @@ push to move the marketing site or demo. Reverse it deliberately, per service.
 
 **No Blueprint sync was performed.** Autosync remains off and the Blueprint
 remains paused; this file records intent, it has not been applied.
+
+---
+
+## 12. Wave 1 target-state declaration (B-3) — 2026-08-16
+
+Declared, **not activated**. Closes the B-3 finding that the approved target
+production configuration existed only as Render dashboard state.
+
+### What is declared
+
+| Flag | Service(s) | render.yaml before | Validated staging | Declared prod target | Wave 1 behaviour it controls |
+|---|---|---|---|---|---|
+| `SECURELOGIC_RISK_WORKSPACE_ENABLED` | app | `"false"` | `"true"` | `"true"` | Selects `WORKSPACE_NAV_ITEMS` over legacy `NAV_ITEMS` — the workspace IA and row 2 of the approved header. |
+| `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Relabels the workspace home entry "Briefing"; engine half opens `/api/briefing/layout`. Structurally required by the approved two-row header. |
+| `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Shows the "Context" nav entry; engine half serves ECL routes. |
+| `SECURELOGIC_ASSET_REGISTRY_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Collapses Assets to the unified registry; hides the legacy Vendors / AI Systems children. |
+| `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | The decision workspace surface. |
+| `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | engine + app | **absent** | `"true"` | `"true"` | Finding risk-acceptance workflow. Key ADDED so the intended value is reviewable. |
+| `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | engine + app | `"true"` | `"false"` | `"false"` | **Removes** the retired point-in-time assess/review write path, making `vendor_engagements` the sole canonical writer. The only flag here that takes a capability away. |
+
+Thirteen declarations across two services. **No staging service was touched**
+and no non-env key (branch, command, plan, region) changed.
+
+### Deliberately NOT declared — decision owed
+
+| Flag | Staging | Why excluded |
+|---|---|---|
+| `SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED` | `"true"` | Read by `app/src/app/findings/page.tsx`, but **no validation record names it**. An enhancement to the findings queue, not structurally required by the approved nav. Declaring it would infer a product decision. |
+| `SECURELOGIC_RISK_ACCEPTANCE_NOTIFICATIONS_ENABLED` | `"true"` | No validation record, and it has a real outbound side effect — enabling it sends email to real customers. Not a presentation flag. |
+| `BRIEF_QUALITY`, `FINDING_CLOSURE_GATE`, `SIGNAL_RECENCY` | `"true"` | Staging validation flags. Membership in "the approved experience" was never stated. |
+| All Wave 2–5 capability flags | varies | Blocked by open B-5 gates. Not declared at any value. |
+
+Production will therefore differ from staging on those first two even after
+Wave 1 activation. That gap is deliberate and needs a ruling, not an inference.
+
+### The hazard this declaration creates — read before resuming the Blueprint
+
+`render.yaml` is the **applied** artifact. It cannot express "intended but not
+yet authorized"; only the comments can, and a Blueprint sync does not read
+comments. **Once these values reach `main` and anyone syncs the Blueprint,
+Wave 1 activates in production** — no further review, by whoever runs the sync.
+
+Two things currently stand between the declaration and that outcome, and both
+must hold:
+
+1. **It is committed to `develop`, not `main`.** The Blueprint watches `main`.
+   Committing to `main` would additionally have redeployed production, since
+   autoDeploy is on for the six promoted services.
+2. **Blueprint autosync is off and the Blueprint is paused.**
+
+The next develop→main promotion removes protection (1). Before that promotion,
+either Wave 1 must be authorized, or the Blueprint must be confirmed paused with
+an explicit owner. Do not treat "it is only IaC" as safe here.
