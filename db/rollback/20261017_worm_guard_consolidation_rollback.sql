@@ -138,6 +138,9 @@ DROP TRIGGER IF EXISTS guard_legal_holds_row_mutation ON legal_holds;
 CREATE TRIGGER guard_legal_holds_row_mutation
   BEFORE UPDATE OR DELETE ON legal_holds
   FOR EACH ROW EXECUTE FUNCTION legal_holds_guard_mutation();
+-- Dropped first so the script is idempotent and safe to run against a database
+-- in a mixed state (e.g. one where E-1's own rollback has re-applied 20261013).
+DROP TRIGGER IF EXISTS guard_legal_holds_truncate ON legal_holds;
 CREATE TRIGGER guard_legal_holds_truncate
   BEFORE TRUNCATE ON legal_holds
   FOR EACH STATEMENT EXECUTE FUNCTION legal_holds_guard_mutation();
