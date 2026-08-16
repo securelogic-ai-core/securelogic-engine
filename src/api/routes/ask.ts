@@ -60,6 +60,8 @@ import {
 } from "../lib/ask/conversationStore.js";
 import { enqueueProvenanceJob } from "../lib/ask/provenanceJobs.js";
 import { toDisplayScore } from "../lib/postureDisplay.js";
+import { tdgFeatureFlag } from "../middleware/tdgFeatureFlag.js";
+import { deleteGovernedObject } from "../lib/governance/retentionService.js";
 
 const router = Router();
 
@@ -1337,6 +1339,82 @@ router.get(
     } catch (err) {
       logger.error({ event: "ask_conversation_read_failed", organizationId, err }, "Ask conversation read failed");
       res.status(500).json({ error: "conversation_read_failed" });
+    }
+  }
+);
+
+/**
+ * DELETE /api/ask/conversations/:id — the OWNER's delete.
+ *
+ * Same chain as the reads above plus the TDG dark control, and the same
+ * user-scoped visibility rule: a thread you cannot read is a thread you cannot
+ * delete, and not-found is indistinguishable from not-yours.
+ *
+ * It does none of the deletion work itself. deleteGovernedObject() is the one
+ * path every trigger goes through — owner, administrator and sweeper alike — so
+ * a legal hold is honoured here for the same reason it is honoured there: not
+ * because this route remembered to check, but because there is nowhere else to
+ * do the deleting. A held thread returns 409 rather than a silent success,
+ * because telling an owner their data is gone when it is not is worse than
+ * refusing them.
+ */
+router.delete(
+  "/ask/conversations/:id",
+  askFeatureFlag,
+  tdgFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  async (req: Request, res: Response) => {
+    const organizationId = (req as any).organizationContext?.organizationId ?? null;
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+    const userId = (req as { userId?: string }).userId ?? null;
+    if (!userId) {
+      // A conversation belongs to a person. An API-key-only caller has no thread
+      // of their own to delete, and must not be able to delete anyone else's.
+      res.status(403).json({ error: "deletion_requires_user" });
+      return;
+    }
+    const conversationId = String(req.params["id"] ?? "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
+      res.status(404).json({ error: "conversation_not_found" });
+      return;
+    }
+
+    try {
+      const outcome = await withTenant(organizationId, () =>
+        deleteGovernedObject({
+          organizationId,
+          dataClassKey: "ask_conversation",
+          objectId: conversationId,
+          actorUserId: userId,
+          requireOwnerUserId: userId,
+          trigger: "owner_request",
+          ipAddress: req.ip ?? null
+        })
+      );
+
+      switch (outcome.outcome) {
+        case "deleted":
+          res.status(200).json({ deleted: true, counts: outcome.counts });
+          return;
+        case "held":
+          res.status(409).json({ error: "legal_hold_active", holdId: outcome.holdId });
+          return;
+        default:
+          // not_found and not_owner are the SAME answer on purpose.
+          res.status(404).json({ error: "conversation_not_found" });
+      }
+    } catch (err) {
+      logger.error(
+        { event: "ask_conversation_delete_failed", organizationId, err },
+        "Ask conversation deletion failed"
+      );
+      res.status(500).json({ error: "conversation_delete_failed" });
     }
   }
 );

@@ -371,6 +371,30 @@ services:
       - key: SECURELOGIC_SEAT_MODEL_ENABLED
         value: "true"
 
+      # ── Tenant Data Governance (TDG / E-1) ─────────────────────────────
+      # DARK, and deliberately declared rather than omitted so the intended
+      # value is reviewable in IaC (the B-3 lesson).
+      #
+      # TWO independent gates stand between this code and a deleted row, and
+      # BOTH are off here:
+      #
+      #   1. ENABLED — off means the governance routes 404 (including the
+      #      owner's own conversation delete), the enqueuer returns 0 without
+      #      touching the database, and the worker claims no sweep jobs.
+      #   2. EFFECTIVE_FROM — an ISO date. EMPTY MEANS ZERO DELETIONS, EVER,
+      #      even with ENABLED on: planning and dry-run still work, execution
+      #      reports `blocked`. Once set, nothing can expire until 30 days
+      #      after it, so no organization is swept merely because the feature
+      #      arrived. An unparseable value is treated as empty — fail closed.
+      #
+      # ACTIVATION IS NOT AUTHORIZED. Enabling the flag is safe and reversible
+      # (it exposes the surface and dry-run only). Setting EFFECTIVE_FROM is
+      # the destructive step and requires the pre-activation report.
+      - key: SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_TDG_EFFECTIVE_FROM
+        value: ""
+
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
   # Tracks the develop branch. Mirrors the production engine
@@ -717,6 +741,30 @@ services:
       # engine block keeps its own "false" and is not touched by this key.
       - key: SECURELOGIC_SEAT_MODEL_ENABLED
         value: "true"
+
+      # ── Tenant Data Governance (TDG / E-1) ─────────────────────────────
+      # DARK, and deliberately declared rather than omitted so the intended
+      # value is reviewable in IaC (the B-3 lesson).
+      #
+      # TWO independent gates stand between this code and a deleted row, and
+      # BOTH are off here:
+      #
+      #   1. ENABLED — off means the governance routes 404 (including the
+      #      owner's own conversation delete), the enqueuer returns 0 without
+      #      touching the database, and the worker claims no sweep jobs.
+      #   2. EFFECTIVE_FROM — an ISO date. EMPTY MEANS ZERO DELETIONS, EVER,
+      #      even with ENABLED on: planning and dry-run still work, execution
+      #      reports `blocked`. Once set, nothing can expire until 30 days
+      #      after it, so no organization is swept merely because the feature
+      #      arrived. An unparseable value is treated as empty — fail closed.
+      #
+      # ACTIVATION IS NOT AUTHORIZED. Enabling the flag is safe and reversible
+      # (it exposes the surface and dry-run only). Setting EFFECTIVE_FROM is
+      # the destructive step and requires the pre-activation report.
+      - key: SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_TDG_EFFECTIVE_FROM
+        value: ""
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
@@ -1161,6 +1209,19 @@ services:
       - key: LOG_LEVEL
         sync: false
 
+      # ── Tenant Data Governance (TDG / E-1) ─────────────────────────────
+      # DARK. This worker claims `retention_sweep` jobs ONLY while ENABLED is
+      # "true", and even then deletes nothing while EFFECTIVE_FROM is empty —
+      # a sweep plans, finds the gate closed and records a `blocked` outcome
+      # with counts. Keep in lockstep with the engine declarations, which are
+      # where the full note lives.
+      #
+      # ACTIVATION IS NOT AUTHORIZED.
+      - key: SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_TDG_EFFECTIVE_FROM
+        value: ""
+
   # =========================================================
   # DATA-RIGHTS WORKER — STAGING (background)
   # Tracks the develop branch. Mirrors the production data-rights
@@ -1220,6 +1281,19 @@ services:
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
+
+      # ── Tenant Data Governance (TDG / E-1) ─────────────────────────────
+      # DARK. This worker claims `retention_sweep` jobs ONLY while ENABLED is
+      # "true", and even then deletes nothing while EFFECTIVE_FROM is empty —
+      # a sweep plans, finds the gate closed and records a `blocked` outcome
+      # with counts. Keep in lockstep with the engine declarations, which are
+      # where the full note lives.
+      #
+      # ACTIVATION IS NOT AUTHORIZED.
+      - key: SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_TDG_EFFECTIVE_FROM
+        value: ""
 
   # =========================================================
   # VENDOR-EXTRACTION WORKER (background)

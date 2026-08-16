@@ -13,6 +13,7 @@ import { logger } from "./infra/logger.js";
 import { startScheduler } from "./lib/schedulerRunner.js";
 import { runBriefCatchupIfMissed } from "./lib/briefCatchup.js";
 import { startAccountDeletionReaperEnqueuer } from "./lib/accountDeletionEnqueuer.js";
+import { startRetentionSweepEnqueuer } from "./lib/governance/retentionSweepEnqueuer.js";
 import { startApplicabilityReassessmentWorker } from "./workers/applicabilityReassessmentWorker.js";
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
@@ -140,6 +141,12 @@ void runBriefCatchupIfMissed().catch((err) => {
   logger.error({ event: "brief_catchup_boot_failed", err }, "Brief catch-up failed at boot (non-fatal)");
 });
 startAccountDeletionReaperEnqueuer();
+// TDG E-1: retention sweep enqueuer. Registered always; the tick self-gates on
+// SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED (zero DB access while off), so
+// this line is inert until the operator enables tenant data governance — and
+// even then a sweep deletes nothing until SECURELOGIC_TDG_EFFECTIVE_FROM is set
+// and its grace window has elapsed.
+startRetentionSweepEnqueuer();
 // ECL R3: in-process reassessment worker. Registered always; every tick
 // self-gates on SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED (zero DB access while
 // off), so this line is inert until the operator enables the ECL.
