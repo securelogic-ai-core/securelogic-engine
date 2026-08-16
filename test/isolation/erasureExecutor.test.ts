@@ -29,6 +29,16 @@ let requester: string;
 let approver: string;
 
 /** A throwaway tenant with a little of everything, including WORM rows. */
+/** Two active admins OF THIS TENANT — authorization is org-scoped. */
+async function tenantAdmins(orgId: string): Promise<{ requester: string; approver: string }> {
+  const mk = async () => {
+    const id = (await seedUser(pool, orgId)).id;
+    await pool.query(`UPDATE users SET role='admin', status='active' WHERE id=$1`, [id]);
+    return id;
+  };
+  return { requester: await mk(), approver: await mk() };
+}
+
 async function tenant(): Promise<{ orgId: string; userId: string }> {
   const orgId = (
     await pool.query<{ id: string }>(
@@ -95,15 +105,22 @@ async function asOwner<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
 }
 
 /** request + approve(destructive) in the ordinary way. */
-async function approvedCertificate(orgId: string, destructive = true): Promise<string> {
+async function approvedCertificate(
+  orgId: string,
+  destructive = true,
+  admins?: { requester: string; approver: string }
+): Promise<string> {
+  // Authorization is revalidated at execution against admins OF THE TARGET
+  // TENANT, so the actors must belong to it.
+  const who = admins ?? (await tenantAdmins(orgId));
   return asOwner(async (c) => {
     const req = await requestErasure(c, {
-      organizationId: orgId, actorUserId: requester, actorRole: "admin",
+      organizationId: orgId, actorUserId: who.requester, actorRole: "admin",
       reason: "isolation probe", legalBasis: "gdpr_art17_request",
     });
     if (req.outcome !== "requested") throw new Error(`request denied: ${req.reason}`);
     const app = await approveErasure(c, {
-      certificateId: req.certificateId, actorUserId: approver, actorRole: "admin", destructive,
+      certificateId: req.certificateId, actorUserId: who.approver, actorRole: "admin", destructive,
     });
     if (app.outcome !== "approved") throw new Error(`approve denied: ${app.reason}`);
     return req.certificateId;
@@ -417,18 +434,56 @@ describe("races and interruptions", () => {
     expect((await certStatus(certId)).status).toBe("completed");
   });
 
-  it("an AN APPROVER WHO BECOMES UNAUTHORIZED — deprovisioned before execution — does not stop a bound approval, but is visible", async () => {
-    // Recorded as discovered: the approval is bound to the SCOPE, and the
-    // approver's later deprovisioning does not retroactively void it. What the
-    // system guarantees is that a second, different, admin approved at the time
-    // and that the fact is immutably audited. Flagged for the operator rather
-    // than silently assumed either way.
+  it("A DEPROVISIONED APPROVER voids the approval — ruling 2026-08-16", async () => {
+    // Increment 3 originally shipped the opposite behaviour, recorded as
+    // observed rather than assumed. The operator ruled the other way, and the
+    // reasoning holds: a two-person control whose second person has since been
+    // removed is a one-person control with a historical footnote.
     const { orgId } = await tenant();
-    const certId = await approvedCertificate(orgId);
-    await pool.query(`UPDATE users SET status='inactive' WHERE id=$1`, [approver]).catch(() => {});
+    const admins = await tenantAdmins(orgId);
+    const certId = await approvedCertificate(orgId, true, admins);
+
+    await pool.query(`UPDATE users SET status='inactive' WHERE id=$1`, [admins.approver]);
+
     const res = await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }));
-    expect(res.outcome).toBe("erased");
-    await pool.query(`UPDATE users SET status='active' WHERE id=$1`, [approver]).catch(() => {});
+    expect(res).toEqual({ outcome: "refused", reason: "approver_unauthorized" });
+    expect((await pool.query(`SELECT 1 FROM organizations WHERE id=$1`, [orgId])).rowCount).toBe(1);
+  });
+
+  it("a DEPROVISIONED REQUESTER voids it too", async () => {
+    const { orgId } = await tenant();
+    const admins = await tenantAdmins(orgId);
+    const certId = await approvedCertificate(orgId, true, admins);
+
+    await pool.query(`UPDATE users SET status='inactive' WHERE id=$1`, [admins.requester]);
+
+    const res = await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }));
+    expect(res).toEqual({ outcome: "refused", reason: "requester_unauthorized" });
+  });
+
+  it("a DEMOTED approver voids it — authorization is role plus status", async () => {
+    const { orgId } = await tenant();
+    const admins = await tenantAdmins(orgId);
+    const certId = await approvedCertificate(orgId, true, admins);
+
+    await pool.query(`UPDATE users SET role='analyst' WHERE id=$1`, [admins.approver]);
+
+    const res = await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }));
+    expect(res).toEqual({ outcome: "refused", reason: "approver_unauthorized" });
+  });
+
+  it("restoring authorization allows the erasure to proceed — fresh authorization, not a bypass", async () => {
+    const { orgId } = await tenant();
+    const admins = await tenantAdmins(orgId);
+    const certId = await approvedCertificate(orgId, true, admins);
+
+    await pool.query(`UPDATE users SET status='inactive' WHERE id=$1`, [admins.approver]);
+    expect((await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }))).outcome)
+      .toBe("refused");
+
+    await pool.query(`UPDATE users SET status='active' WHERE id=$1`, [admins.approver]);
+    expect((await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }))).outcome)
+      .toBe("erased");
   });
 
   it("execution from a NON-erasure_agent connection refuses before touching anything", async () => {
@@ -533,7 +588,8 @@ describe("the execution gate refuses on each condition independently", () => {
   const base = {
     status: "approved", dryRun: false, requestedByUserId: "u1", approvedByUserId: "u2",
     approvalExpiresAt: new Date(Date.now() + 3600_000), scopeFingerprint: "fp",
-    observedFingerprint: "fp", organizationExists: true, activeLegalHolds: 0, now: new Date(),
+    observedFingerprint: "fp", organizationExists: true, activeLegalHolds: 0,
+    requesterStillAuthorized: true, approverStillAuthorized: true, now: new Date(),
   };
   it("passes only when everything holds", () => {
     expect(evaluateExecutionGate(base).proceed).toBe(true);
@@ -547,6 +603,8 @@ describe("the execution gate refuses on each condition independently", () => {
     ["unbound scope", { scopeFingerprint: null }, "missing_scope_binding"],
     ["scope changed", { observedFingerprint: "different" }, "scope_changed"],
     ["hold active", { activeLegalHolds: 1 }, "legal_hold_active"],
+    ["requester deprovisioned", { requesterStillAuthorized: false }, "requester_unauthorized"],
+    ["approver deprovisioned", { approverStillAuthorized: false }, "approver_unauthorized"],
     ["org gone", { organizationExists: false }, "organization_missing"],
     ["draft", { status: "draft" }, "not_approved"],
     ["completed", { status: "completed" }, "terminal_state"],
@@ -556,4 +614,88 @@ describe("the execution gate refuses on each condition independently", () => {
       expect(evaluateExecutionGate({ ...base, ...over }).refusal).toBe(refusal);
     });
   }
+});
+
+/* ───────── the platform-level audit row that would have blocked erasure ───── */
+
+describe("platform-level audit rows do not make a tenant un-erasable", () => {
+  it("a NULL-org audit row referencing a tenant user is anonymised, not a blocker", async () => {
+    // Found by rehearsing: security_audit_log.actor_user_id is ON DELETE SET
+    // NULL and organization_id is nullable, so erasing a tenant fires a SET
+    // NULL update on platform-level rows that name its users. Before the narrow
+    // exception, one such row made the tenant permanently un-erasable.
+    const { orgId } = await tenant();
+    const admins = await tenantAdmins(orgId);
+    await pool.query(
+      `INSERT INTO security_audit_log (organization_id, actor_user_id, event_type, resource_type)
+       VALUES (NULL,$1,'platform.event','probe')`, [admins.requester]);
+    const platformRow = (await pool.query<{ id: string }>(
+      `SELECT id FROM security_audit_log
+        WHERE organization_id IS NULL AND actor_user_id=$1`, [admins.requester])).rows[0]!.id;
+
+    const certId = await approvedCertificate(orgId, true, admins);
+    const res = await asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }));
+    expect(res.outcome).toBe("erased");
+
+    // The row SURVIVES, anonymised — the audit trail is not destroyed by an
+    // erasure, only detached from the person who no longer exists.
+    const after = await pool.query<{ actor_user_id: string | null; event_type: string }>(
+      `SELECT actor_user_id, event_type FROM security_audit_log WHERE id=$1`, [platformRow]);
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0]!.actor_user_id).toBeNull();
+    expect(after.rows[0]!.event_type).toBe("platform.event");
+  });
+
+  it("the exception cannot delete or rewrite a platform row — TWO barriers, not one", async () => {
+    const { orgId } = await tenant();
+    const admins = await tenantAdmins(orgId);
+    const row = (await pool.query<{ id: string }>(
+      `INSERT INTO security_audit_log (organization_id, actor_user_id, event_type, resource_type)
+       VALUES (NULL,$1,'platform.event','probe') RETURNING id`, [admins.requester])).rows[0]!.id;
+    const certId = await approvedCertificate(orgId, true, admins);
+
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`UPDATE erasure_certificates SET status='executing', started_at=now() WHERE id=$1`, [certId]);
+      await c.query(`SELECT set_config('app.erasure_certificate_id',$1,true)`, [certId]);
+      await c.query(`SELECT set_config('app.erasure_org_id',$1,true)`, [orgId]);
+      await c.query("SET SESSION AUTHORIZATION erasure_agent");
+      // Stronger than expected, and recorded as found: erasure_agent holds only
+      // INSERT on security_audit_log, so a direct DELETE or UPDATE is refused by
+      // the PRIVILEGE layer before the guard is even consulted. The guard is the
+      // second barrier, exercised on the cascade path (which runs with owner
+      // rights) by the test above.
+      // A savepoint between the two, because the first failure aborts the
+      // transaction and every later statement would report that instead.
+      await c.query("SAVEPOINT probe");
+      await expect(c.query(`DELETE FROM security_audit_log WHERE id=$1`, [row]))
+        .rejects.toThrow(/permission denied for table security_audit_log/);
+      await c.query("ROLLBACK TO SAVEPOINT probe");
+      await expect(c.query(`UPDATE security_audit_log SET event_type='rewritten' WHERE id=$1`, [row]))
+        .rejects.toThrow(/permission denied for table security_audit_log/);
+    } finally {
+      await c.query("ROLLBACK").catch(() => {});
+      await c.query("RESET SESSION AUTHORIZATION").catch(() => {});
+      c.release();
+    }
+  });
+
+  it("a row belonging to ANOTHER tenant still refuses — cross-tenant is never anonymised", async () => {
+    const a = await tenant();
+    const b = await tenant();
+    const adminsA = await tenantAdmins(a.orgId);
+    // An audit row owned by B that names a user of A: a data-integrity anomaly,
+    // and the erasure of A must refuse rather than quietly touch B's ledger.
+    await pool.query(
+      `INSERT INTO security_audit_log (organization_id, actor_user_id, event_type, resource_type)
+       VALUES ($1,$2,'cross.tenant','probe')`, [b.orgId, adminsA.requester]);
+
+    const certId = await approvedCertificate(a.orgId, true, adminsA);
+    await expect(
+      asErasureAgent((c) => executeErasure(c, { certificateId: certId, actorUserId: null }))
+    ).rejects.toThrow(/append-only/);
+    expect((await pool.query(`SELECT 1 FROM organizations WHERE id=$1`, [a.orgId])).rowCount).toBe(1);
+    expect((await pool.query(`SELECT 1 FROM organizations WHERE id=$1`, [b.orgId])).rowCount).toBe(1);
+  });
 });

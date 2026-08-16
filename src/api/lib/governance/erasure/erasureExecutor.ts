@@ -96,6 +96,28 @@ async function audit(
   );
 }
 
+
+/**
+ * Is this actor still an active admin of the target organization?
+ *
+ * Definer-rights read: the executor runs as erasure_agent, which holds no
+ * privilege on `users` and must not be granted one. It learns one boolean.
+ * Fails closed on a missing row, a NULL actor, a demoted role or a mismatched
+ * organization.
+ */
+async function actorAuthorized(
+  client: PoolClient,
+  actorId: string | null,
+  organizationId: string
+): Promise<boolean> {
+  if (!actorId) return false;
+  const { rows } = await client.query<{ ok: boolean }>(
+    `SELECT erasure_actor_authorized($1,$2) AS ok`,
+    [actorId, organizationId]
+  );
+  return rows[0]?.ok === true;
+}
+
 /* ───────────────────────────── request ───────────────────────────────────── */
 
 export type RequestResult =
@@ -312,6 +334,8 @@ export async function dryRunErasure(
     observedFingerprint: observed,
     organizationExists: orgExists,
     activeLegalHolds: Number(holds),
+    requesterStillAuthorized: await actorAuthorized(client, cert.requested_by_user_id, cert.organization_id),
+    approverStillAuthorized: await actorAuthorized(client, cert.approved_by_user_id, cert.organization_id),
     now,
   });
 
@@ -431,6 +455,9 @@ export async function executeErasure(
     : null;
   const observed = snapshot ? scopeFingerprint(cert.organization_id, snapshot.inventory) : null;
 
+  // Authorization is re-derived HERE, moments before destruction — the same
+  // discipline as the legal hold. An approval granted by someone since
+  // deprovisioned is not an approval (ruling, 2026-08-16).
   const gate = evaluateExecutionGate({
     status: cert.status,
     dryRun: cert.dry_run,
@@ -441,6 +468,8 @@ export async function executeErasure(
     observedFingerprint: observed,
     organizationExists: orgExists,
     activeLegalHolds: holds,
+    requesterStillAuthorized: await actorAuthorized(client, cert.requested_by_user_id, cert.organization_id),
+    approverStillAuthorized: await actorAuthorized(client, cert.approved_by_user_id, cert.organization_id),
     now,
   });
 

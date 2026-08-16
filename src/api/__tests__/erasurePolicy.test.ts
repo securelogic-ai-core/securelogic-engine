@@ -102,6 +102,7 @@ describe("the execution gate re-derives every condition", () => {
     status: "approved", dryRun: false, requestedByUserId: "u1", approvedByUserId: "u2",
     approvalExpiresAt: new Date("2026-08-17T00:00:00Z"), scopeFingerprint: "fp",
     observedFingerprint: "fp", organizationExists: true, activeLegalHolds: 0,
+    requesterStillAuthorized: true, approverStillAuthorized: true,
     now: new Date("2026-08-16T12:00:00Z"),
   };
 
@@ -119,6 +120,13 @@ describe("the execution gate re-derives every condition", () => {
 
   it("a retry from 'executing' is allowed to re-pass the gate", () => {
     expect(evaluateExecutionGate({ ...ok, status: "executing" }).proceed).toBe(true);
+  });
+
+  it("a deprovisioned approver voids the approval — ruling 2026-08-16", () => {
+    expect(evaluateExecutionGate({ ...ok, approverStillAuthorized: false }).refusal)
+      .toBe("approver_unauthorized");
+    expect(evaluateExecutionGate({ ...ok, requesterStillAuthorized: false }).refusal)
+      .toBe("requester_unauthorized");
   });
 
   it("terminal states are never re-executed", () => {

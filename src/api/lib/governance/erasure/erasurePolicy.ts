@@ -170,6 +170,8 @@ export type ExecutionRefusal =
   | "scope_changed"
   | "legal_hold_active"
   | "organization_missing"
+  | "requester_unauthorized"
+  | "approver_unauthorized"
   | "terminal_state";
 
 export interface ExecutionGateInput {
@@ -183,6 +185,13 @@ export interface ExecutionGateInput {
   observedFingerprint: string | null;
   organizationExists: boolean;
   activeLegalHolds: number;
+  /**
+   * Re-derived immediately before execution, per the 2026-08-16 ruling. A
+   * two-person control whose second person has since been deprovisioned is a
+   * one-person control with a historical footnote.
+   */
+  requesterStillAuthorized: boolean;
+  approverStillAuthorized: boolean;
   now: Date;
 }
 
@@ -223,6 +232,14 @@ export function evaluateExecutionGate(input: ExecutionGateInput): ExecutionGateD
   if (!input.organizationExists) return { proceed: false, refusal: "organization_missing" };
   // Re-checked HERE, not at approval. This is the TOCTOU boundary.
   if (input.activeLegalHolds > 0) return { proceed: false, refusal: "legal_hold_active" };
+  // Authorization is a fact about NOW, not about the moment of approval.
+  // Refusal requires fresh authorization; there is no retry that skips this.
+  if (!input.requesterStillAuthorized) {
+    return { proceed: false, refusal: "requester_unauthorized" };
+  }
+  if (!input.approverStillAuthorized) {
+    return { proceed: false, refusal: "approver_unauthorized" };
+  }
   if (input.observedFingerprint !== input.scopeFingerprint) {
     return { proceed: false, refusal: "scope_changed" };
   }
