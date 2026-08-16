@@ -14,6 +14,85 @@ None is "needs more testing" hand-waving; each is a specific, checkable fact.
 > closed by anything this repository can run — BL-2 needs a human in a browser,
 > BL-4 needs an operator ruling. See §10.
 
+> **Status 2026-08-16 — the release QUESTION changed, and two defects were found
+> by acting on it. Candidate is now `91a56923`.**
+>
+> The operator reframed the promotion (2026-08-16): production is no longer the
+> configuration the release must survive — **the validated staging experience is
+> the target, and production should mirror it.** The prior plan to validate under
+> `RISK_WORKSPACE_ENABLED=false` ("Config C") was explicitly abandoned mid-setup;
+> no flag was changed on any environment. Consequences:
+>
+> - **BL-2 is substantially CLOSED.** §1–§3 of the walkthrough were executed on
+>   staging under the TARGET configuration (VA end-to-end incl. external portal
+>   legs, all six Ask steps incl. voice, agentic 10/10). Its unmet clause —
+>   "including under `RISK_WORKSPACE_ENABLED=false` to match production nav" — is
+>   retired by the reframing. One remnant: the client-rendered conversation rail
+>   has still never been seen in a browser.
+> - **BL-4 is CLOSED** at `5a669816`, which declares Vendor Assurance as a
+>   top-level group in BOTH nav models under the operator's BL-4 ruling.
+> - **BL-3 was RE-OPENED and is now RE-CLOSED.** See the two defects below.
+> - **A new governing blocker, B-5, is OPEN.** Under "prod mirrors staging" the
+>   LC flags are ON in production, so four gates that were explicitly ruled NOT
+>   promotion blockers become exactly that: Stop Gate B.4 (real external tester),
+>   Stop Gate ASK-B (agentic review), ASK-C C-6 (Whisper DPA/subprocessor), and
+>   C-9 (Ask conversation-retention ruling). None is closable by code. Note also
+>   that `SECURELOGIC_ASK_ACTIONS_ENABLED` / `_GOVERNED_` are environment-global
+>   with no per-org gate: enabling them in production is all-or-nothing across
+>   every customer at once. **B-5 now governs the verdict.**
+>
+> ### Defect 1 (P0, in the delta) — `POST /api/requirement-responses` 500s
+>
+> `20261011` (`168c8b73`) correctly drops the legacy four-column unique key on
+> `requirement_responses`. `src/api/routes/requirements.ts` inferred its
+> `ON CONFLICT` target from exactly those four columns, while the replacement
+> index `idx_requirement_responses_unique_scoped` adds a fifth expression
+> `COALESCE(engagement_id, zero-uuid)`. Result on every migrated database:
+> `42P10 there is no unique or exclusion constraint matching the ON CONFLICT
+> specification`. **Staging was broken from `168c8b73`; production works only
+> because it has not migrated, and would have broken on arrival.** The defect is
+> actually older than `20261011` — the target has been wrong since `20260924` and
+> was merely propped up by the constraint that migration failed to drop.
+> Blast radius is exactly one writer: `vendorPortal.ts:443` already names the
+> five-expression form and `vendorEngagements.ts:1248` targets a different index.
+> That asymmetry is why the §1 walkthrough passed — it drove the vendor-portal
+> path; the internal framework/self-assessment path has no walkthrough leg.
+> **FIXED at `c53d3b9d`.**
+>
+> ### Defect 2 (P2) — stale LC-5b assertion
+>
+> `askGovernedExecution` still asserted the pre-W-5 bare `cannot_decide`; W-5
+> (`26c11f99`) deliberately composes `error: reason`. Behaviour correct, test
+> left behind — i.e. `26c11f99` shipped without an isolation run. **FIXED at
+> `91a56923`.**
+>
+> ### Also found and fixed — the posture worker was never on the candidate
+>
+> `securelogic-posture-worker-staging` had **20 consecutive `build_failed`
+> deploys** while still running pre-LC code. Workers have no HTTP endpoint, so
+> the `/health` and `/api/version` probes this audit relied on could not see it:
+> "staging is on SHA X" was false for that service. Cause: the Ask tool registry
+> imports the whole `routes/index.ts` barrel, so every tsconfig including
+> `src/api/lib` compiles the entire route tree — and the worker's build lacked
+> the `rawBody` augmentation that lived inside `app.ts`. **FIXED at `d88dfc99`**
+> (augmentation moved to `src/api/types/express-raw-body.d.ts`); the worker is
+> now `live` and its boot cycle completed 13 orgs / 0 failures. The over-broad
+> `include` was deliberately NOT narrowed inside this release.
+>
+> ### Evidence at `91a56923` (local, C-locale Postgres)
+>
+> lint / typecheck / build / url-drift / guard-imports: **0**. Engine **8,094
+> passed** (499 files, 3 skipped). App **1,744 passed** (134 files). test:prod
+> 18 passed. tenant-coverage **260 warn-only** (unchanged). **Isolation
+> 152 files / 1,175 tests / 0 failures — fully green for the first time in this
+> release** (was 150/152 and 1,170/1,175). `npm audit` 7 high, inherited: no
+> lockfile change in any of these three commits.
+>
+> **Caveat on the isolation baseline.** `migrationFilenameOrder` compares a
+> Postgres `ORDER BY` against a JS code-point sort, so it passes only under `C`
+> collation and fails under `en_US.utf8`. That is test fragility, not a defect,
+> but it means an isolation result is only comparable when the locale is stated.
+
 ---
 
 ## 1. Current SHAs
@@ -415,9 +494,10 @@ migration risk; R2–R4 are flag flips with cheap rollbacks.
 | # | Criterion | GO condition | Status |
 |---|---|---|---|
 | **BL-1** | **Migration lock exposure quantified** | `count(*)` measured on `evidence`, `findings`, `requirements`; `20260925`/`20260928` timed against a production-sized restore; a `lock_timeout` set for the migration run **or** a declared maintenance window accepted | **CLOSED — GO** (`0a3f647b`). ~220 ms total `ACCESS EXCLUSIVE` across all 15 migrations; 2.56 s boot-blocking. **Valid only while production remains empty** — re-measure if promotion slips past the first real data load |
-| **BL-2** | **Staging walkthrough executed** | §1–§3 legs completed by a human in a browser, **including under `RISK_WORKSPACE_ENABLED=false`** to match production nav | **OPEN** — REOPENED, legs unexecuted |
-| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **CLOSED at `7692c9e6`** — the current candidate, re-run in full. Engine **8,074** (496 files) / app **1,738** (133 files) / **isolation 1,169** (151 files) / lint 0 errors / url-drift clean / both builds clean / tenant-coverage 260 warn-only. The isolation increase over `59d85b18` (+2 files, +11 tests) was **accounted for, not assumed** — the two new migration test files run alone give exactly 2 files / 11 tests. `audit` red **verified inherited the stronger way**: `main`'s own lockfile audited via `--package-lock-only` returns the **identical seven** high advisories — and the set is `brace-expansion`, `fast-uri`, `ip-address`, **`js-yaml` (direct)**, `nanoid`, `postcss`, **`undici` (direct)**, not the two named at `59d85b18`. Limitation unchanged: local reproduction, not the GitHub Actions run — and it cannot be, because **the SHA is not pushed** |
-| **BL-4** | **VA nav decision made and recorded** | Operator rules explicitly: VA URL-only in prod, **or** flip the workspace nav with its own validation | **OPEN** |
+| **BL-2** | **Staging walkthrough executed** | ~~including under `RISK_WORKSPACE_ENABLED=false`~~ — clause RETIRED 2026-08-16 by the target-state reframing; §1–§3 completed under the TARGET configuration | **CLOSED 2026-08-16** — §1 VA end-to-end (incl. external portal legs), §2 all six Ask steps (incl. voice), §3 agentic 10/10. Remnant: the client-rendered conversation rail has never been seen in a browser |
+| **BL-3** | **CI green on the promotion SHA** | Full suite verified green (inherited npm-audit red explicitly accepted) | **RE-OPENED then RE-CLOSED at `91a56923`** — the `7692c9e6` run below did NOT hold on develop: isolation was 150/152 files and 1,170/1,175 tests until the two 2026-08-16 defects were fixed. Now 152/152 and 1,175/1,175, plus engine 8,094 / app 1,744 / test:prod 18 / tenant-coverage 260 warn-only. **`91a56923` is pushed, so GitHub Actions can verify it for real — the `7692c9e6` "local reproduction, not the Actions run" limitation is lifted.** Historical `7692c9e6` detail follows: **CLOSED at `7692c9e6`** — the current candidate, re-run in full. Engine **8,074** (496 files) / app **1,738** (133 files) / **isolation 1,169** (151 files) / lint 0 errors / url-drift clean / both builds clean / tenant-coverage 260 warn-only. The isolation increase over `59d85b18` (+2 files, +11 tests) was **accounted for, not assumed** — the two new migration test files run alone give exactly 2 files / 11 tests. `audit` red **verified inherited the stronger way**: `main`'s own lockfile audited via `--package-lock-only` returns the **identical seven** high advisories — and the set is `brace-expansion`, `fast-uri`, `ip-address`, **`js-yaml` (direct)**, `nanoid`, `postcss`, **`undici` (direct)**, not the two named at `59d85b18`. Limitation unchanged: local reproduction, not the GitHub Actions run — and it cannot be, because **the SHA is not pushed** |
+| **BL-4** | **VA nav decision made and recorded** | Operator rules explicitly: VA URL-only in prod, **or** flip the workspace nav with its own validation | **CLOSED at `5a669816`** — operator ruled VA a first-class top-level workspace; declared in BOTH nav models, so it survives either flag state |
+| **B-5** | **Target-state activation gates** | Under "prod mirrors staging" the LC flags are ON in prod, so the gates that were shielded by dark-shipping must be discharged: Stop Gate B.4 (real external tester), Stop Gate ASK-B (agentic review), ASK-C C-6 (Whisper DPA), C-9 (Ask retention ruling) | **OPEN — GOVERNING.** None closable by code. `ASK_ACTIONS`/`ASK_GOVERNED` are environment-global with no per-org gate, so prod activation is all-or-nothing across every customer |
 
 ### Conditions — must hold at promotion time
 
@@ -435,8 +515,14 @@ migration risk; R2–R4 are flag flips with cheap rollbacks.
 
 ### Explicitly NOT blockers
 
-- **Stop Gate B (B.3/B.4)** blocks **portal enablement**, not promotion — the portal 404s before any handler with the flag unset.
-- **Agentic Ask / realtime voice** ship dark; TEST-ONLY status is acceptable for unreachable code.
+> **Superseded in part 2026-08-16 — read with B-5.** The first two bullets hold
+> ONLY for a dark-shipped promotion (code to `main`, flags off). They are FALSE
+> for the reframed target state, in which production mirrors staging and these
+> flags are ON. Under that target both bullets invert — see B-5 in the table
+> above. Which list applies is decided by the staged/one-shot choice below.
+
+- **Stop Gate B (B.3/B.4)** blocks **portal enablement**, not promotion — the portal 404s before any handler with the flag unset. *(Dark-ship only.)*
+- **Agentic Ask / realtime voice** ship dark; TEST-ONLY status is acceptable for unreachable code. *(Dark-ship only.)*
 - **RLS migrations** are inert until the `app_request` flip.
 - **Production V1 voice probe** and **key revocation** are independent of this promotion.
 
