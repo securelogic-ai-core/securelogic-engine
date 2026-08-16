@@ -48,11 +48,23 @@ const USERS_TABLE = "users";
  *     Category E so the category filters already skip them; listing them here is
  *     belt-and-suspenders and documents the intent for the org_full dump, which
  *     would otherwise be tempted to include every org-scoped row.
+ *   • `ask_provenance_contexts` — a TRANSIENT in-flight buffer, not a record.
+ *     It holds the authorized tool payloads of one Ask turn only while a
+ *     deferred provenance job is running, and is purged (payloads nulled) in
+ *     the same transaction that attaches the claims, so the steady state is
+ *     empty. Excluding it costs the subject nothing: it is a verbatim copy of
+ *     data already exported from the canonical tables it was read from, and the
+ *     turn it belongs to is exported via `ask_messages`. It also has no user
+ *     column to match on — it is keyed by message_id — and inventing one to
+ *     export a buffer that is normally empty would widen the copy of customer
+ *     risk data this design deliberately keeps short-lived. Erasure is
+ *     unaffected: the row cascades with its `ask_messages` parent.
  */
 export const EXPORT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([
   "password_history",
   "jobs",
   "data_export_files",
+  "ask_provenance_contexts",
 ]);
 
 /**

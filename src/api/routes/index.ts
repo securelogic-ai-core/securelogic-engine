@@ -71,6 +71,8 @@ import vendorReviewsRouter from "./vendorReviews.js";
 import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
 import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
+import vendorPortalRouter from "./vendorPortal.js";
+import vendorEngagementsRouter from "./vendorEngagements.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
 import aiSystemGovernanceContextRouter from "./aiSystemGovernanceContext.js";
@@ -137,6 +139,7 @@ import ssoRouter from "./sso.js";
 import customerApiKeysRouter from "./customerApiKeys.js";
 import webhooksRouter from "./webhooks.js";
 import askRouter from "./ask.js";
+import askActionsRouter from "./askActions.js";
 import transcribeRouter from "./transcribe.js";
 import riskScaleRouter from "./riskScale.js";
 import executiveReportRouter from "./executiveReport.js";
@@ -475,7 +478,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorReviewsRouter);
   router.use("/api", vendorAssessmentAnalysisRouter);
   router.use("/api", vendorAssuranceDocumentsRouter);
+  router.use("/api", vendorEngagementsRouter);
   router.use("/api", vendorSignalContextRouter);
+  // EXTERNAL surface — reachable without a platform account. Every route inside
+  // is flag-gated and resolves its identity from a portal session row, never
+  // from the request. See src/api/routes/vendorPortal.ts before adding to it.
+  router.use("/api", vendorPortalRouter);
   router.use("/api", controlComplianceContextRouter);
   router.use("/api", obligationComplianceContextRouter);
   router.use("/api", aiSystemGovernanceContextRouter);
@@ -573,6 +581,7 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", policiesRouter);
   router.use("/api", webhooksRouter);
   router.use("/api", askRouter);
+  router.use("/api", askActionsRouter);
   router.use("/api", transcribeRouter);
   router.use("/api", riskScaleRouter);
   router.use("/api", executiveReportRouter);

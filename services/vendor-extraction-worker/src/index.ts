@@ -31,6 +31,8 @@
  */
 
 import { runOneTick } from "../../../src/api/workers/vendorExtractionWorker.js";
+import { runAnalysisTick } from "../../../src/api/workers/vendorEvidenceAnalysisWorker.js";
+import { runProvenanceTick } from "../../../src/api/workers/askProvenanceWorker.js";
 import { logger } from "../../../src/api/infra/logger.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -55,10 +57,26 @@ async function tick(): Promise<void> {
   const startedAt = Date.now();
   try {
     const processed = await runOneTick({ shouldContinue: () => !shuttingDown });
-    if (processed > 0) {
+    // Evidence analysis rides the same service: it needs the same model key
+    // (which lives on THIS service only) and the same serial-instance spend
+    // cap. Run after extraction so SOC documents keep priority.
+    const analyzed = await runAnalysisTick({ shouldContinue: () => !shuttingDown });
+    // Ask provenance rides here for the same two reasons evidence analysis does:
+    // it needs the model key that lives on THIS service only, and it wants the
+    // same serial-instance spend cap. Run last — a user waiting on vendor
+    // evidence is blocked on it, whereas a deferred provenance job is attaching
+    // citations to an answer the user already has.
+    const cited = await runProvenanceTick({ shouldContinue: () => !shuttingDown });
+    if (processed > 0 || analyzed > 0 || cited > 0) {
       logger.info(
-        { event: "vendor_extraction_worker_tick_complete", processed, durationMs: Date.now() - startedAt },
-        `Vendor-extraction worker processed ${processed} job(s)`,
+        {
+          event: "vendor_extraction_worker_tick_complete",
+          processed,
+          analyzed,
+          cited,
+          durationMs: Date.now() - startedAt,
+        },
+        `Vendor-extraction worker processed ${processed} extraction / ${analyzed} analysis / ${cited} provenance job(s)`,
       );
     }
   } catch (err) {

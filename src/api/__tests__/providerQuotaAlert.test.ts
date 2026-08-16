@@ -15,6 +15,7 @@ const { sendSecurityAlertSpy } = vi.hoisted(() => ({
 vi.mock("../infra/alerting.js", () => ({ sendSecurityAlert: sendSecurityAlertSpy }));
 
 import {
+  instrumentAnthropicClient,
   isProviderQuotaError,
   maybeAlertProviderQuotaError,
   resetProviderQuotaAlertStateForTest
@@ -152,5 +153,96 @@ describe("maybeAlertProviderQuotaError", () => {
     await expect(
       maybeAlertProviderQuotaError(new RateLimitError("rate limit"))
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Client instrumentation: the wrap must be INVISIBLE to the SDK
+// ---------------------------------------------------------------------------
+//
+// The original wrapper was `async (...args) => { try { return await original() } ... }`.
+// That is correct-looking and was shipped untested, but it silently replaced the
+// SDK's APIPromise with a plain Promise. `messages.stream()` calls
+// `.withResponse()` on whatever `create()` returns, so every streaming Ask turn
+// died with "messages.create(...).withResponse is not a function" — and because
+// the plain Promise was then never consumed, the underlying provider error
+// became an unhandledRejection, which the server turns into drain-and-exit.
+
+describe("instrumentAnthropicClient", () => {
+  /** Stand-in for the SDK's APIPromise: a Promise carrying extra methods. */
+  function apiPromise<T>(value: Promise<T>) {
+    return Object.assign(value, {
+      withResponse: () => value.then((data) => ({ data, response: { status: 200 } })),
+    });
+  }
+
+  it("preserves non-Promise methods on the returned object (APIPromise shape)", async () => {
+    const client = {
+      messages: {
+        create: (..._args: any[]) => apiPromise(Promise.resolve({ content: [] })),
+      },
+    };
+
+    instrumentAnthropicClient(client as any);
+    const returned = client.messages.create({});
+
+    expect(typeof (returned as any).withResponse).toBe("function");
+    await expect((returned as any).withResponse()).resolves.toMatchObject({
+      response: { status: 200 },
+    });
+  });
+
+  it("still surfaces the original error to the caller unchanged", async () => {
+    const boom = new Error("provider exploded");
+    const client = {
+      messages: { create: (..._args: any[]) => apiPromise(Promise.reject(boom)) },
+    };
+
+    instrumentAnthropicClient(client as any);
+
+    await expect(client.messages.create({})).rejects.toBe(boom);
+  });
+
+  it("alerts on a quota error seen through the wrap", async () => {
+    class RateLimitError extends Error {}
+    const err = new RateLimitError("Rate limit exceeded");
+    Object.defineProperty(err, "status", { value: 429 });
+
+    const client = {
+      messages: { create: (..._args: any[]) => apiPromise(Promise.reject(err)) },
+    };
+    instrumentAnthropicClient(client as any);
+
+    await expect(client.messages.create({})).rejects.toBe(err);
+    // The alert subscriber runs independently of the caller's rejection.
+    await new Promise((r) => setImmediate(r));
+
+    expect(sendSecurityAlertSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not produce an unhandled rejection when the caller ignores the result", async () => {
+    const seen: unknown[] = [];
+    const onUnhandled = (reason: unknown) => seen.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const client = {
+        messages: {
+          create: (..._args: any[]) =>
+            apiPromise(Promise.reject(new Error("ignored by caller"))),
+        },
+      };
+      instrumentAnthropicClient(client as any);
+
+      // Caller drops the promise on the floor, exactly as the SDK did when
+      // `.withResponse()` threw before the value was ever awaited.
+      const dropped = client.messages.create({});
+      dropped.catch(() => {});
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(seen).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

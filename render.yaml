@@ -293,18 +293,79 @@ services:
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
         value: "false"
 
-      # Enterprise seat model (PR #784) — DARK in production, and the code is
-      # not on main yet (merged to develop after the #756 release cut). Gates
-      # ALL seat enforcement: requireSeat, Contributor scoping, Viewer-seat
-      # read-only, grantable export, SSO-JIT default seat, API-key seat
-      # binding. Strict === "true" read (requireSeat.ts); off/absent = legacy
-      # authorization byte for byte. Engine web service ONLY — no worker or
-      # app reads this key. Prod enablement = develop→main release (four
-      # additive migrations, migrate-before-merge) THEN a separate GATE B
-      # operator ruling; flip this key — value changes reach the process only
-      # on a deploy, not a restart. See flag matrix §1.21.
-      - key: SECURELOGIC_SEAT_MODEL_ENABLED
+      # Ask SecureLogic KILL SWITCH (Sept-15 program, Ask A0). Ask shipped with
+      # no flag at all — an LLM-mediated read path over customer risk data,
+      # with unbounded per-request provider cost, that could not be closed
+      # without cutting a release.
+      #
+      # Deliberately defaults to ENABLED (only the literal "false" disables it):
+      # Ask is already live in production, so a default-off flag would silently
+      # remove a shipped capability the moment it landed. This is a kill switch,
+      # not a dark launch — turning it off is an explicit operator act.
+      # Off = every /api/ask request 404s BEFORE any DB read or provider call.
+      - key: SECURELOGIC_ASK_ENABLED
+        value: "true"
+      # B1 demotion (Launch Completion 1): the legacy Vendor Assurance write
+      # routes (POST /api/vendor-assessments, POST/PATCH /api/vendor-reviews).
+      # "true" = legacy writes still accepted (current prod behavior, GATE B —
+      # ship dark). The demoted state ("false" -> 410 Gone + engagement
+      # pointer) is validated on staging first; the prod flip is an operator
+      # cutover step. Only the literal "false" disables. Reads are unaffected.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "true"
+
+      # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
+      # POST /api/ask from the eight-query snapshot to the platform tool
+      # registry, where the model calls canonical routes in the caller's own
+      # security context (entitlement, seat, capability and RLS all apply).
+      #
+      # Defaults OFF, unlike SECURELOGIC_ASK_ENABLED which defaults ON — the
+      # reasoning is opposite and deliberate. ASK_ENABLED is a kill switch for
+      # a capability already live, so default-off would silently remove shipped
+      # behaviour. This one changes HOW every answer is produced and no staging
+      # environment has exercised it, so default-on would flip a customer-facing
+      # surface on deploy.
+      #
+      # Rollback is the flag alone: no migration, no data change. Retire this
+      # flag AND the snapshot path once staging validates the tool path — two
+      # retrieval implementations is the parallel-data-path problem this program
+      # removes, acceptable only as a transition.
+      - key: SECURELOGIC_ASK_TOOLS_ENABLED
         value: "false"
+
+      # EXTERNAL VENDOR PORTAL — the platform's first unauthenticated write path
+      # that touches tenant data. THE most consequential flag here.
+      #
+      # Defaults OFF everywhere INCLUDING non-production, unlike
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED which opens off-production for
+      # developer convenience. That reasoning does not transfer: an external
+      # write path must never be open by accident on a preview environment.
+      #
+      # Off = 404 before any handler, any DB read, and — on the exchange route —
+      # before a presented token is even hashed. Enablement is GATE B and
+      # requires Stop Gate B to have passed (adversarial suite, independent
+      # security review, a real external tester on staging).
+      #
+      # Turning this off does not by itself revoke live sessions; also run the
+      # mass revocation:
+      #   UPDATE vendor_portal_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL;
+      - key: SECURELOGIC_VENDOR_PORTAL_ENABLED
+        value: "false"
+
+      # Enterprise seat model (PR #784) — LIVE in production since 2026-08-12
+      # (GATE B activated 14:23 UTC, same-SHA deploy 14:27 UTC on 98e97098).
+      # Gates ALL seat enforcement: requireSeat, Contributor scoping,
+      # Viewer-seat read-only, grantable export, SSO-JIT default seat, API-key
+      # seat binding. Strict === "true" read (requireSeat.ts); off/absent =
+      # legacy authorization byte for byte. Engine web service ONLY — no
+      # worker or app reads this key. This declaration is reconciled to the
+      # live dashboard value so a future Blueprint sync cannot revert
+      # production to dark; do NOT set it back to "false" here as a way to
+      # disable enforcement — that is an operator ruling made on the service.
+      # Value changes reach the process only on a deploy, not a restart.
+      # Rollback = "false"/unset + same-SHA deploy. See flag matrix §1.21.
+      - key: SECURELOGIC_SEAT_MODEL_ENABLED
+        value: "true"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
@@ -584,6 +645,63 @@ services:
       # The prod engine block keeps its own "false" and is not touched.
       - key: SECURELOGIC_BRIEF_CATCHUP_ENABLED
         value: "true" # ENABLED 2026-07-17 — O-6: staging brief dormant since May 19; the weekly cron's single Tuesday-07:00 firing chance lives in a service that redeploys on every develop commit. Catch-up recovers a missed Tuesday at next boot. Prod stays "false".
+
+      # Ask SecureLogic KILL SWITCH (Sept-15 program, Ask A0). Ask shipped with
+      # no flag at all — an LLM-mediated read path over customer risk data,
+      # with unbounded per-request provider cost, that could not be closed
+      # without cutting a release.
+      #
+      # Deliberately defaults to ENABLED (only the literal "false" disables it):
+      # Ask is already live in production, so a default-off flag would silently
+      # remove a shipped capability the moment it landed. This is a kill switch,
+      # not a dark launch — turning it off is an explicit operator act.
+      # Off = every /api/ask request 404s BEFORE any DB read or provider call.
+      - key: SECURELOGIC_ASK_ENABLED
+        value: "true"
+      # B1 demotion (Launch Completion 1): staging runs the DEMOTED state —
+      # legacy vendor writes 410 with the engagement pointer — so the cutover
+      # is validated here before any prod flip. Prod stays "true" until the
+      # operator flips it.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "false"
+
+      # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
+      # POST /api/ask from the eight-query snapshot to the platform tool
+      # registry, where the model calls canonical routes in the caller's own
+      # security context (entitlement, seat, capability and RLS all apply).
+      #
+      # Defaults OFF, unlike SECURELOGIC_ASK_ENABLED which defaults ON — the
+      # reasoning is opposite and deliberate. ASK_ENABLED is a kill switch for
+      # a capability already live, so default-off would silently remove shipped
+      # behaviour. This one changes HOW every answer is produced and no staging
+      # environment has exercised it, so default-on would flip a customer-facing
+      # surface on deploy.
+      #
+      # Rollback is the flag alone: no migration, no data change. Retire this
+      # flag AND the snapshot path once staging validates the tool path — two
+      # retrieval implementations is the parallel-data-path problem this program
+      # removes, acceptable only as a transition.
+      - key: SECURELOGIC_ASK_TOOLS_ENABLED
+        value: "false"
+
+      # EXTERNAL VENDOR PORTAL — the platform's first unauthenticated write path
+      # that touches tenant data. THE most consequential flag here.
+      #
+      # Defaults OFF everywhere INCLUDING non-production, unlike
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED which opens off-production for
+      # developer convenience. That reasoning does not transfer: an external
+      # write path must never be open by accident on a preview environment.
+      #
+      # Off = 404 before any handler, any DB read, and — on the exchange route —
+      # before a presented token is even hashed. Enablement is GATE B and
+      # requires Stop Gate B to have passed (adversarial suite, independent
+      # security review, a real external tester on staging).
+      #
+      # Turning this off does not by itself revoke live sessions; also run the
+      # mass revocation:
+      #   UPDATE vendor_portal_sessions SET revoked_at = NOW() WHERE revoked_at IS NULL;
+      - key: SECURELOGIC_VENDOR_PORTAL_ENABLED
+        value: "false"
 
       # Enterprise seat model (PR #784) — ENABLED on staging 2026-08-12
       # (dashboard-set + same-SHA deploys; multi-seat walkthrough passed,
@@ -1382,6 +1500,13 @@ services:
       # belongs to the Intelligence Brief product flags; do not shorten.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
         value: "false"
+      # B1 demotion (Launch Completion 1), app half of the two-switch: "true"
+      # keeps the legacy assess/review CTAs and forms; "false" swaps every
+      # legacy write CTA for the engagement workflow entry point. Keep in
+      # lockstep with the engine's flag — the UI must never offer a write the
+      # engine 410s.
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "true"
 
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32
@@ -1531,6 +1656,11 @@ services:
       # RUNTIME env — a restart applies, no rebuild.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
         value: "true"
+      # B1 demotion (Launch Completion 1), app half: staging renders the
+      # DEMOTED state (engagement CTAs, retired legacy forms) to match the
+      # staging engine's "false".
+      - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
+        value: "false"
 
       # STAGING session secret — a distinct 32+ char value, NEVER the prod secret.
       - key: SESSION_SECRET

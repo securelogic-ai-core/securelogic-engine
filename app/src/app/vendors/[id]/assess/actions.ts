@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
+import { legacyVendorWritesEnabled } from "@/lib/legacyVendorWrites";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -15,6 +16,15 @@ export async function createAssessment(
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
+
+  // B1 demotion: refuse before the engine does (it would 410), with the
+  // same pointer the retired pages show.
+  if (!legacyVendorWritesEnabled()) {
+    return {
+      error:
+        "Point-in-time assessments have been retired — open a vendor engagement instead.",
+    };
+  }
 
   const assessment_type = ((formData.get("assessment_type") as string | null) ?? "").trim();
   if (!assessment_type) return { error: "Assessment type is required" };

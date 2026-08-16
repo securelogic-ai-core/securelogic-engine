@@ -11,11 +11,6 @@ interface Props {
   isPlatformUser?: boolean;
   /** Show SSO settings link for professional+ orgs */
   isSsoEligible?: boolean;
-  /**
-   * Show an "Ask SecureLogic" link. Set when the risk-workspace IA is on, which
-   * demotes Ask out of the primary header into this menu (still reachable).
-   */
-  showAskLink?: boolean;
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -42,7 +37,17 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-export default function UserMenu({ name, email, role, organizationName, isPlatformUser, isSsoEligible, showAskLink }: Props) {
+/**
+ * The account / user-administration menu.
+ *
+ * Scope rule (pre-September-15 IA refinement): this menu is for the ACCOUNT —
+ * profile, team, keys, settings, sign-out. "Ask SecureLogic" used to be listed
+ * here while the risk-workspace IA was on; it is a platform capability, not an
+ * account setting, and is now a first-class global action in the header's
+ * upper-right utility cluster (`GlobalUtilities.tsx`). Nothing about Ask's
+ * authorization, entitlement, or feature-flag semantics changed with the move.
+ */
+export default function UserMenu({ name, email, role, organizationName, isPlatformUser, isSsoEligible }: Props) {
   const [open, setOpen]   = useState(false);
   const menuRef           = useRef<HTMLDivElement>(null);
   const initial           = (name || email || "?").charAt(0).toUpperCase();
@@ -113,11 +118,6 @@ export default function UserMenu({ name, email, role, organizationName, isPlatfo
 
           {/* Nav links */}
           <div style={{ padding: "6px 0" }}>
-            {showAskLink && (
-              <MenuLink href="/ask" onClick={() => setOpen(false)}>
-                Ask SecureLogic
-              </MenuLink>
-            )}
             <MenuLink href="/account" onClick={() => setOpen(false)}>
               Account
             </MenuLink>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
 import UserMenu from "./UserMenu";
+import { GlobalUtilities } from "./GlobalUtilities";
 import { getNavItems, filterNav, isNavItemActive, type NavFlags } from "@/lib/navigation";
 import { getSiteBaseUrl } from "@/lib/siteUrl";
 
@@ -21,12 +22,16 @@ const SITE_URL = getSiteBaseUrl();
 
 // ─── Inline chevron (no icon-lib dependency) ──────────────────────────────────
 
+// 10px in the tablet nav band, 14px from `lg`. The width/height attributes are
+// the pre-CSS fallback; the classes win. Five groups carry a chevron, so 4px off
+// each is 20px off the band — a real lever at 768px, not a detail.
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
       width="14"
       height="14"
       viewBox="0 0 24 24"
+      className="w-2.5 h-2.5 lg:w-3.5 lg:h-3.5"
       fill="none"
       stroke="currentColor"
       strokeWidth="2.5"
@@ -46,13 +51,20 @@ function Chevron({ open }: { open: boolean }) {
 
 // ─── Desktop: plain link ──────────────────────────────────────────────────────
 
+// `text-xs lg:text-sm` and `whitespace-nowrap`: at the tablet-portrait
+// breakpoint the nav band must hold every workspace entry on ONE line, and it
+// is presentation — type size, chevron size and gap — that buys the room. See
+// the nav band in the Header for the measurements. `shrink-0` is load-bearing:
+// without it the flex items SHRINK to fit and the labels squeeze into each
+// other, which measures as "fits" while looking broken. `whitespace-nowrap`
+// stops "Risk Operations" breaking mid-label.
 function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(href + "/");
   return (
     <Link
       href={href}
-      className="text-sm font-medium transition-colors"
+      className="shrink-0 whitespace-nowrap text-xs lg:text-sm font-medium transition-colors"
       style={{ color: active ? "#00c4b4" : "#cbd5e1" }}
     >
       {label}
@@ -101,10 +113,13 @@ function NavGroup({
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    // `shrink-0` so the group keeps its natural width in the one-line nav band.
+    // The panel below is anchored to THIS element (`absolute top-full`), so the
+    // anchoring is unchanged by the band's sizing.
+    <div ref={ref} className="relative shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1 text-sm font-medium transition-colors"
+        className="flex items-center gap-0.5 lg:gap-1 whitespace-nowrap text-xs lg:text-sm font-medium transition-colors"
         style={{
           color: isActive ? "#00c4b4" : "#cbd5e1",
           background: "none",
@@ -195,13 +210,16 @@ export function Header({
   }, [mobileOpen]);
 
   const visibleNav = filterNav(getNavItems(navFlags), isPlatformUser, isPremiumUser, isAdminUser, navFlags);
-  // When the workspace IA is on, Ask leaves the primary nav and lives in the user
-  // menu (demoted, not removed). Ask is a platform-tier surface.
-  const showAskInMenu = navFlags?.risk_workspace === true && isPlatformUser;
+  // Global utilities (Search, Ask SecureLogic) render in the upper-right cluster
+  // for authenticated platform users — the same entitlement both carried as nav
+  // items, in BOTH nav models and at every breakpoint. No feature flag: this is
+  // a relocation of existing entries, so gating them on one would DARKEN two
+  // live surfaces rather than move them.
+  const showGlobalUtilities = isAuthenticated && isPlatformUser;
 
   return (
     <header className="relative sticky top-0 z-50 bg-navy-900/95 backdrop-blur-md border-b border-slate-800 shadow-[0_1px_0_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.5)]">
-      <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between gap-3">
 
         {/* Wordmark */}
         <Link href={isAuthenticated ? "/dashboard" : SITE_URL} className="flex items-center gap-3">
@@ -224,17 +242,36 @@ export function Header({
           </div>
         </Link>
 
-        {/* Desktop Nav */}
-        <nav className="hidden lg:flex items-center gap-6">
-          {isAuthenticated ? (
-            <>
-              {visibleNav.map(item =>
-                item.type === "link" ? (
-                  <NavLink key={item.label} href={item.href} label={item.label} />
-                ) : (
-                  <NavGroup key={item.label} label={item.label} items={item.items} />
-                ),
-              )}
+        {/* Signed-out links stay in ROW 1 — the two-row structure below is the
+            authenticated workspace header. A signed-out visitor has no workspace
+            nav, so a second row would render empty. */}
+        {!isAuthenticated && (
+          <nav className="hidden md:flex items-center gap-6">
+            <a href={SITE_URL} className="text-slate-400 hover:text-white text-sm transition-colors">
+              securelogicai.com
+            </a>
+            <Link href="/login" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
+              Sign In
+            </Link>
+            <a
+              href="/signup"
+              className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
+            >
+              Get Started
+            </a>
+          </nav>
+        )}
+
+        {/* Global utilities + profile — ROW 1, upper right, every breakpoint.
+            The utilities are deliberately outside the workspace nav (now ROW 2)
+            so they survive the tablet/mobile collapse; the profile control
+            appears from `md` up, where the drawer — which also carries the
+            account links — is no longer the only nav path. */}
+        <div className="flex items-center gap-2 lg:gap-3">
+          {showGlobalUtilities && <GlobalUtilities showSearch showAsk />}
+
+          {isAuthenticated && (
+            <div className="hidden md:flex items-center gap-6">
               {userName ? (
                 <UserMenu
                   name={userName}
@@ -243,7 +280,6 @@ export function Header({
                   organizationName={organizationName}
                   isPlatformUser={isPlatformUser}
                   isSsoEligible={isSsoEligible}
-                  showAskLink={showAskInMenu}
                 />
               ) : (
                 <>
@@ -253,40 +289,103 @@ export function Header({
                   <LogoutButton />
                 </>
               )}
-            </>
-          ) : (
-            <>
-              <a href={SITE_URL} className="text-slate-400 hover:text-white text-sm transition-colors">
-                securelogicai.com
-              </a>
-              <Link href="/login" className="text-slate-300 hover:text-white text-sm font-medium transition-colors">
-                Sign In
-              </Link>
-              <a
-                href="/signup"
-                className="bg-teal-600 hover:bg-teal-500 text-white text-sm font-medium px-4 py-1.5 rounded transition-colors"
-              >
-                Get Started
-              </a>
-            </>
+            </div>
           )}
-        </nav>
 
-        {/* Mobile hamburger */}
-        <button
-          className="lg:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
-          onClick={() => setMobileOpen(o => !o)}
-          aria-label="Toggle menu"
-          style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
-        >
-          <span style={{ fontSize: "18px", lineHeight: 1 }}>{mobileOpen ? "✕" : "☰"}</span>
-        </button>
+          {/* Mobile hamburger — below `md` only, where ROW 2 is not rendered and
+              the drawer is the sole path to the workspace nav. */}
+          <button
+            className="md:hidden flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-slate-800"
+            onClick={() => setMobileOpen(o => !o)}
+            aria-label="Toggle menu"
+            style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer" }}
+          >
+            <span style={{ fontSize: "18px", lineHeight: 1 }}>{mobileOpen ? "✕" : "☰"}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Mobile drawer */}
+      {/* ─── ROW 2 — the workspace nav band ────────────────────────────────────
+          A real second row: a sibling block below the ROW 1 container, NOT a
+          margin/padding offset on the header. Nothing from ROW 1 (logo, Search,
+          Ask, avatar) moves down — those stay in the h-14 container above.
+
+          The header keeps its own `border-b`, so the header's bottom border sits
+          below THIS row. The hairline `border-t` here separates the two rows.
+
+          ONE LINE at every breakpoint it renders at, bought with presentation
+          only — type size, chevron size and gap. No wrapping, no horizontal
+          scroll, no restructuring of the dropdowns.
+
+          Measured against the real nav content at 768px, where the usable width
+          inside `px-6` is 720px and the nine entries have a NATURAL width of
+          715.6px at 13px type — i.e. they do not fit at 13px on any gap at all:
+
+            type  chevron  chev gap  item gap   total    headroom
+            13px    14px      4px      10px     795.6px   −75.6px  (overflowed)
+            12px    14px      4px       8px     731.5px    −11.5px
+            12px    10px      2px       8px     701.5px    +18.5px  ← chosen
+            11.5px  10px      2px       8px     677.5px    +42.5px  (type too small)
+
+          `shrink-0` on the items is load-bearing and easy to remove by
+          accident: without it the flex items shrink to fit, so the band always
+          "fits" while the labels squeeze into each other. It also means a
+          measurement taken WITHOUT it reports the container width rather than
+          the content width — which is how 13px was picked, wrongly, first time.
+
+          Neither `flex-wrap` nor `overflow-x-auto` is used. Wrapping puts the
+          tail of the nav on a second line; an overflow container becomes a
+          clipping context and would cut off the NavGroup dropdowns, which
+          render `absolute top-full` inside it.
+
+          The headroom is 18.5px at nine entries. The count is not fixed — it
+          varies with entitlement, admin role and four feature flags.
+
+          That 18.5px is the WORKSPACE nav (risk_workspace on), whose labels are
+          long: "Risk Operations", "Vendor Assurance", "Intelligence". A tenth
+          entry does not fit THERE — "Executive", behind `risk_intelligence`,
+          is the only one that can add one, and turning that flag on is the
+          trigger to revisit this band.
+
+          The budget is a WIDTH budget, not an entry COUNT, and the legacy nav
+          (risk_workspace off — the production flag state) is far cheaper per
+          entry. Re-measured at 768px with the same method that produced the
+          table above, which reproduces the 701.5px row exactly:
+
+            nav model / audience                        entries   content   headroom
+            workspace, platform admin (calibration)         9      701.5px   +18.5px
+            legacy, platform admin  (prod flag state)       8      542.4px  +177.6px
+            legacy, platform analyst                        7      477.6px  +242.4px
+            legacy, every app flag on + admin (worst)      10      663.8px   +56.2px
+
+          So the legacy band holds TEN entries with 56.2px to spare. That is why
+          BL-4 — surfacing "Vendor Assurance" as a top-level group in NAV_ITEMS
+          so the engagement spine is not URL-only in production — cost 128.2px
+          and still left ~10x the headroom the workspace nav ships with.
+
+          Rendered from `md` up, matching the ROW 1 avatar and the hamburger
+          breakpoint: below `md` the drawer remains the single nav path. */}
+      {isAuthenticated && (
+        <div className="hidden md:block border-t border-slate-800/60">
+          <div className="max-w-6xl mx-auto px-6">
+            <nav className="flex flex-nowrap items-center gap-x-2 lg:gap-x-6 py-2.5">
+              {visibleNav.map(item =>
+                item.type === "link" ? (
+                  <NavLink key={item.label} href={item.href} label={item.label} />
+                ) : (
+                  <NavGroup key={item.label} label={item.label} items={item.items} />
+                ),
+              )}
+            </nav>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile drawer — `top-full` so it hangs below the whole header rather
+          than a hardcoded single-row height. */}
       {mobileOpen && (
         <div
-          className="lg:hidden absolute top-14 left-0 right-0 z-50 border-b"
+          className="md:hidden absolute top-full left-0 right-0 z-50 border-b"
           style={{ background: "#0a0f1a", borderColor: "#1e293b" }}
         >
           <nav className="flex flex-col px-4 py-3 gap-1">
@@ -327,12 +426,10 @@ export function Header({
                     </div>
                   );
                 })}
+                {/* Account section only. Search and Ask are NOT here: they are
+                    global utilities rendered in the top bar at this breakpoint
+                    too, so the drawer never has to be opened to reach them. */}
                 <div className="mt-2 pt-2" style={{ borderTop: "1px solid #1e293b" }}>
-                  {showAskInMenu && (
-                    <Link href="/ask" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
-                      Ask SecureLogic
-                    </Link>
-                  )}
                   <Link href="/account" onClick={closeMobile} className="block py-2 px-3 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">
                     Account
                   </Link>

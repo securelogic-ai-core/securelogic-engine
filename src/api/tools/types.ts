@@ -1,0 +1,187 @@
+/**
+ * types.ts — the SecureLogic platform tool contract.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS IS A PLATFORM CAPABILITY, NOT AN ASK MODULE.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Ask is the FIRST consumer. The Intelligence Brief and the structured
+ * workspaces are intended to read through the same registry, which is why this
+ * lives at `src/api/tools/` and not `src/api/lib/askTools.ts`. Today the
+ * difference is a directory name; once three surfaces depend on it, retrofitting
+ * means touching all three at once.
+ *
+ * ── Why tools bind to ROUTES, not to the database ───────────────────────────
+ *
+ * Ask shipped with a parallel data-access layer: eight hand-written queries
+ * duplicating what the canonical routes already compute. Git records five
+ * separate corrections for drift between the two (88bf1254, df05d81b, 455966e0,
+ * a71af3c6, fe70510d) and the September audit still found five more live
+ * defects, including a severity filter that matched nothing so the model was
+ * shown an empty critical-findings list.
+ *
+ * The durable fix is not better SQL. It is removing the second data path. A tool
+ * binds to an existing route handler TOGETHER WITH ITS FULL MIDDLEWARE CHAIN and
+ * executes in the requesting user's security context, so:
+ *
+ *   - entitlement, seat, capability, contributor row-scoping and RLS all apply
+ *     automatically and unchanged;
+ *   - metric definitions cannot drift, because there is only one query;
+ *   - Ask is INCAPABLE of returning something the product would not, rather than
+ *     merely being careful not to.
+ *
+ * That is the ratified ASK-A invariant expressed structurally: "a user must
+ * never obtain information through Ask that they cannot obtain through their
+ * authorized product access."
+ *
+ * ── Action classes ──────────────────────────────────────────────────────────
+ *
+ * read    executes immediately. GET handlers only.
+ * draft   produces a proposal; persists nothing, or persists as an existing
+ *         suggestion row. Never commits a change to a canonical object.
+ * mutate  requires a server-issued confirmation token bound to the user and a
+ *         rendered diff. The token is issued to the CLIENT and never placed in
+ *         the model's context, so no amount of prompt injection can cause one.
+ * governed
+ *         mutate + mandatory rationale + audit evidence + the existing SoD and
+ *         approval gates (risk acceptance, vendor decision, finding closure).
+ *
+ * September 15 shipped READ only. Launch Completion 5 opened `mutate` under
+ * Stop Gate ASK-B (docs/validation/ask-b-action-gate.md): a mutate tool call
+ * EXECUTES NOTHING — it records a proposal, and the confirmation token that
+ * can execute it is minted only after the model loop ends and issued only to
+ * the client. `draft` and `governed` remain unopened; governed is LC-5b,
+ * decision-gated on its own review of the SoD-bearing transitions.
+ */
+
+import type { RequestHandler } from "express";
+
+export const TOOL_ACTION_CLASSES = ["read", "draft", "mutate", "governed"] as const;
+export type ToolActionClass = (typeof TOOL_ACTION_CLASSES)[number];
+
+/** JSON Schema fragment describing a tool's inputs, passed to the model verbatim. */
+export type ToolInputSchema = {
+  type: "object";
+  properties: Record<string, unknown>;
+  required?: string[];
+  additionalProperties?: boolean;
+};
+
+/**
+ * How the tool's arguments map onto the bound route.
+ *
+ * `pathParams` names which arguments fill `:id`-style segments; everything else
+ * goes to the query string for GETs or the body for writes.
+ *
+ * NOTE the deliberate absence of any way to supply organization_id, or to
+ * override the caller's identity. Tenant identity comes from the executing
+ * request's own authenticated context, never from tool arguments — a tool that
+ * accepted an org id would be exactly the privileged bypass ASK-A forbids.
+ */
+export type ToolBinding = {
+  method: "GET" | "POST" | "PATCH" | "DELETE";
+  /** Express-style path as registered on the router, e.g. "/findings/:id". */
+  path: string;
+  /** Argument names that fill path segments, in order of appearance. */
+  pathParams?: string[];
+};
+
+export type ToolDefinition = {
+  /** Stable identifier the model calls, e.g. "findings.search". */
+  name: string;
+  /** Shown to the model. Describes WHAT it returns and WHEN to use it. */
+  description: string;
+  inputSchema: ToolInputSchema;
+  actionClass: ToolActionClass;
+  binding: ToolBinding;
+  /**
+   * Render the human-readable change-set the user is asked to confirm.
+   *
+   * REQUIRED for every non-read tool (the registry test enforces it): what the
+   * user confirms is what the SERVER rendered from the frozen input — never
+   * the model's own narration, which is not trustworthy about its own
+   * proposal. Pure function of the input; no I/O.
+   */
+  summarize?: (input: Record<string, unknown>) => string;
+  /**
+   * Spec-owned arguments merged OVER the model's input at proposal time
+   * (LC-5b). This is how a governed tool pins its transition literal: the
+   * model cannot choose a different target state, because the spec's value
+   * wins unconditionally — e.g. findings.close fixes
+   * `decision_state: "resolved"` and no model output can turn the tool into
+   * a different transition.
+   */
+  fixedInput?: Record<string, unknown>;
+  /**
+   * Server-side input defaulting for non-read proposals, applied AFTER
+   * fixedInput and BEFORE validation, with the proposing user's identity —
+   * e.g. risks.accept defaults the accountable owner to the proposing (and
+   * therefore confirming) user when the model names none. The result is
+   * FROZEN in the proposal row like any other input: defaults are a
+   * proposal-time act, never an execution-time one (B-4). Pure; no I/O.
+   */
+  applyDefaults?: (
+    input: Record<string, unknown>,
+    ctx: { userId: string | null }
+  ) => Record<string, unknown>;
+  /**
+   * Server-side content validation for non-read proposals, run by the
+   * orchestrator AFTER the required-fields check and BEFORE a proposal is
+   * recorded. Returns an error string (→ invalid_arguments, no proposal) or
+   * null. This is where mandatory-rationale rules live: schema `required`
+   * proves presence; this proves substance (trimmed length bounds etc.).
+   * Pure function; no I/O.
+   */
+  validateInput?: (input: Record<string, unknown>) => string | null;
+  /**
+   * Extra audit-payload fields for an EXECUTED proposal (LC-5b): rationale,
+   * the transition performed, and the resulting object state extracted from
+   * the route's own response. Pure function of (frozen input, route response
+   * data); no I/O. Required for governed tools (registry test).
+   */
+  auditContext?: (
+    input: Record<string, unknown>,
+    resultData: unknown
+  ) => Record<string, unknown>;
+  /**
+   * Per-tool confirmation TTL override in milliseconds. Defaults to the
+   * store's PROPOSAL_TTL_MS (15 min). risks.accept uses 5 minutes by
+   * operator ruling.
+   */
+  proposalTtlMs?: number;
+  /**
+   * The FULL middleware chain, in order, exactly as the route registers it.
+   *
+   * This is the load-bearing field. It must be the same array reference (or a
+   * deep-equal copy) the router uses — a tool that ran only the final handler
+   * would skip requireApiKey / requireEntitlement / denyContributor and become a
+   * privileged path. `toolChainParity.test.ts` asserts parity against the
+   * registered routes.
+   */
+  chain: RequestHandler[];
+};
+
+/** What the executor returns. Never throws for an application-level failure. */
+export type ToolInvocationResult =
+  | {
+      ok: true;
+      status: number;
+      /** The route's JSON body, unmodified. */
+      data: unknown;
+      latencyMs: number;
+    }
+  | {
+      ok: false;
+      /**
+       * `denied` covers every authorization outcome — 401/403/404 alike.
+       * Collapsing them is deliberate: a 404 from a canonical handler is the
+       * platform's non-disclosure posture (cross-org reads return 404, not 403),
+       * and the model must not be able to distinguish "does not exist" from
+       * "exists but is not yours". Preserving that distinction in the tool layer
+       * would leak existence through the assistant that the API refuses to leak.
+       */
+      error: "denied" | "invalid_arguments" | "unavailable" | "internal";
+      status: number;
+      message: string;
+      latencyMs: number;
+    };

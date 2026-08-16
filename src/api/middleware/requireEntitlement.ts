@@ -9,6 +9,15 @@ const entitlementRank: Record<EntitlementLevel, number> = {
   premium:      4  // premium / platform / team — all map here
 };
 
+// The canonical raw-level → class collapse lives in lib/entitlementClass.ts
+// (dependency-free, safe from middleware mocks); this middleware applies it.
+import {
+  collapseEntitlementLevel,
+  type EntitlementClass,
+} from "../lib/entitlementClass.js";
+
+export { collapseEntitlementLevel, type EntitlementClass };
+
 export function requireEntitlement(minimumLevel: EntitlementLevel) {
   return (req: Request, res: Response, next: NextFunction) => {
     const ctx = (req as any).organizationContext as
@@ -23,17 +32,9 @@ export function requireEntitlement(minimumLevel: EntitlementLevel) {
       return;
     }
 
-    const currentLevelRaw =
-      typeof ctx.entitlementLevel === "string"
-        ? ctx.entitlementLevel.toLowerCase()
-        : "starter";
-
-    const currentLevel: EntitlementLevel =
-      currentLevelRaw === "premium" || currentLevelRaw === "platform" || currentLevelRaw === "team"
-        ? "premium"
-        : currentLevelRaw === "professional" || currentLevelRaw === "standard"
-          ? "professional"
-          : "starter";
+    const currentLevel: EntitlementLevel = collapseEntitlementLevel(
+      ctx.entitlementLevel
+    );
 
     if (entitlementRank[currentLevel] < entitlementRank[minimumLevel]) {
       res.status(403).json({

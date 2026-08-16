@@ -1,0 +1,619 @@
+# September 15 Launch Completion Program — Execution Status
+
+Baseline: `develop` @ `bc53ae82` (master program merged: #786/#789/#788;
+September-15 schema live and probe-verified on staging; production untouched).
+Operator directive 2026-08-13: execute the six deferred items in priority
+order, preserving the ratified architecture and every passed security gate.
+
+Branch discipline: one branch per item (`feat/lc<N>-*`), separately reviewable
+from the merged master program. Nothing in this program touches production
+without explicit authorization; prod-affecting flags ship dark.
+
+| # | Item | Branch | Status |
+|---|---|---|---|
+| 1 | B1 legacy VA demotion | `feat/lc1-b1-legacy-va-demotion` | **Built — validated** |
+| 2 | Ask access truth | `feat/lc2-ask-access-truth` (stacked on LC-1) | **Built — validated** |
+| 3 | Ask streaming | `feat/lc3-ask-streaming` (stacked on LC-2) | **Built — validated** |
+| 4 | Realtime voice | `feat/lc4-realtime-voice` (stacked on LC-3) | **Built — validated** |
+| 5 | Bounded agentic Ask | `feat/lc5-bounded-agentic-ask` (stacked on LC-4) | **Built — validated** (committed `0ddfcf3c`) |
+| 5b | Governed agentic Ask | `feat/lc5b-governed-ask` (stacked on LC-5) | **Built — validated** |
+| 6 | Platform convergence | — | Blocked on 1–5 |
+| 7 | UX/IA: global utilities | `develop` (`c13a6cbc`, `66204045`) | **Shipped to staging — verified from the authenticated UI** |
+| 8 | Ask answer-truth defects (found by the walkthrough, not planned) | `develop` (`ac4b8898` → `05625d02`) | **Shipped to staging — both P1s closed on live evidence** |
+
+---
+
+## 1. B1 legacy Vendor Assurance demotion
+
+**Operator decision B1 is resolved by the Launch Completion directive**: make
+`vendor_engagements` the single canonical workflow writer; freeze/demote the
+legacy writers; preserve compatibility/read paths; prove no competing writer.
+
+### Scope ruling
+
+The demoted set is `vendor_assessments` + `vendor_reviews` — exactly the set
+the spine migration's own contract names (`20260919_vendor_engagements.sql:
+25-28`). `assessments` / `POST /api/assess` is the generic assessment runner,
+a public API **compatibility path preserved per the directive** — the Gate 0
+record classifies its retirement as a separate decision with a notice period
+(`sept15-va-phase0-gate0-evidence.md` §4). It does not compete with the vendor
+workflow.
+
+### Writer disposition (complete inventory, verified at bc53ae82)
+
+| Writer | Table | Disposition |
+|---|---|---|
+| `POST /api/vendor-assessments` (`vendorAssessments.ts`) | vendor_assessments INSERT | **Demoted** — flag-gated 410 |
+| `POST /api/vendor-reviews` (`vendorReviews.ts`) | vendor_reviews INSERT | **Demoted** — flag-gated 410 |
+| `PATCH /api/vendor-reviews/:id` (`vendorReviews.ts`) | vendor_reviews UPDATE | **Demoted** — flag-gated 410 (before the assignment probe, so the demoted state cannot enumerate review ids) |
+| App UI callers (`vendors/[id]/assess`, `/review`, page CTAs ×6, CompleteReviewSection) | via the above | **Demoted** — CTAs swap to the engagement intake (`/vendor-engagements/new?vendorId=…`), forms replaced by retirement notices, server actions refuse first |
+| Account-deletion reaper (`accountDeletionReaper.ts`) | vendor_reviews UPDATE (reviewer_id scrub) | **Preserved** — GDPR erasure obligation, not a workflow writer (ADR-0005 precedent); allowlisted in the structural guard |
+| Seed scripts (`seed-demo.ts`, `seed-walkthrough-org.ts`) + isolation-test fixtures | direct SQL | **Preserved** — operator/test data fixtures outside the product workflow and outside src/ |
+| `POST /api/assess` (`assess.ts`) | assessments INSERT | **Out of scope** — compatibility path (see scope ruling) |
+
+### Mechanism
+
+- `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` — same name on engine and app
+  (two-switch model). **Default ON; only the literal `"false"` disables**
+  (these are live prod surfaces with first-party UI callers — the demotion
+  ships dark per GATE B; the prod flip is an operator cutover step).
+- Engine: 410 Gone with one canonical body (`legacyVendorWriteFlag.ts`) before
+  any validation or DB work; every rejection writes a
+  `*.legacy_write_rejected` audit event so the cutover runbook can watch for
+  stragglers. Reads untouched.
+- App: every legacy write CTA swaps to the engagement intake (with vendor
+  preselect, validated against the picker list); `/assess` and `/review` pages
+  render retirement notices; in-progress reviews show a read-only note.
+- **Metric truth**: the ratified ASSESSED VENDOR definition is extended —
+  `vendor_assessments` OR `vendor_engagements` existence (monotone; same
+  existence-based no-status-qualifier stance as the 2026-08-09 ruling).
+  Without this, every engagement-assessed vendor would report "never assessed"
+  forever once legacy writes freeze. `assessment_count` /
+  `latest_assessment_at` deliberately still count legacy records only
+  (renaming/merging is item 6 convergence work).
+
+### Proof of no competing writer
+
+1. `legacyVendorWriterGuard.test.ts` — structural scan of `src/`: any
+   INSERT/UPDATE/DELETE on the two tables outside the allowlist (three gated
+   route sites + the reaper policy) fails the suite with file:line. The
+   allowlist itself is asserted accurate, and the gated files are asserted to
+   reference the flag.
+2. `legacyVendorWriteDemotion.test.ts` — 410 + audit + no-DB-work on all three
+   routes when demoted; pure passthrough when not; reads exempt.
+3. The full writer inventory above (agent sweep of routes, workers, seeds,
+   dead zones — evidence in this doc's table).
+
+### Deferred within this item (deliberate)
+
+- **DB-level freeze** (blocking trigger per the `20260725` WORM pattern +
+  grant narrowing in `20260618`): correct only AFTER the prod flip — a
+  trigger now would break live legacy writes while the flag still allows
+  them, and it needs an erasure escape hatch for the reaper. Belongs to the
+  cutover runbook as post-flip hardening.
+- In-progress legacy reviews at flip time become permanently in_progress
+  (read-only). Cutover guidance: flip when no reviews are in_progress, or
+  accept the frozen state — rows stay visible either way.
+- `assess_vendor.yaml` in the workflow registry (Ask's how-to corpus)
+  describes the legacy assess/review flows — rewrite it around the engagement
+  workflow AT the prod flip, or Ask will narrate a retired path. (Found
+  during LC-2.)
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     480 files · 7791 passed · 3 skipped · 0 failed
+app        126 files · 1671 passed ·             0 failed
+isolation  147 files · 1135 passed ·             0 failed   (real Postgres; includes the tenant-wrap
+                                                             suite POSTing through the new gate with the
+                                                             flag defaulted — passthrough proven live)
+typecheck  clean (engine + app)
+```
+
+New tests: 15 (route gating + audit + enumeration-resistance + structural
+writer guard, engine) + 12 (flag semantics + CTA targets, app). Updated: the 8
+`vendorsAssessmentCounts` SQL-shape assertions now hold the TWO-leg
+never-assessed predicate (both legs org-scoped inside the correlation), and
+the list/aggregate equivalence extractor walks the new `NOT (…)` span.
+
+---
+
+## 2. Ask access truth
+
+**Defect**: body-gated pages absent from both navigations classified
+`access:"all"` in the Application Knowledge Index, and Ask's prompt is
+rendered from that index — so the assistant could route a customer to a
+surface whose page-body guard bounces them to /dashboard. The sweep found
+**12 misclassified routes** (`/vendor-engagements×3`, `/vendor-assurance×2`,
+`/approvals`, `/evidence`, `/posture`, `/getting-started`,
+`/settings/organization`, `/settings/security`, `/account/team` — the last
+found by the new honesty test, not the manual sweep).
+
+**Fix, reusing canonical primitives only (no parallel permission system):**
+
+1. `ROUTE_ACCESS_DECLARATIONS` (navigation.ts) — declared body-gate access
+   for nav-orphaned routes, exactly the mechanism `SECONDARY_NAV_ITEMS.access`
+   already uses. Longest prefix wins; a declaration never overrides
+   nav-derived access. Consumed by the index builder/generator/drift test.
+2. `collapseEntitlementLevel()` — the entitlement collapse `requireEntitlement`
+   always applied inline, now EXPORTED as the canonical class mapping and the
+   middleware refactored onto it (no behavior change).
+3. `renderProductKnowledge(requesterClass?)` — with a class, every
+   destination and workflow the class cannot use is OMITTED from the prompt
+   (nav items, secondary items, and workflows via their existing
+   `permissions` field). Admin items stay annotated ("[admin only]") —
+   admin is a role inside an org of any entitlement, which entitlement
+   cannot decide. No class = full corpus (back-compat).
+4. `ask.ts` — three memoized per-class system prompts (prompt caching stays
+   effective); both the tool path and the snapshot path select by
+   `collapseEntitlementLevel(organizationContext.entitlementLevel)`.
+
+**Honesty enforcement**: a new test scans EVERY page.tsx for body-gate
+patterns (`if (!isPlatform…`, admin-role redirects, `entitlement !==
+"starter"`) and fails the build if a gated page classifies `"all"` —
+the metadata can no longer silently rot. Plus per-class filtering tests
+(starter sees no platform surface; professional sees premium but not
+platform; premium = full corpus byte-identical to the unfiltered render).
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     480 files · 7856 passed · 3 skipped · 0 failed
+app        126 files · 1671 passed ·             0 failed
+isolation  147 files · 1135 passed ·             0 failed   (FRESH Postgres required — rerunning against
+                                                             a database left over from a prior isolation
+                                                             run reports ~39 file failures that are stale-
+                                                             state artifacts, not code defects)
+typecheck  clean (engine + app)
+index      `npm run generate:knowledge-index` reproduces the committed
+           artifact byte-identical (zero drift)
+```
+
+New tests: +65 in `applicationKnowledgeIndex.test.ts` (18 → 83): the access-
+truth suite generates one test per body-gated page (so a new gated page is
+automatically covered) plus the per-class filtering suite (starter/
+professional/premium corpus expectations, premium ≡ unfiltered byte-identical,
+admin-annotation preservation). The generated-index diff flips 13 access
+values, every one a tightening (9 → platform, 2 → admin, 2 → premium);
+no route loosened.
+
+---
+
+## 3. Ask streaming
+
+**Item**: the A3 leftover "Streaming answers" (sept15-execution-status §4 —
+P1-adjacent polish, not gate-blocking). A tool-path turn takes 10–30s of model
+rounds and retrieval; the answer arrived as one JSON blob at the end.
+
+**Shape — one turn implementation, two transports:**
+
+1. `runAskOrchestration` gains an optional `onEvent` callback. With it, model
+   turns run through the SDK's streaming API (`messages.stream`) and emit
+   `round` / `delta` / `tool_call` events; without it, behaviour is
+   byte-identical to before (every pre-existing orchestrator test passes a
+   client with NO `stream` method — that is the proof).
+2. `POST /api/ask/stream` (engine) — the tool-path turn logic extracted to
+   `runAskToolTurn` and shared with the JSON route, so the SSE `final` event
+   is byte-shape-identical to the JSON body (asserted by test). Identical
+   middleware chain INCLUDING the same rate-limiter instance (one 20/min
+   per-org budget across both endpoints). All validation answers plain JSON
+   BEFORE the SSE upgrade; after it, failure is an `error` event with the 502's
+   wording. Audit: same `ask.question.asked` event + `streamed: true|false`.
+3. `app/api/ask/stream` (app) — same-origin proxy, iron-session → Bearer,
+   pipes the SSE body through UNBUFFERED (`engineRes.body` handed to the
+   Response; the vendor-portal proxy's arrayBuffer pattern would defeat it).
+4. `AskClient` — `streamAsk()` fetch-reader consumer (chunk-boundary-safe SSE
+   parser, separately unit-tested) rendering a preview bubble: retrieval
+   activity line + accumulating deltas, reset per `round`, always REPLACED by
+   `final` (the INLINE provenance pass may re-render prose after the last
+   delta; as of `05625d02` the DEFERRED pass deliberately does not — see §8). A
+   stream that ends without `final` is an error, never a success — a
+   half-delivered preview cannot be mistaken for an answer.
+
+**Flags (dark, two-switch):** `SECURELOGIC_ASK_STREAMING_ENABLED` on both
+engine (404 when off, and streaming also requires `ASK_TOOLS` — no investment
+in the retiring snapshot path) and app (page passes `streamingEnabled` at
+render; a dark deployment costs zero probe requests; a 404 mid-session latches
+a silent fallback to the server action). Rollback is the flag; no migration,
+no schema change, no new SQL.
+
+**Old blocker resolved by construction**: "asTenant throws on streaming" does
+not bite — ask.ts never used the wrap; every `withTenant` scope commits before
+the model round-trips, and the SSE handler documents it must never be wrapped.
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     483 files · 7889 passed · 3 skipped · 0 failed
+app        126 files · 1689 passed ·             0 failed
+typecheck  clean (engine + app)
+isolation  NOT re-run — deliberate: LC-3 adds no SQL, no schema, no tenant-
+           wrap change, and no new DB access path (the SSE route reuses
+           runAskToolTurn's committed-before-model-call withTenant scopes);
+           the LC-2 fresh-Postgres pass at this branch's base still covers
+           the data layer.
+```
+
+New tests: 33 — engine 15 (SSE contract: dual-flag 404s, JSON-before-upgrade
+validation, frame ordering, final ≡ JSON-body parity, error-event wording,
+streamed:true|false audit; orchestrator: round/delta/tool_call emission,
+denial events, throwing-listener immunity) + app 18 (chunk-boundary-safe SSE
+parser incl. \r\n and multi-data frames; streamAsk outcome union — final,
+fallback on 404/rewritten response, structured HTTP errors, terminal error
+event, stream-without-final = error; proxy: 401 pre-engine, Bearer + body
+forwarding, unbuffered pipe-through, status passthrough, 502 on unreachable).
+
+One pre-existing test updated: `vendorEntitlementGate.test.ts`'s structural
+census of `requireEntitlement("premium")` sites in ask.ts (3 → 4) — the
+census caught the new gate exactly as designed.
+
+---
+
+## 4. Realtime voice
+
+**Scope ruling honored**: the ratified ASK-C gate deferred "realtime voice"
+defined as duplex transport + realtime provider integration. LC-4 ships the
+realtime conversation LOOP without crossing that line — explicit press-to-talk
+clip → Whisper (existing, sole, disclosed subprocessor) → LC-3 streamed answer
+→ **browser-local** spoken readback (SpeechSynthesis; no audio leaves the
+device; no new provider). Continuous/full-duplex provider streaming remains
+decision-gated outside this item. The gate itself is formalized as an
+eleven-dimension evidentiary checklist: `docs/validation/ask-c-voice-gate.md`.
+
+**Four governance gaps the formalization audit found, all closed here:**
+
+1. **C-1 tenant control** — no per-tenant voice switch existed. Now:
+   `organizations.voice_input_enabled` (migration `20261001`, NOT NULL
+   DEFAULT true — a false default would silently remove live behavior),
+   patchable via the existing org-settings allow-list (admin-only, audited
+   as `org.settings_changed`), enforced ENGINE-side on the transcribe route
+   (403 `voice_disabled_for_org` before multer ever parses audio). Loaded by
+   `attachOrganizationContext` in the same SELECT as `viewer_export_enabled`
+   — no added query.
+2. **C-7 authorization equivalence ×2** — the transcribe chain lacked
+   `askFeatureFlag` (the Ask kill switch did NOT kill voice) and
+   `denyContributor()` (a contributor seat could spend Whisper calls it could
+   never turn into a question). Chain now: askFeatureFlag → voiceFeatureFlag
+   → requireApiKey → attachOrganizationContext → requireEntitlement("premium")
+   → denyContributor() → requireOrgVoiceEnabled → org-keyed rate limit —
+   asserted structurally (in order) and behaviorally.
+3. **C-8 audit** — transcription left no ledger record. Now every success
+   writes `ask.voice.transcribed` (sizes, mime, transcript length, provider,
+   correlation id — never content, matching the Ask precedent).
+4. **C-9 kill switch** — no voice-specific lever existed (only removing
+   `OPENAI_API_KEY`). Now `SECURELOGIC_ASK_VOICE_ENABLED` — kill-switch
+   semantics (default ON, literal "false" disables), 404s the route,
+   un-advertises `/status`, hides the app mic. Killing Ask kills voice
+   (one-way implication by design).
+
+**C-2 disclosure closed app-side**: first mic press renders a disclosure card
+(audio → OpenAI for transcription only; not stored by SecureLogic; transcript
+becomes the Ask question) — capture cannot start until explicitly continued;
+latched per browser (`voiceGovernance.ts`, storage failures err toward MORE
+disclosure).
+
+**The realtime loop (dark)**: `SECURELOGIC_ASK_VOICE_REALTIME_ENABLED`
+(default OFF — new behavior, not a kill switch; two-switch model). When lit:
+a readback toggle appears; answers to VOICE-originated questions are spoken
+via browser-local SpeechSynthesis after the LC-3 stream finalizes. A new
+submit always silences in-flight readback; synthesis failure is silent (the
+text answer is already rendered). Voice-origin is a consumed-once marker, so
+typed questions are never spoken.
+
+**Fallback + honesty**: `voice_disabled_for_org` / kill-switch 404 map to
+friendly type-instead messages; the org-disabled note replaces (not joins)
+the capability note; `/status` reports `configured: false` when killed.
+
+**Rollback**: both flags; the migration is additive (one defaulted column)
+and needs no down-path for the flags to restore prior behavior exactly.
+
+One pre-existing test updated: `src/api/tests/transcribeRoute.test.ts` (the
+DB-less upload-pipeline suite) mocks the transcribe route's imports so the
+postgres pool never loads — LC-4's new `auditLog` import transitively throws
+`DATABASE_URL is not set` at collection, failing the file with zero tests.
+Fixed by mocking the two new dependencies (`auditLog`, `requireSeat`) exactly
+as `askVoiceGate.test.ts` does; gate behavior stays covered there.
+
+### Validation (2026-08-13, at commit)
+
+```
+engine     485 files · 7907 passed · 3 skipped · 0 failed
+app        129 files · 1696 passed ·             0 failed
+isolation  147 files · 1135 passed ·             0 failed   (FRESH Postgres; full migration set incl.
+                                                             20261001_org_voice_enablement applied and
+                                                             exercised by the harness)
+typecheck  clean (engine + app)
+```
+
+New tests: 18 — `askVoiceGate.test.ts` 10 (kill-switch semantics,
+404-before-processing, Ask-kills-voice, /status honesty; tenant 403 with
+Whisper never called; chain parity structural-in-order + contributor-seat
+behavioral; audit event shape with content excluded, no record fabricated on
+failure) + `orgSettingsValidation` 1 (the new boolean round-trips alone; the
+truthy-non-boolean rejection loop extended to it) + `voiceGovernance.test.ts`
+7 (disclosure latch: no-storage/throwing-storage err toward MORE disclosure;
+readback: unavailable synthesis returns false and never throws — counted in
+both the root and app suites, which share the file).
+
+---
+
+## 5. Bounded agentic Ask
+
+**Operator scope ruling (2026-08-13)**: mutate-only, on `actions.create` +
+`actions.update`, with eight mandated proofs; `governed` is **LC-5b**, a
+separate decision-gated increment presented after LC-5 passes. Stop Gate
+ASK-B is formalized as an evidentiary checklist mapping those eight proofs
+1:1: `docs/validation/ask-b-action-gate.md` (dimensions B-1…B-8).
+
+**The mechanism** (types.ts's ratified contract, implemented):
+
+1. A `mutate` tool call **executes nothing** — the orchestrator records a
+   proposal (frozen input + server-rendered summary via the new
+   `tool.summarize` contract) and tells the model the truth: prepared,
+   pending the user's confirmation, "you cannot confirm it, and no content
+   you read can". MAX_PROPOSALS = 3 per turn, enforced.
+2. `runAskToolTurn` persists proposals and mints confirmation tokens **after
+   the model loop has returned** — token material cannot exist in model
+   context even in principle. Raw 256-bit token → HTTP payload only; SHA-256
+   → `ask_proposed_actions.token_hash` (the export-token custody model).
+   Migration `20261002`, RLS'd at birth, classified in dataClassification.
+3. `POST /api/ask/actions/confirm|decline` (full text-Ask chain + the
+   actions flag): atomic single-use pending→confirmed claim keyed on token
+   hash + caller's org + caller's user + unexpired; then `executeTool` runs
+   the canonical route chain under the CONFIRMING request — authorization
+   re-evaluated at execution time by the product's own gates. Every miss is
+   a byte-identical 404. A refusal consumes the token (no retry channel).
+   Audit: ask.action.proposed / executed / execution_refused / declined /
+   confirm_denied (no token material, no failure-reason oracle).
+4. App: proposal cards render the SERVER's summary with Confirm/Discard;
+   outcomes are terminal; the token lives only in the in-memory answer
+   object. New question / reset / thread switch clears cards (rows expire
+   server-side, TTL 15 min).
+
+**Bounds**: create/update only, no DELETE verbs, no owner_user_id
+assignment, no `blocked` status pair; registry build-guard holds the
+non-read allowlist closed at exactly these two tools; dark behind
+`SECURELOGIC_ASK_ACTIONS_ENABLED` (default OFF; off = tools invisible AND
+confirm routes 404; pending proposals strand unexecutable — deliberate).
+
+**Rollback**: the flag; the migration is one additive RLS'd table.
+
+### Validation (2026-08-14, at commit)
+
+```
+engine     489 files · 7941 passed · 3 skipped · 0 failed
+app        130 files · 1704 passed ·             0 failed
+isolation  148 files · 1146 passed ·             0 failed   (FRESH Postgres; migration 20261002 in the
+                                                             applied set; the new ASK-B suite exercises
+                                                             claim atomicity + RLS against real rows)
+typecheck  clean (engine + app)
+```
+
+New tests: 34 — `askProposalFlow` 8 (mutate-executes-nothing with executor
+spy; obeyed-injection still inert; transcript token scan; default-closed
+classes; required-fields + proposal budget) + `askActionsRoute` 11
+(byte-identical miss across malformed/unknown/userless; frozen-input
+execution with confirm-body overrides ignored; refusal consumes the token;
+retired-tool 409; decline; chain-parity structural) + `askActionsTurnPayload`
+6 (token in payload and nowhere else; per-proposal audit; all-or-nothing
+persistence; flag/identity class-gating) + registry guard net +1 (non-read
+allowlist closed at exactly two tools; summarize + no-DELETE) +
+`askProposals` app 8 (terminal outcomes, no retry invitations, expiry hint).
+Isolation +11 (`askProposedActionsIsolation`: user/org/tenant claim binding,
+concurrency single-winner, expiry, decline terminality, hash-only custody,
+TTL constant, RLS SELECT/INSERT/UPDATE). Updated: `askStreamingRoute` +
+`askToolsSwitchover` orchestrator mocks gained the `proposals` field;
+`seatRouteCoverage`'s default-deny census caught the new route file exactly
+as designed — `askActions.ts` classified WIRED_DENY beside `ask.ts`.
+
+---
+
+## 5b. Governed agentic Ask (LC-5b)
+
+**Operator directive (2026-08-14)**: governed as a separate increment on the
+proven LC-5 infrastructure; order findings.close → vendors.decide → PROGRAM
+STOP GATE → risks.accept LAST; flags independent, both default OFF; eight
+per-action requirements; no staging/production enablement.
+
+Everything is recorded in the gate document — `docs/validation/
+ask-b-action-gate.md` §LC-5b: the governed contract additions (fixedInput,
+validateInput, summary enrichment with proposal-drop on invisible objects,
+auditContext with refusal_detail, applyDefaults), the three tool bindings
+with their workflow gates, and the stop-gate record (one audit-fidelity
+weakness found and closed; otherwise clean; risks.accept bound on the clean
+verdict). risks.accept deliberately binds the PROPOSE step of the signed
+workflow — approval, the only act that closes a finding, stays in-product
+where SoD (proposer ≠ approver) is enforced by route and DB CHECK alike.
+
+### Validation (2026-08-14, at commit)
+
+```
+engine     489 files · 7960 passed · 3 skipped · 0 failed
+app        130 files · 1704 passed ·             0 failed   (unchanged — the governed increment is
+                                                             payload-driven; no app change needed)
+isolation  149 files · 1158 passed ·             0 failed   (FRESH Postgres; includes the 12-test
+                                                             askGovernedExecution suite: real state
+                                                             machines, SoD, the full acceptance round
+                                                             trip, cross-tenant denial)
+typecheck  clean (engine + app)
+```
+
+New tests: +19 engine (proposal flow: governed independence, fixedInput
+pinning incl. an attempted accepted_risk repoint, rationale substance,
+risks.accept owner freezing + smuggled-owner overwrite + missing-expiry
+refusal; route: flag independence ×2, class-disabled 409s ×2, governed audit
+context, workflow-refusal detail, denial stays reason-free; turn: widening
+matrix, enrichment, invisible-object drop, 5-min TTL passthrough; registry:
+class-by-class allowlists, governed contract census, transition pinning,
+PROPOSE-step binding) + 12 isolation (closure machinery ×4 incl. SoD both
+ways; decision machinery ×4 incl. identity-injection inertness + residual
+immutability; acceptance ×4 incl. the full propose→self-approve-403→
+second-user-approve round trip with severity asserted unchanged).
+
+---
+
+## 7. UX/IA decisions approved 2026-08-14
+
+Operator-approved product decisions, recorded here because they change what the
+product IS, not merely how a page looks. Shipped to staging as `c13a6cbc`
+(navigation) and `66204045` (conversation rail); both verified from the
+authenticated staging UI — see `lc-integrated-staging-walkthrough.md` §"UX/IA
+deployment verification (2026-08-14, `66204045`)" for the evidence.
+
+### The decisions
+
+1. **Search is a global utility, removed from primary workspace navigation.**
+   It operates across every workspace, so it belongs to none of them. It now
+   renders in the header's upper-right cluster at every breakpoint.
+
+2. **Ask SecureLogic is a first-class global utility, removed from the
+   profile/account menu.** Ask is a platform capability, not an account
+   setting. Its previous home — the avatar dropdown — is the one place a user
+   does not look for a product capability. It now sits beside Search in the
+   same cluster.
+
+3. **Ask initially displays the 5 most recent conversations, with full history
+   available through "View all conversations".** A display limit only: the
+   client already holds every thread the engine returned, nothing is deleted or
+   made unselectable, and a thread opened from the expanded list stays visible
+   in the rail after collapsing.
+
+4. **Vendor Assurance remains a first-class Platform capability. No add-on
+   conversion was approved.** It keeps its own top-level navigation group
+   covering the whole engagement lifecycle, and its existing platform
+   entitlement gate is unchanged. Any future repackaging is a separate
+   commercial decision, not implied by this UX work.
+
+5. **The broader navigation redesign is intentionally deferred until
+   design-partner feedback.** These five changes are deliberately the minimum
+   that makes find-and-understand reachable from everywhere; the larger IA
+   question (workspace consolidation, page merges) stays open on purpose rather
+   than being guessed at ahead of real usage.
+
+### Why decisions 1 and 2 are structural, not cosmetic
+
+Production runs `risk_workspace=false` and therefore renders the legacy
+`NAV_ITEMS`. Any destination wired into only `WORKSPACE_NAV_ITEMS` is invisible
+to every production user while appearing correct in any review that happens to
+have the flag on — a gap that has already reached production once
+(`render-yaml-declared-not-synced` / the nav-variant defect recorded in the
+walkthrough's REOPENED header). Rendering Search and Ask from the header itself,
+outside both menus, removes the class of failure rather than the instance.
+
+The Application Knowledge Index moved to v3 in the same change, adding a
+`globalUtilities` section. The index is what Ask answers navigation questions
+from, so leaving these two in `destinations` would have the assistant directing
+callers to a menu entry that is no longer in the menu they are looking at.
+
+### What was NOT decided
+
+- No entitlement, route, or feature-flag semantics changed. Both utilities keep
+  the platform gate they carried as nav items.
+- No page was merged, renamed, or retired.
+- Vendor Assurance packaging is untouched (decision 4).
+
+---
+
+## 8. Ask answer-truth defects — found by walkthrough execution, 2026-08-14 → 15
+
+Not a planned LC item. These were surfaced by actually opening the product as a
+signed-in user, after flags, migrations, health checks and 401-probes had all
+reported the stack ready. They are recorded here because the fixes changed the
+Ask architecture, not just its behaviour.
+
+| Defect | Raised | Closed | Fix |
+|---|---|---|---|
+| Verified claims space-joined into one paragraph, REPLACING the model's prose on the final frame | `66204045` walkthrough | `ac4b8898` | one claim per line; class prefixes unchanged |
+| Non-streaming `POST /api/ask` 504s at 90s on heavy multi-tool questions | `66204045` walkthrough | `ac4b8898` | verified 2026-08-14: 8,147-char / 6-tool answer returns 200 in 54.4s; zero 504s since |
+| Answers over ~4,000 chars lose **every** citation — permanently, in storage | `66204045` walkthrough | `05625d02` | asynchronous provenance (below) |
+
+### The long-answer defect was a design limit, not a tuning error
+
+The measurement that settled it: decomposition costs **~11x the answer in
+output tokens at ~85–100 tok/s**. A 3,000-char answer therefore needs ~97s —
+past the entire 90s interactive budget before orchestration has spent anything.
+Long answers were never citable on the request path. Tuning the synchronous
+budget could only choose *how* they failed: refuse early and ship uncited
+(`ask_provenance_skipped_no_budget`), or run and be cut off
+(`ask_provenance_truncated`). Both ship an answer nobody verified.
+
+**This design question is settled and closed. Do not reopen the synchronous
+provenance design.**
+
+### What shipped (`2833a0ea`, `602965c4`, `05625d02`)
+
+- **Hybrid on the existing budget rule.** `provenanceBudgetFor()` still decides;
+  the orchestrator now reads its verdict *before* paying for the call, so a "no"
+  **defers** instead of abandoning. Short answers are untouched — same inline
+  pass, same deadline, same telemetry (live control: 516 chars → 12 inline
+  claims in 15.9s).
+- **The authorization property.** The worker issues **no canonical query at
+  all**. It decomposes `ask_provenance_contexts`, which froze the authorized
+  tool results the answer was built from, *after* they passed the ASK-A gate for
+  the asking user under that user's seat scope. There is no second
+  authorization decision, so there is none to get wrong: the worker cannot widen
+  scope, cannot see rows created after the turn, and cannot see anything the
+  user was denied. A worker that re-ran the reads would need an identity able to
+  serve every tenant's jobs — broader than any asking user, by construction.
+  `withTenant` wraps every statement so RLS enforces on top. Held by a test that
+  watches every statement the worker runs.
+- **The freeze is temporary by design.** It is a second copy of customer risk
+  data — precisely what `ask_tool_invocations` refuses to store — so payloads
+  are nulled and `purged_at` stamped in the same transaction that attaches the
+  claims, on **every** terminal path including failure. Steady state is an empty
+  table. Category C, high PII risk, excluded from data-rights export with a
+  stated reason.
+- **Explicit lifecycle**: `pending` / `complete` / `partial` / `failed`, NULL =
+  never applicable. Inferring verification from a non-empty claims column cannot
+  distinguish "decomposition failed" from "nothing to say", and would render the
+  first as verified. The UI renders three of the four; a clean answer gets no
+  banner.
+- **Deferred ≠ interactive limits** (`602965c4`). The first staging run deferred
+  correctly and was then refused *by the worker* — the interactive ceiling and
+  budget had followed the work off the request path. Background mode raises the
+  ceiling to 49,152 and the deadline to 12 minutes, kept deliberately below the
+  15-minute job visibility timeout so a job cannot normally be reclaimed and
+  decomposed twice. Large-output calls stream, because non-streaming requests hit
+  SDK HTTP timeouts at high `max_tokens` regardless of deadline.
+- **A delivered answer must not change after the fact** (`05625d02`). The first
+  successful deferred run attached 70 claims to a 7,776-char answer and silently
+  shortened it by 578 characters — 7% of a document the user had already read.
+  The synchronous path re-renders prose from verified claims, which is safe only
+  *because* the user has not seen the answer yet. The deferred path had inherited
+  that symmetry. Claims still attach; the content rewrite is dropped, held by a
+  test on the COALESCE parameter so a future symmetry-restoring refactor fails
+  instead of silently editing customers' answers.
+- **Fail-open throughout.** The enqueue runs in its own tenant scope, because
+  Postgres aborts a whole transaction on any failed statement — enqueuing inside
+  the message's transaction would let a queue problem roll back the **answer**. A
+  failed enqueue leaves an ordinary uncited turn. Ask is fully usable with the
+  worker down.
+- **No new infrastructure.** Rides the vendor-extraction worker (the model key
+  lives on that service and it carries the serial-instance spend cap) and the
+  existing `jobs` table for bounded retry and dead-lettering. One migration:
+  `20261010_ask_async_provenance.sql`.
+
+### Validation
+
+```
+engine   8052 passed · typecheck clean · lint 0 errors
+app      133 files · 1738 passed
+```
+
+Live on staging `05625d02` (engine + app + vendor-extraction worker all Live on
+the SHA), 2026-08-15 00:20–00:27Z, as `[SEED] Walkthrough Org`: a 7,521-char /
+9-tool answer delivered **200 in 52.1s** with `provenance_status: "pending"`,
+and carried **62 claims** at `partial` ~100s later, with the delivered text
+**byte-identical** at every observation. `ask_provenance_skipped_no_budget` has
+not fired since 2026-08-14 21:27:44Z (pre-deploy); zero engine errors and zero
+5xx since the deploy. Full evidence in
+`lc-integrated-staging-walkthrough.md` § "Re-verification against deployed
+`05625d02`".
+
+### What is NOT closed by this
+
+- The purge behaviour is test-covered, **not** live-observed.
+- The provenance banners are confirmed in the **deployed chunk**, not in a
+  browser. Operator-owed.
+- Production is untouched. `SECURELOGIC_ASK_PROVENANCE_ENABLED` remains off in
+  production; nothing here is on `main`.

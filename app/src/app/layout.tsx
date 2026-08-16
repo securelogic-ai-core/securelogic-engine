@@ -6,6 +6,7 @@ import { getIdleSeconds } from "@/lib/sessionPolicy";
 import { getConsentStatus } from "@/lib/api";
 import IdleLogout from "@/components/IdleLogout";
 import ConsentInterstitial from "@/components/ConsentInterstitial";
+import NonPortalChrome from "@/components/NonPortalChrome";
 
 export const metadata: Metadata = {
   title: "SecureLogic AI — Intelligence Brief",
@@ -64,33 +65,40 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col bg-brand-bg text-slate-100" suppressHydrationWarning>
-        <Header
-          isAuthenticated={isAuthenticated}
-          isPlatformUser={isPlatformUser}
-          isPremiumUser={isPremiumUser}
-          isAdminUser={isAdminUser}
-          isSsoEligible={isSsoEligible}
-          navFlags={navFlags}
-          organizationName={session.organizationName}
-          userName={session.name}
-          userEmail={session.email}
-          userRole={session.userRole}
-        />
+        {/* The external vendor portal (/portal) is a standalone surface: no
+            internal nav, no links into the app. NonPortalChrome hides the
+            header/footer there and renders them unchanged everywhere else. */}
+        <NonPortalChrome>
+          <Header
+            isAuthenticated={isAuthenticated}
+            isPlatformUser={isPlatformUser}
+            isPremiumUser={isPremiumUser}
+            isAdminUser={isAdminUser}
+            isSsoEligible={isSsoEligible}
+            navFlags={navFlags}
+            organizationName={session.organizationName}
+            userName={session.name}
+            userEmail={session.email}
+            userRole={session.userRole}
+          />
+        </NonPortalChrome>
         <main className="flex-1">{children}</main>
         {consent.consentRequired && (
           <ConsentInterstitial missingDocuments={consent.missingDocuments} />
         )}
         {isAuthenticated && <IdleLogout idleSeconds={getIdleSeconds()} />}
-        <footer className="border-t border-brand-line bg-brand-surface mt-16">
-          <div className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
-            <span className="text-slate-400 text-sm">
-              © {new Date().getFullYear()} SecureLogic AI. All rights reserved.
-            </span>
-            <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
-              Enterprise Risk Intelligence
-            </span>
-          </div>
-        </footer>
+        <NonPortalChrome>
+          <footer className="border-t border-brand-line bg-brand-surface mt-16">
+            <div className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
+              <span className="text-slate-400 text-sm">
+                © {new Date().getFullYear()} SecureLogic AI. All rights reserved.
+              </span>
+              <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
+                Enterprise Risk Intelligence
+              </span>
+            </div>
+          </footer>
+        </NonPortalChrome>
       </body>
     </html>
   );

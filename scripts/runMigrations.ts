@@ -3,6 +3,15 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
+import {
+  applyMigration,
+  describeMigrationFailure,
+  ensureMigrationTable,
+  listMigrationFilenames,
+  migrationsDirFrom,
+  resolveMigrationTimeouts,
+} from "../src/api/lib/migrationRunner.js";
+
 const DATABASE_URL = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
@@ -12,22 +21,16 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
+// Resolved before the first connection so a malformed duration fails the deploy
+// immediately and unmistakably, rather than mid-migration.
+const timeouts = resolveMigrationTimeouts();
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-const migrationsDir = path.join(process.cwd(), "db", "migrations");
-
-async function ensureMigrationTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id SERIAL PRIMARY KEY,
-      filename TEXT NOT NULL UNIQUE,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-}
+const migrationsDir = migrationsDirFrom(process.cwd());
 
 async function getAppliedMigrations(): Promise<Set<string>> {
   const res = await pool.query(
@@ -37,36 +40,20 @@ async function getAppliedMigrations(): Promise<Set<string>> {
   return new Set(res.rows.map((r) => r.filename as string));
 }
 
-async function applyMigration(filename: string, sql: string) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-    await client.query(sql);
-    await client.query(
-      "INSERT INTO schema_migrations (filename) VALUES ($1)",
-      [filename]
-    );
-    await client.query("COMMIT");
-    console.log("Applied migration:", filename);
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("Migration failed:", filename);
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
 async function run() {
-  await ensureMigrationTable();
+  await ensureMigrationTable(pool);
 
   const applied = await getAppliedMigrations();
 
-  const files = fs
-    .readdirSync(migrationsDir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
+  // Strict filename order, no retry, no dependency resolution — see
+  // listMigrationFilenames. test/isolation/migrationFilenameOrder.test.ts
+  // proves this exact order rebuilds the schema from empty.
+  const files = listMigrationFilenames(migrationsDir);
+
+  console.log(
+    `Migration timeouts: lock_timeout=${timeouts.lockTimeout}, ` +
+      `statement_timeout=${timeouts.statementTimeout}`
+  );
 
   for (const file of files) {
     if (applied.has(file)) continue;
@@ -74,7 +61,17 @@ async function run() {
     const fullPath = path.join(migrationsDir, file);
     const sql = fs.readFileSync(fullPath, "utf8");
 
-    await applyMigration(file, sql);
+    const client = await pool.connect();
+
+    try {
+      await applyMigration(client, file, sql, timeouts);
+      console.log("Applied migration:", file);
+    } catch (err) {
+      console.error(describeMigrationFailure(file, err, timeouts));
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   console.log("Migrations complete");

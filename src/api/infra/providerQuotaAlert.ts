@@ -150,13 +150,25 @@ interface OpenAILike {
 
 export function instrumentAnthropicClient<T extends AnthropicLike>(client: T): T {
   const original = client.messages.create.bind(client.messages);
-  client.messages.create = async (...args: any[]) => {
-    try {
-      return await original(...args);
-    } catch (err) {
-      await maybeAlertProviderQuotaError(err);
-      throw err;
+  // NOT an `async` wrapper. `messages.create` returns the SDK's APIPromise, and
+  // `messages.stream()` calls `.withResponse()` on it internally; an async
+  // function returns a plain Promise, which strips that method and made every
+  // streaming Ask turn die with "messages.create(...).withResponse is not a
+  // function". Worse, the plain Promise was then never consumed by the SDK, so
+  // the underlying provider error surfaced as an unhandledRejection — which the
+  // server's handler turns into drain-and-exit. Alerting therefore has to
+  // observe the rejection WITHOUT replacing the returned object.
+  client.messages.create = (...args: any[]) => {
+    const result = original(...args);
+    if (result && typeof (result as Promise<unknown>).catch === "function") {
+      // A second, independent subscriber: it never alters what the caller gets
+      // back, and it swallows so this branch cannot itself become an
+      // unhandledRejection. The real caller still sees the original error.
+      void Promise.resolve(result).catch((err: unknown) =>
+        maybeAlertProviderQuotaError(err).catch(() => {}),
+      );
     }
+    return result;
   };
   return client;
 }

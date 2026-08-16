@@ -65,20 +65,11 @@ import { buildRoutes } from "./routes/index.js";
    TYPE AUGMENTATION
    ========================================================= */
 
-declare global {
-  namespace Express {
-    interface Request {
-      rawBody?: string | Buffer;
-    }
-  }
-}
-
-// The express.json() verify callback receives http.IncomingMessage, not Express.Request
-declare module "http" {
-  interface IncomingMessage {
-    rawBody?: string | Buffer;
-  }
-}
+// `req.rawBody` (Express.Request and http.IncomingMessage) is declared in
+// src/api/types/express-raw-body.d.ts. It was moved out of this file on
+// 2026-08-16: declaring it here made the type available only to builds that
+// compile app.ts, so any tsconfig that reached a consumer without it failed
+// with TS2339. This file still owns the ASSIGNMENT of both fields below.
 
 /* =========================================================
    MODULE-LEVEL PATH HELPERS
@@ -96,6 +87,47 @@ const __serverDir = path.dirname(fileURLToPath(import.meta.url));
    ========================================================= */
 
 const REQUEST_TIMEOUT_MS = 30_000;
+
+// Ask's tool path is the one surface this default cannot hold. A turn is a
+// multi-round loop (up to MAX_ITERATIONS model calls, each followed by tool
+// execution) and then a separate provenance pass. Measured on staging
+// 2026-08-14 for one ordinary question: ~17s orchestration + ~23s provenance =
+// 45s wall clock. Under the 30s default:
+//
+//   - POST /api/ask (JSON) 504'd on EVERY tool-path turn. Nothing is written to
+//     the socket while the loop runs, so the idle timer never resets and the
+//     30s behaves as a hard total-duration cap.
+//   - POST /api/ask/stream survived only incidentally, because each SSE write
+//     resets that timer. The provenance pass writes nothing for its whole
+//     duration — a measured 29s silent gap, i.e. one second inside the limit.
+//     A marginally slower pass truncates the stream after the last delta and
+//     before `final`, which the client reads as a silently incomplete answer.
+//
+// Both routes therefore get the same longer budget. This is a CEILING, not a
+// comfort margin: the edge proxy in front of the service (Cloudflare) aborts an
+// origin request around 100s and answers with its own HTML 524, which no client
+// here can parse. Staying below that keeps a timeout a clean JSON 504.
+const ASK_REQUEST_TIMEOUT_MS = 90_000;
+
+// Exact match, deliberately not a prefix. The other /api/ask/* routes —
+// conversation reads and the actions confirm/decline pair — do no model work
+// and must keep the strict default.
+const EXTENDED_TIMEOUT_PATHS: ReadonlySet<string> = new Set([
+  "/api/ask",
+  "/api/ask/stream"
+]);
+
+/**
+ * The request-timeout budget for a routed path. Exported as a pure function so
+ * the policy is assertable directly — proving it by driving a real socket to
+ * expiry would mean a 90-second test.
+ *
+ * `path` is req.path (no query string).
+ */
+export function resolveRequestTimeoutMs(path: string): number {
+  const routedPath = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  return EXTENDED_TIMEOUT_PATHS.has(routedPath) ? ASK_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+}
 
 // Production origins: exact-match allowlist — no wildcard.
 // Dev origins: github.dev previews (*.app.github.dev) plus localhost variants.
@@ -144,12 +176,25 @@ export function createApp(opts: CreateAppOptions): express.Express {
      ========================================================= */
 
   app.use((req, res, next) => {
-    res.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    // req.path excludes the query string, and the resolver normalizes a
+    // trailing slash so "/api/ask/" cannot reach the handler while missing its
+    // budget here.
+    const timeoutMs = resolveRequestTimeoutMs(req.path);
+
+    // Stamp WHEN this request dies, not just how long it had. A handler doing
+    // multi-second model work needs to know how much budget is left before
+    // starting the next expensive step — Ask's provenance pass declines to run
+    // rather than overrun it and turn a written answer into a 504. Set here, in
+    // the same place the timeout is armed, so the two can never disagree.
+    (req as unknown as { deadlineAt?: number }).deadlineAt = Date.now() + timeoutMs;
+
+    res.setTimeout(timeoutMs, () => {
       logger.warn(
         {
           event: "request_timeout",
           method: req.method,
-          path: req.originalUrl
+          path: req.originalUrl,
+          timeoutMs
         },
         "Request timed out"
       );

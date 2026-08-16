@@ -341,11 +341,26 @@ production (no prod enablement without an explicit operator ruling).
   403s; SSO/JIT, live API-key binding, and live Admin-vs-Full separation are documented
   coverage limits that go into GATE B validation — see
   `docs/validation/seat-model-staging-soak-signoff.md`).
-- **Production order:** **GATE B — and additionally the code is NOT on `main`.** PR #784
+- **Production order:** ~~**GATE B — and additionally the code is NOT on `main`.** PR #784
   merged to `develop` after the #756 release cut; prod (`49691948`) predates the package,
   the prod flag is unset, and prod is at 203 migrations (no seat migrations). Prod
   enablement therefore requires a develop→main release (with its four migrations,
-  migrate-before-merge) **before** any GATE B flag ruling.
+  migrate-before-merge) **before** any GATE B flag ruling.~~ *(Both steps are now done —
+  see the production state below. Preserved as the state at time of writing.)*
+- **Production state (2026-08-12): ENABLED — GATE B activated.** Release PR #785 put the
+  code on `main` (`98e97098`, all services live) and applied the four migrations
+  (203 → 207, migrate-before-merge). GATE B: `SECURELOGIC_SEAT_MODEL_ENABLED="true"` set on
+  `securelogic-engine` (prod engine service **only** — verified absent on every worker, the
+  app, the website, and demo) at 14:23 UTC, activated by a same-SHA deploy of `98e97098`
+  completing 14:27 UTC. Post-activation: `/health` ok + db connected, boot self-test passed,
+  migrations a no-op, zero error-level logs, no restarts, flag stable across a 30-minute
+  window. **Validation caveat:** production carries no organic API traffic (last `audit_log`
+  request 2026-07-03), and the authenticated GATE B probes — `seat.enforced` observation,
+  Admin-vs-Full separation, API-key binding, legacy-key compatibility — require an operator
+  session and were **not** executed; they remain owed. Blast radius at activation: 1 org,
+  1 user (admin + Full seat), 1 active legacy API key (`bound_seat_type` NULL = admin-level
+  compatibility until rotated — deferred P3), 0 pending invites, 0 SSO configs (so JIT
+  cannot fire in prod).
 - **Validation:** `GET /api/me` seat block (`seatType`/`role`/scopes/`capabilities`/`enforced`);
   deny paths: Contributor `POST /api/findings` → 403, Viewer writes → 403, ungranted
   `GET /api/findings/export.csv` → 403; API-key calls constrained to issuer seat/role.

@@ -95,7 +95,10 @@ export function buildObligationSummary(
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
-const VALID_STATUS_FILTERS = new Set(["active", "waived", "not_applicable"]);
+// Exported so the Ask tool registry's declared `status` enum can be asserted
+// against this set rather than a hand-copied duplicate of it. The list route
+// also accepts the 'all' sentinel, which is not a member of this set.
+export const VALID_STATUS_FILTERS = new Set(["active", "waived", "not_applicable"]);
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

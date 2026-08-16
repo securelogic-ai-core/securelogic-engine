@@ -215,8 +215,10 @@ export function sqlObligationOverdue(statusCol = "status", dueCol = "due_date"):
 // ── Vendor assessment state ─────────────────────────────────────────────────
 
 /**
- * ASSESSED VENDOR = at least one row in vendor_assessments for that vendor in
- * that org.  (product ruling 2026-08-09)
+ * ASSESSED VENDOR = at least one row in vendor_assessments OR in
+ * vendor_engagements for that vendor in that org.  (product ruling 2026-08-09;
+ * engagement leg added 2026-08-13 with the B1 legacy-writer demotion — see
+ * sqlVendorAssessed for the rationale)
  *
  * This module exists because the same business word was computed differently
  * per surface. "Assessed" had reached THREE definitions:
@@ -247,15 +249,46 @@ export function sqlVendorAssessmentScope(
      AND ${va}.organization_id = ${vendorTable}.organization_id`;
 }
 
-/** `EXISTS (…)` — the vendor has been assessed at least once. */
-export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
-  return `EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+/**
+ * Correlated scope over the canonical engagement spine — the Launch Completion
+ * extension of the assessed axis. Same org-inside-the-correlation rule as
+ * sqlVendorAssessmentScope, for the same IDOR reason.
+ */
+export function sqlVendorEngagementScope(
+  vendorTable = "vendors",
+  ve = "ve"
+): string {
+  return `FROM vendor_engagements ${ve}
+   WHERE ${ve}.vendor_id = ${vendorTable}.id
+     AND ${ve}.organization_id = ${vendorTable}.organization_id`;
 }
 
 /**
- * `NOT EXISTS (…)` — the vendor has never been assessed. The complement of
- * sqlVendorAssessed on the SAME axis, derived from the same scope, so the two
- * are exhaustive by construction.
+ * `(EXISTS … OR EXISTS …)` — the vendor has been assessed at least once.
+ *
+ * DEFINITION EXTENDED (2026-08-13, Launch Completion 1 / B1 demotion): with
+ * `vendor_engagements` as the single canonical workflow writer and the legacy
+ * write paths demoted, a vendor whose only assessment activity is an
+ * engagement MUST count as assessed — otherwise the ratified metric freezes at
+ * its pre-demotion value and every newly-engaged vendor reports "never
+ * assessed" forever. The extension is monotone: no vendor that counted as
+ * assessed before counts as unassessed after. The engagement leg follows the
+ * same existence-based, no-status-qualifier stance as the 2026-08-09 ruling
+ * (an engagement computes an inherent rating at intake, so its existence IS
+ * assessment activity).
+ *
+ * assessment_count / latest_assessment_at on /vendors and ask.ts deliberately
+ * still count LEGACY records only — they describe vendor_assessments rows, and
+ * engagement activity has its own surfaces. Renaming/merging those columns is
+ * convergence work (Launch Completion 6), not part of this predicate.
+ */
+export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
+  return `(EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)}) OR EXISTS (SELECT 1 ${sqlVendorEngagementScope(vendorTable, `${va}_e`)}))`;
+}
+
+/**
+ * The complement of sqlVendorAssessed on the SAME axis, derived by negating
+ * the same predicate, so the two are exhaustive by construction.
  *
  * Surfaces that print a count of this population AND link to a list of it
  * (the "Never assessed" pill on /vendors) must build both from this function.
@@ -263,5 +296,85 @@ export function sqlVendorAssessed(vendorTable = "vendors", va = "va"): string {
  * than a capped count: both halves look equally trustworthy.
  */
 export function sqlVendorNeverAssessed(vendorTable = "vendors", va = "va"): string {
-  return `NOT EXISTS (SELECT 1 ${sqlVendorAssessmentScope(vendorTable, va)})`;
+  return `NOT ${sqlVendorAssessed(vendorTable, va)}`;
+}
+
+// ── Finding provenance groupings ────────────────────────────────────────────
+//
+// "How many of my findings came from vendor work / from external intelligence?"
+// is a question several surfaces answer, and each one that hand-rolls its own
+// source_type list drifts the moment a new type is added to the DB CHECK.
+// Ask did exactly that: it counted `source_type = 'vendor_review'` and
+// `source_type = 'signal'` as if those were the whole story, so vendor review
+// CYCLES and every finding the matcher wrote as 'cyber_signal' — plus the newer
+// 'intelligence_event' — were silently reported as zero.
+//
+// Keep these in lockstep with FINDING_SOURCE_TYPES (findingValidation.ts) and
+// the findings_source_type_check CHECK constraint.
+
+/** Findings that originated in a vendor assessment or review workflow. */
+export const VENDOR_SOURCED_FINDING_TYPES = [
+  "vendor_review",        // point-in-time vendor_assessments
+  "vendor_cycle_review",  // mutable vendor_reviews cycles
+  "vendor_engagement"     // the Vendor Assurance workflow spine
+] as const;
+
+/** Findings that originated in the external-intelligence pipeline. */
+export const SIGNAL_SOURCED_FINDING_TYPES = [
+  "signal",              // legacy matcher write
+  "cyber_signal",        // current matcher dual-write
+  "intelligence_event"   // normalized event projection
+] as const;
+
+function sqlInList(col: string, values: readonly string[]): string {
+  return `${col} IN (${values.map((v) => `'${v}'`).join(", ")})`;
+}
+
+/** SQL predicate: the finding came from a vendor workflow. */
+export function sqlFindingVendorSourced(col = "source_type"): string {
+  return sqlInList(col, VENDOR_SOURCED_FINDING_TYPES);
+}
+
+/** SQL predicate: the finding came from the intelligence pipeline. */
+export function sqlFindingSignalSourced(col = "source_type"): string {
+  return sqlInList(col, SIGNAL_SOURCED_FINDING_TYPES);
+}
+
+// ── Vendor-assurance document review state ──────────────────────────────────
+
+/**
+ * The terminal states meaning A HUMAN HAS ACCEPTED THIS EXTRACTION.
+ *
+ * TWO values, not one, and that is the whole point. Migration 20260612
+ * (`vendor_assurance_document_presentation`) replaced the per-field
+ * Accept/Edit/Reject + Finalize flow with a document-level review whose accept
+ * state is `approved`; its own comment records that "no new code path writes
+ * 'finalized'". But `finalized` stayed a legal value for the rows written
+ * before that change, and those rows are real customer review decisions.
+ *
+ * So "reviewed" is `approved OR finalized`, and any surface that wants "the
+ * latest reviewed assurance document" MUST use this set. Hardcoding either
+ * value alone is a defect in one direction or the other:
+ *   - `finalized` alone  → the surface is dead for every org on the current
+ *     flow (this was the live bug on /vendors/[id]: the card queried
+ *     `status: "finalized"`, which nothing writes, so it rendered the empty
+ *     state forever after a reviewer approved a SOC report);
+ *   - `approved` alone   → legacy reviewed documents silently disappear.
+ */
+export const ASSURANCE_REVIEWED_STATUSES = ["approved", "finalized"] as const;
+
+/** True when a document's processing_status means a human accepted the extraction. */
+export function isAssuranceReviewed(processingStatus: string | null | undefined): boolean {
+  return (ASSURANCE_REVIEWED_STATUSES as readonly string[]).includes(
+    processingStatus ?? ""
+  );
+}
+
+/**
+ * SQL predicate for the reviewed population. Compile-time constant — the column
+ * name comes from the caller's own literal, never from request input.
+ */
+export function sqlAssuranceReviewed(col = "processing_status"): string {
+  const list = ASSURANCE_REVIEWED_STATUSES.map((s) => `'${s}'`).join(", ");
+  return `${col} IN (${list})`;
 }

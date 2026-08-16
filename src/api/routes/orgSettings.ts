@@ -31,7 +31,7 @@ import {
 
 const router = Router();
 
-const SETTINGS_SELECT = `name, require_mfa, regulated, handles_pii, safety_critical, scale`;
+const SETTINGS_SELECT = `name, require_mfa, regulated, handles_pii, safety_critical, scale, voice_input_enabled`;
 
 interface OrgSettingsRow {
   name: string;
@@ -40,6 +40,7 @@ interface OrgSettingsRow {
   handles_pii: boolean;
   safety_critical: boolean;
   scale: string;
+  voice_input_enabled: boolean;
 }
 
 /* =========================================================
@@ -81,6 +82,7 @@ const PATCHABLE_COLUMNS: ReadonlyArray<keyof OrgSettingsPatch> = [
   "handles_pii",
   "safety_critical",
   "scale",
+  "voice_input_enabled",
 ];
 
 router.patch("/org/settings", requireAuth, requireAdminRole, async (req, res) => {

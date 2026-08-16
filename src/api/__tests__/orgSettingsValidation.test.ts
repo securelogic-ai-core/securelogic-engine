@@ -57,18 +57,38 @@ describe("validateOrgSettingsPatch — booleans", () => {
       regulated: true,
       handles_pii: false,
       safety_critical: true,
+      voice_input_enabled: false,
     });
     expect(r).toEqual({
       ok: true,
-      patch: { require_mfa: false, regulated: true, handles_pii: false, safety_critical: true },
+      patch: {
+        require_mfa: false,
+        regulated: true,
+        handles_pii: false,
+        safety_critical: true,
+        voice_input_enabled: false,
+      },
     });
   });
 
   it("rejects truthy non-booleans per field (preserves the legacy invalid_require_mfa code)", () => {
-    for (const field of ["require_mfa", "regulated", "handles_pii", "safety_critical"]) {
+    for (const field of [
+      "require_mfa",
+      "regulated",
+      "handles_pii",
+      "safety_critical",
+      "voice_input_enabled",
+    ]) {
       const r = validateOrgSettingsPatch({ [field]: "true" });
       expect(r).toMatchObject({ ok: false, error: `invalid_${field}` });
     }
+  });
+
+  it("voice_input_enabled (ASK-C C-1) round-trips alone — the disable action is one field", () => {
+    expect(validateOrgSettingsPatch({ voice_input_enabled: false })).toEqual({
+      ok: true,
+      patch: { voice_input_enabled: false },
+    });
   });
 });
 

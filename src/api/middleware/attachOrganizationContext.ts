@@ -43,9 +43,11 @@ export async function attachOrganizationContext(
       stripe_customer_id: string | null;
       stripe_subscription_tier: string | null;
       viewer_export_enabled: boolean | null;
+      voice_input_enabled: boolean | null;
     }>(
       `SELECT entitlement_level, payment_failed_at, stripe_customer_id,
-              stripe_subscription_tier, viewer_export_enabled
+              stripe_subscription_tier, viewer_export_enabled,
+              voice_input_enabled
          FROM organizations
         WHERE id = $1
         LIMIT 1`,
@@ -66,6 +68,10 @@ export async function attachOrganizationContext(
       // Per-org grant consumed by the seat resolver: may Viewer-class
       // identities bulk-export? Full/admin always may regardless.
       viewerExportEnabled: row?.viewer_export_enabled === true,
+      // Tenant voice governance control (ASK-C C-1): defaults ON — a missing
+      // row/column must not disable a live capability, so only an explicit
+      // false disables (mirrors the column's NOT NULL DEFAULT true).
+      voiceInputEnabled: row?.voice_input_enabled !== false,
     };
 
     next();

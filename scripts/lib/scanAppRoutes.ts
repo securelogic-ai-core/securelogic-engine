@@ -17,7 +17,14 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-export type ScannedRoute = { path: string; dynamic: boolean };
+export type ScannedRoute = {
+  path: string;
+  dynamic: boolean;
+  /** Directory of the page.tsx, relative to the app dir — lets the access-truth
+   * test map a route back to its source (route groups make the URL path alone
+   * non-invertible). The index builder ignores it. */
+  sourceDir: string;
+};
 
 export function scanAppRoutes(appAppDir: string): ScannedRoute[] {
   const found: ScannedRoute[] = [];
@@ -31,7 +38,7 @@ export function scanAppRoutes(appAppDir: string): ScannedRoute[] {
       );
       const path = urlSegments.length === 0 ? "/" : "/" + urlSegments.join("/");
       const dynamic = segments.some((s) => s.startsWith("[") && s.endsWith("]"));
-      found.push({ path, dynamic });
+      found.push({ path, dynamic, sourceDir: segments.join("/") });
     }
 
     for (const e of entries) {

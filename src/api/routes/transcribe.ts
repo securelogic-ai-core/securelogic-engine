@@ -5,6 +5,10 @@ import OpenAI from "openai";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
+import { denyContributor } from "../middleware/requireSeat.js";
+import { askFeatureFlag } from "../lib/askFeatureFlag.js";
+import { askVoiceEnabled } from "../lib/ask/askVoiceFeatureFlag.js";
+import { writeAuditEvent } from "../lib/auditLog.js";
 import { logger } from "../infra/logger.js";
 import { instrumentOpenAIClient } from "../infra/providerQuotaAlert.js";
 import {
@@ -79,16 +83,58 @@ function uploadAudio(req: Request, res: Response, next: NextFunction) {
 const transcribeRateLimit = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  // Keyed on the ORG (attachOrganizationContext has run by this point in the
+  // chain). The previous key read `req.organizationId` — a field nothing ever
+  // assigns — so every request fell through to req.ip, and behind Cloudflare's
+  // rotating edge IPs each edge got its own 10/min bucket: effectively no
+  // per-org limit on a paid model call. Same fragmentation class as the
+  // adminLockout fix (resolveThrottleIdentity).
   keyGenerator: (req) =>
-    (req as any).organizationId ?? (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
+    (req as any).organizationContext?.organizationId ??
+    (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many transcription requests. Wait 60 seconds."
   }
 });
 
+/**
+ * Independent voice kill switch (ASK-C C-9). 404 with the same body a
+ * nonexistent route would produce, matching askFeatureFlag's convention.
+ * Mounted AFTER askFeatureFlag: killing Ask kills voice (voice exists only
+ * to feed Ask); killing voice never touches text Ask.
+ */
+function voiceFeatureFlag(_req: Request, res: Response, next: NextFunction): void {
+  if (!askVoiceEnabled()) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  next();
+}
+
+/**
+ * Tenant voice governance (ASK-C C-1): an org admin's disablement is enforced
+ * HERE, engine-side, regardless of client behavior. Mounted after
+ * attachOrganizationContext (which loads the grant with the org row — no
+ * added query) and BEFORE multer, so a disabled tenant's audio is never even
+ * parsed. 403 (not 404): the surface exists; this tenant turned it off.
+ */
+function requireOrgVoiceEnabled(req: Request, res: Response, next: NextFunction): void {
+  const ctx = (req as any).organizationContext as { voiceInputEnabled?: boolean } | undefined;
+  if (ctx?.voiceInputEnabled === false) {
+    res.status(403).json({
+      error: "voice_disabled_for_org",
+      message: "Voice input is disabled for your organization. Please type your question instead.",
+    });
+    return;
+  }
+  next();
+}
+
 router.get("/ask/transcribe/status", (_req, res) => {
-  res.status(200).json({ configured: !!process.env.OPENAI_API_KEY });
+  // Honest availability: configured means the key exists AND the kill switch
+  // is not thrown — a killed capability must not advertise itself.
+  res.status(200).json({ configured: !!process.env.OPENAI_API_KEY && askVoiceEnabled() });
 });
 
 // Friendly, non-sensitive messages per outcome. Unknown codes fall back to a
@@ -104,11 +150,19 @@ const OUTCOME_MESSAGE: Record<TranscribeOutcome, string> = {
   unexpected_exception: "Failed to transcribe audio.",
 };
 
+// Chain = authorization EQUIVALENCE with text Ask (ASK-C C-7): every gate on
+// POST /api/ask gates voice identically — Ask kill switch, voice kill switch,
+// API key, org context, entitlement, seat policy, org-keyed rate limit. A
+// caller who cannot ask by text must not be able to spend voice processing.
 router.post(
   "/ask/transcribe",
+  askFeatureFlag,
+  voiceFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
+  denyContributor(),
+  requireOrgVoiceEnabled,
   transcribeRateLimit,
   uploadAudio,
   async (req, res) => {
@@ -129,7 +183,7 @@ router.post(
         {
           event: "voice_transcribe_diagnostic",
           correlationId: cid,
-          organizationId: (req as any).organizationId ?? null,
+          organizationId: (req as any).organizationContext?.organizationId ?? null,
           received_content_type: req.headers["content-type"] ?? null,
           file_mimetype: file?.mimetype ?? null,
           file_originalname: file?.originalname ?? null,
@@ -187,6 +241,29 @@ router.post(
       });
 
       logDiagnostic("ok", { text_length: transcription.text?.length ?? 0 });
+
+      // ASK-C C-8: every transcription is an auditable per-org event — the
+      // FACT and SHAPE of voice processing (sizes, mime, outcome), never the
+      // content, matching the Ask precedent that answers stay out of the
+      // audit log. This is the ledger's record that a user's audio was
+      // processed by the disclosed provider.
+      writeAuditEvent({
+        organizationId: (req as any).organizationContext?.organizationId ?? null,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: (req as { userId?: string }).userId ?? null,
+        eventType: "ask.voice.transcribed",
+        resourceType: "ask",
+        resourceId: null,
+        payload: {
+          audio_bytes: file!.size,
+          audio_mime: file!.mimetype ?? null,
+          transcript_length: transcription.text?.length ?? 0,
+          provider: "openai_whisper",
+          correlation_id: cid,
+        },
+        ipAddress: req.ip ?? null,
+      });
+
       res.status(200).json({ text: transcription.text, correlationId: cid });
     } catch (err) {
       // Distinguish an OpenAI/Whisper failure (cause F) from an unexpected

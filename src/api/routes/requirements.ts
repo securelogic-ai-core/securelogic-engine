@@ -660,7 +660,18 @@ router.post(
           assessed_at
         )
         VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, $8, NOW())
-        ON CONFLICT (organization_id, requirement_id, assessment_type, subject_id)
+        -- Must name the SAME expression set as idx_requirement_responses_unique_scoped
+        -- (20260924), which is (organization_id, requirement_id, assessment_type,
+        -- subject_id, COALESCE(engagement_id, zero-uuid)). The bare four-column form
+        -- used to be inferrable from the legacy unique CONSTRAINT, but 20261011 drops
+        -- that constraint, after which Postgres has nothing matching the inferred spec
+        -- and raises 42P10 — a hard 500 on every write through this route. This route
+        -- never sets engagement_id, so the COALESCE is always the zero uuid and the
+        -- upsert semantics for self/vendor rows are unchanged; what it additionally
+        -- gains is the 20260924 intent, i.e. NOT colliding with engagement-scoped rows
+        -- for the same (organization, requirement, assessment_type, subject).
+        ON CONFLICT (organization_id, requirement_id, assessment_type, subject_id,
+                     COALESCE(engagement_id, '00000000-0000-0000-0000-000000000000'::uuid))
         DO UPDATE SET
           status       = EXCLUDED.status,
           notes        = EXCLUDED.notes,

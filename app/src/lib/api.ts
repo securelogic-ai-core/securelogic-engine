@@ -1297,15 +1297,46 @@ export type SsoDomainCheck = {
 // HELPERS
 // =========================================================
 
+/**
+ * Default client abort for engine reads. Right for the CRUD surface, which
+ * answers in well under a second; deliberately overridable, because one caller
+ * on this client is not a CRUD read (see ASK_CLIENT_TIMEOUT_MS).
+ */
+export const ENGINE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Ask is the exception, and it must OUTLIVE the engine's own budget.
+ *
+ * The engine bounds `/api/ask` at 90s (ASK_REQUEST_TIMEOUT_MS, raised in
+ * 1f8da416 once a real tool-path turn was measured at 38–52s). Aborting here
+ * at the 15s default meant the app gave up less than a third of the way in and
+ * reported `network_error` — rendered to the user as "Couldn't reach the
+ * server. Check your connection and try again." — for a server that was
+ * working correctly and about to answer.
+ *
+ * It also silently defeated that 90s fix on the ONE path that needed it. The
+ * page uses SSE when streaming is on (its proxy already allows 180s), so the
+ * non-streaming server action is exactly what runs where streaming is OFF —
+ * the production default. Engine-side probes never saw this because they call
+ * the engine directly and never cross this client.
+ *
+ * 95s is the engine's 90s PLUS margin, in that order and for that reason: the
+ * client must still be waiting when the engine gives up, so the user gets the
+ * engine's real 504 rather than a fabricated connection error. The ceiling is
+ * Cloudflare, which aborts the origin at ~100s.
+ */
+export const ASK_CLIENT_TIMEOUT_MS = 95_000;
+
 async function engineFetch(
   path: string,
   token: string,
-  options?: RequestInit
+  options?: RequestInit,
+  timeoutMs: number = ENGINE_FETCH_TIMEOUT_MS
 ): Promise<Response> {
   // Supports both legacy API keys (sl_…) and JWT tokens (contains ".").
   // The engine's requireApiKey middleware accepts both via Authorization: Bearer.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(`${ENGINE_URL}${path}`, {
       ...options,
@@ -2111,6 +2142,9 @@ export type OrgSettings = {
   handles_pii: boolean;
   safety_critical: boolean;
   scale: "Small" | "Medium" | "Enterprise";
+  // ASK-C C-1 (LC-4): tenant-level voice governance. Optional so the app
+  // tolerates an engine predating the column; absence means enabled.
+  voice_input_enabled?: boolean;
 };
 
 export async function getOrgSettings(token: string): Promise<OrgSettings | null> {
@@ -5194,17 +5228,245 @@ export async function getWebhookDeliveries(
 // ASK (natural language posture search)
 // =========================================================
 
+/**
+ * `context_used` differs by which retrieval path the engine ran (ask.ts):
+ *   - snapshot path: posture_score / findings_count / risks_count /
+ *     vendors_count / as_of
+ *   - tool path: retrieval:"tools" / tool_calls / tools_denied / complete
+ * All fields optional so one type covers both; callers must branch on
+ * presence, never assume a shape.
+ */
+export type AskContextUsed = {
+  // Snapshot path
+  posture_score?: number | null;
+  findings_count?: number;
+  risks_count?: number;
+  vendors_count?: number;
+  as_of?: string | null;
+  // Tool path
+  retrieval?: "tools";
+  tool_calls?: number;
+  tools_denied?: number;
+  complete?: boolean;
+};
+
+/**
+ * A citation on a verified claim.
+ *
+ * Two field spellings exist in the engine, both real:
+ *   - POST /api/ask's `provenance.claims[].citations[]` maps the engine's
+ *     `tool_name` to `tool` (ask.ts response assembly).
+ *   - The STORED claims column on ask_messages holds the raw engine Claim
+ *     shape (src/api/lib/ask/claims.ts): `invocation_index`, `tool_name`,
+ *     plus optional `object_type` / `object_id` / `field` / `value`.
+ * Renderers read `tool_name ?? tool` and treat every field as optional.
+ */
+export type AskClaimCitation = {
+  invocation_index?: number;
+  tool_name?: string;
+  tool?: string;
+  object_type?: string;
+  object_id?: string;
+  field?: string;
+  value?: unknown;
+};
+
+/** Mirrors CLAIM_CLASSES in src/api/lib/ask/claims.ts (strongest-evidence-first). */
+export type AskClaimClass = "observed" | "derived" | "inference" | "recommendation";
+
+export type AskClaim = {
+  text: string;
+  claim_class: AskClaimClass | string;
+  citations: AskClaimCitation[];
+  /** For `inference`: indices of the claims it reasoned from (stored shape only). */
+  derived_from?: number[];
+};
+
 export type AskResponse = {
   answer: string;
-  context_used: {
-    posture_score: number | null;
-    findings_count: number;
-    risks_count: number;
-    vendors_count: number;
-    as_of: string | null;
-  };
+  context_used: AskContextUsed;
   question: string;
+  /**
+   * Present on the tool path when a thread was created/continued; absent on
+   * the snapshot path and when persistence failed. Its absence means the UI
+   * must behave single-shot.
+   */
+  conversation_id?: string | null;
+  /**
+   * Present only when the provenance pass ran — absent is "no provenance
+   * available", NOT "nothing was observed" (engine contract).
+   */
+  provenance?: {
+    verified: boolean;
+    claims: AskClaim[];
+  };
+  /**
+   * Provenance lifecycle for this turn.
+   *
+   * `pending` is the one that changes the UI's obligations: the answer is
+   * complete and correct, but its claims are still being decomposed by the
+   * background worker because the answer was too long to decompose inside the
+   * interactive budget. Citations will arrive on the stored turn.
+   *
+   * Absent means provenance was never applicable (no retrieval). It must NOT be
+   * rendered as "verified" — an answer nobody decomposed and an answer verified
+   * clean are different things.
+   */
+  provenance_status?: "pending" | "complete" | "partial" | "failed";
+  /**
+   * ASK-B (LC-5): mutations the assistant PREPARED, awaiting this user's
+   * explicit confirmation. `token` is the server-issued confirmation
+   * credential — it exists only in this response and must never be logged
+   * or persisted client-side beyond the card that uses it.
+   */
+  proposed_actions?: AskProposedAction[];
 };
+
+export type AskProposedAction = {
+  id: string;
+  tool: string;
+  /** Server-rendered change-set — what the user is actually confirming. */
+  summary: string;
+  token: string;
+  expires_at: string;
+};
+
+/** Outcome of confirming a proposal. The token is single-use either way. */
+export type AskConfirmResult =
+  | { ok: true; status: "executed"; summary: string; action?: unknown }
+  | { ok: true; status: "refused"; summary: string; message: string }
+  | { ok: true; status: "declined"; summary: string }
+  | { ok: false; status: number; code: string; message: string };
+
+export async function confirmAskAction(
+  token: string,
+  proposalToken: string,
+  decision: "confirm" | "decline"
+): Promise<AskConfirmResult> {
+  try {
+    const res = await fetch(
+      `${ENGINE_URL}/api/ask/actions/${decision === "confirm" ? "confirm" : "decline"}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ token: proposalToken }),
+        cache: "no-store",
+      }
+    );
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: typeof body?.error === "string" ? body.error : "confirm_failed",
+        message:
+          typeof body?.message === "string" ? body.message : "Unable to process confirmation",
+      };
+    }
+    const status = body?.status;
+    if (status === "executed") {
+      return {
+        ok: true,
+        status: "executed",
+        summary: String(body?.summary ?? ""),
+        action: body?.action,
+      };
+    }
+    if (status === "refused") {
+      return {
+        ok: true,
+        status: "refused",
+        summary: String(body?.summary ?? ""),
+        message: String(body?.message ?? "The platform declined this change."),
+      };
+    }
+    if (status === "declined") {
+      return { ok: true, status: "declined", summary: String(body?.summary ?? "") };
+    }
+    return { ok: false, status: res.status, code: "unexpected_response", message: "Unexpected response" };
+  } catch {
+    return { ok: false, status: 0, code: "network_error", message: "Could not reach the server" };
+  }
+}
+
+// ─── Ask conversations (multi-turn) ─────────────────────────
+
+/** Mirrors AskConversation in src/api/lib/ask/conversationStore.ts. */
+export type AskConversationSummary = {
+  id: string;
+  title: string | null;
+  mode: "text" | "voice";
+  last_message_at: string | null;
+};
+
+/**
+ * Mirrors AskMessage in src/api/lib/ask/conversationStore.ts. `claims` is the
+ * verified-claims structure captured at answer time (null on user turns and on
+ * answers whose provenance pass did not run) — citations are RENDERED from it,
+ * never recomputed.
+ */
+export type AskConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  claims: unknown;
+  /**
+   * Provenance lifecycle, replayed from the record. `pending` means a deferred
+   * decomposition is still running for this turn — the reason a reloaded
+   * thread may show an answer with no citations that later gains them.
+   */
+  provenance_status?: "pending" | "complete" | "partial" | "failed" | null;
+  created_at: string;
+};
+
+export type AskConversationDetail = {
+  conversation: AskConversationSummary;
+  messages: AskConversationMessage[];
+};
+
+/**
+ * GET /api/ask/conversations — the caller's own threads, newest-activity first
+ * (ordering is the engine's; do not re-sort).
+ *
+ * Returns null on ANY failure — including 404 from an engine predating the
+ * conversation routes — and the caller must degrade to single-shot Ask, never
+ * render an error for it.
+ */
+export async function listAskConversations(
+  token: string
+): Promise<{ conversations: AskConversationSummary[] } | null> {
+  try {
+    const res = await engineFetch("/api/ask/conversations", token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ conversations: AskConversationSummary[] }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /api/ask/conversations/:id — one owned thread with its transcript.
+ * The engine answers 404 for not-found AND not-owned (indistinguishable on
+ * purpose); both surface here as null.
+ */
+export async function getAskConversation(
+  token: string,
+  conversationId: string
+): Promise<AskConversationDetail | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ask/conversations/${encodeURIComponent(conversationId)}`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AskConversationDetail>;
+  } catch {
+    return null;
+  }
+}
 
 // Discriminated-union result so the caller can distinguish success from
 // each failure mode (auth, rate-limit, model failure, network) and render
@@ -5217,14 +5479,26 @@ export type AskResult =
 
 export async function askQuestion(
   token: string,
-  question: string
+  question: string,
+  conversationId?: string | null
 ): Promise<AskResult> {
   let res: Response;
   try {
-    res = await engineFetch("/api/ask", token, {
-      method: "POST",
-      body: JSON.stringify({ question }),
-    });
+    res = await engineFetch(
+      "/api/ask",
+      token,
+      {
+        method: "POST",
+        // conversation_id continues an existing thread on the tool path; the
+        // snapshot path (and an unknown/expired id) simply ignores it, so
+        // sending it is always safe.
+        body: JSON.stringify(
+          conversationId ? { question, conversation_id: conversationId } : { question }
+        ),
+      },
+      // NOT the 15s default. A tool-path turn takes longer than that to think.
+      ASK_CLIENT_TIMEOUT_MS
+    );
   } catch {
     return { ok: false, status: 0, code: "network_error" };
   }
@@ -5698,9 +5972,21 @@ export type VendorAssuranceReviewDecisionInput = {
   reviewer_note?: string | null;
 };
 
+/**
+ * Filter values accepted by listVendorAssuranceDocuments. `"reviewed"` is a
+ * PSEUDO-STATUS meaning "a human accepted this extraction" — it expands
+ * server-side to `approved OR finalized`. Surfaces that want the latest
+ * reviewed document MUST pass this rather than naming a raw state: `finalized`
+ * is written by no current code path (migration 20260612) and `approved` alone
+ * drops legacy reviewed rows.
+ */
+export type VendorAssuranceStatusFilter =
+  | VendorAssuranceProcessingStatus
+  | "reviewed";
+
 export async function listVendorAssuranceDocuments(
   token: string,
-  opts?: { vendorId?: string; status?: VendorAssuranceProcessingStatus; limit?: number }
+  opts?: { vendorId?: string; status?: VendorAssuranceStatusFilter; limit?: number }
 ): Promise<{ documents: VendorAssuranceDocument[] } | null> {
   const params = new URLSearchParams();
   if (opts?.vendorId) params.set("vendor_id", opts.vendorId);
@@ -6866,5 +7152,661 @@ export async function searchGlobal(
     return (await res.json()) as GlobalSearchResponse;
   } catch {
     return null;
+  }
+}
+
+// =========================================================
+// VENDOR ENGAGEMENT WORKFLOW (internal reviewer surface)
+//
+// Typed wrappers over src/api/routes/vendorEngagements.ts — the internal half
+// of the Vendor Assurance engagement spine. The ENGINE is the only authority on
+// workflow legality: every transition is re-checked server-side and a refused
+// one comes back as a 409 whose reason these wrappers preserve verbatim
+// (`VendorEngagementFailure`) so the UI can show the engine's words, not a
+// paraphrase.
+// =========================================================
+
+/**
+ * The engine's refusal/validation shape, preserved as-is. 409s carry `reason`
+ * (the state machine's sentence) and/or `message` (the handler's explanation);
+ * 400s on intake carry `missing` + `invalid`.
+ */
+export type VendorEngagementFailure = {
+  error: string;
+  message?: string;
+  reason?: string;
+  from?: string;
+  status?: string;
+  missing?: string[];
+  invalid?: Array<{ field: string; allowed: readonly string[] }>;
+};
+
+export type VendorEngagementResult<T> = T | { failure: VendorEngagementFailure };
+
+export function isEngagementFailure<T>(
+  r: VendorEngagementResult<T>
+): r is { failure: VendorEngagementFailure } {
+  return typeof r === "object" && r !== null && "failure" in r;
+}
+
+/**
+ * The one sentence a reviewer sees when the engine refuses an action.
+ * Preference order: the handler's `message`, then the state machine's `reason`,
+ * then a summary of intake validation, then the bare error code. Never invents
+ * words the engine did not say beyond naming the failed fields.
+ */
+export function vendorEngagementFailureText(f: VendorEngagementFailure): string {
+  if (f.message) return f.message;
+  if (f.reason) return f.reason;
+  const parts: string[] = [];
+  if (f.missing && f.missing.length > 0) {
+    parts.push(`Missing: ${f.missing.join(", ")}`);
+  }
+  if (f.invalid && f.invalid.length > 0) {
+    parts.push(
+      f.invalid
+        .map((i) => `Invalid ${i.field} (allowed: ${i.allowed.join(", ")})`)
+        .join("; ")
+    );
+  }
+  if (parts.length > 0) return parts.join(". ");
+  return f.error;
+}
+
+async function engagementFailureFrom(
+  res: Response,
+  fallback: string
+): Promise<{ failure: VendorEngagementFailure }> {
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return {
+    failure: {
+      error: String(body["error"] ?? fallback),
+      ...(typeof body["message"] === "string" ? { message: body["message"] } : {}),
+      ...(typeof body["reason"] === "string" ? { reason: body["reason"] } : {}),
+      ...(typeof body["from"] === "string" ? { from: body["from"] } : {}),
+      ...(typeof body["status"] === "string" ? { status: body["status"] } : {}),
+      ...(Array.isArray(body["missing"]) ? { missing: body["missing"] as string[] } : {}),
+      ...(Array.isArray(body["invalid"])
+        ? { invalid: body["invalid"] as Array<{ field: string; allowed: readonly string[] }> }
+        : {}),
+    },
+  };
+}
+
+/** One row of GET /api/vendor-engagements — the reviewer's queue. */
+export type VendorEngagementListRow = {
+  id: string;
+  status: string;
+  title: string | null;
+  engagement_type: string;
+  inherent_score: number | null;
+  inherent_rating: string | null;
+  assessment_tier: string | null;
+  residual_score: number | null;
+  residual_rating: string | null;
+  residual_computed_at: string | null;
+  decision: string | null;
+  decided_at: string | null;
+  next_review_due: string | null;
+  analysis_coverage: "full" | "partial" | "deterministic_only" | null;
+  /** Monitoring-sweep signal: status='monitoring' AND next_review_due < today. */
+  review_overdue: boolean;
+  /** Intelligence-triggered reassessment recommendation, if the sweep raised one. */
+  reassessment_recommended_at: string | null;
+  vendor_id: string;
+  vendor_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name. */
+export type VendorEngagementDetail = {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  vendor_name: string;
+  engagement_type: string;
+  parent_engagement_id: string | null;
+  title: string | null;
+  status: string;
+  issued_at: string | null;
+  submitted_at: string | null;
+  closed_at: string | null;
+  cancellation_reason: string | null;
+  inherent_score: number | null;
+  inherent_rating: string | null;
+  inherent_arithmetic_rating: string | null;
+  inherent_basis: unknown;
+  inherent_override_rationale: string | null;
+  inherent_overridden_at: string | null;
+  assessment_tier: string | null;
+  effectiveness_score: number | null;
+  residual_score: number | null;
+  residual_rating: string | null;
+  residual_basis: unknown;
+  residual_computed_at: string | null;
+  decision: string | null;
+  decision_rationale: string | null;
+  decided_at: string | null;
+  decision_expires_at: string | null;
+  analysis_coverage: "full" | "partial" | "deterministic_only" | null;
+  analysis_coverage_at: string | null;
+  next_review_due: string | null;
+  review_cadence_days: number | null;
+  reassessment_recommended_at: string | null;
+  reassessment_reason: string | null;
+  scope_resolved_at: string | null;
+  methodology_version: string;
+  scope_rule_version: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorEngagementQuestionnaire = {
+  scoped: number;
+  answered: number;
+  mandatory: number;
+};
+
+/** One row of GET /api/vendor-engagements/:id/evidence. */
+export type VendorEngagementEvidenceRow = {
+  id: string;
+  title: string | null;
+  original_filename: string | null;
+  /** BIGINT — node-postgres serializes it as a string; callers must coerce. */
+  byte_size: number | string | null;
+  mime_type: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  review_note: string | null;
+  requirement_id: string | null;
+  requirement_reference: string | null;
+  requirement_title: string | null;
+  /** Provenance: an invite upload means the VENDOR supplied it. */
+  from_vendor: boolean;
+  uploaded_by_user_id: string | null;
+  /**
+   * The analysis worker's ADVISORY verdict — a suggestion for where to look
+   * first, never an input to scoring. `unreadable` is the worker's deterministic
+   * "a human must read this". Null when the worker has not run for this file.
+   */
+  analysis_verdict: "supports" | "insufficient" | "contradicts" | "unreadable" | null;
+  analysis_rationale: string | null;
+};
+
+/** One row of GET /api/vendor-engagements/:id/comments. */
+export type VendorEngagementComment = {
+  id: string;
+  author_type: "internal" | "vendor";
+  author_user_id: string | null;
+  author_display_name: string | null;
+  visibility: "internal" | "vendor";
+  body: string;
+  created_at: string;
+  requirement_id: string | null;
+  requirement_reference: string | null;
+};
+
+/** POST /api/vendor-engagements — full intake; every field is required. */
+export type VendorEngagementIntakeInput = {
+  data_sensitivity: string;
+  data_volume: string;
+  access_level: string;
+  operational_dependency: string;
+  recoverability: string;
+  business_criticality: string;
+  regulatory_exposure: string;
+  regulatory_breach_notification: boolean;
+  ai_involvement: string;
+  ai_autonomy: string;
+  hosting_model: string;
+  fourth_party_exposure: string;
+  concentration: string;
+};
+
+export type VendorEngagementCreated = {
+  id: string;
+  status: "draft";
+  inherent: {
+    score: number;
+    rating: string;
+    arithmetic_rating: string;
+    tier: string;
+    basis: unknown;
+  };
+};
+
+export async function listVendorEngagements(
+  token: string,
+  opts?: { status?: string; limit?: number }
+): Promise<{ engagements: VendorEngagementListRow[]; count: number } | null> {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  try {
+    const res = await engineFetch(`/api/vendor-engagements${qs ? `?${qs}` : ""}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagements: VendorEngagementListRow[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getVendorEngagement(
+  token: string,
+  id: string
+): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<{
+      engagement: VendorEngagementDetail;
+      questionnaire: VendorEngagementQuestionnaire;
+    }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function createVendorEngagement(
+  token: string,
+  input: {
+    vendor_id: string;
+    engagement_type: "initial" | "periodic" | "targeted" | "event_driven";
+    title?: string;
+    intake: VendorEngagementIntakeInput;
+  }
+): Promise<VendorEngagementResult<VendorEngagementCreated>> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return engagementFailureFrom(res, "engagement_create_failed");
+    return (await res.json()) as VendorEngagementCreated;
+  } catch {
+    return { failure: { error: "engagement_create_failed" } };
+  }
+}
+
+export async function overrideVendorEngagementInherent(
+  token: string,
+  id: string,
+  rating: string,
+  rationale: string
+): Promise<VendorEngagementResult<{ ok: true; inherent_rating: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/inherent`,
+      token,
+      { method: "PATCH", body: JSON.stringify({ rating, rationale }) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "override_failed");
+    return (await res.json()) as { ok: true; inherent_rating: string };
+  } catch {
+    return { failure: { error: "override_failed" } };
+  }
+}
+
+export async function resolveVendorEngagementScope(
+  token: string,
+  id: string
+): Promise<
+  VendorEngagementResult<{
+    scoped: number;
+    excluded: number;
+    tier: string;
+    scope_rule_version: string;
+    notes: unknown;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/scope`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "scope_resolve_failed");
+    return (await res.json()) as {
+      scoped: number;
+      excluded: number;
+      tier: string;
+      scope_rule_version: string;
+      notes: unknown;
+    };
+  } catch {
+    return { failure: { error: "scope_resolve_failed" } };
+  }
+}
+
+/**
+ * POST .../issue — mints the vendor portal invite. The engine returns the RAW
+ * token exactly once (only its hash is stored). The caller must show it once
+ * and never persist it.
+ */
+export async function issueVendorEngagement(
+  token: string,
+  id: string,
+  contactEmail: string,
+  contactName?: string
+): Promise<
+  VendorEngagementResult<{ ok: true; status: "issued"; invite_token: string; expires_at: string }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/issue`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contact_email: contactEmail,
+          ...(contactName ? { contact_name: contactName } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "issue_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "issued";
+      invite_token: string;
+      expires_at: string;
+    };
+  } catch {
+    return { failure: { error: "issue_failed" } };
+  }
+}
+
+export type VendorEngagementRecomputeResult = {
+  effectiveness: {
+    score: number;
+    arithmetic_score: number;
+    assessed: number;
+    not_applicable: number;
+    not_assessed: number;
+    failed_mandatory: number;
+    coverage: number;
+    basis: unknown;
+  };
+  residual: {
+    score: number;
+    rating: string;
+    arithmetic_score: number;
+    inherent_understated: boolean;
+    basis: unknown;
+  };
+};
+
+export async function recomputeVendorEngagementRisk(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<VendorEngagementRecomputeResult>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/recompute`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "recompute_failed");
+    return (await res.json()) as VendorEngagementRecomputeResult;
+  } catch {
+    return { failure: { error: "recompute_failed" } };
+  }
+}
+
+/** The engine's allowed decision values (POST .../decision). */
+export const VENDOR_ENGAGEMENT_DECISIONS = [
+  "approved",
+  "approved_with_conditions",
+  "rejected",
+  "terminated",
+] as const;
+export type VendorEngagementDecision = (typeof VENDOR_ENGAGEMENT_DECISIONS)[number];
+
+export async function recordVendorEngagementDecision(
+  token: string,
+  id: string,
+  decision: VendorEngagementDecision,
+  rationale: string,
+  expiresAt?: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "decided";
+    decision: string;
+    residual_score: number | null;
+    residual_rating: string | null;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/decision`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          decision,
+          rationale,
+          ...(expiresAt ? { expires_at: expiresAt } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "decision_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "decided";
+      decision: string;
+      residual_score: number | null;
+      residual_rating: string | null;
+    };
+  } catch {
+    return { failure: { error: "decision_failed" } };
+  }
+}
+
+export async function listVendorEngagementEvidence(
+  token: string,
+  id: string
+): Promise<{ evidence: VendorEngagementEvidenceRow[]; count: number } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/evidence`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ evidence: VendorEngagementEvidenceRow[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST .../evidence/:evidenceId/review — the human confirmation the assurance
+ * ladder turns on. `supports:false` requires a note the vendor can act on.
+ * The engine reminds: run /recompute to apply the change to the scores.
+ */
+export async function reviewVendorEngagementEvidence(
+  token: string,
+  id: string,
+  evidenceId: string,
+  supports: boolean,
+  note?: string
+): Promise<VendorEngagementResult<{ ok: true; reviewed: boolean; note: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}/review`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({ supports, ...(note ? { note } : {}) }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "review_failed");
+    return (await res.json()) as { ok: true; reviewed: boolean; note: string };
+  } catch {
+    return { failure: { error: "review_failed" } };
+  }
+}
+
+export type VendorEngagementPromotionResult = {
+  promoted: number;
+  created: number;
+  updated: number;
+  findings: Array<{
+    reference: string;
+    severity: string;
+    title: string;
+    severity_rationale: string;
+  }>;
+};
+
+export async function promoteVendorEngagementFindings(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<VendorEngagementPromotionResult>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/promote-findings`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "promotion_failed");
+    return (await res.json()) as VendorEngagementPromotionResult;
+  } catch {
+    return { failure: { error: "promotion_failed" } };
+  }
+}
+
+export async function listVendorEngagementComments(
+  token: string,
+  id: string
+): Promise<{ comments: VendorEngagementComment[]; count: number } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/comments`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ comments: VendorEngagementComment[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST .../comments. Visibility defaults to INTERNAL server-side; a
+ * vendor-visible comment posted while in_review performs
+ * in_review → clarification_requested — the response's `status` reports the
+ * resulting state so the caller can tell whether that transition happened.
+ */
+export async function postVendorEngagementComment(
+  token: string,
+  id: string,
+  body: string,
+  visibility: "internal" | "vendor",
+  requirementId?: string
+): Promise<VendorEngagementResult<{ id: string; visibility: string; status: string }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/comments`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          body,
+          visibility,
+          ...(requirementId ? { requirement_id: requirementId } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "comment_post_failed");
+    return (await res.json()) as { id: string; visibility: string; status: string };
+  } catch {
+    return { failure: { error: "comment_post_failed" } };
+  }
+}
+
+export async function beginVendorEngagementReview(
+  token: string,
+  id: string
+): Promise<VendorEngagementResult<{ ok: true; status: "in_review" }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/begin-review`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "begin_review_failed");
+    return (await res.json()) as { ok: true; status: "in_review" };
+  } catch {
+    return { failure: { error: "begin_review_failed" } };
+  }
+}
+
+export async function completeVendorEngagementAnalysis(
+  token: string,
+  id: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "analysis_complete";
+    analysis_coverage: "full" | "partial" | "deterministic_only";
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/complete-analysis`,
+      token,
+      { method: "POST", body: JSON.stringify({}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "complete_analysis_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "analysis_complete";
+      analysis_coverage: "full" | "partial" | "deterministic_only";
+    };
+  } catch {
+    return { failure: { error: "complete_analysis_failed" } };
+  }
+}
+
+/**
+ * POST .../monitoring — from `decided` it starts monitoring; from `monitoring`
+ * it records a completed periodic review (re-arming both sweep triggers).
+ * Provide cadence_days (1–3650) or an explicit next_review_due (YYYY-MM-DD).
+ */
+export async function startVendorEngagementMonitoring(
+  token: string,
+  id: string,
+  opts: { cadenceDays?: number; nextReviewDue?: string }
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    status: "monitoring";
+    next_review_due: string;
+    cadence_days: number | null;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/monitoring`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...(opts.cadenceDays !== undefined ? { cadence_days: opts.cadenceDays } : {}),
+          ...(opts.nextReviewDue ? { next_review_due: opts.nextReviewDue } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "monitoring_start_failed");
+    return (await res.json()) as {
+      ok: true;
+      status: "monitoring";
+      next_review_due: string;
+      cadence_days: number | null;
+    };
+  } catch {
+    return { failure: { error: "monitoring_start_failed" } };
   }
 }

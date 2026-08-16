@@ -9,7 +9,7 @@ import type { ApplicationKnowledgeIndex } from "./applicationKnowledgeIndex.js";
 
 export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
 {
-  "version": 2,
+  "version": 3,
   "navigation": [
     {
       "type": "link",
@@ -22,18 +22,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Briefs",
       "href": "/briefs",
       "access": "all"
-    },
-    {
-      "type": "link",
-      "label": "Search",
-      "href": "/search",
-      "access": "platform"
-    },
-    {
-      "type": "link",
-      "label": "Ask",
-      "href": "/ask",
-      "access": "platform"
     },
     {
       "type": "link",
@@ -57,6 +45,25 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
         {
           "label": "AI Systems",
           "href": "/ai-systems"
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "label": "Vendor Assurance",
+      "access": "platform",
+      "children": [
+        {
+          "label": "Overview",
+          "href": "/vendor-assurance"
+        },
+        {
+          "label": "Engagements",
+          "href": "/vendor-engagements"
+        },
+        {
+          "label": "Document Queue",
+          "href": "/vendor-assurance/queue"
         }
       ]
     },
@@ -135,18 +142,6 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "group": null
     },
     {
-      "label": "Search",
-      "href": "/search",
-      "access": "platform",
-      "group": null
-    },
-    {
-      "label": "Ask",
-      "href": "/ask",
-      "access": "platform",
-      "group": null
-    },
-    {
       "label": "Queue",
       "href": "/queue",
       "access": "platform",
@@ -169,6 +164,24 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "href": "/ai-systems",
       "access": "platform",
       "group": "Assets"
+    },
+    {
+      "label": "Overview",
+      "href": "/vendor-assurance",
+      "access": "platform",
+      "group": "Vendor Assurance"
+    },
+    {
+      "label": "Engagements",
+      "href": "/vendor-engagements",
+      "access": "platform",
+      "group": "Vendor Assurance"
+    },
+    {
+      "label": "Document Queue",
+      "href": "/vendor-assurance/queue",
+      "access": "platform",
+      "group": "Vendor Assurance"
     },
     {
       "label": "Context",
@@ -278,7 +291,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/account/team",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "premium"
     },
     {
       "path": "/actions",
@@ -338,12 +351,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/approvals",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/ask",
       "dynamic": false,
-      "navLabel": "Ask",
+      "navLabel": null,
       "access": "platform"
     },
     {
@@ -548,7 +561,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/evidence",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/executive",
@@ -596,7 +609,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/getting-started",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/intelligence/[id]",
@@ -677,10 +690,52 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "platform"
     },
     {
-      "path": "/posture",
+      "path": "/portal",
       "dynamic": false,
       "navLabel": null,
       "access": "all"
+    },
+    {
+      "path": "/portal/accept/[token]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/clarifications",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/done",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/evidence",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/questionnaire",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/portal/review",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
+      "path": "/posture",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
     },
     {
       "path": "/pricing",
@@ -763,14 +818,14 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/search",
       "dynamic": false,
-      "navLabel": "Search",
+      "navLabel": null,
       "access": "platform"
     },
     {
       "path": "/settings/organization",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "admin"
     },
     {
       "path": "/settings/risk-policy",
@@ -788,7 +843,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "path": "/settings/security",
       "dynamic": false,
       "navLabel": null,
-      "access": "all"
+      "access": "admin"
     },
     {
       "path": "/settings/sso",
@@ -827,16 +882,40 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/vendor-assurance",
+      "dynamic": false,
+      "navLabel": "Overview",
+      "access": "platform"
+    },
+    {
       "path": "/vendor-assurance/[documentId]",
       "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
     },
     {
       "path": "/vendor-assurance/queue",
       "dynamic": false,
+      "navLabel": "Document Queue",
+      "access": "platform"
+    },
+    {
+      "path": "/vendor-engagements",
+      "dynamic": false,
+      "navLabel": "Engagements",
+      "access": "platform"
+    },
+    {
+      "path": "/vendor-engagements/[id]",
+      "dynamic": true,
       "navLabel": null,
-      "access": "all"
+      "access": "platform"
+    },
+    {
+      "path": "/vendor-engagements/new",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
     },
     {
       "path": "/vendors",
@@ -905,6 +984,18 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     }
   ],
+  "globalUtilities": [
+    {
+      "label": "Search",
+      "href": "/search",
+      "access": "platform"
+    },
+    {
+      "label": "Ask SecureLogic",
+      "href": "/ask",
+      "access": "platform"
+    }
+  ],
   "secondaryNavigation": [
     {
       "label": "Account, profile & billing",
@@ -916,7 +1007,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Team & users",
       "href": "/account/team",
       "group": "Account",
-      "access": "all"
+      "access": "premium"
     },
     {
       "label": "API keys",
