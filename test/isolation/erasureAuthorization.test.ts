@@ -31,11 +31,15 @@ async function certificate(
   const status = over.status ?? "executing";
   const dryRun = over.dryRun ?? false;
   const approved = over.approved ?? status !== "draft";
+  // Increment 3 added erasure_certificates_approved_scope: a non-draft
+  // certificate MUST carry the scope it was approved for and a deadline. These
+  // fixtures therefore supply both — the constraint is doing its job, and an
+  // approval that binds nothing is exactly what it exists to reject.
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO erasure_certificates
        (organization_id, requested_by_user_id, approved_by_user_id, reason, legal_basis,
-        dry_run, status, approved_at, started_at)
-     VALUES ($1,$2,$3,'isolation probe','gdpr_art17_request',$4,$5,$6,$7)
+        dry_run, status, approved_at, started_at, scope_fingerprint, approval_expires_at)
+     VALUES ($1,$2,$3,'isolation probe','gdpr_art17_request',$4,$5,$6,$7,$8,$9)
      RETURNING id`,
     [
       orgId,
@@ -45,6 +49,8 @@ async function certificate(
       status,
       approved ? new Date() : null,
       status === "executing" ? new Date() : null,
+      status === "draft" ? null : "fixture-fingerprint",
+      status === "draft" ? null : new Date(Date.now() + 86_400_000),
     ]
   );
   return rows[0]!.id;
@@ -235,11 +241,20 @@ describe("fail-closed: every missing or wrong condition denies", () => {
     }
   });
 
-  it("erasure_agent holds NO privilege on the WORM tables — it can destroy a tenant, not read one", async () => {
+  it("erasure_agent can APPEND to the audit log but never read it", async () => {
+    const { rows } = await pool.query<{ privilege_type: string }>(
+      `SELECT privilege_type FROM information_schema.role_table_grants
+        WHERE grantee='erasure_agent' AND table_name='security_audit_log'
+        ORDER BY privilege_type`
+    );
+    expect(rows.map((r) => r.privilege_type)).toEqual(["INSERT"]);
+  });
+
+  it("erasure_agent holds NO readable privilege on the WORM tables — it can destroy a tenant, not read one", async () => {
     const { rows } = await pool.query<{ table_name: string; privilege_type: string }>(
       `SELECT table_name, privilege_type FROM information_schema.role_table_grants
         WHERE grantee='erasure_agent'
-          AND table_name IN ('security_audit_log','finding_lifecycle_events','risk_lifecycle_events',
+          AND table_name IN ('finding_lifecycle_events','risk_lifecycle_events',
                              'applicability_assessments','applicability_evidence',
                              'applicability_affected_entities','finding_risk_acceptances','retention_policies')
         ORDER BY table_name, privilege_type`
@@ -259,6 +274,9 @@ describe("fail-closed: every missing or wrong condition denies", () => {
       "legal_holds:SELECT",
       "organizations:DELETE",
       "organizations:SELECT",
+      // Increment 3: append its own audit events inside the destructive
+      // transaction. INSERT only — no SELECT, so it still cannot read the log.
+      "security_audit_log:INSERT",
     ]);
   });
 });
@@ -394,10 +412,12 @@ describe("the certificate proves erasure without preserving what was erased", ()
   it("refuses self-approval at the database level", async () => {
     await expect(
       pool.query(
+        // Scope binding supplied so the TWO-PERSON constraint is the one under
+        // test rather than the scope constraint firing first.
         `INSERT INTO erasure_certificates
            (organization_id, requested_by_user_id, approved_by_user_id, reason, legal_basis,
-            dry_run, status, approved_at)
-         VALUES ($1,$2,$2,'self','gdpr_art17_request',false,'approved',now())`,
+            dry_run, status, approved_at, scope_fingerprint, approval_expires_at)
+         VALUES ($1,$2,$2,'self','gdpr_art17_request',false,'approved',now(),'fp',now()+interval '1 day')`,
         [seed.orgA.id, requester]
       )
     ).rejects.toThrow(/erasure_certificates_two_person/);
