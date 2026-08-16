@@ -981,13 +981,26 @@ again exactly as before E-2.
 ### 4. Production pre-flight SQL (read-only)
 
 ```sql
--- P1. Confirm the baseline: expect 228, and none of the four pending.
+-- P1a. Baseline count. EXPECT 229, not 228 — see the orphan note below.
 SELECT count(*) AS applied FROM schema_migrations;
-SELECT filename FROM schema_migrations
+
+-- P1b. None of the four pending may already be stamped.
+SELECT count(*) AS pending_already_applied FROM schema_migrations
  WHERE filename IN ('20261017_worm_guard_consolidation.sql',
                     '20261018_erasure_authorization.sql',
                     '20261019_erasure_execution_state.sql',
-                    '20261020_erasure_actor_revalidation.sql');   -- expect 0 rows
+                    '20261020_erasure_actor_revalidation.sql');   -- expect 0
+
+-- P1c. THE CHECK THAT ACTUALLY MATTERS. The count alone cannot distinguish
+--      "a harmless historical duplicate" from "a migration file that is
+--      missing". Compare both directions against the files on main:
+--        * stamped-but-no-file  -> expect EXACTLY ONE: 20260522_alert_preferences.sql
+--        * file-but-not-stamped -> expect NONE (anything here would re-apply)
+COPY (SELECT filename FROM schema_migrations ORDER BY filename) TO STDOUT;
+--      then, locally:
+--        git ls-tree --name-only origin/main db/migrations/ | sed 's#db/migrations/##' | sort > main_files
+--        comm -23 prod_stamped main_files    # expect: 20260522_alert_preferences.sql
+--        comm -13 prod_stamped main_files    # expect: empty
 
 -- P2. The six functions 20261017 replaces must exist, or the DROPs are no-ops
 --     and a trigger could be left pointing at nothing.
@@ -1017,9 +1030,65 @@ SELECT count(*) FROM legal_holds;                                   -- expect 0
 SELECT count(*) FROM ask_tool_invocations WHERE message_id IS NULL;  -- expect 0
 ```
 
-**Decision rule:** P1 must show 228 applied and 0 of the pending four; P2 must
-return 6; P3 must show `rolcreaterole = true` and no existing role. Any
-deviation is a **STOP**.
+#### The orphaned filename — expected, and why the count is 229
+
+The migration runner keys on **filename**. `7692c9e6` renamed
+`20260522_alert_preferences.sql` to `20260417_alert_preferences.sql` so the set
+applies in strict order to an empty database. Production had already stamped the
+old name, and stamped the new one at Stage 1 — so it carries **one bookkeeping
+row with no corresponding file**. This was documented at Stage 1 and proven
+harmless there (schema byte-identical before and after, no row loss).
+
+**Production therefore holds 229 stamped rows against 228 files on `main`.** The
+count is correct; an expectation of 228 was not.
+
+> **Corrected 2026-08-16.** This rule originally said "expect 228", written from
+> the file count without carrying forward the duplicate this document itself
+> records. The first execution attempt stopped on that deviation, investigated
+> it, and found the rule wrong rather than production drifted. The rule is fixed
+> here rather than waived at run time.
+
+**Decision rule (corrected):**
+
+| Check | GO condition |
+|---|---|
+| P1a | `count(*) = 229` |
+| P1b | `0` of the four pending already stamped |
+| **P1c** | stamped-but-no-file is **exactly** `20260522_alert_preferences.sql`, and file-but-not-stamped is **empty** |
+| P2 | returns `6` |
+| P3 | `rolcreaterole = true`, and `erasure_agent` does not exist |
+| P4 | no granted locks on the nine WORM tables, or trivially few |
+| P5 | `0 / 0 / 0` |
+
+Any deviation is a **STOP**. P1c is the load-bearing one: a raw count can hide a
+missing migration behind a harmless duplicate, and only the two-directional
+comparison distinguishes them.
+
+#### Pre-flight EXECUTED 2026-08-16 — results
+
+Read-only, against the production database, before any merge or deploy.
+
+| Check | Expected | Observed | |
+|---|---|---|---|
+| P1a | 229 | **229** | pass |
+| P1b | 0 | **0** | pass |
+| P1c | one named orphan / none missing | **`20260522_alert_preferences.sql` only / none missing** | pass |
+| P2 | 6 | **6** | pass |
+| P3 | true, absent | **`securelogic_user`, `rolcreaterole = t`, no `erasure_agent`** | pass |
+| P4 | empty | **0 rows** | pass |
+| P5 | 0/0/0 | **0 / 0 / 0** | pass |
+
+**Two supporting facts recorded from the same pre-flight:**
+
+- The production database user is **`securelogic_user` with `rolsuper = f`**.
+  Not a superuser — which independently confirms §6-as-corrected: the
+  application-as-owner **cannot** `SET SESSION AUTHORIZATION erasure_agent`,
+  because that requires superuser. The residual M-1 exposure is `DISABLE TRIGGER`
+  alone.
+- Production scale: **1 organization, 1 user, 85 `security_audit_log` rows, 0 Ask
+  conversations.** The `AccessExclusiveLock` in `20261017` lands on an 85-row
+  table with zero concurrent locks, so §3's lock exposure is real in principle
+  and negligible in fact for this promotion.
 
 ### 5. Candidate verification
 
@@ -1119,12 +1188,12 @@ sufficient.
 
 | Condition | Status |
 |---|---|
-| Any pre-flight query deviates (§4 decision rule) | **Operator-owed — not yet run** |
-| `rolcreaterole = false` on the production database user | Unverified; `20260618` precedent suggests true |
+| Any pre-flight query deviates (§4 corrected decision rule) | **Clear — executed 2026-08-16, all seven checks pass**. Re-run immediately before the merge |
+| `rolcreaterole = false` on the production database user | **Clear — `securelogic_user`, `rolcreaterole = t`** |
 | Wave 1 values present in the candidate | **Clear** — 311 keys compared, zero differences |
 | `SECURELOGIC_TDG_EFFECTIVE_FROM` non-empty anywhere | **Clear** |
 | An erasure credential existing in IaC or env | **Clear** — none exists |
 | CI red on the candidate beyond inherited `audit` | **Clear** |
-| Lock contention on the nine WORM tables at deploy time | Unverified until pre-flight P4 |
+| Lock contention on the nine WORM tables at deploy time | **Clear at pre-flight — 0 granted locks.** Re-check at P4 immediately before the merge |
 | A migration edited or renamed rather than added | **Clear** — additions only |
 | Demo or the four `autoDeploy` holds disturbed | **Clear** — untouched |
