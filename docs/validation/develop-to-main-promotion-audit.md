@@ -1016,13 +1016,20 @@ SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user;   -- expect tru
 SELECT 1 FROM pg_roles WHERE rolname='erasure_agent';              -- expect 0 rows
 
 -- P4. Lock contention on the tables 20261017 will swap triggers on.
-SELECT c.relname, count(*) AS blockers
+--     `l.pid <> pg_backend_pid()` is REQUIRED, not tidiness: without it the
+--     query counts the AccessShareLocks it is taking on those very tables while
+--     it runs, and reports contention that is entirely its own. That produced a
+--     false reading of "2" during rehearsal — run P4 ALONE, never folded into a
+--     statement that also reads legal_holds or retention_policies.
+SELECT c.relname, l.mode, count(*) AS blockers
   FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
  WHERE c.relname IN ('security_audit_log','finding_lifecycle_events','risk_lifecycle_events',
                      'applicability_assessments','applicability_evidence',
                      'applicability_affected_entities','finding_risk_acceptances',
                      'legal_holds','retention_policies')
-   AND l.granted GROUP BY 1 ORDER BY 2 DESC;                       -- expect empty or trivial
+   AND l.granted
+   AND l.pid <> pg_backend_pid()
+ GROUP BY 1,2 ORDER BY 3 DESC;                                     -- expect 0 rows
 
 -- P5. E-1 is still dark, and nothing has drifted.
 SELECT count(*) FROM retention_policies;                            -- expect 0
@@ -1075,7 +1082,7 @@ Read-only, against the production database, before any merge or deploy.
 | P1c | one named orphan / none missing | **`20260522_alert_preferences.sql` only / none missing** | pass |
 | P2 | 6 | **6** | pass |
 | P3 | true, absent | **`securelogic_user`, `rolcreaterole = t`, no `erasure_agent`** | pass |
-| P4 | empty | **0 rows** | pass |
+| P4 | 0 foreign locks | **0** (an initial reading of 2 was this query's own locks — see the note in P4) | pass |
 | P5 | 0/0/0 | **0 / 0 / 0** | pass |
 
 **Two supporting facts recorded from the same pre-flight:**
