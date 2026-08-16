@@ -1023,12 +1023,31 @@ deviation is a **STOP**.
 
 ### 5. Candidate verification
 
-CI on the exact candidate `3b929bf5`: **lint, typecheck, build, test,
-cross-org-isolation, tenant-coverage, url-drift all green**; `audit` red and
-inherited (no dependency file is in the delta). Locally: unit **503 files /
-8,193 passed**, isolation **191 passed**, fresh Postgres **232 migrations** in
-strict order, three rollback rehearsals passed, `[SEED]` lifecycle rehearsal
-passed.
+**The candidate is `develop` HEAD at the moment of promotion, and its CI must be
+confirmed green immediately before the merge.** This section deliberately does
+not freeze a SHA: writing one here changes `develop`, which changes the SHA,
+which makes the note stale — the plan would be wrong the instant it was
+committed.
+
+Verified so far, each on the `develop` HEAD current at the time:
+
+| SHA | Result |
+|---|---|
+| `3b929bf5` | 7 green, `audit` inherited |
+| `0ee4bca4` (this plan + the Increment 3 rollback) | 7 green, `audit` inherited |
+
+`audit` is red on both and on `main` itself — the same seven inherited
+advisories, and **no dependency file appears in the delta**, so it is not
+attributable to this release.
+
+Locally, on the same content: unit **503 files / 8,193 passed**, isolation
+**191 passed**, fresh Postgres **232 migrations** in strict order, **three**
+rollback rehearsals passed (Increment 1, Increment 2, and the full 3→2→1 chain),
+and the `[SEED]` lifecycle rehearsal passed.
+
+**Pre-merge check:** re-run the §1 tree diff and the §6 configuration proof
+against the actual candidate before merging. Both are scripted comparisons, not
+judgement calls, and both take seconds.
 
 ### 6. Configuration safety
 
