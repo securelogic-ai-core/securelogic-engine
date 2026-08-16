@@ -215,9 +215,9 @@ services:
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
       - key: SECURELOGIC_CONNECTOR_SCHEDULED_SYNC_ENABLED # ERIP E2.P1 (scheduled connector sync) — DARK (default off); triple fence: also requires ECL + asset-registry flags
         value: "false"
       - key: SECURELOGIC_CONNECTOR_WRITEBACK_ENABLED  # ERIP E2a (bidirectional connector writeback) — DARK (default off); only external-mutation fence; also requires ECL + asset-registry flags
@@ -225,13 +225,9 @@ services:
       - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED    # ERIP E3 (graph-aware risk intelligence) — DARK (default off)
         value: "false"
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED   # ERIP Package 3 (Decision Workspace) — DARK (default off); gates GET /api/findings/:id/context, plus finding creation and bulk governance decisions. Prod enablement is a separate operator ruling (GATE B); not part of the develop→main release train
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
-      # WAVE-1 TARGET declared 2026-08-16 — key added so the intended production
-      # value is reviewable. Declaration only; not authorized to activate.
-      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was ABSENT) — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED   # Briefing Initiative B2 — DARK (default off). Engine half of the two-switch: opens /api/briefing/layout + /api/briefing/changes. PROMOTE ENGINE BEFORE APP. Prod stays dark per SPRINT_1 ruling D-E; enablement is a separate operator ruling
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # Vendor Assurance — EG3 WAVE 1 (Reveal). Previously UNDECLARED in this
       # block, so it resolved absent→false while the staging block set it true.
@@ -316,7 +312,7 @@ services:
       # pointer) is validated on staging first; the prod flip is an operator
       # cutover step. Only the literal "false" disables. Reads are unaffected.
       - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
-        value: "false"   # WAVE-1 TARGET 2026-08-16 (was "true") — declaration only, not authorized to activate
+        value: "true"   # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
       # POST /api/ask from the eight-query snapshot to the platform tool
@@ -1520,7 +1516,7 @@ services:
       # The securelogic-app-staging service is defined below in this file — set it
       # true there for staging validation. Prod flip is GATE B (operator ledger L-2).
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # EAR Phase 4 nav visibility — DARK (default off). App half of the
       # two-switch model for the unified Assets surface: this only reveals the
@@ -1529,7 +1525,7 @@ services:
       # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
       # Prod flip is out of scope for the EAR goal (GATE B posture).
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # Enterprise Risk Workspace IA/nav (ERIP Packages 1+2) — DARK (default off).
       # Flips the app header to the enterprise-workflow information architecture
@@ -1545,7 +1541,7 @@ services:
       # surfaces an "Approvals" nav entry whose page has no backing capability in
       # the production flag set (RISK_LIFECYCLE=false, RISK_ACCEPTANCE undeclared).
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # ERIP Package 3 (Decision Workspace) — DARK (default off). App half of the
       # two-switch model: renders the Decision Workspace on /findings/:id when on
@@ -1553,11 +1549,7 @@ services:
       # NEXT_PUBLIC): a restart applies it. Flag off = legacy finding detail
       # byte-for-byte. Staging app is defined below in this file; prod flip is GATE B.
       - key: SECURELOGIC_DECISION_WORKSPACE_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
-      # WAVE-1 TARGET declared 2026-08-16 — key added so the intended production
-      # value is reviewable. Declaration only; not authorized to activate.
-      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was ABSENT) — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # Scalable Risk Findings queue controls — DARK (default off). Adds the
       # search/filter/sort toolbar, due-status urgency labels, and server-side
@@ -1581,14 +1573,14 @@ services:
       # NAMING: deliberately DASHBOARD_BRIEFING — the SECURELOGIC_BRIEF* namespace
       # belongs to the Intelligence Brief product flags; do not shorten.
       - key: SECURELOGIC_DASHBOARD_BRIEFING_ENABLED
-        value: "true"   # WAVE-1 TARGET 2026-08-16 (was "false") — declaration only, not authorized to activate
+        value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
       # B1 demotion (Launch Completion 1), app half of the two-switch: "true"
       # keeps the legacy assess/review CTAs and forms; "false" swaps every
       # legacy write CTA for the engagement workflow entry point. Keep in
       # lockstep with the engine's flag — the UI must never offer a write the
       # engine 410s.
       - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
-        value: "false"   # WAVE-1 TARGET 2026-08-16 (was "true") — declaration only, not authorized to activate
+        value: "true"   # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
       # Secret used to encrypt the iron-session cookie.
       # Must be at least 32 characters. Generate with: openssl rand -hex 32

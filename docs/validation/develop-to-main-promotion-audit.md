@@ -586,6 +586,16 @@ remains paused; this file records intent, it has not been applied.
 
 ## 12. Wave 1 target-state declaration (B-3) — 2026-08-16
 
+> **SUPERSEDED AS IaC, RETAINED AS THE RECORD — 2026-08-16 (see §15).** The
+> values below were reverted out of `render.yaml` on `develop` by the operator
+> ruling that **current production Wave 1 state wins** for the next promotion.
+> Wave 1 has not been authorized, so the declaration no longer sits in the
+> applied artifact where a Blueprint sync could act on it.
+>
+> **This section is now the sole record of the approved candidate
+> configuration.** It remains the target; it is not live IaC. When Wave 1
+> receives explicit activation authorization, this table is what gets applied.
+
 Declared, **not activated**. Closes the B-3 finding that the approved target
 production configuration existed only as Render dashboard state.
 
@@ -833,7 +843,78 @@ The squash gave `main` a **new commit**, so `01a99a70`, `bddc984d` and
 `git log origin/main..origin/develop` still lists all five commits.
 
 Consequently the next `develop`→`main` promotion will re-present that content
-alongside `f19f7059`, and a **`render.yaml` conflict is expected**. That conflict
-is where the Wave 1 values re-enter the picture. **Do not resolve it
-mechanically** — resolving it is the moment the Wave 1 decision gets made, and it
-must be made deliberately, per §12's hazard note.
+alongside `f19f7059`, and a **`render.yaml` conflict was expected**. That conflict
+is where the Wave 1 values re-enter the picture, and it must never be resolved
+mechanically — resolving it *is* the Wave 1 decision.
+
+> **RESOLVED IN ADVANCE — 2026-08-16, see §15.** The operator ruled that current
+> production Wave 1 state wins. The Wave 1 values have been reverted out of
+> `render.yaml` on `develop`, so `develop` and `main` now agree on every
+> production env key and the conflict no longer exists. The Wave 1 target is
+> retained in §12 as documentation.
+
+---
+
+## 15. Wave 1 IaC reconciliation — 2026-08-16
+
+**Ruling: current production Wave 1 state wins.** `f19f7059`'s Wave 1 `"true"`
+values are NOT carried into the promotion candidate. Wave 1 has not been
+authorized.
+
+### What differed, and what was resolved
+
+`origin/main` and `origin/develop` differed on **13 environment keys and nothing
+else** — no service, branch, plan, region, command or `autoDeploy` difference.
+All 13 came from `f19f7059`.
+
+| Service | Flag | Production-authorized | develop (f19f7059) | RESOLVED | Reason |
+|---|---|---|---|---|---|
+| engine | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | **absent** | `"true"` | **removed** | Key does not exist in the authorized production state; adding it *is* the change |
+| engine | `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | `"true"` | `"false"` | **`"true"`** | The only Wave 1 flag that REMOVES a capability. Reverting keeps the legacy write path available |
+| app | `SECURELOGIC_RISK_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized — this is the nav/IA switch |
+| app | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | **absent** | `"true"` | **removed** | As above |
+| app | `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | `"true"` | `"false"` | **`"true"`** | As above |
+
+### Unchanged by this reconciliation, and verified so
+
+| Item | State | Note |
+|---|---|---|
+| `SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED` | `"false"` on engine + data-rights worker | E-1 already matched on both refs — it reached `main` via the dark promotion |
+| `SECURELOGIC_TDG_EFFECTIVE_FROM` | `""` | The destructive gate. Empty means zero deletions, ever |
+| E-2 configuration | **none exists in IaC** | Erasure is database-level and credential-gated; there is no key a sync could set |
+| `autoDeploy` holds | `securelogic-website` `false` | Identical on both refs; unchanged |
+| Blueprint ownership | 14 services | `demo-engine`, `demo-app`, `intelligence-api` remain dashboard-only (INF-1) |
+| Staging service blocks | untouched | Zero staging env changes; staging keeps its validated configuration |
+
+### Blueprint-sync safety proof
+
+Executed against the resolved file, not asserted:
+
+- Wave 1 experience flags **false or absent on every service**.
+- `LEGACY_VENDOR_WRITES` still `"true"` on both — the one flag whose Wave 1 value
+  would have *removed* a capability.
+- TDG flag `"false"` and `TDG_EFFECTIVE_FROM` `""` wherever declared.
+- **No erasure key exists in the file at all.**
+- `autoDeploy` hold preserved; service count still 14; no dashboard-only service
+  adopted.
+
+**Result: a Blueprint sync against the resolved file could not activate Wave 1,
+E-1 destructive retention, E-2 erasure, or any other currently unauthorized
+capability.** After reconciliation `develop` and `main` agree on **every
+production environment key**, so the next promotion carries **zero configuration
+change** — code and migrations only.
+
+### What is preserved, and where
+
+The Wave 1 target is **not discarded**. It remains in §12 as the approved
+candidate configuration, to be applied when — and only when — Wave 1 receives
+explicit activation authorization. It is documentation, not live IaC, which is
+precisely the distinction §12's hazard note asked for.
