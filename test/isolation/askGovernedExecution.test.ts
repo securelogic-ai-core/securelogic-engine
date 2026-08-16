@@ -310,7 +310,17 @@ describe("LC-5b — vendors.decide executes the real decision machinery", () => 
     expect(res.body.ok).toBe(false);
     // The refusal carries the route's OWN reason — this is what the confirm
     // route records in the audit digest (stop-gate fidelity fix).
-    expect(res.body.message).toBe("cannot_decide");
+    //
+    // UPDATED 2026-08-16. W-5 (`26c11f99`) made a governed refusal record WHY, not
+    // just that it refused: describeError() in src/api/tools/executor.ts composes
+    // `error: reason` because neither field is reliably the specific one — here the
+    // ERROR is specific ("cannot_decide") and the reason qualifies it
+    // ("illegal_transition"), while findings.close is the other way round. This
+    // assertion had been left on the pre-W-5 bare string and was failing on develop.
+    // The generic code stays FIRST by design so prefix matching still works, which
+    // is asserted separately below rather than assumed.
+    expect(res.body.message).toBe("cannot_decide: illegal_transition");
+    expect(res.body.message.startsWith("cannot_decide")).toBe(true);
     const row = await pool.query(`SELECT status FROM vendor_engagements WHERE id = $1`, [
       engagementId,
     ]);
