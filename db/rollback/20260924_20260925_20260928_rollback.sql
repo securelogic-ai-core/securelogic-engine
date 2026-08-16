@@ -40,6 +40,14 @@
 --    it, the legacy key would stay, and the 42P10 defect it exists to fix
 --    (POST /api/requirement-responses, see c53d3b9d) would come straight back.
 --    Its row is removed so the re-apply re-runs it.
+-- 3. 20261012 restores the two evidence source types 20260925 deleted by
+--    accident. This rollback re-installs the PRE-20260925 constraint, which
+--    already contains them — but the forward re-apply then runs 20260925 again
+--    and removes them a second time. With 20261012 still recorded it would be
+--    skipped, and the database would end up back at the eleven-value list with
+--    'asset_assessment' and 'finding_risk_acceptance' illegal again. Caught by
+--    re-running this rehearsal after 20261012 landed: the re-forward produced
+--    count=11 and asset_assessment legal? false. Its row is removed too.
 --
 -- DELIBERATE DEVIATION FROM A BYTE-EXACT RESTORE — RLS
 -- ============================================================================
@@ -182,7 +190,8 @@ DELETE FROM schema_migrations WHERE filename IN (
   '20260925_vendor_portal_evidence_comments.sql',
   '20260927_engagement_intake_and_effectiveness.sql',
   '20260928_vendor_engagement_findings.sql',
-  '20261011_requirement_responses_drop_legacy_unique.sql'
+  '20261011_requirement_responses_drop_legacy_unique.sql',
+  '20261012_evidence_source_type_restore.sql'
 );
 
 COMMIT;
