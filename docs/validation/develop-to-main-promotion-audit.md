@@ -717,3 +717,123 @@ requires separate authorization.
 B-5 governs Stage 2 and is unchanged by this closeout. Wave 1's target state is
 declared in §12 on `develop` only — read §12's hazard note before the next
 promotion.
+
+---
+
+## 14. E-1 dark production promotion — executed 2026-08-16 15:11–15:22Z
+
+Tenant Data Governance promoted to production **dark**. Activates nothing.
+
+### Merge
+
+PR **#796** `release/e1-dark` → `main`, **squash-merged**. Resulting production
+SHA: **`5e108365936eea5c687d731b3bf93bf6eda895a4`**.
+
+Not a `develop` merge. `develop` carried five commits main lacked; `f19f7059`
+(the §12 Wave 1 declaration) was **deliberately excluded**, and `c2179e60` was
+not taken because its §13 sits directly on §12 in this file. The branch took
+`01a99a70`, `bddc984d`, `27cfcf40` only.
+
+### Deploy discipline and order
+
+autoDeploy was disabled on all ten `main`-tracking services before the merge and
+**independently re-read from the API** (6/6 `no`, four holds still `no`) as a
+pre-merge gate. The merge itself deployed nothing — engine and app still read
+`38eb535f` afterwards. The six were then deployed individually, each `--wait`,
+in this order:
+
+| # | Service | Deploy finished |
+|---|---|---|
+| 1 | `securelogic-engine` (migrates) | 15:13:26Z |
+| 2 | `securelogic-vendor-extraction-worker` | 15:14:54Z |
+| 3 | `securelogic-posture-worker` | 15:16:11Z |
+| 4 | `securelogic-intelligence-worker` | 15:17:26Z |
+| 5 | `securelogic-data-rights-worker` | 15:18:29Z |
+| 6 | `securelogic-app` | 15:22:06Z |
+
+All six reached `live` on `5e108365`. No service failed, so the stop-rule did
+not fire. autoDeploy was then restored on those six and **re-read from the API**
+rather than trusted from the update responses: 6/6 `yes`.
+
+### Migrations applied
+
+`20261013_tenant_data_governance`, `20261014_ask_ledger_survives_deletion`,
+`20261015_jobs_retention_sweep`, `20261016_ask_conversations_survive_user_deletion`.
+
+The engine's `startCommand` is `npm run migrate && npm start`, so a `live`
+engine is the evidence they committed. `/health` → `{"status":"ok","db":"connected"}`.
+
+### Health and smoke results
+
+| Probe | Result |
+|---|---|
+| engine `/health` | `ok`, db connected |
+| app `/api/version` | self-reports `5e108365…`, branch `main` |
+| `/api/governance/classes` · `/retention` · `/holds` · `/objects/:class` · `/sweep/:class/preview` | **404** |
+| `DELETE /api/governance/objects/:class/:id` · `DELETE /api/ask/conversations/:id` | **404** |
+| `POST /api/ask` · `GET /api/ask/conversations` | **401** — reachable and auth-gated, unchanged |
+| app `/login` · `/dashboard` | 200 · 307 — same auth gate as before |
+| workers | posture cycle completing, intelligence KEV poll completing, vendor-extraction idle-ticking on its own flag, data-rights worker booted clean |
+| error-level log entries since deploy | **0** across engine and app |
+
+### TDG dark at process level
+
+The engine's own boot log:
+
+```
+"event":"retention_sweep_enqueuer_registered","enabled":false
+```
+
+That is the enqueuer reporting the flag state from **inside the production
+process** — not inferred from configuration or from a 404.
+
+### `SECURELOGIC_TDG_EFFECTIVE_FROM`
+
+**Not directly read.** Reading service environment variables was not available
+in this session. What is on record: it was **never set**; `main`'s `render.yaml`
+declares it **empty**; and the first gate is provably closed at process level
+(above). A direct read remains operator-owned.
+
+### No retention or deletion execution
+
+A log scan across the engine and all workers for `retention_sweeps_enqueued`,
+`retention_sweep_succeeded`, `object_deleted`, `erasure` and
+`account_deletion_reap` returned **zero matches**. No reap jobs; the reaper's own
+flag is absent in every environment.
+
+### Wave 1 posture on `main`
+
+`main`'s `render.yaml` currently declares every Wave 1 flag **`false`**, with
+`SECURELOGIC_RISK_ACCEPTANCE_ENABLED` **absent**. **An accidental Blueprint sync
+therefore cannot activate Wave 1 from the current `main`.**
+
+Behavioural confirmation: `/api/enterprise/entities`, `/api/decisions` and
+`/api/asset-registry/assets` all **404**. **No environment variable was changed
+on any service** during this promotion — only autoDeploy.
+
+### Blueprint
+
+**No Blueprint sync was performed.** Blueprint state itself was **not directly
+verified** — the Render CLI exposes no blueprints command. Confirming it remains
+paused is operator-owned.
+
+### Explicitly not done
+
+- §3 destructive activation **not executed**.
+- `SECURELOGIC_TDG_EFFECTIVE_FROM` **not set**.
+- **E-2 / E-3 not started. Stage 2 not started.**
+- **Demo untouched** — `securelogic-demo-engine` and `securelogic-demo-app`
+  remain `autoDeploy=no` on `98e97098`, alongside `securelogic-website` and
+  `securelogic-intelligence-api`. All four holds from §11 intact.
+
+### Squash-merge ancestry caveat — read before the next develop→main reconciliation
+
+The squash gave `main` a **new commit**, so `01a99a70`, `bddc984d` and
+`27cfcf40` are **not ancestors** of `main` even though their **content is**.
+`git log origin/main..origin/develop` still lists all five commits.
+
+Consequently the next `develop`→`main` promotion will re-present that content
+alongside `f19f7059`, and a **`render.yaml` conflict is expected**. That conflict
+is where the Wave 1 values re-enter the picture. **Do not resolve it
+mechanically** — resolving it is the moment the Wave 1 decision gets made, and it
+must be made deliberately, per §12's hazard note.
