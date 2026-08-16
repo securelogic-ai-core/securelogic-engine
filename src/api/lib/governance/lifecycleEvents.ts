@@ -116,9 +116,15 @@ export const LIFECYCLE_EVENTS: readonly LifecycleEventDefinition[] = [
     note:
       "Everything the tenant owns, including the conversations every other event preserves. " +
       "Currently IMPOSSIBLE, not merely unbuilt: WORM triggers fire on FK cascade, so " +
-      "DELETE FROM organizations raises. E-1 does not attempt it and adds nothing to the " +
-      "cascade web — legal_holds and retention_policies use ON DELETE SET NULL on their actor " +
-      "columns precisely so they do not deepen D-12."
+      "DELETE FROM organizations raises. CORRECTED 2026-08-16 (E-2 discovery): an earlier " +
+      "version of this note claimed E-1 'adds nothing to the cascade web' because its actor " +
+      "columns are ON DELETE SET NULL. That was WRONG on both counts. A SET NULL cascade is " +
+      "an UPDATE, and these triggers guard UPDATE OR DELETE — so SET NULL does not avoid the " +
+      "web at all; and organization_id on both tables is ON DELETE CASCADE regardless. " +
+      "legal_holds and retention_policies are now two of the NINE blocking tables, verified " +
+      "against a real database: an org holding only a retention_policies row, or only a " +
+      "legal_holds row, cannot be deleted. Removing them from the web is E-2's job, not a " +
+      "property E-1 ever had."
   },
   {
     key: "legal_hold",

@@ -222,3 +222,24 @@ its registry entry.
 `age_anchor <= now() - retention_days` **and**
 `now() >= TDG_EFFECTIVE_FROM + 30 days`. No conversation can expire because the
 schema arrived; every org gets at least 30 days under a declared policy first.
+
+---
+
+## Correction — 2026-08-16 (E-2 Increment 1)
+
+E-1 claimed, in its commit message, in `lifecycleEvents.ts` and in a comment on
+`20261013`, that it "adds nothing to the D-12 cascade web" because its actor
+columns use `ON DELETE SET NULL`. **That was wrong on both counts.**
+
+- A `SET NULL` cascade is an **UPDATE**, and the WORM triggers guard
+  `UPDATE OR DELETE` — so `SET NULL` does not avoid the web.
+- `organization_id` on both new tables is `ON DELETE CASCADE` regardless.
+
+Verified against a real database: an organization holding **only** a
+`retention_policies` row, or **only** a `legal_holds` row, cannot be deleted.
+`retention_policies` and `legal_holds` are two of the **nine** blocking tables.
+
+No production defect follows — no shipped code deletes an organization or a
+user, and E-1 remains dark. Removing these tables from the web is E-2's work.
+Corrected in `lifecycleEvents.ts` and recorded in `20261017`; `20261013` is left
+untouched because applied migrations are not edited.
