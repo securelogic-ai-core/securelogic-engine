@@ -1695,7 +1695,12 @@ services:
     plan: starter
     buildCommand: cd website && npm ci --include=dev && npm run build
     startCommand: cd website && npx serve@latest out -l $PORT
-    autoDeploy: true
+    # HELD 2026-08-16 (Stage 1). Deliberately false, matching live state: the
+    # marketing site is outside the current release train, so it stays on its
+    # own SHA rather than moving with every promotion to main. Set back to
+    # true when the site is explicitly brought into a release. Declared here
+    # so the hold is reviewable IaC, not silent dashboard drift.
+    autoDeploy: false
     # Public marketing domain. Next.js on Render is the production site
     # (the legacy WordPress host is being retired). The apex and www both
     # serve this service. NOTE: declaring domains here records intent in IaC;

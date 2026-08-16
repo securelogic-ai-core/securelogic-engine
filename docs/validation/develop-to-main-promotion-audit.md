@@ -538,3 +538,46 @@ distinguished from hand-curation after the fact except via `scope_tags_source`.
 
 **A promotion is therefore only as reversible as the migration step. That is the
 single strongest argument for clearing BL-1 before anything else.**
+
+---
+
+## 11. Post-Stage-1 service hold register (2026-08-16)
+
+Stage 1 promoted `main` to `924abbdf`. To make the approved deploy ORDER
+possible, `autoDeploy` was disabled on all ten `main`-tracking services before
+the merge (otherwise the merge alone deploys everything at once, demo included),
+then restored on the six services that were actually promoted. Four were
+deliberately left disabled. This section is the record of that decision so the
+state is intentional rather than dashboard drift.
+
+| Service | autoDeploy | SHA | Why held |
+|---|---|---|---|
+| `securelogic-website` | **false** | `98e97098` | Outside the current release train. Recorded in `render.yaml`. |
+| `securelogic-demo-engine` | **false** | `98e97098` | Demo tracks `main`; its database carries unresolved migration drift, so a promotion would apply this release's 18 migrations to it unreviewed. |
+| `securelogic-demo-app` | **false** | `98e97098` | As above — demo must move as a pair, and only by explicit decision. |
+| `securelogic-intelligence-api` | **false** | `759e7c94`, `update_failed` | Pre-existing failed-update condition since 2026-05-02 — three months before this release and unrelated to it. Pending separate reconciliation. |
+
+### Only ONE of the four can be expressed in `render.yaml`
+
+`render.yaml` declares **fourteen** services. `securelogic-demo-engine`,
+`securelogic-demo-app` and `securelogic-intelligence-api` are **not among them** —
+they exist only in the Render dashboard and have never been Blueprint-managed.
+Their hold therefore cannot be declared in IaC without first ADDING full service
+definitions (branch, build/start commands, environment), which would both exceed
+the scope of recording a hold and hand the Blueprint control of services it has
+never owned. **For those three this table is the only record**, and that is a
+statement about the Blueprint's coverage gap, not about the hold.
+
+`securelogic-website` IS Blueprint-managed, so its `autoDeploy: false` is
+declared at its service block. Note the pre-existing hazard this closes: the
+file had said `true` while the dashboard said `no`.
+
+### Consequence to keep visible
+
+While these four are `false`, pushes to `main` will not deploy them. That is
+currently protective — it is what keeps demo from taking the migrations
+unreviewed — but it is a silent surprise for anyone who later expects a `main`
+push to move the marketing site or demo. Reverse it deliberately, per service.
+
+**No Blueprint sync was performed.** Autosync remains off and the Blueprint
+remains paused; this file records intent, it has not been applied.
