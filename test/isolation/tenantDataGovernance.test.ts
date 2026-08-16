@@ -23,6 +23,7 @@ import { planSweep, executeSweep, deleteGovernedObject } from "../../src/api/lib
 import { insertHold, releaseHold, listActiveHolds, insertPolicyVersion, listPolicyVersions } from "../../src/api/lib/governance/governanceStore.js";
 import { resolveEffectivePolicy } from "../../src/api/lib/governance/retentionPolicy.js";
 import { getDataClass } from "../../src/api/lib/governance/dataClasses.js";
+import { processReapJob } from "../../src/api/workers/accountDeletionReaper.js";
 
 let seed: TestDbSeed;
 let pool: Pool;
@@ -747,5 +748,166 @@ describe("RULING: a conversation outlives its author", () => {
       })
     );
     expect(outcome.outcome).toBe("held");
+  });
+});
+
+/* ────── A legal hold stands in front of EVERY deletion path, including the
+          Art.17 account-deletion reaper (real reaper, real database) ────────── */
+
+describe("legal hold vs the Art.17 account-deletion reaper", () => {
+  async function pendingDeletionUser(): Promise<string> {
+    const id = (await seedUser(pool, seed.orgA.id)).id;
+    await pool.query(
+      `UPDATE users SET status = 'pending_deletion', deletion_scheduled_at = now() - interval '1 day'
+        WHERE id = $1`,
+      [id]
+    );
+    return id;
+  }
+
+  function reapJob(userId: string) {
+    return {
+      id: "00000000-0000-4000-8000-00000000dead",
+      organization_id: seed.orgA.id,
+      requested_by_user_id: userId,
+      job_type: "account_deletion_reap",
+      status: "processing",
+      attempts: 1,
+      max_attempts: 5,
+      payload: { userId, organizationId: seed.orgA.id }
+    } as never;
+  }
+
+  it("a subject hold suppresses the erasure, leaves the request pending, and records why", async () => {
+    const subject = await pendingDeletionUser();
+    const emailBefore = (
+      await pool.query<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [subject])
+    ).rows[0]!.email;
+
+    await withTenant(seed.orgA.id, () =>
+      insertHold({
+        organizationId: seed.orgA.id,
+        scopeType: "subject_user",
+        dataClass: null,
+        subjectUserId: subject,
+        objectId: null,
+        reason: "Matter 2026-14 names this custodian",
+        placedByUserId: userA1
+      })
+    );
+
+    await processReapJob(reapJob(subject));
+
+    const after = await pool.query<{ email: string; status: string }>(
+      `SELECT email, status FROM users WHERE id = $1`,
+      [subject]
+    );
+    // Not tombstoned: the identity survives for the matter.
+    expect(after.rows[0]!.email).toBe(emailBefore);
+    // And the request is neither lost nor completed — it waits for the hold.
+    expect(after.rows[0]!.status).toBe("pending_deletion");
+    expect(await auditEvents(seed.orgA.id, "governance.erasure_suppressed")).toBe(1);
+  });
+
+  it("an ORGANIZATION hold suppresses it too", async () => {
+    const subject = await pendingDeletionUser();
+    await withTenant(seed.orgA.id, () =>
+      insertHold({
+        organizationId: seed.orgA.id,
+        scopeType: "organization",
+        dataClass: null,
+        subjectUserId: null,
+        objectId: null,
+        reason: "Org-wide preservation notice",
+        placedByUserId: userA1
+      })
+    );
+
+    await processReapJob(reapJob(subject));
+
+    const after = await pool.query<{ status: string }>(`SELECT status FROM users WHERE id = $1`, [subject]);
+    expect(after.rows[0]!.status).toBe("pending_deletion");
+  });
+
+  it("a hold on a CONVERSATION does not block the person's erasure", async () => {
+    // The scopes are not interchangeable: preserving a thing must not quietly
+    // suspend someone's right to be forgotten.
+    const subject = await pendingDeletionUser();
+    const t = await seedConversation(seed.orgA.id, subject, 1);
+    await withTenant(seed.orgA.id, () =>
+      insertHold({
+        organizationId: seed.orgA.id,
+        scopeType: "object",
+        dataClass: "ask_conversation",
+        subjectUserId: null,
+        objectId: t.conversationId,
+        reason: "One thread is evidence",
+        placedByUserId: userA1
+      })
+    );
+
+    await processReapJob(reapJob(subject));
+
+    const after = await pool.query<{ email: string; status: string }>(
+      `SELECT email, status FROM users WHERE id = $1`,
+      [subject]
+    );
+    expect(after.rows[0]!.email).toMatch(/^deleted-.*@deleted\.invalid$/);
+    expect(after.rows[0]!.status).toBe("deleted");
+  });
+
+  it("once the hold is released the erasure proceeds — and the conversations still survive it", async () => {
+    const subject = await pendingDeletionUser();
+    const t = await seedConversation(seed.orgA.id, subject, 1);
+
+    const hold = await withTenant(seed.orgA.id, () =>
+      insertHold({
+        organizationId: seed.orgA.id,
+        scopeType: "subject_user",
+        dataClass: null,
+        subjectUserId: subject,
+        objectId: null,
+        reason: "Matter 2026-14",
+        placedByUserId: userA1
+      })
+    );
+
+    await processReapJob(reapJob(subject));
+    expect(
+      (await pool.query<{ status: string }>(`SELECT status FROM users WHERE id = $1`, [subject]))
+        .rows[0]!.status
+    ).toBe("pending_deletion");
+
+    await withTenant(seed.orgA.id, () =>
+      releaseHold({
+        organizationId: seed.orgA.id,
+        holdId: hold.id,
+        releasedByUserId: userA2,
+        releaseReason: "Matter closed"
+      })
+    );
+
+    await processReapJob(reapJob(subject));
+
+    const user = await pool.query<{ email: string; status: string }>(
+      `SELECT email, status FROM users WHERE id = $1`,
+      [subject]
+    );
+    expect(user.rows[0]!.email).toMatch(/^deleted-.*@deleted\.invalid$/);
+    expect(user.rows[0]!.status).toBe("deleted");
+
+    // THE RULING, end to end: the person is erased, the organization's record
+    // is not, and it is still attributable to a thread rather than to nothing.
+    const conv = await pool.query<{ id: string; user_id: string | null }>(
+      `SELECT id, user_id FROM ask_conversations WHERE id = $1`,
+      [t.conversationId]
+    );
+    expect(conv.rows).toHaveLength(1);
+    expect(conv.rows[0]!.user_id).toBe(subject);
+
+    const msgs = await pool.query(`SELECT id FROM ask_messages WHERE conversation_id = $1`, [
+      t.conversationId
+    ]);
+    expect(msgs.rows).toHaveLength(1);
   });
 });

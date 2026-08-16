@@ -125,11 +125,17 @@ const askConversationHandler: ClassHandler = {
    *      but they are the one place FULL authorized tool payloads are ever
    *      written, so they are destroyed FIRST and counted explicitly rather
    *      than disappearing as a side effect nobody measured.
-   *   2. ask_messages. Deleting these SET NULLs ask_tool_invocations.message_id
+   *   2. ask_proposed_actions. They cascade from the conversation, so before
+   *      this they vanished UNCOUNTED — a governance record that under-reports
+   *      what it destroyed is the failure mode TDG-14 exists to prevent.
+   *      Deleted explicitly and counted. (Agentic proposals are dark today;
+   *      counting them now costs one statement and stops the audit trail from
+   *      quietly becoming wrong the day the flag flips.)
+   *   3. ask_messages. Deleting these SET NULLs ask_tool_invocations.message_id
    *      (20261014) instead of cascading it away, so the audit ledger — the
    *      denials included — outlives the content it describes. Those orphaned
    *      ledger rows then age out under their OWN class policy.
-   *   3. ask_conversations. Last, so no step ever runs against a thread whose
+   *   4. ask_conversations. Last, so no step ever runs against a thread whose
    *      parent row is already gone.
    *
    * All three statements run in the caller's transaction. There is no partial
@@ -149,6 +155,12 @@ const askConversationHandler: ClassHandler = {
       [organizationId, idList]
     );
 
+    const proposals = await pg.query(
+      `DELETE FROM ask_proposed_actions
+        WHERE organization_id = $1 AND conversation_id = ANY($2::uuid[])`,
+      [organizationId, idList]
+    );
+
     const messages = await pg.query(
       `DELETE FROM ask_messages
         WHERE organization_id = $1 AND conversation_id = ANY($2::uuid[])`,
@@ -165,7 +177,8 @@ const askConversationHandler: ClassHandler = {
       objects: conversations.rowCount ?? 0,
       children: {
         ask_messages: messages.rowCount ?? 0,
-        ask_provenance_contexts: contexts.rowCount ?? 0
+        ask_provenance_contexts: contexts.rowCount ?? 0,
+        ask_proposed_actions: proposals.rowCount ?? 0
       }
     };
   }

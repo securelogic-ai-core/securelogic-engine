@@ -35,7 +35,8 @@ export const GOVERNANCE_EVENT_TYPES = {
   objectDeleted: "governance.object_deleted",
   expiryExecuted: "governance.retention_expiry_executed",
   sweepSuppressed: "governance.retention_sweep_suppressed",
-  sweepFailed: "governance.retention_sweep_failed"
+  sweepFailed: "governance.retention_sweep_failed",
+  erasureSuppressed: "governance.erasure_suppressed"
 } as const;
 
 export type GovernanceEventType =
@@ -99,6 +100,20 @@ export interface SweepFailedPayload {
   deletedBeforeFailure: 0;
 }
 
+/**
+ * An erasure the platform declined to perform because a hold covers the
+ * subject. Records that the request was received and NOT actioned — the absence
+ * of an erasure is exactly the thing a regulator or an opposing party will ask
+ * us to evidence.
+ */
+export interface ErasureSuppressedPayload {
+  lifecycleEvent: string;
+  subjectUserId: string;
+  holdId: string;
+  /** What would have happened had the hold not been there. */
+  suppressedAction: string;
+}
+
 export type GovernancePayload =
   | { type: typeof GOVERNANCE_EVENT_TYPES.policyChanged; data: PolicyChangedPayload }
   | { type: typeof GOVERNANCE_EVENT_TYPES.holdPlaced; data: HoldPayload }
@@ -106,7 +121,8 @@ export type GovernancePayload =
   | { type: typeof GOVERNANCE_EVENT_TYPES.objectDeleted; data: ObjectDeletedPayload }
   | { type: typeof GOVERNANCE_EVENT_TYPES.expiryExecuted; data: SweepRunPayload }
   | { type: typeof GOVERNANCE_EVENT_TYPES.sweepSuppressed; data: SweepRunPayload }
-  | { type: typeof GOVERNANCE_EVENT_TYPES.sweepFailed; data: SweepFailedPayload };
+  | { type: typeof GOVERNANCE_EVENT_TYPES.sweepFailed; data: SweepFailedPayload }
+  | { type: typeof GOVERNANCE_EVENT_TYPES.erasureSuppressed; data: ErasureSuppressedPayload };
 
 export interface GovernanceEventInput {
   organizationId: string;
