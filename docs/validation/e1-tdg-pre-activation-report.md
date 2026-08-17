@@ -29,7 +29,7 @@ established by inventory rather than by assertion.
 | Retention sweeper | via the governed path | Yes — skipped, counted, `sweep_suppressed` event | isolation |
 | **Art.17 account-deletion reaper** | **No** — deletes only Category-B tables (none governed) and tombstones the `users` row | **Yes, now** — see below | isolation, against the real reaper |
 | FK cascade from `users` | **No longer** — `SET NULL` since `20261016` | n/a | isolation: hard-deleted user leaves the thread standing |
-| FK cascade from `organizations` | Yes, in principle | n/a — **no shipped code deletes an organization**, and D-12 makes it raise | grep across `src/` + `services/`: zero occurrences |
+| FK cascade from `organizations` | Yes, in principle | n/a — **no shipped code deletes an organization**, and D-12 makes it raise | grep across `src/` + `services/`: zero occurrences. **Correction 2026-08-16:** E-1's own two tables are part of that D-12 web (see E1-tdg-invariants.md); the earlier claim that they were not is withdrawn |
 | `exportFilePurgeWorker` | No — `data_export_files` / R2 only | n/a | not a governed class |
 | Validation / teardown scripts | Yes, with triggers disabled | **No** — and they must not run outside a throwaway database | `scripts/validation/*`, non-production by construction |
 

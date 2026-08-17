@@ -581,3 +581,626 @@ push to move the marketing site or demo. Reverse it deliberately, per service.
 
 **No Blueprint sync was performed.** Autosync remains off and the Blueprint
 remains paused; this file records intent, it has not been applied.
+
+---
+
+## 12. Wave 1 target-state declaration (B-3) — 2026-08-16
+
+> **SUPERSEDED AS IaC, RETAINED AS THE RECORD — 2026-08-16 (see §15).** The
+> values below were reverted out of `render.yaml` on `develop` by the operator
+> ruling that **current production Wave 1 state wins** for the next promotion.
+> Wave 1 has not been authorized, so the declaration no longer sits in the
+> applied artifact where a Blueprint sync could act on it.
+>
+> **This section is now the sole record of the approved candidate
+> configuration.** It remains the target; it is not live IaC. When Wave 1
+> receives explicit activation authorization, this table is what gets applied.
+
+Declared, **not activated**. Closes the B-3 finding that the approved target
+production configuration existed only as Render dashboard state.
+
+### What is declared
+
+| Flag | Service(s) | render.yaml before | Validated staging | Declared prod target | Wave 1 behaviour it controls |
+|---|---|---|---|---|---|
+| `SECURELOGIC_RISK_WORKSPACE_ENABLED` | app | `"false"` | `"true"` | `"true"` | Selects `WORKSPACE_NAV_ITEMS` over legacy `NAV_ITEMS` — the workspace IA and row 2 of the approved header. |
+| `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Relabels the workspace home entry "Briefing"; engine half opens `/api/briefing/layout`. Structurally required by the approved two-row header. |
+| `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Shows the "Context" nav entry; engine half serves ECL routes. |
+| `SECURELOGIC_ASSET_REGISTRY_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | Collapses Assets to the unified registry; hides the legacy Vendors / AI Systems children. |
+| `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | engine + app | `"false"` | `"true"` | `"true"` | The decision workspace surface. |
+| `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | engine + app | **absent** | `"true"` | `"true"` | Finding risk-acceptance workflow. Key ADDED so the intended value is reviewable. |
+| `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | engine + app | `"true"` | `"false"` | `"false"` | **Removes** the retired point-in-time assess/review write path, making `vendor_engagements` the sole canonical writer. The only flag here that takes a capability away. |
+
+Thirteen declarations across two services. **No staging service was touched**
+and no non-env key (branch, command, plan, region) changed.
+
+### Deliberately NOT declared — decision owed
+
+| Flag | Staging | Why excluded |
+|---|---|---|
+| `SECURELOGIC_FINDINGS_QUEUE_CONTROLS_ENABLED` | `"true"` | Read by `app/src/app/findings/page.tsx`, but **no validation record names it**. An enhancement to the findings queue, not structurally required by the approved nav. Declaring it would infer a product decision. |
+| `SECURELOGIC_RISK_ACCEPTANCE_NOTIFICATIONS_ENABLED` | `"true"` | No validation record, and it has a real outbound side effect — enabling it sends email to real customers. Not a presentation flag. |
+| `BRIEF_QUALITY`, `FINDING_CLOSURE_GATE`, `SIGNAL_RECENCY` | `"true"` | Staging validation flags. Membership in "the approved experience" was never stated. |
+| All Wave 2–5 capability flags | varies | Blocked by open B-5 gates. Not declared at any value. |
+
+Production will therefore differ from staging on those first two even after
+Wave 1 activation. That gap is deliberate and needs a ruling, not an inference.
+
+### The hazard this declaration creates — read before resuming the Blueprint
+
+`render.yaml` is the **applied** artifact. It cannot express "intended but not
+yet authorized"; only the comments can, and a Blueprint sync does not read
+comments. **Once these values reach `main` and anyone syncs the Blueprint,
+Wave 1 activates in production** — no further review, by whoever runs the sync.
+
+Two things currently stand between the declaration and that outcome, and both
+must hold:
+
+1. **It is committed to `develop`, not `main`.** The Blueprint watches `main`.
+   Committing to `main` would additionally have redeployed production, since
+   autoDeploy is on for the six promoted services.
+2. **Blueprint autosync is off and the Blueprint is paused.**
+
+The next develop→main promotion removes protection (1). Before that promotion,
+either Wave 1 must be authorized, or the Blueprint must be confirmed paused with
+an explicit owner. Do not treat "it is only IaC" as safe here.
+
+---
+
+## 13. Stage 1 closeout — verified 2026-08-16 11:15Z
+
+Stage 1 landed. This section records the outcome; it does not restate the plan.
+
+**Deployed SHA: `38eb535f`.** `main` advanced past the release commit `924abbdf`
+by two IaC/doc commits (`5d41ec46` → `924abbdf` → `38eb535f`), so the SHA
+production actually runs is `38eb535f`, not the release commit. All prior
+`98e97098` deploys are `deactivated`.
+
+### The six promoted services — all `live` on `38eb535f`
+
+| Service | 924abbdf deploy | 38eb535f deploy (live) |
+|---|---|---|
+| `securelogic-engine` | 05:43:43Z | **06:56:44Z** |
+| `securelogic-vendor-extraction-worker` | 05:45:44Z | **06:56:19Z** |
+| `securelogic-posture-worker` | 05:47:19Z | **06:56:28Z** |
+| `securelogic-intelligence-worker` | 05:48:43Z | **06:56:22Z** |
+| `securelogic-data-rights-worker` | 05:50:05Z | **06:56:20Z** |
+| `securelogic-app` | 05:53:45Z | **06:58:26Z** |
+
+**C-4 (deploy order) is verified by the 924abbdf timestamps, not asserted**:
+engine → vendor-extraction worker → remaining workers → app, engine first by
+2m01s and app last by 3m40s. C-5 is satisfied — the vendor worker is on the
+promotion SHA, so `ask_provenance` jobs are serviced.
+
+### Migrations
+
+**Applied successfully.** The engine's `startCommand` is
+`npm run migrate && npm start`, so a `live` engine is direct evidence that the
+migration chain exited 0; a failure would have held the service out of service,
+not degraded it. `/health` returns `{"status":"ok","db":"connected"}`.
+
+**B-6 did not fire.** The operator pre-flight returned 0 rows for
+`source_type IN ('asset_assessment','finding_risk_acceptance')` before the merge,
+which is the condition under which `20260925` applies cleanly; the live engine
+confirms it did.
+
+*Not measured:* the resulting `schema_migrations` count. No production database
+credential exists in this environment, so the expected 223 was not read back.
+
+### Probe results
+
+| Probe | Result |
+|---|---|
+| engine `/health` | `{"status":"ok","db":"connected"}` |
+| app `/api/version` | `commit: 38eb535f…`, `branch: main` |
+| engine `/api/vendor-portal/session` | **404** — portal unreachable, as designed |
+
+### Stage-2 capability remains dark
+
+No flag was changed at any point in Stage 1. The portal 404 above is the one
+piece of behavioural evidence collected; the new dashboard/workspace experience,
+Ask agentic actions, governed actions and realtime voice were not probed.
+
+*Limitation, stated rather than glossed:* production environment variables were
+**not read back** in this session, so "flags dark" rests on (a) no flag having
+been set and (b) that single 404 — not on a config read. A direct read remains
+the stronger check and is owed before Stage 2.
+
+### Held services — holds intact
+
+`securelogic-website`, `securelogic-demo-engine`, `securelogic-demo-app` and
+`securelogic-intelligence-api` all confirmed `autoDeploy: no` today. No drift
+against §11. Their SHAs were not re-probed. Ownership of the three
+Blueprint-invisible services is tracked as INF-1 in
+`docs/backlog/INFRASTRUCTURE_BACKLOG.md`.
+
+### Rollback status
+
+**Not exercised — and not needed.** Rollback Point A stands as defined in the
+release commit: revert code to `98e97098`, leave the additive migrations in
+place, change no flag. The rehearsed schema procedure remains at
+`db/rollback/20260924_20260925_20260928_rollback.sql`; a schema rollback still
+requires separate authorization.
+
+### What Stage 1 does NOT close
+
+B-5 governs Stage 2 and is unchanged by this closeout. Wave 1's target state is
+declared in §12 on `develop` only — read §12's hazard note before the next
+promotion.
+
+---
+
+## 14. E-1 dark production promotion — executed 2026-08-16 15:11–15:22Z
+
+Tenant Data Governance promoted to production **dark**. Activates nothing.
+
+### Merge
+
+PR **#796** `release/e1-dark` → `main`, **squash-merged**. Resulting production
+SHA: **`5e108365936eea5c687d731b3bf93bf6eda895a4`**.
+
+Not a `develop` merge. `develop` carried five commits main lacked; `f19f7059`
+(the §12 Wave 1 declaration) was **deliberately excluded**, and `c2179e60` was
+not taken because its §13 sits directly on §12 in this file. The branch took
+`01a99a70`, `bddc984d`, `27cfcf40` only.
+
+### Deploy discipline and order
+
+autoDeploy was disabled on all ten `main`-tracking services before the merge and
+**independently re-read from the API** (6/6 `no`, four holds still `no`) as a
+pre-merge gate. The merge itself deployed nothing — engine and app still read
+`38eb535f` afterwards. The six were then deployed individually, each `--wait`,
+in this order:
+
+| # | Service | Deploy finished |
+|---|---|---|
+| 1 | `securelogic-engine` (migrates) | 15:13:26Z |
+| 2 | `securelogic-vendor-extraction-worker` | 15:14:54Z |
+| 3 | `securelogic-posture-worker` | 15:16:11Z |
+| 4 | `securelogic-intelligence-worker` | 15:17:26Z |
+| 5 | `securelogic-data-rights-worker` | 15:18:29Z |
+| 6 | `securelogic-app` | 15:22:06Z |
+
+All six reached `live` on `5e108365`. No service failed, so the stop-rule did
+not fire. autoDeploy was then restored on those six and **re-read from the API**
+rather than trusted from the update responses: 6/6 `yes`.
+
+### Migrations applied
+
+`20261013_tenant_data_governance`, `20261014_ask_ledger_survives_deletion`,
+`20261015_jobs_retention_sweep`, `20261016_ask_conversations_survive_user_deletion`.
+
+The engine's `startCommand` is `npm run migrate && npm start`, so a `live`
+engine is the evidence they committed. `/health` → `{"status":"ok","db":"connected"}`.
+
+### Health and smoke results
+
+| Probe | Result |
+|---|---|
+| engine `/health` | `ok`, db connected |
+| app `/api/version` | self-reports `5e108365…`, branch `main` |
+| `/api/governance/classes` · `/retention` · `/holds` · `/objects/:class` · `/sweep/:class/preview` | **404** |
+| `DELETE /api/governance/objects/:class/:id` · `DELETE /api/ask/conversations/:id` | **404** |
+| `POST /api/ask` · `GET /api/ask/conversations` | **401** — reachable and auth-gated, unchanged |
+| app `/login` · `/dashboard` | 200 · 307 — same auth gate as before |
+| workers | posture cycle completing, intelligence KEV poll completing, vendor-extraction idle-ticking on its own flag, data-rights worker booted clean |
+| error-level log entries since deploy | **0** across engine and app |
+
+### TDG dark at process level
+
+The engine's own boot log:
+
+```
+"event":"retention_sweep_enqueuer_registered","enabled":false
+```
+
+That is the enqueuer reporting the flag state from **inside the production
+process** — not inferred from configuration or from a 404.
+
+### `SECURELOGIC_TDG_EFFECTIVE_FROM`
+
+**Not directly read.** Reading service environment variables was not available
+in this session. What is on record: it was **never set**; `main`'s `render.yaml`
+declares it **empty**; and the first gate is provably closed at process level
+(above). A direct read remains operator-owned.
+
+### No retention or deletion execution
+
+A log scan across the engine and all workers for `retention_sweeps_enqueued`,
+`retention_sweep_succeeded`, `object_deleted`, `erasure` and
+`account_deletion_reap` returned **zero matches**. No reap jobs; the reaper's own
+flag is absent in every environment.
+
+### Wave 1 posture on `main`
+
+`main`'s `render.yaml` currently declares every Wave 1 flag **`false`**, with
+`SECURELOGIC_RISK_ACCEPTANCE_ENABLED` **absent**. **An accidental Blueprint sync
+therefore cannot activate Wave 1 from the current `main`.**
+
+Behavioural confirmation: `/api/enterprise/entities`, `/api/decisions` and
+`/api/asset-registry/assets` all **404**. **No environment variable was changed
+on any service** during this promotion — only autoDeploy.
+
+### Blueprint
+
+**No Blueprint sync was performed.** Blueprint state itself was **not directly
+verified** — the Render CLI exposes no blueprints command. Confirming it remains
+paused is operator-owned.
+
+### Explicitly not done
+
+- §3 destructive activation **not executed**.
+- `SECURELOGIC_TDG_EFFECTIVE_FROM` **not set**.
+- **E-2 / E-3 not started. Stage 2 not started.**
+- **Demo untouched** — `securelogic-demo-engine` and `securelogic-demo-app`
+  remain `autoDeploy=no` on `98e97098`, alongside `securelogic-website` and
+  `securelogic-intelligence-api`. All four holds from §11 intact.
+
+### Squash-merge ancestry caveat — read before the next develop→main reconciliation
+
+The squash gave `main` a **new commit**, so `01a99a70`, `bddc984d` and
+`27cfcf40` are **not ancestors** of `main` even though their **content is**.
+`git log origin/main..origin/develop` still lists all five commits.
+
+Consequently the next `develop`→`main` promotion will re-present that content
+alongside `f19f7059`, and a **`render.yaml` conflict was expected**. That conflict
+is where the Wave 1 values re-enter the picture, and it must never be resolved
+mechanically — resolving it *is* the Wave 1 decision.
+
+> **RESOLVED IN ADVANCE — 2026-08-16, see §15.** The operator ruled that current
+> production Wave 1 state wins. The Wave 1 values have been reverted out of
+> `render.yaml` on `develop`, so `develop` and `main` now agree on every
+> production env key and the conflict no longer exists. The Wave 1 target is
+> retained in §12 as documentation.
+
+---
+
+## 15. Wave 1 IaC reconciliation — 2026-08-16
+
+**Ruling: current production Wave 1 state wins.** `f19f7059`'s Wave 1 `"true"`
+values are NOT carried into the promotion candidate. Wave 1 has not been
+authorized.
+
+### What differed, and what was resolved
+
+`origin/main` and `origin/develop` differed on **13 environment keys and nothing
+else** — no service, branch, plan, region, command or `autoDeploy` difference.
+All 13 came from `f19f7059`.
+
+| Service | Flag | Production-authorized | develop (f19f7059) | RESOLVED | Reason |
+|---|---|---|---|---|---|
+| engine | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| engine | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | **absent** | `"true"` | **removed** | Key does not exist in the authorized production state; adding it *is* the change |
+| engine | `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | `"true"` | `"false"` | **`"true"`** | The only Wave 1 flag that REMOVES a capability. Reverting keeps the legacy write path available |
+| app | `SECURELOGIC_RISK_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized — this is the nav/IA switch |
+| app | `SECURELOGIC_DASHBOARD_BRIEFING_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_ASSET_REGISTRY_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_DECISION_WORKSPACE_ENABLED` | `"false"` | `"true"` | **`"false"`** | Wave 1 unauthorized |
+| app | `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` | **absent** | `"true"` | **removed** | As above |
+| app | `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED` | `"true"` | `"false"` | **`"true"`** | As above |
+
+### Unchanged by this reconciliation, and verified so
+
+| Item | State | Note |
+|---|---|---|
+| `SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED` | `"false"` on engine + data-rights worker | E-1 already matched on both refs — it reached `main` via the dark promotion |
+| `SECURELOGIC_TDG_EFFECTIVE_FROM` | `""` | The destructive gate. Empty means zero deletions, ever |
+| E-2 configuration | **none exists in IaC** | Erasure is database-level and credential-gated; there is no key a sync could set |
+| `autoDeploy` holds | `securelogic-website` `false` | Identical on both refs; unchanged |
+| Blueprint ownership | 14 services | `demo-engine`, `demo-app`, `intelligence-api` remain dashboard-only (INF-1) |
+| Staging service blocks | untouched | Zero staging env changes; staging keeps its validated configuration |
+
+### Blueprint-sync safety proof
+
+Executed against the resolved file, not asserted:
+
+- Wave 1 experience flags **false or absent on every service**.
+- `LEGACY_VENDOR_WRITES` still `"true"` on both — the one flag whose Wave 1 value
+  would have *removed* a capability.
+- TDG flag `"false"` and `TDG_EFFECTIVE_FROM` `""` wherever declared.
+- **No erasure key exists in the file at all.**
+- `autoDeploy` hold preserved; service count still 14; no dashboard-only service
+  adopted.
+
+**Result: a Blueprint sync against the resolved file could not activate Wave 1,
+E-1 destructive retention, E-2 erasure, or any other currently unauthorized
+capability.** After reconciliation `develop` and `main` agree on **every
+production environment key**, so the next promotion carries **zero configuration
+change** — code and migrations only.
+
+### What is preserved, and where
+
+The Wave 1 target is **not discarded**. It remains in §12 as the approved
+candidate configuration, to be applied when — and only when — Wave 1 receives
+explicit activation authorization. It is documentation, not live IaC, which is
+precisely the distinction §12's hazard note asked for.
+
+---
+
+## 16. E-1 + E-2 dark production promotion — RELEASE PLAN (prepared 2026-08-16, NOT executed)
+
+**Scope:** E-1 (already in production) plus **E-2 Increments 1–3**, their
+supporting fixes, rollbacks and documentation. **Wave 1 remains unauthorized and
+is not in this release.**
+
+### 1. Content delta — the commit log is misleading, the tree is not
+
+`git log origin/main..origin/develop` shows **12 commits**, but four of them
+(`01a99a70`, `c2179e60`, `bddc984d`, `27cfcf40`) reached `main` by **cherry-pick
+during the E-1 dark promotion**, so their content is already there under
+different SHAs. `f19f7059` (Wave 1) is present in the log and **must never be
+promoted**.
+
+The ancestry-independent truth is the tree diff: **25 files, +5,496 / −17.**
+`render.yaml` appears in it, but its **values are identical to `main`** —
+the change is trailing comments only (proven: 311 env keys compared across 14
+services, zero differences).
+
+### 2. Migrations production would actually execute — FOUR
+
+`main` carries 228 migration files; `develop` carries 232. The runner keys on
+**filename**, and no existing migration was renamed, edited or removed —
+verified with `git diff --name-status`, which returns additions only.
+
+| # | Migration | What it does |
+|---|---|---|
+| 1 | `20261017_worm_guard_consolidation` | Nine WORM tables onto one shared guard; six superseded functions dropped |
+| 2 | `20261018_erasure_authorization` | `erasure_agent` (NOLOGIN), `erasure_certificates`, the guard's exception |
+| 3 | `20261019_erasure_execution_state` | Scope binding, expiry, attempt state, three SECURITY DEFINER helpers, RLS fail-open fix |
+| 4 | `20261020_erasure_actor_revalidation` | Actor revalidation + the platform-row anonymisation exception |
+
+Measured from a rebuilt 228-migration baseline that mirrors production:
+**61.6 ms total** (19.8 / 25.4 / 13.6 / 2.7). `schema_migrations` ends at **232**.
+
+### 3. Per-migration risk
+
+| Migration | Locking | Rewrite | Constraints / indexes | Existing-data assumptions | Rollback |
+|---|---|---|---|---|---|
+| `20261017` | **`AccessExclusiveLock` on 9 tables** for the trigger swap — measured, and the only real lock exposure in this release. Includes `security_audit_log`, which every request writes | None | No index; triggers only | The six named functions and their triggers exist (true — all applied) | `20261017_…_rollback.sql`, rehearsed clean-room |
+| `20261018` | New empty table only. **`GRANT` takes no table lock** (measured). `CREATE ROLE` is cluster-level | None | Triggers + CHECKs on a new empty table | `CREATEROLE` privilege (proven — `20260618` created `app_request` the same way, and this applied on staging); `worm_guard_mutation` exists from 17 | `20261018_…_rollback.sql`, refuses while any certificate exists |
+| `20261019` | `AccessExclusive` on `erasure_certificates` only — **empty by construction**, created minutes earlier by 18 | None (`ADD COLUMN … NOT NULL DEFAULT 0` is metadata-only in PG11+) | One validated CHECK — full scan of an empty table | `erasure_certificates` exists and is empty | `20261019_20261020_…_rollback.sql` **(new)** |
+| `20261020` | `CREATE OR REPLACE FUNCTION` — **no table lock** (measured) | None | None | `users` has `status` and `role` | as above |
+
+**The lock-timeout position:** the runner sets `lock_timeout = 5s` and
+`statement_timeout = 300s` per migration transaction. `20261017` therefore
+**aborts rather than hangs** if it cannot acquire `AccessExclusiveLock` — the
+deploy fails loudly and the old instance keeps serving. Production has had no
+organic traffic since 2026-07-03, so contention is unlikely, but the timeout is
+the control, not the traffic assumption.
+
+**Rollback chain, rehearsed end to end:** Increment **3 → 2 → 1**, and it
+**refuses in both wrong orders** ("2 trigger(s) still reference it";
+"role cannot be dropped because some objects depend on it"). After the full
+chain, every erasure function is gone, the role is gone, and org deletion raises
+again exactly as before E-2.
+
+### 4. Production pre-flight SQL (read-only)
+
+```sql
+-- P1a. Baseline count. EXPECT 229, not 228 — see the orphan note below.
+SELECT count(*) AS applied FROM schema_migrations;
+
+-- P1b. None of the four pending may already be stamped.
+SELECT count(*) AS pending_already_applied FROM schema_migrations
+ WHERE filename IN ('20261017_worm_guard_consolidation.sql',
+                    '20261018_erasure_authorization.sql',
+                    '20261019_erasure_execution_state.sql',
+                    '20261020_erasure_actor_revalidation.sql');   -- expect 0
+
+-- P1c. THE CHECK THAT ACTUALLY MATTERS. The count alone cannot distinguish
+--      "a harmless historical duplicate" from "a migration file that is
+--      missing". Compare both directions against the files on main:
+--        * stamped-but-no-file  -> expect EXACTLY ONE: 20260522_alert_preferences.sql
+--        * file-but-not-stamped -> expect NONE (anything here would re-apply)
+COPY (SELECT filename FROM schema_migrations ORDER BY filename) TO STDOUT;
+--      then, locally:
+--        git ls-tree --name-only origin/main db/migrations/ | sed 's#db/migrations/##' | sort > main_files
+--        comm -23 prod_stamped main_files    # expect: 20260522_alert_preferences.sql
+--        comm -13 prod_stamped main_files    # expect: empty
+
+-- P2. The six functions 20261017 replaces must exist, or the DROPs are no-ops
+--     and a trigger could be left pointing at nothing.
+SELECT proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='public' AND proname IN
+   ('applicability_forbid_mutation','security_audit_log_forbid_mutation',
+    'finding_lifecycle_events_forbid_mutation','risk_lifecycle_events_forbid_mutation',
+    'retention_policies_forbid_mutation','finding_risk_acceptances_forbid_delete')
+ ORDER BY 1;                                                       -- expect 6 rows
+
+-- P3. CREATE ROLE privilege — 20261018 needs it.
+SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user;   -- expect true
+SELECT 1 FROM pg_roles WHERE rolname='erasure_agent';              -- expect 0 rows
+
+-- P4. Lock contention on the tables 20261017 will swap triggers on.
+--     `l.pid <> pg_backend_pid()` is REQUIRED, not tidiness: without it the
+--     query counts the AccessShareLocks it is taking on those very tables while
+--     it runs, and reports contention that is entirely its own. That produced a
+--     false reading of "2" during rehearsal — run P4 ALONE, never folded into a
+--     statement that also reads legal_holds or retention_policies.
+SELECT c.relname, l.mode, count(*) AS blockers
+  FROM pg_locks l JOIN pg_class c ON c.oid=l.relation
+ WHERE c.relname IN ('security_audit_log','finding_lifecycle_events','risk_lifecycle_events',
+                     'applicability_assessments','applicability_evidence',
+                     'applicability_affected_entities','finding_risk_acceptances',
+                     'legal_holds','retention_policies')
+   AND l.granted
+   AND l.pid <> pg_backend_pid()
+ GROUP BY 1,2 ORDER BY 3 DESC;                                     -- expect 0 rows
+
+-- P5. E-1 is still dark, and nothing has drifted.
+SELECT count(*) FROM retention_policies;                            -- expect 0
+SELECT count(*) FROM legal_holds;                                   -- expect 0
+SELECT count(*) FROM ask_tool_invocations WHERE message_id IS NULL;  -- expect 0
+```
+
+#### The orphaned filename — expected, and why the count is 229
+
+The migration runner keys on **filename**. `7692c9e6` renamed
+`20260522_alert_preferences.sql` to `20260417_alert_preferences.sql` so the set
+applies in strict order to an empty database. Production had already stamped the
+old name, and stamped the new one at Stage 1 — so it carries **one bookkeeping
+row with no corresponding file**. This was documented at Stage 1 and proven
+harmless there (schema byte-identical before and after, no row loss).
+
+**Production therefore holds 229 stamped rows against 228 files on `main`.** The
+count is correct; an expectation of 228 was not.
+
+> **Corrected 2026-08-16.** This rule originally said "expect 228", written from
+> the file count without carrying forward the duplicate this document itself
+> records. The first execution attempt stopped on that deviation, investigated
+> it, and found the rule wrong rather than production drifted. The rule is fixed
+> here rather than waived at run time.
+
+**Decision rule (corrected):**
+
+| Check | GO condition |
+|---|---|
+| P1a | `count(*) = 229` |
+| P1b | `0` of the four pending already stamped |
+| **P1c** | stamped-but-no-file is **exactly** `20260522_alert_preferences.sql`, and file-but-not-stamped is **empty** |
+| P2 | returns `6` |
+| P3 | `rolcreaterole = true`, and `erasure_agent` does not exist |
+| P4 | no granted locks on the nine WORM tables, or trivially few |
+| P5 | `0 / 0 / 0` |
+
+Any deviation is a **STOP**. P1c is the load-bearing one: a raw count can hide a
+missing migration behind a harmless duplicate, and only the two-directional
+comparison distinguishes them.
+
+#### Pre-flight EXECUTED 2026-08-16 — results
+
+Read-only, against the production database, before any merge or deploy.
+
+| Check | Expected | Observed | |
+|---|---|---|---|
+| P1a | 229 | **229** | pass |
+| P1b | 0 | **0** | pass |
+| P1c | one named orphan / none missing | **`20260522_alert_preferences.sql` only / none missing** | pass |
+| P2 | 6 | **6** | pass |
+| P3 | true, absent | **`securelogic_user`, `rolcreaterole = t`, no `erasure_agent`** | pass |
+| P4 | 0 foreign locks | **0** (an initial reading of 2 was this query's own locks — see the note in P4) | pass |
+| P5 | 0/0/0 | **0 / 0 / 0** | pass |
+
+**Two supporting facts recorded from the same pre-flight:**
+
+- The production database user is **`securelogic_user` with `rolsuper = f`**.
+  Not a superuser — which independently confirms §6-as-corrected: the
+  application-as-owner **cannot** `SET SESSION AUTHORIZATION erasure_agent`,
+  because that requires superuser. The residual M-1 exposure is `DISABLE TRIGGER`
+  alone.
+- Production scale: **1 organization, 1 user, 85 `security_audit_log` rows, 0 Ask
+  conversations.** The `AccessExclusiveLock` in `20261017` lands on an 85-row
+  table with zero concurrent locks, so §3's lock exposure is real in principle
+  and negligible in fact for this promotion.
+
+### 5. Candidate verification
+
+**The candidate is `develop` HEAD at the moment of promotion, and its CI must be
+confirmed green immediately before the merge.** This section deliberately does
+not freeze a SHA: writing one here changes `develop`, which changes the SHA,
+which makes the note stale — the plan would be wrong the instant it was
+committed.
+
+Verified so far, each on the `develop` HEAD current at the time:
+
+| SHA | Result |
+|---|---|
+| `3b929bf5` | 7 green, `audit` inherited |
+| `0ee4bca4` (this plan + the Increment 3 rollback) | 7 green, `audit` inherited |
+
+`audit` is red on both and on `main` itself — the same seven inherited
+advisories, and **no dependency file appears in the delta**, so it is not
+attributable to this release.
+
+Locally, on the same content: unit **503 files / 8,193 passed**, isolation
+**191 passed**, fresh Postgres **232 migrations** in strict order, **three**
+rollback rehearsals passed (Increment 1, Increment 2, and the full 3→2→1 chain),
+and the `[SEED]` lifecycle rehearsal passed.
+
+**Pre-merge check:** re-run the §1 tree diff and the §6 configuration proof
+against the actual candidate before merging. Both are scripted comparisons, not
+judgement calls, and both take seconds.
+
+### 6. Configuration safety
+
+Wave 1 flags **false or absent on every service**; `LEGACY_VENDOR_WRITES` still
+`"true"`; TDG flag `"false"` and `SECURELOGIC_TDG_EFFECTIVE_FROM` `""`; **no
+erasure key exists in IaC at all**; `autoDeploy` holds unchanged; 14 services
+with the three dashboard-only ones still unowned. A Blueprint sync against this
+file could not activate anything unauthorized.
+
+### 7. Erasure remains impossible after migration
+
+Verified on the migrated baseline: **`erasure_agent.rolcanlogin = false`**. No
+erasure credential exists in `render.yaml`, `.env.example`, or any code path —
+nothing reads an erasure DSN. Increment 4 is the only thing that changes this,
+and it needs its own authorization.
+
+### 8. Controlled deployment order
+
+**A plain `develop` → `main` merge CONFLICTS** — five files, because the E-1
+content reached `main` by cherry-pick and git sees independent adds. Use the
+proven release-branch approach:
+
+```
+git checkout -b release/e1-e2-dark origin/main
+git checkout origin/develop -- $(git diff --name-only origin/main origin/develop)
+git commit    # verify: git diff --cached origin/develop  ->  EMPTY
+```
+
+This was executed as a dry run: the resulting tree is **byte-identical to
+`develop`**, and the diff against `main` is exactly the 25-file delta.
+
+Then, per Stage-1 discipline:
+
+1. `autoDeploy=false` on **all ten** `main`-tracking services; **re-read from the
+   API** to confirm 6 of 6 off and the four holds intact.
+2. Merge the release PR (squash). Confirm it deployed nothing.
+3. **Engine first** — it migrates. Validate: `/health` db connected; governance
+   routes 404; `POST /api/ask` 401; `erasure_agent` still NOLOGIN.
+4. Workers: vendor-extraction → posture → intelligence → **data-rights last**
+   (it is the only worker carrying E-2 code).
+5. **App last.** Dependency analysis: E-2 adds no app code and no new app→engine
+   call, so no other order is required.
+6. Restore `autoDeploy` on the six; **re-read from the API** to confirm.
+7. Post-deploy proof: SHA on all six, migrations applied, TDG dark, erasure
+   unreachable, Wave 1 unchanged, no new P0/P1.
+
+**Stop rule:** if any service fails validation, stop at that service. Do not
+continue deploying downstream to complete the release.
+
+### 9. Rollback
+
+**Rollback Point A (code).** Revert the six promoted services to `5e108365`,
+leave all four migrations applied, change no flag. Safe because every one is
+additive and the capability is inert: the WORM consolidation is
+behaviour-identical, and the erasure mechanism cannot act without a credential.
+**This is the expected rollback.**
+
+**Schema rollback is a different act and is NOT part of an operational
+rollback.** It requires separate authorization, runs `3 → 2 → 1`, and each script
+refuses out of order or while evidence exists (certificates, sweep jobs,
+orphaned ledger rows). Rehearsed clean-room, never against production-shaped
+data.
+
+**Not reversible at all:** nothing in this release destroys data, so there is no
+data rollback to define. That property is what makes Rollback Point A
+sufficient.
+
+### 10. What would make this NO-GO
+
+| Condition | Status |
+|---|---|
+| Any pre-flight query deviates (§4 corrected decision rule) | **Clear — executed 2026-08-16, all seven checks pass**. Re-run immediately before the merge |
+| `rolcreaterole = false` on the production database user | **Clear — `securelogic_user`, `rolcreaterole = t`** |
+| Wave 1 values present in the candidate | **Clear** — 311 keys compared, zero differences |
+| `SECURELOGIC_TDG_EFFECTIVE_FROM` non-empty anywhere | **Clear** |
+| An erasure credential existing in IaC or env | **Clear** — none exists |
+| CI red on the candidate beyond inherited `audit` | **Clear** |
+| Lock contention on the nine WORM tables at deploy time | **Clear at pre-flight — 0 granted locks.** Re-check at P4 immediately before the merge |
+| A migration edited or renamed rather than added | **Clear** — additions only |
+| Demo or the four `autoDeploy` holds disturbed | **Clear** — untouched |
