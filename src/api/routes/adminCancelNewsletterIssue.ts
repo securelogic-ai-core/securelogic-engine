@@ -1,5 +1,9 @@
 import { Router } from "express"
-import { pg } from "../infra/postgres.js"
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js"
 import { canCancelIssue } from "../lib/newsletterLifecycle.js"
 
@@ -22,7 +26,7 @@ router.post("/newsletter-issues/:id/cancel", async (req, res) => {
       return
     }
 
-    const issueResult = await pg.query(
+    const issueResult = await pgElevated.query(
       `
       SELECT id, organization_id, title, status, created_at
       FROM newsletter_issues
@@ -54,7 +58,7 @@ router.post("/newsletter-issues/:id/cancel", async (req, res) => {
       return
     }
 
-    const updateResult = await pg.query(
+    const updateResult = await pgElevated.query(
       `
       UPDATE newsletter_issues
       SET status = 'canceled',
@@ -65,7 +69,7 @@ router.post("/newsletter-issues/:id/cancel", async (req, res) => {
       [issueId]
     )
 
-    await pg.query(
+    await pgElevated.query(
       `
       UPDATE newsletter_deliveries
       SET status = 'failed'

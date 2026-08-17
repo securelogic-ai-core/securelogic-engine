@@ -9,6 +9,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -49,7 +50,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;
 
@@ -111,7 +112,7 @@ router.get(
       res.status(500).json({ error: "risk_scale_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/risk-scale/presets
@@ -124,7 +125,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     if (!orgCtx?.organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
@@ -150,7 +151,7 @@ router.get(
       res.status(500).json({ error: "risk_scale_presets_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    PUT /api/risk-scale
@@ -173,7 +174,7 @@ router.put(
   // Org-wide risk scale is administrative — it defines what the platform
   // calls critical. Admin (or API-key) only.
   requireAdminRole,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const orgCtx = (req as any).organizationContext ?? null;
     const organizationId = orgCtx?.organizationId ?? null;
 
@@ -282,6 +283,6 @@ router.put(
       res.status(500).json({ error: "risk_scale_put_failed" });
     }
   }
-);
+));
 
 export default router;

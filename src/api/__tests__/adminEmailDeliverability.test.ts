@@ -24,8 +24,9 @@ const pgQuery = vi.hoisted(() => vi.fn());
 const providerLookup = vi.hoisted(() => vi.fn());
 
 vi.mock("../infra/postgres.js", () => ({
-  pg: { query: pgQuery },
-  pgElevated: { query: vi.fn() },
+  // M-1 PR-2: the admin surface reads through the elevated channel now.
+  pg: { query: vi.fn() },
+  pgElevated: { query: pgQuery },
   withTenant: vi.fn()
 }));
 vi.mock("../infra/providerSuppression.js", () => ({

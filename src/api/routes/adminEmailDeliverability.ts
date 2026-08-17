@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { getProviderSuppression } from "../infra/providerSuppression.js";
 
@@ -80,7 +84,7 @@ router.get("/email-deliverability/:email", async (req, res) => {
 
   try {
     // Local suppression row (written by the provider bounce/complaint webhook).
-    const suppression = await pg.query<SuppressionRow>(
+    const suppression = await pgElevated.query<SuppressionRow>(
       `SELECT id, email, reason, source, created_at
          FROM email_suppressions
         WHERE LOWER(email) = LOWER($1)
@@ -89,7 +93,7 @@ router.get("/email-deliverability/:email", async (req, res) => {
     );
 
     // The account, if any — "stranded" is only meaningful when one exists.
-    const user = await pg.query<UserRow>(
+    const user = await pgElevated.query<UserRow>(
       `SELECT id, email_verified, created_at, organization_id
          FROM users
         WHERE LOWER(email) = LOWER($1)

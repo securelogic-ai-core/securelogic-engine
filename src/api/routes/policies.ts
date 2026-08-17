@@ -17,6 +17,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -120,7 +121,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -224,7 +225,7 @@ router.post(
       res.status(500).json({ error: "policy_create_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/policies
@@ -236,7 +237,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -363,7 +364,7 @@ router.get(
       res.status(500).json({ error: "policies_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/policies/:id
@@ -375,7 +376,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -427,7 +428,7 @@ router.get(
       res.status(500).json({ error: "policy_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    PATCH /api/policies/:id
@@ -439,7 +440,7 @@ router.patch(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -625,7 +626,7 @@ router.patch(
       res.status(500).json({ error: "policy_patch_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/policies/:id/controls
@@ -638,7 +639,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -698,7 +699,7 @@ router.post(
       res.status(500).json({ error: "policy_link_control_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/policies/:id/controls/:controlId
@@ -712,7 +713,7 @@ router.delete(
   requireEntitlement("premium"),
   denyContributor(),
   requireAdminRole,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId =
       (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
@@ -757,6 +758,6 @@ router.delete(
       res.status(500).json({ error: "policy_unlink_control_failed" });
     }
   }
-);
+));
 
 export default router;

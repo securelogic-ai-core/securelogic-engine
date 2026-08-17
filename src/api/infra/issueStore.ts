@@ -1,5 +1,9 @@
 import { ensureRedisConnected, redisReady } from "./redis.js";
-import { pg } from "./postgres.js";
+// M-1 PR-2: published_artifacts is SHARED-REF (app_request holds SELECT only;
+// writes are owner-side by design) and the publish backup below is
+// fire-and-forget — both the grant matrix and the A04-G1 β1 rule (no ambient
+// pg from detached continuations) put this store on the elevated channel.
+import { pgElevated } from "./postgres.js";
 import { logger } from "./logger.js";
 
 const KEY_LATEST = "issues:latest";
@@ -244,7 +248,7 @@ export async function getIssueArtifact(
 
   // Postgres fallback: durable backup written at publish time.
   try {
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `SELECT artifact_json, bytes FROM published_artifacts WHERE issue_number = $1 LIMIT 1`,
       [issueNumber]
     );
@@ -358,7 +362,7 @@ export async function publishIssueArtifact(
 
   // Durable backup: write to Postgres so artifacts survive Redis restarts.
   // Fire-and-forget — a Postgres failure must not fail the publish operation.
-  pg.query(
+  pgElevated.query(
     `
     INSERT INTO published_artifacts (issue_number, artifact_json, bytes, published_at)
     VALUES ($1, $2, $3, NOW())

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -14,7 +15,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null;
       const organizationId = organizationContext?.organizationId;
@@ -59,6 +60,6 @@ router.get(
       });
     }
   }
-);
+));
 
 export default router;

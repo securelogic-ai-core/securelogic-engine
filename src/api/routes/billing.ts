@@ -3,7 +3,14 @@ import { logger } from "../infra/logger.js";
 import { getStripe } from "../infra/stripeClient.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: billing surface. Org context exists (requireApiKey chain), but
+// every DB site reads/writes the ROOT-TENANT `organizations` row (Stripe
+// customer id, trial timestamps) — writes the A04-G1 grant matrix keeps
+// owner-side BY DESIGN (Tier C: "admin / Stripe / signup paths on the owner
+// role"; app_request holds SELECT only). The handlers also block on Stripe
+// API calls, which must not hold a tenant transaction open. Elevated channel,
+// per the grant-matrix design.
+import { pgElevated } from "../infra/postgres.js";
 
 const router = Router();
 
@@ -31,7 +38,7 @@ async function resolveStripeCustomer(
   description: string | null,
   apiKeyId: string | null
 ): Promise<string> {
-  const existing = await pg.query(
+  const existing = await pgElevated.query(
     `SELECT stripe_customer_id FROM organizations WHERE id = $1 LIMIT 1`,
     [organizationId]
   );
@@ -50,7 +57,7 @@ async function resolveStripeCustomer(
     },
   });
 
-  await pg.query(
+  await pgElevated.query(
     `UPDATE organizations SET stripe_customer_id = $1 WHERE id = $2`,
     [customer.id, organizationId]
   );
@@ -192,7 +199,7 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
       // by the webhook when a trial actually begins (not here), so an abandoned
       // trial checkout never burns the org's single trial. On any DB error the
       // outer catch returns 500 — no session, no trial (fail closed).
-      const priorTrial = await pg.query<{ trial_started_at: string | null }>(
+      const priorTrial = await pgElevated.query<{ trial_started_at: string | null }>(
         `SELECT trial_started_at FROM organizations WHERE id = $1 LIMIT 1`,
         [orgId]
       );
@@ -391,7 +398,7 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       entitlement_level:           string;
       stripe_customer_id:          string | null;
       payment_failed_at:           string | null;

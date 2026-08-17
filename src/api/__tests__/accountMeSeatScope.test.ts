@@ -10,7 +10,11 @@ import request from "supertest";
 const ORG = "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb";
 const queryMock = vi.fn();
 
-vi.mock("../infra/postgres.js", () => ({ pg: { query: (...a: unknown[]) => queryMock(...a) } }));
+vi.mock("../infra/postgres.js", () => ({
+  pg: { query: (...a: unknown[]) => queryMock(...a) },
+  // M-1 PR-2: /me is asTenant-wrapped; passthrough keeps the unit test DB-free.
+  withTenant: (_orgId: unknown, fn: () => unknown) => fn()
+}));
 vi.mock("../infra/logger.js", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 vi.mock("../middleware/requireApiKey.js", () => ({
   requireApiKey: (req: Record<string, unknown>, _res: unknown, next: () => void) => {

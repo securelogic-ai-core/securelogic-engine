@@ -3,6 +3,7 @@ import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { scopeFromRequest } from "../lib/seatScope.js";
 import { seatModelEnabled } from "../middleware/requireSeat.js";
 
@@ -20,7 +21,7 @@ const router = Router();
    Never exposes key_hash, stripe_customer_id, or revoked_at.
    ========================================================= */
 
-router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, next) => {
+router.get("/me", requireApiKey, attachOrganizationContext, asTenant(async (req, res, next) => {
   try {
     const apiKey = (req as any).apiKey as Record<string, unknown>;
     const orgId = typeof apiKey.organization_id === "string"
@@ -106,6 +107,6 @@ router.get("/me", requireApiKey, attachOrganizationContext, async (req, res, nex
     logger.error({ event: "me_failed", err }, "GET /api/me failed");
     next(err);
   }
-});
+}));
 
 export default router;

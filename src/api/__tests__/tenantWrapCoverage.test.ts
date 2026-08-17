@@ -45,8 +45,14 @@ describe("EAR P8 — asTenant wrap coverage", () => {
       expect(wrapped.length).toBe(spec.endpoints - spec.unwrapped.length);
 
       expect(src).toContain('import { asTenant } from "../middleware/asTenant.js";');
-      // The wrap owns the request transaction — no nested withTenant may remain.
-      expect(src, `${file} must not nest withTenant inside asTenant`).not.toContain("withTenant(");
+      // The wrap owns the request transaction — no nested withTenant may remain
+      // inside a wrapped handler. The ONLY sanctioned use is vendors.ts's
+      // documented-exception CSV export (M-1 PR-2): the streaming handler is
+      // unwrapped and scopes its SELECT in withTenant instead. Count-pinned so
+      // a second use still fails here.
+      const withTenantUses = (src.match(/withTenant\(/g) ?? []).length;
+      const allowed = file === "vendors.ts" ? 1 : 0; // the export.csv call only
+      expect(withTenantUses, `${file}: unexpected withTenant use — nested scopes are forbidden`).toBe(allowed);
 
       for (const exception of spec.unwrapped) {
         expect(src).toContain(exception);

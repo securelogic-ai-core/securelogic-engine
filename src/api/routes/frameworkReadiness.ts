@@ -21,6 +21,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -48,7 +49,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -259,6 +260,6 @@ router.get(
       res.status(500).json({ error: "framework_readiness_failed" });
     }
   }
-);
+));
 
 export default router;

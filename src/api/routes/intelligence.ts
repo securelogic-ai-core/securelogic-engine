@@ -27,7 +27,7 @@ function isValidUuid(value: unknown): value is string {
    Ordered newest-first.
    ========================================================= */
 
-router.get("/intelligence", async (req, res, next) => {
+router.get("/intelligence", asTenant(async (req, res, next) => {
   try {
     const orgId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -49,7 +49,7 @@ router.get("/intelligence", async (req, res, next) => {
     logger.error({ event: "intelligence_list_failed", err }, "GET /api/intelligence failed");
     next(err);
   }
-});
+}));
 
 /* =========================================================
    GET /api/intelligence/latest
@@ -58,7 +58,7 @@ router.get("/intelligence", async (req, res, next) => {
    to the calling org.
    ========================================================= */
 
-router.get("/intelligence/latest", async (req, res, next) => {
+router.get("/intelligence/latest", asTenant(async (req, res, next) => {
   try {
     const orgId =
       (req as any).organizationContext?.organizationId ?? null;
@@ -86,7 +86,7 @@ router.get("/intelligence/latest", async (req, res, next) => {
     logger.error({ event: "intelligence_latest_failed", err }, "GET /api/intelligence/latest failed");
     next(err);
   }
-});
+}));
 
 /* =========================================================
    GET /api/intelligence/:id
@@ -96,7 +96,7 @@ router.get("/intelligence/latest", async (req, res, next) => {
    different org or does not exist.
    ========================================================= */
 
-router.get("/intelligence/:id", async (req, res, next) => {
+router.get("/intelligence/:id", asTenant(async (req, res, next) => {
   try {
     const id = req.params["id"];
 
@@ -131,7 +131,7 @@ router.get("/intelligence/:id", async (req, res, next) => {
     logger.error({ event: "intelligence_get_failed", err }, "GET /api/intelligence/:id failed");
     next(err);
   }
-});
+}));
 
 // ===========================================================================
 // POST /api/intelligence/summary

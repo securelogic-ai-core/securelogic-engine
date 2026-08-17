@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import {
   classifyConfidence,
@@ -20,7 +21,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("starter"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationContext = (req as any).organizationContext ?? null
       const organizationId = organizationContext?.organizationId
@@ -115,6 +116,6 @@ router.get(
       })
     }
   }
-)
+))
 
 export default router

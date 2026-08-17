@@ -1,5 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: inbound provider webhook (svix-signature-authenticated, no org
+// context exists or can exist). Writes email_provider_events + suppressions —
+// system-level Tier-D/owner-side tables — inside its own explicit transaction,
+// so the elevated owner channel is the correct disposition.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { verifyWebhookSignature } from "../infra/verifyWebhookSignature.js";
 import {
@@ -21,7 +25,7 @@ function normalizeEventType(value: unknown): string {
 }
 
 router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
-  const client = await pg.connect();
+  const client = await pgElevated.connect();
 
   try {
     const rawBody =

@@ -24,6 +24,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -303,7 +304,7 @@ router.post(
   "/me/dismiss-banner",
   requireApiKey,
   attachOrganizationContext,
-  dismissBannerRoute
+  asTenant(dismissBannerRoute)
 );
 
 export default router;

@@ -1,5 +1,9 @@
 import { Router } from "express"
-import { pg } from "../infra/postgres.js"
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js"
 
 const UUID_RE =
@@ -21,7 +25,7 @@ router.delete("/email-suppressions/:id", async (req, res) => {
       return
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       DELETE FROM email_suppressions
       WHERE id = $1

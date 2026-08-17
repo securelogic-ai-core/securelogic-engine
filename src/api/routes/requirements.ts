@@ -20,6 +20,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -73,7 +74,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -170,7 +171,7 @@ router.post(
       client.release();
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/requirements
@@ -186,7 +187,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -284,7 +285,7 @@ router.get(
       res.status(500).json({ error: "requirements_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/requirements/:id
@@ -300,7 +301,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -347,7 +348,7 @@ router.get(
       res.status(500).json({ error: "requirement_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/frameworks/:id/requirements
@@ -370,7 +371,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -542,7 +543,7 @@ router.get(
       res.status(500).json({ error: "framework_requirements_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/requirement-responses
@@ -560,7 +561,7 @@ router.post(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -757,7 +758,7 @@ router.post(
       res.status(500).json({ error: "requirement_response_upsert_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/requirement-responses
@@ -775,7 +776,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireEntitlement("premium"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -889,6 +890,6 @@ router.get(
       res.status(500).json({ error: "requirement_responses_list_failed" });
     }
   }
-);
+));
 
 export default router;

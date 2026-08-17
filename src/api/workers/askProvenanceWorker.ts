@@ -44,7 +44,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-import { pg, withTenant } from "../infra/postgres.js";
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import {
   LOCK_TIMEOUT_MS,
@@ -107,7 +107,9 @@ const CLAIM_SQL = `
    RETURNING id, organization_id, requested_by_user_id, job_type, status, attempts, max_attempts, payload`;
 
 export async function claimNextProvenanceJob(workerId: string): Promise<JobRow | null> {
-  const result = await pg.query<JobRow>(CLAIM_SQL, [
+  // M-1 PR-2: the claim poll scans `jobs` ACROSS orgs (no org known until a
+  // row is claimed) — elevated channel, matching every sibling worker.
+  const result = await pgElevated.query<JobRow>(CLAIM_SQL, [
     workerId,
     [...ASK_PROVENANCE_JOB_TYPES],
     LOCK_TIMEOUT_MS,
@@ -340,19 +342,22 @@ export async function processClaimedProvenanceJob(
 }
 
 async function recordSuccess(job: JobRow, result: Record<string, unknown>): Promise<void> {
-  await pg.query(
+  // M-1 PR-2: terminal write scoped to the claimed job's org (RLS-correct
+  // post-flip; `jobs` carries a policy). Sibling-worker pattern.
+  await withTenant(job.organization_id, () => pg.query(
     `UPDATE jobs
         SET status = 'succeeded', result = $2::jsonb, error = NULL,
             locked_by = NULL, locked_at = NULL,
             completed_at = now(), updated_at = now()
       WHERE id = $1`,
     [job.id, JSON.stringify(result)]
-  );
+  ));
 }
 
 async function recordFailure(job: JobRow, err: unknown): Promise<void> {
   const decision = decideFailureState(job, err, new Date());
-  await pg.query(
+  // M-1 PR-2: terminal write scoped to the claimed job's org (see recordSuccess).
+  await withTenant(job.organization_id, () => pg.query(
     `UPDATE jobs
         SET status = $2, error = $3, next_attempt_at = $4,
             scheduled_for = COALESCE($4, scheduled_for),
@@ -364,7 +369,7 @@ async function recordFailure(job: JobRow, err: unknown): Promise<void> {
       err instanceof Error ? err.message : String(err),
       decision.nextAttemptAt,
     ]
-  );
+  ));
 
   // A job that will never run again must stop the turn saying "processing" —
   // it is uncited, permanently, and has to say so. BOTH terminal states count:
