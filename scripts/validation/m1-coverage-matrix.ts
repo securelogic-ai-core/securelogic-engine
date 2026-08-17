@@ -76,7 +76,6 @@ const TIER_D_ALLOWLIST = new Set([
   "email_provider_events",
   "feed_health",
   "sources",
-  "sso_login_codes",
   "intelligence_event_timeline",
   "intelligence_event_workflow_triggers"
 ]);
