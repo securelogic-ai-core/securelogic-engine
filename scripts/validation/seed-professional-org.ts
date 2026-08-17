@@ -64,6 +64,7 @@ import argon2 from "argon2";
 import { Pool, type PoolClient } from "pg";
 
 import { recordAllCurrentConsents } from "../../src/api/lib/legalConsent.js";
+import { resolvePgSsl } from "../../src/api/infra/pgSsl.js";
 
 config();
 
@@ -93,7 +94,7 @@ const TEARDOWN_ONLY = process.argv.includes("--teardown");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false },
+  ssl: process.env.DATABASE_URL?.includes("localhost") ? false : resolvePgSsl(),
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

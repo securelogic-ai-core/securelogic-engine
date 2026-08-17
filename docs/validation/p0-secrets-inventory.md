@@ -1,0 +1,187 @@
+# Dashboard-managed secrets inventory (sync: false) — generated 2026-08-17 from render.yaml
+
+For the DR_PLAN §3 sealed offline export: every key below exists ONLY in the
+Render dashboard. Export each value to the org password manager, dated.
+
+## securelogic-engine  (33)
+- [ ] ALERT_WEBHOOK_URL
+- [ ] ANTHROPIC_API_KEY
+- [ ] APP_BASE_URL
+- [ ] BRIEF_FROM_EMAIL
+- [ ] BRIEF_UNSUBSCRIBE_BASE_URL
+- [ ] DATABASE_URL
+- [ ] ENGINE_URL_BASE
+- [ ] FIELD_ENCRYPTION_KEY
+- [ ] JWT_SECRET
+- [ ] LEMON_WEBHOOK_SECRET
+- [ ] MFA_SECRET_KEY
+- [ ] NEWSLETTER_FROM_EMAIL
+- [ ] OPENAI_API_KEY
+- [ ] REDIS_URL
+- [ ] RESEND_API_KEY
+- [ ] RESEND_WEBHOOK_SECRET
+- [ ] SCHEDULER_SECRET
+- [ ] SECURELOGIC_ADMIN_ALLOWED_IPS
+- [ ] SECURELOGIC_ADMIN_KEY
+- [ ] SECURELOGIC_SIGNING_SECRET
+- [ ] SENTRY_DSN_ENGINE
+- [ ] SENTRY_ENV
+- [ ] STRIPE_CANCEL_URL
+- [ ] STRIPE_PORTAL_CONFIGURATION_ID
+- [ ] STRIPE_PORTAL_RETURN_URL
+- [ ] STRIPE_PRICE_ID_PLATFORM
+- [ ] STRIPE_PRICE_ID_PLATFORM_ANNUAL
+- [ ] STRIPE_PRICE_ID_PROFESSIONAL
+- [ ] STRIPE_PRICE_ID_TEAMS
+- [ ] STRIPE_SECRET_KEY
+- [ ] STRIPE_SUCCESS_URL
+- [ ] STRIPE_WEBHOOK_SECRET
+- [ ] UNSUBSCRIBE_SECRET
+
+## securelogic-engine-staging  (38)
+- [ ] ALERT_WEBHOOK_URL
+- [ ] ANTHROPIC_API_KEY
+- [ ] APP_BASE_URL
+- [ ] BRIEF_FROM_EMAIL
+- [ ] BRIEF_UNSUBSCRIBE_BASE_URL
+- [ ] DATABASE_URL
+- [ ] ENGINE_URL_BASE
+- [ ] FIELD_ENCRYPTION_KEY
+- [ ] JWT_SECRET
+- [ ] LEMON_WEBHOOK_SECRET
+- [ ] MFA_SECRET_KEY
+- [ ] NEWSLETTER_FROM_EMAIL
+- [ ] OPENAI_API_KEY
+- [ ] R2_ACCESS_KEY_ID
+- [ ] R2_ACCOUNT_ID
+- [ ] R2_BUCKET
+- [ ] R2_ENDPOINT
+- [ ] R2_SECRET_ACCESS_KEY
+- [ ] REDIS_URL
+- [ ] RESEND_API_KEY
+- [ ] RESEND_WEBHOOK_SECRET
+- [ ] SCHEDULER_SECRET
+- [ ] SECURELOGIC_ADMIN_ALLOWED_IPS
+- [ ] SECURELOGIC_ADMIN_KEY
+- [ ] SECURELOGIC_SIGNING_SECRET
+- [ ] SENTRY_DSN_ENGINE
+- [ ] SENTRY_ENV
+- [ ] STRIPE_CANCEL_URL
+- [ ] STRIPE_PORTAL_CONFIGURATION_ID
+- [ ] STRIPE_PORTAL_RETURN_URL
+- [ ] STRIPE_PRICE_ID_PLATFORM
+- [ ] STRIPE_PRICE_ID_PLATFORM_ANNUAL
+- [ ] STRIPE_PRICE_ID_PROFESSIONAL
+- [ ] STRIPE_PRICE_ID_TEAMS
+- [ ] STRIPE_SECRET_KEY
+- [ ] STRIPE_SUCCESS_URL
+- [ ] STRIPE_WEBHOOK_SECRET
+- [ ] UNSUBSCRIBE_SECRET
+
+## securelogic-intelligence-worker  (11)
+- [ ] ALERT_WEBHOOK_URL
+- [ ] ANTHROPIC_API_KEY
+- [ ] APP_BASE_URL
+- [ ] DATABASE_URL
+- [ ] ENGINE_URL_BASE
+- [ ] LOG_LEVEL
+- [ ] NEWSLETTER_APP_URL
+- [ ] NEWSLETTER_FROM_EMAIL
+- [ ] REDIS_URL
+- [ ] RESEND_API_KEY
+- [ ] UNSUBSCRIBE_SECRET
+
+## securelogic-intelligence-worker-staging  (11)
+- [ ] ALERT_WEBHOOK_URL
+- [ ] ANTHROPIC_API_KEY
+- [ ] APP_BASE_URL
+- [ ] DATABASE_URL
+- [ ] ENGINE_URL_BASE
+- [ ] LOG_LEVEL
+- [ ] NEWSLETTER_APP_URL
+- [ ] NEWSLETTER_FROM_EMAIL
+- [ ] REDIS_URL
+- [ ] RESEND_API_KEY
+- [ ] UNSUBSCRIBE_SECRET
+
+## securelogic-posture-worker  (2)
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+
+## securelogic-posture-worker-staging  (2)
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+
+## securelogic-data-rights-worker  (7)
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+- [ ] R2_ACCESS_KEY_ID
+- [ ] R2_ACCOUNT_ID
+- [ ] R2_BUCKET
+- [ ] R2_ENDPOINT
+- [ ] R2_SECRET_ACCESS_KEY
+
+## securelogic-data-rights-worker-staging  (7)
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+- [ ] R2_ACCESS_KEY_ID
+- [ ] R2_ACCOUNT_ID
+- [ ] R2_BUCKET
+- [ ] R2_ENDPOINT
+- [ ] R2_SECRET_ACCESS_KEY
+
+## securelogic-vendor-extraction-worker  (8)
+- [ ] ANTHROPIC_API_KEY
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+- [ ] R2_ACCESS_KEY_ID
+- [ ] R2_ACCOUNT_ID
+- [ ] R2_BUCKET
+- [ ] R2_ENDPOINT
+- [ ] R2_SECRET_ACCESS_KEY
+
+## securelogic-vendor-extraction-worker-staging  (8)
+- [ ] ANTHROPIC_API_KEY
+- [ ] DATABASE_URL
+- [ ] LOG_LEVEL
+- [ ] R2_ACCESS_KEY_ID
+- [ ] R2_ACCOUNT_ID
+- [ ] R2_BUCKET
+- [ ] R2_ENDPOINT
+- [ ] R2_SECRET_ACCESS_KEY
+
+## securelogic-app  (10)
+- [ ] ENGINE_API_URL
+- [ ] NEXT_PUBLIC_ENGINE_URL
+- [ ] NEXT_PUBLIC_SENTRY_DSN_APP
+- [ ] NEXT_PUBLIC_SENTRY_ENV
+- [ ] NEXT_PUBLIC_SITE_URL
+- [ ] SENTRY_DSN_APP
+- [ ] SESSION_ABSOLUTE_SECONDS
+- [ ] SESSION_IDLE_SECONDS
+- [ ] SESSION_SECRET
+- [ ] SESSION_TIMEOUT_SECONDS
+
+## securelogic-app-staging  (10)
+- [ ] ENGINE_API_URL
+- [ ] NEXT_PUBLIC_ENGINE_URL
+- [ ] NEXT_PUBLIC_SENTRY_DSN_APP
+- [ ] NEXT_PUBLIC_SENTRY_ENV
+- [ ] NEXT_PUBLIC_SITE_URL
+- [ ] SENTRY_DSN_APP
+- [ ] SESSION_ABSOLUTE_SECONDS
+- [ ] SESSION_IDLE_SECONDS
+- [ ] SESSION_SECRET
+- [ ] SESSION_TIMEOUT_SECONDS
+
+## securelogic-website  (3)
+- [ ] NEXT_PUBLIC_API_URL
+- [ ] NEXT_PUBLIC_APP_URL
+- [ ] NEXT_PUBLIC_SITE_URL
+
+## securelogic-website-staging  (3)
+- [ ] NEXT_PUBLIC_API_URL
+- [ ] NEXT_PUBLIC_APP_URL
+- [ ] NEXT_PUBLIC_SITE_URL
+
+**Total: 153 sync:false instances across services; 52 distinct keys.**

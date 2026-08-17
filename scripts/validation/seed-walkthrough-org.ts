@@ -103,6 +103,7 @@ import { Pool, type PoolClient } from "pg";
 // The PRODUCTION canonicalizer — imported, never re-implemented, so seeded
 // canonical_key values cannot drift from what the resolver computes at runtime.
 import { canonicalizeVendorName } from "../../src/api/lib/vendorNameCanonical.js";
+import { resolvePgSsl } from "../../src/api/infra/pgSsl.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(DATABASE_URL);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: isLocal ? undefined : { rejectUnauthorized: false },
+  ssl: isLocal ? undefined : resolvePgSsl(),
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
