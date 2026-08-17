@@ -52,6 +52,7 @@
 
 import type { Request } from "express";
 import ipaddr from "ipaddr.js";
+import { ipKeyGenerator } from "express-rate-limit";
 
 /** Cloudflare's true-client-IP header. Overwritten at the edge on every request. */
 export const CLOUDFLARE_CLIENT_IP_HEADER = "cf-connecting-ip";
@@ -211,4 +212,33 @@ export function resolveThrottleIdentity(req: Request): ThrottleIdentity {
     ip: resolved.ip,
     source: resolved.source
   };
+}
+
+/**
+ * keyGenerator for `express-rate-limit` / `express-slow-down` sites
+ * (rate-limit client-identity package, 2026-08-17).
+ *
+ * Before this existed, 12 enforcing limiters had NO keyGenerator and two more
+ * fed `ipKeyGenerator(req.ip)` — all keying on the ROTATING Cloudflare edge
+ * node documented at the top of this file. Consequences, both measured-real:
+ * an abuser traversing PoPs received a FRESH budget per edge (login spraying,
+ * signup abuse, forgot-password mail-bombing, recovery-claim and invite-token
+ * brute force, global-limiter evasion), while legitimate callers sharing a PoP
+ * consumed EACH OTHER'S budgets.
+ *
+ * This is the same trusted mechanism the enforcing admin controls key on —
+ * resolveThrottleIdentity → express-rate-limit's own `ipKeyGenerator` (which
+ * buckets IPv6 callers by /56 so one host cannot mint per-address budgets from
+ * a delegated prefix). Unresolvable callers collapse onto the shared
+ * UNRESOLVED_THROTTLE_KEY bucket — collectively throttled sooner, never a
+ * private allowance. Off Cloudflare (local dev, tests) the resolved identity
+ * IS `req.ip`, so behaviour there is unchanged by construction.
+ *
+ * Thresholds, windows, stores and fail-open semantics are each limiter's own
+ * business and are untouched — only the identity moved (the adminLockout /
+ * adminRateLimit precedent above).
+ */
+export function rateLimitKeyGenerator(req: Request): string {
+  const identity = resolveThrottleIdentity(req);
+  return identity.ip ? ipKeyGenerator(identity.ip) : UNRESOLVED_THROTTLE_KEY;
 }

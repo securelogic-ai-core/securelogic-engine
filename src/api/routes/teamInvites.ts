@@ -18,6 +18,7 @@ import rateLimit from "express-rate-limit";
 import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
 import { asTenant } from "../middleware/asTenant.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -167,6 +168,7 @@ async function sendInviteEmail(params: {
 const inviteLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -655,6 +657,7 @@ router.get("/team/invites/:token/preview", asTenant(async (req, res) => {
 const acceptLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }

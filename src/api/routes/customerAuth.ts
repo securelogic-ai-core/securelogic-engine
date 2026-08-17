@@ -35,6 +35,7 @@ import { logger } from "../infra/logger.js";
 import { captureException } from "../lib/sentry.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAccountLockout } from "../lib/authAnomaly.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
@@ -59,6 +60,7 @@ const router = Router();
 const signupLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -67,6 +69,7 @@ const signupLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -75,6 +78,7 @@ const loginLimiter = rateLimit({
 const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -83,6 +87,7 @@ const forgotPasswordLimiter = rateLimit({
 const verifyLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }

@@ -7,6 +7,7 @@ import { Resend } from "resend";
 // api_keys lookups/rotation here are identity-plane and use the elevated
 // channel (the customerAuth pre-auth pattern). Rate limiters unchanged.
 import { pgElevated } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { ensureRedisConnected } from "../infra/redis.js";
 import { withEnvironmentTag } from "../infra/emailEnvironment.js";
@@ -21,6 +22,7 @@ const router = Router();
 const requestLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "recovery_rate_limit_exceeded" }
@@ -30,6 +32,7 @@ const requestLimiter = rateLimit({
 const claimLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "recovery_rate_limit_exceeded" }
