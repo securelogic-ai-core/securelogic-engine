@@ -96,7 +96,7 @@ BEGIN
      AND c.relname NOT IN (
        'auth_anomaly_alerts', 'webhook_events_processed', 'worker_runs',
        'schema_migrations', 'email_provider_events', 'feed_health', 'sources',
-       'sso_login_codes', 'intelligence_event_timeline',
+       'intelligence_event_timeline',
        'intelligence_event_workflow_triggers')
      AND NOT EXISTS (
        SELECT 1 FROM information_schema.role_table_grants g
@@ -108,7 +108,7 @@ BEGIN
   SELECT string_agg(t.name, ', ') INTO bad
     FROM unnest(ARRAY[
        'auth_anomaly_alerts', 'webhook_events_processed', 'worker_runs',
-       'email_provider_events', 'feed_health', 'sources', 'sso_login_codes',
+       'email_provider_events', 'feed_health', 'sources',
        'intelligence_event_timeline', 'intelligence_event_workflow_triggers'
     ]) AS t(name)
    WHERE EXISTS (

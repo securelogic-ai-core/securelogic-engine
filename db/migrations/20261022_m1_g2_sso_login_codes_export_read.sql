@@ -1,0 +1,31 @@
+-- Migration: m1_g2_sso_login_codes_export_read
+-- Package:   M-1 staging soak fix (accelerated functional validation, 2026-08-17)
+-- Evidence:  docs/validation/m1-staging-soak.md — data_export_failed 42501
+--
+-- WHAT THE VALIDATION FOUND
+-- -------------------------
+-- The GDPR self-export (data-rights worker → runExport → categoryQueries)
+-- derives its table set DYNAMICALLY from dataClassification.ts and reads every
+-- category-B table on the TENANT channel inside withTenant(job.organization_id).
+-- `sso_login_codes` is category B (user_id) — but M1-G1 classified it Tier-D
+-- no-grant from its WRITE path (pre-auth SSO login plane, elevated by design).
+-- Under the flipped app_request runtime the export job failed loudly:
+--     permission denied for table sso_login_codes (42501)
+-- Bounding check: of the ten no-grant tables, sso_login_codes is the ONLY one
+-- in an export category (the rest are category E, excluded); the exporter is
+-- its only tenant-channel consumer (the reaper/retention sweep do not iterate
+-- the classification).
+--
+-- THE FIX
+-- -------
+-- SELECT for app_request — the export read is a legitimate tenant-path read,
+-- and the table's RLS policy (already enabled) scopes it. The pre-auth WRITE
+-- path (ssoLoginCodes.ts) stays on the elevated channel unchanged; no INSERT/
+-- UPDATE/DELETE is granted. Tier-D bookkeeping updated in the same change:
+-- appRequestGrants.test.ts, m1-preflight.sql G5, m1-coverage-matrix.ts.
+--
+-- Inert-at-apply: grants change nothing until a service runs as app_request;
+-- the staging data-rights worker was rolled back to the owner channel pending
+-- this fix and re-flips after it deploys.
+
+GRANT SELECT ON sso_login_codes TO app_request;

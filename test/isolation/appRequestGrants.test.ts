@@ -33,7 +33,6 @@ const TIER_D_ALLOWLIST: Record<string, string> = {
   email_provider_events: "provider-webhook + admin evidence surface, elevated-only (PR-2 moves its BARE sites)",
   feed_health: "pipeline telemetry, elevated-only",
   sources: "source catalog, pipeline-maintained, elevated-only",
-  sso_login_codes: "pre-auth SSO surface, elevated-only by design",
   intelligence_event_timeline: "event-workflow internals, elevated-only",
   intelligence_event_workflow_triggers: "event-workflow internals, elevated-only"
 };
@@ -117,6 +116,9 @@ describe("C-3 — app_request grant coverage (Option Y assertion)", () => {
       canonical_products: ["SELECT"],
       canonical_product_versions: ["SELECT"],
       canonical_product_external_ids: ["SELECT"],
+      // M1-G2: the GDPR exporter reads this category-B table on the tenant
+      // channel; the pre-auth write path stays elevated (no write verbs).
+      sso_login_codes: ["SELECT"],
       intelligence_events: ["SELECT"],
       intelligence_event_sources: ["SELECT"],
       legal_consents: ["SELECT"]
