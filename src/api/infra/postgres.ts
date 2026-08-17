@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 
+import { logger } from "./logger.js";
 import { resolvePgSsl } from "./pgSsl.js";
 import type { PoolClient } from "pg";
 import {
@@ -69,15 +70,72 @@ export const pgRaw = pool;
 const elevatedUrl = process.env.MIGRATION_DATABASE_URL ?? databaseUrl;
 export const pgElevated = new Pool({ connectionString: elevatedUrl, ssl });
 
+/**
+ * M-1 PR-1 (C-2) — strict-mode observability for the raw-pool fallback.
+ *
+ * When SECURELOGIC_DB_STRICT_TENANT_LOG=true, every `pg.query()` that executes
+ * OUTSIDE a withTenant/asTenant scope logs a sampled, structured warning. Under
+ * the owner credential this fallback is silently correct; under `app_request`
+ * (post-flip) it is the silent-zero-rows failure mode on policied tables — the
+ * staging soak reads this signal to find missed wraps empirically before prod.
+ * Off by default; zero cost when disabled. Legitimate pre-org-context callers
+ * (requireApiKey, attachOrganizationContext, …) will appear here by design and
+ * are classified in the C-1 matrix, not silenced in code.
+ */
+const strictTenantLog = process.env.SECURELOGIC_DB_STRICT_TENANT_LOG === "true";
+const strictLogCounts = new Map<string, number>();
+const STRICT_LOG_EVERY = 100;
+const STRICT_LOG_MAX_KEYS = 500;
+
+function logBareQuery(args: unknown[]): void {
+  let caller = "unknown";
+  const stack = new Error().stack?.split("\n") ?? [];
+  for (const frame of stack.slice(1)) {
+    if (!frame.includes("infra/postgres") && frame.includes("at ")) {
+      caller = frame.trim().slice(0, 160);
+      break;
+    }
+  }
+  const first = args[0];
+  const sql =
+    typeof first === "string"
+      ? first
+      : typeof (first as { text?: unknown })?.text === "string"
+        ? ((first as { text: string }).text)
+        : "";
+  const key = caller;
+  const n = (strictLogCounts.get(key) ?? 0) + 1;
+  if (strictLogCounts.size < STRICT_LOG_MAX_KEYS || strictLogCounts.has(key)) {
+    strictLogCounts.set(key, n);
+  }
+  if (n === 1 || n % STRICT_LOG_EVERY === 0) {
+    // Dynamic import would be async; a top-level import is safe (logger has no
+    // dependency back into this module).
+    logger.warn(
+      {
+        event: "db_query_outside_tenant_scope",
+        caller,
+        sqlHead: sql.replace(/\s+/g, " ").slice(0, 120),
+        occurrences: n
+      },
+      "pg.query executed outside any tenant scope (raw-pool fallback)"
+    );
+  }
+}
+
 function tenantAwareQuery(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
   if (ctx) return (ctx.client.query as (...a: unknown[]) => unknown)(...args);
+  if (strictTenantLog) logBareQuery(args);
   return (pool.query as (...a: unknown[]) => unknown)(...args);
 }
 
 function tenantAwareConnect(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
-  if (!ctx) return (pool.connect as (...a: unknown[]) => unknown)(...args);
+  if (!ctx) {
+    if (strictTenantLog) logBareQuery(["<pg.connect>"]);
+    return (pool.connect as (...a: unknown[]) => unknown)(...args);
+  }
   return Promise.resolve(createSavepointClient(ctx));
 }
 
