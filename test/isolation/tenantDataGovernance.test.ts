@@ -100,9 +100,14 @@ beforeEach(async () => {
   // are about the code, not about leftovers.
   await pool.query("DELETE FROM ask_tool_invocations");
   await pool.query("DELETE FROM ask_conversations");
-  await pool.query("ALTER TABLE legal_holds DISABLE TRIGGER guard_legal_holds_row_mutation");
+  // E-2 Increment 1 split the legal_holds guard: the UPDATE state machine stays
+  // in guard_legal_holds_row_mutation, and DELETE is now refused by the shared
+  // worm_guard_mutation via prevent_legal_holds_delete. The teardown has to
+  // disable the DELETE one — which is the point of the split, since that is the
+  // trigger E-2 Increment 2 will teach about certified erasure.
+  await pool.query("ALTER TABLE legal_holds DISABLE TRIGGER prevent_legal_holds_delete");
   await pool.query("DELETE FROM legal_holds");
-  await pool.query("ALTER TABLE legal_holds ENABLE TRIGGER guard_legal_holds_row_mutation");
+  await pool.query("ALTER TABLE legal_holds ENABLE TRIGGER prevent_legal_holds_delete");
   await pool.query("ALTER TABLE retention_policies DISABLE TRIGGER prevent_retention_policies_row_mutation");
   await pool.query("DELETE FROM retention_policies");
   await pool.query("ALTER TABLE retention_policies ENABLE TRIGGER prevent_retention_policies_row_mutation");
