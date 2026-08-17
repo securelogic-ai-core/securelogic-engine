@@ -935,7 +935,12 @@ during the E-1 dark promotion**, so their content is already there under
 different SHAs. `f19f7059` (Wave 1) is present in the log and **must never be
 promoted**.
 
-The ancestry-independent truth is the tree diff: **25 files, +5,496 / −17.**
+The ancestry-independent truth is the tree diff: **27 files, +6,000 / −17.**
+(Corrected 2026-08-17. This line first read "25 files, +5,496" — measured
+*before* the commit that wrote this section, `0ee4bca4`, added its own three
+files: the Increment-3 rollback script, the full-chain rehearsal, and the
+`20261018` rollback edit. The candidate read 27 / +5,995 until this
+correction, whose own lines are counted in the +6,000 stated above.)
 `render.yaml` appears in it, but its **values are identical to `main`** —
 the change is trailing comments only (proven: 311 env keys compared across 14
 services, zero differences).
@@ -1153,7 +1158,7 @@ git commit    # verify: git diff --cached origin/develop  ->  EMPTY
 ```
 
 This was executed as a dry run: the resulting tree is **byte-identical to
-`develop`**, and the diff against `main` is exactly the 25-file delta.
+`develop`**, and the diff against `main` is exactly the 27-file delta.
 
 Then, per Stage-1 discipline:
 
