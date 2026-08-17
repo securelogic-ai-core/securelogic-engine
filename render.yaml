@@ -390,6 +390,13 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # E-3 (org capability gates): master flag for the per-org dimension of the
+      # env-global capability flags. OFF -> resolver answers allow with zero
+      # queries (byte-identical to pre-E-3). Enablement is an operator ruling;
+      # on staging, grant the walkthrough orgs BEFORE flipping, because the dark
+      # agentic capabilities are explicit-grant-only under the org dimension.
+      - key: SECURELOGIC_ORG_CAPABILITY_GATES_ENABLED
+        value: "false"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
@@ -761,6 +768,13 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # E-3 (org capability gates): master flag for the per-org dimension of the
+      # env-global capability flags. OFF -> resolver answers allow with zero
+      # queries (byte-identical to pre-E-3). Enablement is an operator ruling;
+      # on staging, grant the walkthrough orgs BEFORE flipping, because the dark
+      # agentic capabilities are explicit-grant-only under the org dimension.
+      - key: SECURELOGIC_ORG_CAPABILITY_GATES_ENABLED
+        value: "false"
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.

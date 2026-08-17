@@ -40,6 +40,7 @@ import {
 } from "../lib/metricDefinitions.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
+import { orgCapabilityAllows, requireOrgCapability } from "../lib/orgCapabilityGates.js";
 import { askToolsEnabled } from "../lib/ask/askToolsFeatureFlag.js";
 import { askStreamingEnabled } from "../lib/ask/askStreamingFeatureFlag.js";
 import { askActionsEnabled, askGovernedEnabled } from "../lib/ask/askActionsFeatureFlag.js";
@@ -353,8 +354,14 @@ async function runAskToolTurn(args: {
     // closed inside the orchestrator; this is the single widening site.
     const actionClasses: ToolActionClass[] = ["read"];
     if (userId !== null) {
-      if (askActionsEnabled()) actionClasses.push("mutate");
-      if (askGovernedEnabled()) actionClasses.push("governed");
+      // E-3: each class is env AND org — a tenant without the grant gets read
+      // tools only, exactly as if the env flag were off for it alone.
+      if (askActionsEnabled() && (await orgCapabilityAllows(organizationId, "ask_actions"))) {
+        actionClasses.push("mutate");
+      }
+      if (askGovernedEnabled() && (await orgCapabilityAllows(organizationId, "ask_governed"))) {
+        actionClasses.push("governed");
+      }
     }
     const proposalsPossible = actionClasses.length > 1;
 
@@ -736,6 +743,7 @@ router.post(
   askFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   askRateLimit,
@@ -764,7 +772,7 @@ router.post(
     // is exactly the parallel-data-path problem this programme removes — it is
     // a transition, not a steady state, and the snapshot path retires with the
     // flag once staging validates the tool path.
-    if (askToolsEnabled()) {
+    if (askToolsEnabled() && (await orgCapabilityAllows(organizationId, "ask_tools"))) {
       await handleWithTools({ req, res, client, organizationId, question });
       return;
     }
@@ -1251,6 +1259,7 @@ router.post(
   askFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   askRateLimit,
@@ -1263,6 +1272,17 @@ router.post(
     const validated = validateAskRequest(req, res);
     if (!validated) return;
     const { organizationId, client, question } = validated;
+
+    // E-3: the org dimension of both flags this route composes. Same 404 as
+    // the env dimension — a refused org learns nothing the env flag wouldn't
+    // have told it.
+    if (
+      !(await orgCapabilityAllows(organizationId, "ask_streaming")) ||
+      !(await orgCapabilityAllows(organizationId, "ask_tools"))
+    ) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
 
     await handleWithToolsStream({ req, res, client, organizationId, question });
   }
@@ -1282,6 +1302,7 @@ router.get(
   askFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   async (req: Request, res: Response) => {
@@ -1308,6 +1329,7 @@ router.get(
   askFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   async (req: Request, res: Response) => {
@@ -1364,6 +1386,7 @@ router.delete(
   tdgFeatureFlag,
   requireApiKey,
   attachOrganizationContext,
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   async (req: Request, res: Response) => {

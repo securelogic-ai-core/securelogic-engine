@@ -263,6 +263,13 @@ have its own security review and isolation tests proving the triggers still
 RAISE without the variable. *Tests:* high. *Stage-2:* independent.
 
 **E-3 — Per-organization capability gates for the env-global flags.**
+*Status 2026-08-17: BUILT on branch (migration `20261021_org_capability_gates`,
+`orgCapabilityGates.ts`, wired at the five Ask flag sites) behind
+`SECURELOGIC_ORG_CAPABILITY_GATES_ENABLED` (default off, zero-query
+passthrough). One deviation from this document awaiting ruling: per-capability
+org defaults (live `ask` = allow; dark agentic keys = deny/explicit-grant-only)
+instead of blanket default-on — blanket default-on would leave Stage-2
+activation all-tenants-at-once, which is the property E-3 removes.*
 *Value:* staged rollout, per-tenant pilots, and the ability to enable an agentic
 capability for one design partner. *Architectural:* every Ask/agentic flag is
 **environment-global with no per-org gate** (audit §4), so Stage-2 activation is

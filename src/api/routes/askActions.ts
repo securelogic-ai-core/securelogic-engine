@@ -44,6 +44,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { askFeatureFlag } from "../lib/askFeatureFlag.js";
 import { askActionsEnabled, askGovernedEnabled } from "../lib/ask/askActionsFeatureFlag.js";
+import { orgCapabilityAllows, requireOrgCapability } from "../lib/orgCapabilityGates.js";
 import {
   claimPendingByTokenHash,
   declineByTokenHash,
@@ -72,11 +73,20 @@ function askActionsFlag(_req: Request, res: Response, next: NextFunction): void 
   next();
 }
 
-/** Is this tool's action class currently enabled? Read tools are never
- *  confirmable; unknown classes fail closed. */
-function classCurrentlyEnabled(actionClass: string): boolean {
-  if (actionClass === "mutate") return askActionsEnabled();
-  if (actionClass === "governed") return askGovernedEnabled();
+/** Is this tool's action class currently enabled FOR THIS ORG? Both dimensions
+ *  must hold (E-3: env AND org) — a grant revoked after the proposal was issued
+ *  makes it honestly unexecutable, exactly like a dropped env flag. Read tools
+ *  are never confirmable; unknown classes fail closed. */
+async function classCurrentlyEnabled(
+  actionClass: string,
+  organizationId: string
+): Promise<boolean> {
+  if (actionClass === "mutate") {
+    return askActionsEnabled() && (await orgCapabilityAllows(organizationId, "ask_actions"));
+  }
+  if (actionClass === "governed") {
+    return askGovernedEnabled() && (await orgCapabilityAllows(organizationId, "ask_governed"));
+  }
   return false;
 }
 
@@ -105,6 +115,10 @@ const CHAIN = [
   askActionsFlag,
   requireApiKey,
   attachOrganizationContext,
+  // E-3: an org whose 'ask' grant is revoked cannot confirm proposals either —
+  // the whole Ask surface closes for it, tokens included. The per-CLASS org
+  // dimension is enforced post-claim in classCurrentlyEnabled.
+  requireOrgCapability("ask"),
   requireEntitlement("premium"),
   denyContributor(),
   confirmRateLimit,
@@ -171,7 +185,7 @@ router.post("/ask/actions/confirm", ...CHAIN, async (req, res) => {
     }
 
     const tool = getTool(record.tool_name);
-    if (!tool || tool.actionClass === "read" || !classCurrentlyEnabled(tool.actionClass)) {
+    if (!tool || tool.actionClass === "read" || !(await classCurrentlyEnabled(tool.actionClass, organizationId))) {
       // The tool is gone (deploy), demoted to read, or its class's flag has
       // been dropped since the proposal was issued. The token is consumed;
       // the proposal is honestly unexecutable — a killed class must not
