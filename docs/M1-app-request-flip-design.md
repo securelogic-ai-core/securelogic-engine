@@ -499,3 +499,64 @@ true owner stays NOLOGIN. The only new secret M-1 introduces is the `app_request
 password per environment. Flip-set final: engine, intelligence-worker, posture-worker,
 data-rights-worker, vendor-extraction-worker (5 services × staging/prod waves); demo
 follow-on per D-3; intelligence-api decommissioned per D-2.
+
+---
+
+# Status addendum 2 — 2026-08-17: PR-1/PR-2/PR-3 complete; awaiting activation authorization
+
+- **PR-1** (#802, merged): M1-G1 grant catch-up (17 tables), C-1 coverage
+  matrix + report, C-3 bidirectional grant CI assertion, C-2 strict-mode
+  `db_query_outside_tenant_scope` logging.
+- **PR-2** (#803, merged): every route/worker DB call site classified and
+  closed — 72 `asTenant` wraps, explicit `withTenant` for streaming/redirect
+  handlers, GUC-set explicit transactions (cyberSignals fetch loops), justified
+  `pgElevated` across admin/identity/system surfaces, worker claim/terminal
+  fixes. Zero unresolved sites.
+- **PR-3** (this change): `scripts/validation/m1-preflight.sql` (gates G1–G9,
+  fail-closed, read-only; PASS on the harness, negative-tested to exit 3 on an
+  injected grant gap) and `scripts/validation/m1-proof.ts` (both-sides battery;
+  **29/29 PASS on the harness using a real `app_request` login + the owner
+  identity**), plus this doc-sync (TENANT_ISOLATION_STANDARD §14,
+  BUILD_SEQUENCE, KNOWN_ISSUES M-1, dataClassification reconcile, DR_PLAN
+  two-key rotation note, render.yaml `MIGRATION_DATABASE_URL` declarations ×10,
+  rollout-plan §4a reconcile).
+
+## Staging activation sequence (operator-executed, in this exact order)
+
+0. This branch merged; staging deployed and healthy on it.
+1. **Pre-flight**: `psql "$STAGING_OWNER_DSN" -X -v ON_ERROR_STOP=1 -f
+   scripts/validation/m1-preflight.sql` → must print `M1 PREFLIGHT: PASS`
+   (exit 0). Any failure stops the activation.
+2. **Credential**: `ALTER USER app_request PASSWORD '<generated>'` via the
+   staging psql shell; record in the P0-2 sealed-secrets inventory.
+3. **Proof, pre-flip**: run `m1-proof.ts` against staging
+   (`M1_PROOF_RUNTIME_URL` = new app_request DSN, `M1_PROOF_MIGRATION_URL` =
+   current owner DSN, `M1_PROOF_SEED=true`) → must exit 0. This proves the
+   credential and both boundary sides BEFORE any service is touched.
+4. **Owner channel (inert)**: set `MIGRATION_DATABASE_URL` = the service's
+   CURRENT `DATABASE_URL` value on all five staging services
+   (intel-worker-staging: use the standard login-member DSN, ending its
+   direct-owner login — D-4); redeploy each; verify behaviour unchanged.
+5. **Flip, engine first**: set engine-staging `DATABASE_URL` =
+   `postgres://app_request:…@<external-host>/securelogic_staging` +
+   `SECURELOGIC_DB_STRICT_TENANT_LOG=true`; redeploy; verify `Migrations
+   complete` (owner channel) + boot self-test + `/health db:connected` +
+   authenticated walkthrough-org smoke.
+6. **Flip workers one at a time** (posture → data-rights → vendor-extraction →
+   intelligence): same env change; verify by RUNTIME TICK LOGS, not deploy
+   status (claim polls returning work, zero 42501s, zero silent-idle
+   anomalies).
+7. **48-hour soak** (approved acceptance): engine DB paths, worker claim/poll
+   cycles, background jobs, admin functions, tenant isolation (cross-org
+   harness against staging), `db_query_outside_tenant_scope` warnings triaged
+   to zero unexplained on customer paths, zero 42501s.
+8. **Post-soak proof**: re-run `m1-proof.ts` and `m1-preflight.sql` (G9 with
+   `m1.expect_flipped=1`) and record both in the validation doc.
+
+## Rollback (any step, per service)
+
+Repoint that service's `DATABASE_URL` back to the owner DSN (the same value
+now held in `MIGRATION_DATABASE_URL`) + redeploy. No code revert, no
+migration; policies return to inert automatically. Partial-fleet rollback is
+safe. Keep `MIGRATION_DATABASE_URL` and the `app_request` password in place
+(inert while unused); rotate the password only on suspicion of exposure.
