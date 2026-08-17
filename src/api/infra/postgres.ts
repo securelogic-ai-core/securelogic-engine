@@ -1,4 +1,6 @@
 import { Pool } from "pg";
+
+import { resolvePgSsl } from "./pgSsl.js";
 import type { PoolClient } from "pg";
 import {
   tenantStorage,
@@ -32,15 +34,13 @@ if (!databaseUrl) {
   throw new Error("DATABASE_URL is not set");
 }
 
-// Production (Render) Postgres requires TLS, so SSL is on by default.
-// A non-TLS Postgres — the cross-org isolation harness's local/CI Postgres
-// (E1-G1) — has no certificate to negotiate; set DATABASE_SSL_DISABLED=true
-// in those environments only. Unset (production), behaviour is unchanged.
-const sslDisabled =
-  process.env.DATABASE_SSL_DISABLED === "true" ||
-  process.env.DATABASE_SSL_DISABLED === "1";
-
-const ssl = sslDisabled ? false : { rejectUnauthorized: false };
+// Production (Render) Postgres requires TLS, so SSL is on by default — and as
+// of P0-1 (hardening batch 2026-08-17) the certificate is VERIFIED by default.
+// The full decision matrix, the empirical CA evidence, and every knob
+// (DATABASE_SSL_DISABLED for the non-TLS harness, DATABASE_SSL_SERVERNAME for
+// internal-hostname DSNs, DATABASE_TLS_NO_VERIFY as the incident rollback
+// hatch) live in ./pgSsl.ts, shared with the standalone script pools.
+const ssl = resolvePgSsl();
 
 // The application connection pool. Today connects as the DB owner; under
 // A04-G1 phase 1+ the DATABASE_URL on the 5 flip-set services repoints to the

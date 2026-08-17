@@ -21,6 +21,7 @@ config({ path: ".env" });
 
 import { Pool } from "pg";
 import argon2 from "argon2";
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,8 @@ const SRC_ORG_ID = "3124d8a3-34c0-4696-8c91-64ef0d4eeb17";
 // so the script works unchanged when seeding an org on the same DB.
 const SEED_SRC_DATABASE_URL = process.env.SEED_SRC_DATABASE_URL ?? DATABASE_URL;
 
-const pool    = new Pool({ connectionString: DATABASE_URL,       ssl: { rejectUnauthorized: false } });
-const srcPool = new Pool({ connectionString: SEED_SRC_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const pool    = new Pool({ connectionString: DATABASE_URL,       ssl: resolvePgSsl() });
+const srcPool = new Pool({ connectionString: SEED_SRC_DATABASE_URL, ssl: resolvePgSsl() });
 
 function ok(msg: string)   { console.log(`  ✓ ${msg}`); }
 function step(msg: string) { console.log(`\n${msg}`); }

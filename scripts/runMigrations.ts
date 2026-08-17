@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 
 import {
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
   applyMigration,
   describeMigrationFailure,
   ensureMigrationTable,
@@ -27,7 +28,7 @@ const timeouts = resolveMigrationTimeouts();
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: resolvePgSsl()
 });
 
 const migrationsDir = migrationsDirFrom(process.cwd());

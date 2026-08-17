@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { redisReady } from "../infra/redis.js";
 import { logger } from "../infra/logger.js";
+import { pgTlsVerificationDisabled } from "../infra/pgSsl.js";
 
 function fail(msg: string): never {
   logger.fatal({ msg }, "Boot self-test failed (fail-closed)");
@@ -35,6 +36,22 @@ function assertMaxLength(key: string, max: number): void {
 function assertProdHardening(): void {
   const isProd = process.env.NODE_ENV === "production";
   if (!isProd) return;
+
+  /**
+   * P0-1: database TLS verification is the default. The rollback hatch
+   * (DATABASE_TLS_NO_VERIFY) must stay USABLE in production — it exists so a
+   * verification failure is recoverable with an env flip instead of a code
+   * revert, and an assert here would brick that path. So it does not fail the
+   * boot; it screams: an error-level line on every boot until the hatch is
+   * removed. An open incident is the only legitimate reason to see this.
+   */
+  if (pgTlsVerificationDisabled()) {
+    logger.error(
+      { event: "pg_tls_verification_disabled" },
+      "DATABASE_TLS_NO_VERIFY is set: Postgres TLS is UNAUTHENTICATED. " +
+        "This is the P0-1 incident rollback hatch and must not persist."
+    );
+  }
 
   /**
    * Production MUST have Redis.

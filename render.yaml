@@ -390,6 +390,18 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # P0-1 (2026-08-17): Postgres TLS certificates are now VERIFIED by default
+      # (system roots; Render presents a Let's Encrypt chain with
+      # *.virginia-postgres.render.com in the SANs). Knobs, all default-off:
+      #   DATABASE_SSL_SERVERNAME — set to the DB's EXTERNAL hostname if this
+      #     service's DATABASE_URL uses the internal hostname (the cert's SANs
+      #     cover only the public names, so hostname verification needs it).
+      #   DATABASE_TLS_NO_VERIFY="true" — incident rollback hatch ONLY: exact
+      #     legacy unauthenticated-TLS behaviour; the engine logs error-level
+      #     on every boot while it is set. Applies to the workers identically
+      #     (same shared resolution in src/api/infra/pgSsl.ts).
+      - key: DATABASE_TLS_NO_VERIFY
+        value: "false"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
@@ -761,6 +773,18 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # P0-1 (2026-08-17): Postgres TLS certificates are now VERIFIED by default
+      # (system roots; Render presents a Let's Encrypt chain with
+      # *.virginia-postgres.render.com in the SANs). Knobs, all default-off:
+      #   DATABASE_SSL_SERVERNAME — set to the DB's EXTERNAL hostname if this
+      #     service's DATABASE_URL uses the internal hostname (the cert's SANs
+      #     cover only the public names, so hostname verification needs it).
+      #   DATABASE_TLS_NO_VERIFY="true" — incident rollback hatch ONLY: exact
+      #     legacy unauthenticated-TLS behaviour; the engine logs error-level
+      #     on every boot while it is set. Applies to the workers identically
+      #     (same shared resolution in src/api/infra/pgSsl.ts).
+      - key: DATABASE_TLS_NO_VERIFY
+        value: "false"
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
