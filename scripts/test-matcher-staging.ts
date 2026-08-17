@@ -37,8 +37,8 @@ import { createHash, randomBytes } from "crypto";
 import { writeFileSync, existsSync, appendFileSync } from "fs";
 import { resolve } from "path";
 
-import {
 import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
+import {
   processSignal,
   type CyberSignalRecord
 } from "../src/api/lib/cyberSignalProcessingService.js";

@@ -3,8 +3,8 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
-import {
 import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
+import {
   applyMigration,
   describeMigrationFailure,
   ensureMigrationTable,
