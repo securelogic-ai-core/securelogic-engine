@@ -23,7 +23,14 @@ import { Router } from "express";
 import crypto from "crypto";
 import argon2 from "argon2";
 import rateLimit from "express-rate-limit";
-import { pg, pgElevated } from "../infra/postgres.js";
+// M-1 PR-2: every remaining ambient-pg site in this file is a pre-auth or
+// identity-plane operation (verify-email, login, password flows, /auth/me,
+// admin unlock) on users / organizations / password_history — surfaces where
+// no organization context exists yet or the operation is keyed on the
+// caller's own user row. All converge on the elevated channel, which this
+// file already used for its documented pre-org sites (signup org-INSERT,
+// accept-terms). Auth/RBAC semantics are untouched.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { captureException } from "../lib/sentry.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -419,7 +426,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       : null;
 
     // Check for existing account (email uniqueness)
-    const existing = await pg.query(
+    const existing = await pgElevated.query(
       `SELECT id FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -590,7 +597,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `SELECT id, organization_id, name, role, email_verification_expires_at
        FROM users
        WHERE email_verification_token = $1 AND email_verified = FALSE
@@ -616,7 +623,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       return;
     }
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET email_verified = TRUE,
            email_verification_token = NULL,
@@ -694,7 +701,7 @@ router.post("/auth/resend-verification", forgotPasswordLimiter, async (req, res)
 
     const email = String(emailRaw).trim().toLowerCase();
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `SELECT id, name, email_verified FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -709,7 +716,7 @@ router.post("/auth/resend-verification", forgotPasswordLimiter, async (req, res)
     const verificationToken   = generateToken();
     const verificationExpires = new Date(Date.now() + VERIFICATION_TTL_MS);
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET email_verification_token = $1,
            email_verification_expires_at = $2,
@@ -749,7 +756,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     const email = String(emailRaw).trim().toLowerCase();
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       id: string;
       organization_id: string;
       name: string;
@@ -780,7 +787,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     if (user && user.last_failed_login_at) {
       const hoursSince = (Date.now() - new Date(user.last_failed_login_at).getTime()) / (1000 * 60 * 60);
       if (hoursSince > ATTEMPT_RESET_HOURS && (!user.lockout_until || new Date(user.lockout_until) <= new Date())) {
-        pg.query(
+        pgElevated.query(
           `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
           [user.id]
         ).catch(() => {});
@@ -876,7 +883,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         const newCount    = (user.failed_login_attempts ?? 0) + 1;
         const shouldLock  = newCount >= MAX_FAILED_ATTEMPTS;
         const lockoutUntil = shouldLock ? new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000) : null;
-        pg.query(
+        pgElevated.query(
           `UPDATE users SET failed_login_attempts = $1, last_failed_login_at = NOW(), lockout_until = $2 WHERE id = $3`,
           [newCount, lockoutUntil, user.id]
         ).catch(() => {});
@@ -902,7 +909,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
 
     // B4: Reset failure counter on successful authentication (fire-and-forget)
     if ((user.failed_login_attempts ?? 0) > 0) {
-      pg.query(
+      pgElevated.query(
         `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
         [user.id]
       ).catch(() => {});
@@ -916,7 +923,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     // Org-level MFA enforcement: block login if the org requires MFA and
     // the user has not yet enrolled. Identity is proven at this point —
     // we block completion, not discovery.
-    const orgMfaResult = await pg.query<{ require_mfa: boolean }>(
+    const orgMfaResult = await pgElevated.query<{ require_mfa: boolean }>(
       `SELECT require_mfa FROM organizations WHERE id = $1 LIMIT 1`,
       [user.organization_id]
     );
@@ -946,13 +953,13 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
     }
 
     // Stamp last login — best-effort, never blocks login
-    pg.query(
+    pgElevated.query(
       `UPDATE users SET previous_login_at = last_login_at, last_login_at = NOW() WHERE id = $1`,
       [user.id]
     ).catch(() => {/* ignore */});
 
     // Fetch org for display info
-    const orgResult = await pg.query<{
+    const orgResult = await pgElevated.query<{
       name: string;
       entitlement_level: string;
       onboarding_completed_at: string | null;
@@ -1039,7 +1046,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
 
     const email = String(emailRaw).trim().toLowerCase();
 
-    const result = await pg.query<{ id: string; organization_id: string; name: string; email_verified: boolean }>(
+    const result = await pgElevated.query<{ id: string; organization_id: string; name: string; email_verified: boolean }>(
       `SELECT id, organization_id, name, email_verified FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -1053,7 +1060,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
     const resetToken = generateToken();
     const resetExpires = new Date(Date.now() + RESET_TTL_MS);
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET password_reset_token = $1,
            password_reset_expires_at = $2,
@@ -1110,7 +1117,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       id: string;
       organization_id: string;
       password_reset_expires_at: Date;
@@ -1134,7 +1141,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       return;
     }
 
-    if (await checkPasswordReuse(user.id, String(passwordRaw), pg)) {
+    if (await checkPasswordReuse(user.id, String(passwordRaw), pgElevated)) {
       res.status(400).json({ error: "password_recently_used", detail: "Password was used recently. Choose a different password." });
       return;
     }
@@ -1143,7 +1150,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
     });
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET password_hash = $1,
            password_changed_at = NOW(),
@@ -1154,7 +1161,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       [newHash, user.id]
     );
 
-    await recordPasswordHash(user.id, newHash, pg);
+    await recordPasswordHash(user.id, newHash, pgElevated);
 
     logger.info({ event: "password_reset", userId: user.id }, "Password reset complete");
 
@@ -1204,7 +1211,7 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{ password_hash: string }>(
+    const result = await pgElevated.query<{ password_hash: string }>(
       `SELECT password_hash FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
@@ -1226,7 +1233,7 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       return;
     }
 
-    if (await checkPasswordReuse(userId, newRaw, pg)) {
+    if (await checkPasswordReuse(userId, newRaw, pgElevated)) {
       res.status(400).json({ error: "password_recently_used", detail: "Password was used recently. Choose a different password." });
       return;
     }
@@ -1235,14 +1242,14 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
     });
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
        WHERE id = $2`,
       [newHash, userId]
     );
 
-    await recordPasswordHash(userId, newHash, pg);
+    await recordPasswordHash(userId, newHash, pgElevated);
 
     writeAuditEvent({
       organizationId: orgId,
@@ -1274,7 +1281,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     const userId = req.jwtPayload!.sub;
     const orgId  = req.jwtPayload!.org;
 
-    const userResult = await pg.query<{
+    const userResult = await pgElevated.query<{
       id: string;
       email: string;
       name: string;
@@ -1299,7 +1306,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
     }
 
     const [orgResult, suppressionResult] = await Promise.all([
-      pg.query<{
+      pgElevated.query<{
         name: string;
         entitlement_level: string;
         payment_failed_at: string | null;
@@ -1311,7 +1318,7 @@ router.get("/auth/me", requireAuth, async (req, res) => {
           LIMIT 1`,
         [orgId]
       ),
-      pg.query<{ id: string }>(
+      pgElevated.query<{ id: string }>(
         `SELECT id FROM email_suppressions WHERE LOWER(email) = LOWER($1) LIMIT 1`,
         [userResult.rows[0]!.email]
       )
@@ -1353,7 +1360,7 @@ router.post("/auth/onboarding-complete", requireAuth, async (req, res) => {
   try {
     const orgId = req.jwtPayload!.org;
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE organizations
        SET onboarding_completed_at = NOW()
        WHERE id = $1
@@ -1392,7 +1399,7 @@ router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
       return;
     }
 
-    const userResult = await pg.query<{ id: string }>(
+    const userResult = await pgElevated.query<{ id: string }>(
       `SELECT id FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [targetUserId, orgId]
     );
@@ -1402,7 +1409,7 @@ router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
       return;
     }
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL, last_failed_login_at = NULL WHERE id = $1`,
       [targetUserId]
     );

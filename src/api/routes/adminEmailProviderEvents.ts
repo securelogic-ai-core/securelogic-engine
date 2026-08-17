@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -35,7 +39,7 @@ router.get("/email-provider-events", async (req, res) => {
     const useCursor = Boolean(beforeCreatedAt && beforeId);
 
     const result = useCursor
-      ? await pg.query(
+      ? await pgElevated.query(
           `
           SELECT
             id,
@@ -51,7 +55,7 @@ router.get("/email-provider-events", async (req, res) => {
           `,
           [limit, beforeCreatedAt, beforeId]
         )
-      : await pg.query(
+      : await pgElevated.query(
           `
           SELECT
             id,

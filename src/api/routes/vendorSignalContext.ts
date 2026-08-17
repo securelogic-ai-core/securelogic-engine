@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -16,7 +17,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req: Request, res: Response) => {
+  asTenant(async (req: Request, res: Response) => {
     try {
       const orgId: string = (req as unknown as { organizationContext: { organizationId: string } }).organizationContext?.organizationId;
       const vendorId = req.params["id"];
@@ -112,6 +113,6 @@ router.get(
       res.status(500).json({ error: "internal_error" });
     }
   }
-);
+));
 
 export default router;

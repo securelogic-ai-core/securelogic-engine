@@ -16,6 +16,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -68,7 +69,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -123,7 +124,7 @@ router.post(
       res.status(500).json({ error: "framework_create_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/frameworks
@@ -137,7 +138,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -204,7 +205,7 @@ router.get(
       res.status(500).json({ error: "frameworks_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/frameworks/:id
@@ -218,7 +219,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -309,7 +310,7 @@ router.get(
       res.status(500).json({ error: "framework_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/frameworks/:id
@@ -325,7 +326,7 @@ router.delete(
   requireEntitlement("premium"),
   denyContributor(),
   requireAdminRole,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -423,6 +424,6 @@ router.delete(
       client.release();
     }
   }
-);
+));
 
 export default router;

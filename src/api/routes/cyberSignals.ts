@@ -43,6 +43,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -153,7 +154,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -333,7 +334,7 @@ router.post(
       client.release();
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/cyber-signals
@@ -353,7 +354,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -458,7 +459,7 @@ router.get(
       res.status(500).json({ error: "cyber_signals_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/cyber-signals/:id
@@ -472,7 +473,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -536,7 +537,7 @@ router.get(
       res.status(500).json({ error: "cyber_signal_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/cyber-signals/fetch/cisa-kev
@@ -601,6 +602,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -787,6 +793,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -965,6 +976,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -1143,6 +1159,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -1307,6 +1328,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `INSERT INTO cyber_signals (
@@ -1488,6 +1514,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `INSERT INTO cyber_signals (
@@ -1653,6 +1684,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `INSERT INTO cyber_signals (
@@ -1815,6 +1851,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -1977,6 +2018,11 @@ router.post(
         const client = await pg.connect();
         try {
           await client.query("BEGIN");
+          // M-1 PR-2: explicit-client tx (the asTenant wrap cannot hold a loop
+          // with `continue`) — set the tenant GUC directly, per the documented
+          // escape-hatch pattern in infra/postgres.ts. Inert pre-flip; makes
+          // this per-signal transaction RLS-correct post-flip.
+          await client.query("SELECT set_config('app.current_org_id', $1, true)", [organizationId]);
 
           const insertResult = await client.query(
             `
@@ -2108,7 +2154,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
 
@@ -2197,6 +2243,6 @@ router.post(
       res.status(500).json({ error: "cyber_signal_reprocess_failed" });
     }
   }
-);
+));
 
 export default router;

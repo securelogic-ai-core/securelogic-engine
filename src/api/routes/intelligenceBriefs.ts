@@ -22,6 +22,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -88,7 +89,7 @@ router.use(
 // POST /api/intelligence-briefs/generate
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/generate", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.post("/intelligence-briefs/generate", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   // Accept optional period_start / period_end; default to last 7 days.
@@ -449,7 +450,7 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), den
   } finally {
     client.release();
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // POST /api/intelligence-briefs/subscribers
@@ -457,7 +458,7 @@ router.post("/intelligence-briefs/generate", requireEntitlement("standard"), den
 // Upserts on (organization_id, email): reactivates if previously unsubscribed.
 // ---------------------------------------------------------------------------
 
-router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const rawEmail = String(req.body?.email ?? "").trim().toLowerCase();
@@ -492,7 +493,7 @@ router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), 
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // GET /api/intelligence-briefs/subscribers
@@ -501,7 +502,7 @@ router.post("/intelligence-briefs/subscribers", requireEntitlement("standard"), 
 // "subscribers" as a brief UUID parameter.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const includeInactive = req.query["include_inactive"] === "true";
@@ -537,7 +538,7 @@ router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), d
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // DELETE /api/intelligence-briefs/subscribers/:id
@@ -545,7 +546,7 @@ router.get("/intelligence-briefs/subscribers", requireEntitlement("standard"), d
 // Hard delete is intentionally not supported — preserves audit history.
 // ---------------------------------------------------------------------------
 
-router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -576,7 +577,7 @@ router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standa
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // GET /api/intelligence-briefs/subscribers/:id/preferences
@@ -584,7 +585,7 @@ router.delete("/intelligence-briefs/subscribers/:id", requireEntitlement("standa
 // IMPORTANT: defined before /:id routes.
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -618,7 +619,7 @@ router.get("/intelligence-briefs/subscribers/:id/preferences", requireEntitlemen
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // PATCH /api/intelligence-briefs/subscribers/:id/preferences
@@ -639,7 +640,7 @@ const VALID_PREF_CATEGORIES = new Set([
   "general"
 ]);
 
-router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), async (req, res) => {
+router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlement("standard"), denyContributor(), asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id: subscriberId } = req.params as { id: string };
 
@@ -739,13 +740,16 @@ router.patch("/intelligence-briefs/subscribers/:id/preferences", requireEntitlem
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // POST /api/intelligence-briefs/:id/send
 // Trigger delivery of a published brief to all active subscribers.
 // ---------------------------------------------------------------------------
 
+// M-1 PR-2: deliberately NOT asTenant-wrapped — sendBrief() fans out emails
+// (network per subscriber) and manages its own withTenant scopes internally;
+// a route-level wrap would hold one tenant transaction across every send.
 router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), denyContributor(), async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
   const { id } = req.params as { id: string };
@@ -803,7 +807,7 @@ router.post("/intelligence-briefs/:id/send", requireEntitlement("standard"), den
 // Cursor fields: cursor_period_end (ISO 8601) + cursor_id (UUID).
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs", async (req, res) => {
+router.get("/intelligence-briefs", asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
 
   const rawLimit = parseInt(String(req.query["limit"] ?? DEFAULT_LIMIT), 10);
@@ -898,16 +902,16 @@ router.get("/intelligence-briefs", async (req, res) => {
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // ---------------------------------------------------------------------------
 // GET /api/intelligence-briefs/:id
 // Returns brief + all items (sorted by sort_order).
 // ---------------------------------------------------------------------------
 
-router.get("/intelligence-briefs/:id", async (req, res) => {
+router.get("/intelligence-briefs/:id", asTenant(async (req, res) => {
   const orgId = (req as any).organizationContext?.organizationId as string;
-  const { id } = req.params;
+  const id = String(req.params.id ?? "");
 
   if (!UUID_RE.test(id)) {
     return res.status(400).json({ error: "invalid_brief_id" });
@@ -1049,6 +1053,6 @@ router.get("/intelligence-briefs/:id", async (req, res) => {
     );
     return res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 export default router;

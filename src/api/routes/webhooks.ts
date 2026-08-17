@@ -19,6 +19,7 @@
 import crypto from "crypto";
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
@@ -121,7 +122,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -147,7 +148,7 @@ router.get(
       res.status(500).json({ error: "webhooks_list_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/webhooks
@@ -161,7 +162,7 @@ router.post(
   requireEntitlement("premium"),
   denyContributor(),
   requireNotViewer,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -243,7 +244,7 @@ router.post(
       res.status(500).json({ error: "webhook_create_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/webhooks/event-types
@@ -283,7 +284,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -317,7 +318,7 @@ router.get(
       res.status(500).json({ error: "webhook_get_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    PATCH /api/webhooks/:id
@@ -332,7 +333,7 @@ router.patch(
   requireEntitlement("premium"),
   denyContributor(),
   requireNotViewer,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -426,7 +427,7 @@ router.patch(
       res.status(500).json({ error: "webhook_patch_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/webhooks/:id
@@ -440,7 +441,7 @@ router.delete(
   requireEntitlement("premium"),
   denyContributor(),
   requireNotViewer,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -475,7 +476,7 @@ router.delete(
       res.status(500).json({ error: "webhook_delete_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/webhooks/:id/rotate-secret
@@ -501,7 +502,7 @@ router.post(
   requireEntitlement("premium"),
   denyContributor(),
   requireNotViewer,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -568,7 +569,7 @@ router.post(
       res.status(500).json({ error: "webhook_rotate_secret_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    POST /api/webhooks/:id/test
@@ -582,7 +583,7 @@ router.post(
   requireEntitlement("premium"),
   denyContributor(),
   requireNotViewer,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -637,7 +638,7 @@ router.post(
       res.status(500).json({ error: "webhook_test_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/webhooks/:id/deliveries
@@ -650,7 +651,7 @@ router.get(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const organizationId = (req as any).organizationContext?.organizationId ?? null;
       if (!organizationId) {
@@ -691,6 +692,6 @@ router.get(
       res.status(500).json({ error: "webhook_deliveries_failed" });
     }
   }
-);
+));
 
 export default router;

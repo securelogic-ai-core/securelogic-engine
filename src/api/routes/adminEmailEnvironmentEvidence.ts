@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import {
   readEventEnvironment,
@@ -82,7 +86,7 @@ router.get("/email-environment-evidence", async (req, res) => {
 
   try {
     // MAX_ROWS + 1 so truncation is detected rather than inferred.
-    const result = await pg.query<EventRow>(
+    const result = await pgElevated.query<EventRow>(
       `SELECT event_type, payload, created_at
          FROM email_provider_events
         WHERE created_at >= NOW() - ($1::int * INTERVAL '1 day')

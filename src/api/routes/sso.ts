@@ -14,7 +14,16 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
-import { pg, pgElevated } from "../infra/postgres.js";
+// M-1 PR-2 channel dispositions for this file:
+//   • The SSO LOGIN PLANE (check-domain, /:orgId/login, ACS + JIT user
+//     provisioning, /sso/exchange, metadata, and the shared loadSsoConfig
+//     helper the login plane reads through) is PRE-AUTH — no org-scoped
+//     session exists yet — so those sites use the elevated channel.
+//   • The /sso/config admin trio runs with a session (requireAuth +
+//     requireRole("admin")); its org_sso_configs write/delete are wrapped in
+//     withTenant(orgId) so the RLS backstop applies post-flip. GET shares the
+//     elevated loadSsoConfig helper with the login plane (read-only).
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
@@ -123,7 +132,8 @@ function firstAttr(attrs: Record<string, string | string[]>, key: string): strin
 }
 
 async function loadSsoConfig(orgId: string): Promise<SsoConfigRow | null> {
-  const result = await pg.query<SsoConfigRow>(
+  // Elevated: called from the pre-auth login plane (no session/GUC exists).
+  const result = await pgElevated.query<SsoConfigRow>(
     `SELECT * FROM org_sso_configs WHERE organization_id = $1 LIMIT 1`,
     [orgId]
   );
@@ -148,7 +158,7 @@ router.get("/sso/check-domain", checkDomainLimiter, async (req: Request, res: Re
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       organization_id: string;
       is_enforced: boolean;
       sp_entity_id: string;
@@ -246,7 +256,7 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
     ).trim();
 
     // Find or JIT-create the user
-    const existing = await pg.query<{
+    const existing = await pgElevated.query<{
       id: string;
       name: string;
       email: string;
@@ -324,7 +334,7 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       let jitSeatType = "full";
       let jitRole = "analyst";
       if (seatModelOn) {
-        const defaults = await pg.query<{ default_sso_seat_type: string; default_sso_role: string }>(
+        const defaults = await pgElevated.query<{ default_sso_seat_type: string; default_sso_role: string }>(
           `SELECT default_sso_seat_type, default_sso_role FROM organizations WHERE id = $1`,
           [orgId]
         );
@@ -360,7 +370,7 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       // consent_required for these users until they accept terms via
       // POST /api/auth/accept-terms (handled by the customer app UI in a
       // separate PR).
-      const inserted = await pg.query<{ id: string }>(
+      const inserted = await pgElevated.query<{ id: string }>(
         `INSERT INTO users (organization_id, email, name, password_hash, email_verified, role, seat_type, sso_provider)
          VALUES ($1, $2, $3, '', true, $4, $5, 'saml')
          RETURNING id`,
@@ -602,7 +612,8 @@ router.post(
         return;
       }
 
-      const result = await pg.query<SsoConfigRow>(
+      const result = await withTenant(orgId, () =>
+        pg.query<SsoConfigRow>(
         `INSERT INTO org_sso_configs
            (organization_id, idp_entity_id, idp_sso_url, idp_certificate, sp_entity_id, is_enforced)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -615,7 +626,7 @@ router.post(
            updated_at      = NOW()
          RETURNING *`,
         [orgId, idp_entity_id, idp_sso_url, idp_certificate, sp_entity_id, is_enforced]
-      );
+      ));
 
       writeAuditEvent({
         organizationId: orgId,
@@ -677,9 +688,8 @@ router.delete(
       const orgId = req.jwtPayload?.org;
       if (!orgId) { res.status(401).json({ error: "unauthorized" }); return; }
 
-      await pg.query(
-        `DELETE FROM org_sso_configs WHERE organization_id = $1`,
-        [orgId]
+      await withTenant(orgId, () =>
+        pg.query(`DELETE FROM org_sso_configs WHERE organization_id = $1`, [orgId])
       );
 
       writeAuditEvent({

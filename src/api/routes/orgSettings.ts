@@ -20,6 +20,7 @@
 
 import { Router } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -48,7 +49,7 @@ interface OrgSettingsRow {
    Returns org-level settings + risk-context profile.
    ========================================================= */
 
-router.get("/org/settings", requireAuth, async (req, res) => {
+router.get("/org/settings", requireAuth, asTenant(async (req, res) => {
   try {
     const orgId = req.jwtPayload!.org;
 
@@ -67,7 +68,7 @@ router.get("/org/settings", requireAuth, async (req, res) => {
     logger.error({ event: "org_settings_get_failed", err }, "GET /api/org/settings failed");
     res.status(500).json({ error: "fetch_failed" });
   }
-});
+}));
 
 /* =========================================================
    PATCH /api/org/settings
@@ -85,7 +86,7 @@ const PATCHABLE_COLUMNS: ReadonlyArray<keyof OrgSettingsPatch> = [
   "voice_input_enabled",
 ];
 
-router.patch("/org/settings", requireAuth, requireAdminRole, async (req, res) => {
+router.patch("/org/settings", requireAuth, requireAdminRole, asTenant(async (req, res) => {
   try {
     const orgId   = req.jwtPayload!.org;
     const actorId = req.jwtPayload!.sub;
@@ -147,6 +148,6 @@ router.patch("/org/settings", requireAuth, requireAdminRole, async (req, res) =>
     logger.error({ event: "org_settings_patch_failed", err }, "PATCH /api/org/settings failed");
     res.status(500).json({ error: "update_failed" });
   }
-});
+}));
 
 export default router;

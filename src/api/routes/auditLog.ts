@@ -7,7 +7,8 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -58,7 +59,7 @@ router.get(
   requireEntitlement("premium"),
   denyContributor(),
   requireAdminRole,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId = (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
@@ -105,8 +106,9 @@ router.get(
 
       const where = conditions.join(" AND ");
 
-      const [rowsResult, countResult] = await Promise.all([
-        pg.query(
+      // A04-G1 γ.1 precedent: serialized (was Promise.all) — under the asTenant
+      // wrap both queries share one tenant client.
+      const rowsResult = await pg.query(
           `SELECT
              sal.id,
              sal.event_type,
@@ -124,12 +126,11 @@ router.get(
            ORDER BY sal.created_at DESC, sal.id DESC
            LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
           [...params, limit, offset]
-        ),
-        pg.query(
+        );
+      const countResult = await pg.query(
           `SELECT COUNT(*) AS total FROM security_audit_log sal WHERE ${where}`,
           params
-        ),
-      ]);
+        );
 
       const total       = parseInt(countResult.rows[0].total as string, 10);
       const total_pages = Math.max(1, Math.ceil(total / limit));
@@ -145,7 +146,7 @@ router.get(
       logger.error({ event: "audit_log_list_failed", err }, "GET /api/audit-log failed");
       res.status(500).json({ error: "audit_log_list_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -159,7 +160,7 @@ router.get(
   requireEntitlement("premium"),
   denyContributor(),
   requireAdminRole,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     const organizationId = (req as any).organizationContext?.organizationId ?? null;
     if (!organizationId) {
       res.status(403).json({ error: "organization_context_missing" });
@@ -182,7 +183,7 @@ router.get(
       logger.error({ event: "audit_log_event_types_failed", err }, "GET /api/audit-log/event-types failed");
       res.status(500).json({ error: "audit_log_event_types_failed" });
     }
-  }
+  })
 );
 
 /* =========================================================
@@ -234,7 +235,8 @@ router.get(
 
       const where = conditions.join(" AND ");
 
-      const result = await pg.query(
+      // M-1 PR-2: CSV export streams — withTenant scopes only the SELECT.
+      const result = await withTenant(organizationId, () => pg.query(
         `SELECT
            sal.created_at,
            sal.event_type,
@@ -250,7 +252,7 @@ router.get(
          ORDER BY sal.created_at DESC
          LIMIT $${params.length + 1}`,
         [...params, CSV_MAX]
-      );
+      ));
 
       writeAuditEvent({
         organizationId,

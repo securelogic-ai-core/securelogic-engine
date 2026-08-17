@@ -17,6 +17,7 @@ import argon2 from "argon2";
 import rateLimit from "express-rate-limit";
 import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -178,7 +179,7 @@ router.post(
   requireTeamCapability(),
   requireRole("admin"),
   inviteLimiter,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId  = (req as any).organizationContext?.organizationId as string | null;
       const userId = req.userId ?? null;
@@ -290,7 +291,7 @@ router.post(
       res.status(500).json({ error: "invite_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/team/members
@@ -302,7 +303,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireTeamCapability(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId = (req as any).organizationContext?.organizationId as string | null;
 
@@ -367,7 +368,7 @@ router.get(
       res.status(500).json({ error: "fetch_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/team/members/:userId
@@ -380,7 +381,7 @@ router.delete(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId        = (req as any).organizationContext?.organizationId as string | null;
       const actorUserId  = req.userId ?? null;
@@ -446,7 +447,7 @@ router.delete(
       res.status(500).json({ error: "remove_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    PATCH /api/team/members/:userId/role
@@ -459,7 +460,7 @@ router.patch(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId        = (req as any).organizationContext?.organizationId as string | null;
       const actorUserId  = req.userId ?? null;
@@ -534,7 +535,7 @@ router.patch(
       res.status(500).json({ error: "role_change_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/team/invites/:inviteId
@@ -547,7 +548,7 @@ router.delete(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId    = (req as any).organizationContext?.organizationId as string | null;
       const inviteId = req.params.inviteId;
@@ -581,14 +582,14 @@ router.delete(
       res.status(500).json({ error: "revoke_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/team/invites/:token/preview
    Preview an invite before accepting. Public — no auth.
    ========================================================= */
 
-router.get("/team/invites/:token/preview", async (req, res) => {
+router.get("/team/invites/:token/preview", asTenant(async (req, res) => {
   try {
     const token = req.params.token;
 
@@ -644,7 +645,7 @@ router.get("/team/invites/:token/preview", async (req, res) => {
     logger.error({ event: "invite_preview_failed", err }, "GET /api/team/invites/:token/preview failed");
     res.status(500).json({ valid: false, reason: "error" });
   }
-});
+}));
 
 /* =========================================================
    POST /api/team/invites/:token/accept
@@ -659,7 +660,7 @@ const acceptLimiter = rateLimit({
   message: { error: "rate_limit_exceeded" }
 });
 
-router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
+router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, res) => {
   try {
     const token       = req.params.token;
     const body        = req.body as Record<string, unknown>;
@@ -855,6 +856,6 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     logger.error({ event: "invite_accept_failed", err }, "POST /api/team/invites/:token/accept failed");
     res.status(500).json({ error: "accept_failed" });
   }
-});
+}));
 
 export default router;

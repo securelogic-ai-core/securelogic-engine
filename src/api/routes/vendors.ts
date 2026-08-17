@@ -23,7 +23,7 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { csvRow } from "../lib/csvExport.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -716,6 +716,8 @@ router.get(
 // CSV serialization migrated to the shared lib (src/api/lib/csvExport.ts) so
 // every register export escapes identically.
 
+// M-1 PR-2: CSV export streams — withTenant scopes only the SELECT (see
+// risksExport.ts for the pattern rationale).
 router.get(
   "/vendors/export.csv",
   requireApiKey,
@@ -757,7 +759,7 @@ router.get(
     const where = conditions.join(" AND ");
 
     try {
-      const result = await pg.query<{
+      const result = await withTenant(organizationId, () => pg.query<{
         id: string;
         name: string;
         category: string | null;
@@ -776,7 +778,7 @@ router.get(
          ORDER BY created_at DESC, id DESC
          LIMIT 10000`,
         params
-      );
+      ));
 
       writeAuditEvent({
         organizationId: organizationId,

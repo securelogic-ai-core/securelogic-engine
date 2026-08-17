@@ -196,9 +196,19 @@ function scanFile(absPath: string, liveTables: Set<string>): FileScan {
   const { extents, balanced } = findExtents(text);
   const sites: Site[] = [];
 
-  const sitePatterns: Array<[RegExp, string, (k: "tenant" | "elevated" | null) => Channel]> = [
-    [/\bpg\.(query|connect)\s*(?:<[^>]*>)?\s*\(/g, "pg", k =>
-      k === "tenant" ? "TENANT" : k === "elevated" ? "ELEVATED" : "BARE"],
+  // The documented explicit-client escape hatch: a pg.connect whose block sets
+  // the tenant GUC itself (set_config('app.current_org_id', …) within the next
+  // 600 chars) is tenant-correct without a lexical withTenant extent.
+  const GUC_NEARBY = /set_config\('app\.current_org_id'/;
+  const sitePatterns: Array<[RegExp, string, (k: "tenant" | "elevated" | null, at: number) => Channel]> = [
+    [/\bpg\.(query|connect)\s*(?:<[^>]*>)?\s*\(/g, "pg", (k, at) =>
+      k === "tenant"
+        ? "TENANT"
+        : k === "elevated"
+          ? "ELEVATED"
+          : GUC_NEARBY.test(text.slice(at, at + 600))
+            ? "TENANT"
+            : "BARE"],
     [/\bpgElevated\.(query|connect)\s*(?:<[^>]*>)?\s*\(/g, "pgElevated", () => "ELEVATED"],
     [/\bpgRaw\.(query|connect)\s*(?:<[^>]*>)?\s*\(/g, "pgRaw", () => "RAW"]
   ];
@@ -207,7 +217,7 @@ function scanFile(absPath: string, liveTables: Set<string>): FileScan {
       sites.push({
         line: lineOf(text, m.index),
         api: `${api}.${m[1]}`,
-        channel: resolve(channelAt(extents, m.index))
+        channel: resolve(channelAt(extents, m.index), m.index)
       });
     }
   }

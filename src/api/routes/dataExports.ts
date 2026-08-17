@@ -36,6 +36,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { hashDownloadToken } from "../lib/dataExportDownloadToken.js";
 import { getDataExportSignedUrl } from "../lib/dataExportStorage.js";
 
@@ -122,7 +123,7 @@ async function redirectToSignedUrl(
 const router = Router();
 
 // POST /api/data-exports — request a self-export.
-router.post("/data-exports", ...authMiddleware, async (req: Request, res: Response) => {
+router.post("/data-exports", ...authMiddleware, asTenant(async (req: Request, res: Response) => {
   const orgId = getOrgId(req);
   const userId = getUserId(req);
 
@@ -187,10 +188,10 @@ router.post("/data-exports", ...authMiddleware, async (req: Request, res: Respon
     );
     res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // GET /api/data-exports — list the caller's own self-export requests + bundles.
-router.get("/data-exports", ...authMiddleware, async (req: Request, res: Response) => {
+router.get("/data-exports", ...authMiddleware, asTenant(async (req: Request, res: Response) => {
   const orgId = getOrgId(req);
   const userId = getUserId(req);
 
@@ -270,7 +271,7 @@ router.get("/data-exports", ...authMiddleware, async (req: Request, res: Respons
     );
     res.status(500).json({ error: "internal_error" });
   }
-});
+}));
 
 // GET /api/data-exports/:fileId/download — owner download (302 → signed URL).
 router.get(
@@ -299,13 +300,15 @@ router.get(
     try {
       // Scoped by BOTH org and the requesting user: cross-org AND cross-user
       // (same-org) requests both fall through to 404 — no IDOR.
-      const { rows } = await pg.query<ExportFileRow>(
+      // M-1 PR-2: this handler 302-redirects (asTenant forbidden) — scope just
+      // the row lookup in withTenant for the post-flip RLS backstop.
+      const { rows } = await withTenant(orgId, () => pg.query<ExportFileRow>(
         `SELECT id, organization_id, r2_key, download_token_expires_at, purged_at
            FROM data_export_files
           WHERE id = $1 AND organization_id = $2 AND requested_by_user_id = $3
           LIMIT 1`,
         [fileId, orgId, userId],
-      );
+      ));
       const row = rows[0];
       if (!row) {
         res.status(404).json({ error: "export_not_found" });

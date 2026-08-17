@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff ops surface behind requireAdminKey. Every query is a
+// cross-org platform read, several on Tier-D owner-only tables (worker_runs,
+// email_provider_events) that app_request deliberately cannot see — the
+// elevated owner channel is the only correct disposition.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -13,7 +17,7 @@ async function runQuery(
   text: string,
   values: unknown[] = []
 ): Promise<Row[]> {
-  const result = await pg.query(text, values);
+  const result = await pgElevated.query(text, values);
   return result.rows as Row[];
 }
 
