@@ -27,6 +27,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Redis — provision a Render Redis instance or supply an external URL
       - key: REDIS_URL
         sync: false
@@ -447,6 +456,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Staging Redis — populate in dashboard
       - key: REDIS_URL
         sync: false
@@ -831,6 +849,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Shared with API service — same Redis instance.
       # Required for the 15-minute KEV poll's ETag short-circuit
       # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
@@ -968,6 +995,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Staging Redis — populate with the staging Redis URL in dashboard.
       # Required for the 15-minute KEV poll's ETag short-circuit
       # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
@@ -1103,6 +1139,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
@@ -1149,6 +1194,15 @@ services:
       # use. TLS is on by default (src/api/infra/postgres.ts:19-23 — only
       # DATABASE_SSL_DISABLED=true turns it off); no PGSSL needed.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Optional: override log verbosity (default: info)
@@ -1205,6 +1259,15 @@ services:
       # (owner) is added for the cross-org claim poll (pgElevated). See
       # docs/A04-G1-rls-rollout-plan.md §4a (6th flip-set holder).
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — destination for export bundles
@@ -1279,6 +1342,15 @@ services:
       # Staging Postgres — same instance engine-staging, intelligence-worker-
       # staging and posture-worker-staging use. TLS on by default; no PGSSL.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — STAGING. Same bucket the engine-staging block uses for
@@ -1379,6 +1451,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Cloudflare R2 — source of the uploaded SOC PDFs the worker
       # extracts (org/{orgId}/vendor-assurance/...). Populate in the
       # dashboard; prod enablement is a separate Part-2 decision.
@@ -1444,6 +1525,15 @@ services:
       # Staging Postgres — same instance engine-staging and the other
       # staging workers use. TLS on by default; no PGSSL.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — STAGING. Same bucket engine-staging uses for

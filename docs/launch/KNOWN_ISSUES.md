@@ -27,10 +27,11 @@ This file does **not** track CI bugs or transient failures. It tracks structural
 
 ## 🟠 Ship-with-mitigation (live at launch, mitigated)
 
-### M-1 — Postgres RLS is INERT pre-flip
-- **What:** RLS policies exist on ~22 tables but run under the owner cred with `NOT FORCE` — they do **not** enforce.
+### M-1 — Postgres RLS is INERT pre-flip (code-complete; activation pending)
+- **What:** RLS policies exist on **78 tables** (live census 2026-08-17; the earlier "~22" undercounted) but run under the owner cred with `NOT FORCE` — they do **not** enforce.
 - **Live mitigation:** route-level `organization_id` scoping is the live tenant defense, and the `cross-org-isolation` CI lane proves per-org containment of the worker→brief fan-out (R5 resolved). This is the **current production posture** and is acceptable for launch.
-- **Resolution:** A04-G1 `app_request` flip → **Sprint 3.1**.
+- **Status 2026-08-17:** the flip is **code-complete** — grants cured + CI-asserted (#802), every route/worker site channel-dispositioned (#803), activation gates shipped (`m1-preflight.sql`, `m1-proof.ts`). Remaining: operator credential issuance + per-environment `DATABASE_URL`/`MIGRATION_DATABASE_URL` repoints + staging soak, per `docs/M1-app-request-flip-design.md`.
+- **Resolution:** M-1 staging → prod activation; closes together with risk-register R8.
 
 ### M-2 — GDPR export ships, but delivery email does not
 - **What:** The Art. 15 export path is built and prod-verified, but no delivery email is sent → exports are **inert end-to-end**. A requester receives no link.

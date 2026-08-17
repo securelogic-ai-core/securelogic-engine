@@ -55,7 +55,7 @@ Known wrinkle: Render Postgres uses a single default role; `pg_dump`/restore flo
 ### 4a. Database loss (worst case)
 1. Declare the incident (§7) and freeze deploys.
 2. Render dashboard → Postgres instance → Restore (choose PITR timestamp or latest snapshot). If instance is unrecoverable, create a new instance and restore the snapshot into it.
-3. If the instance changed: update `DATABASE_URL` on **all 7 production services** (engine, app, website if applicable, 4 workers).
+3. If the instance changed: update `DATABASE_URL` on **all 7 production services** (engine, app, website if applicable, 4 workers). **Post-M-1 activation there are TWO database env keys per DB-connected service** — `DATABASE_URL` (the `app_request` runtime credential) **and** `MIGRATION_DATABASE_URL` (the owner login) — and any DB credential rotation or restore must update BOTH; a missed `MIGRATION_DATABASE_URL` breaks the elevated channel and boot migrations while `/health` stays green (the 2026-08-11 rotation trap). A restored instance must also re-verify the `app_request` role exists with its password (`scripts/validation/m1-preflight.sql` is the gate).
 4. Verify: `GET /health` returns `{"status":"ok","db":"connected"}`.
 5. Run migration check: migrations are filename-tracked and idempotent — a restored DB at an older migration point self-heals on next deploy.
 6. Post-restore validation: run the smoke set in `docs/validation/staging-smoke-2026-07-30.md` §Method against production with an internal tenant.
