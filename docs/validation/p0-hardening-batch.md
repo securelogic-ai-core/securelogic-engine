@@ -28,7 +28,7 @@ standalone script pools. **Verification is the default.** Knobs:
 | Env | Purpose |
 |---|---|
 | `DATABASE_SSL_DISABLED` | pre-existing: non-TLS harness Postgres only |
-| `DATABASE_SSL_SERVERNAME` | hostname to verify when the DSN uses Render's INTERNAL hostname (§1.3) |
+| `DATABASE_SSL_SERVERNAME` | override the hostname checked against the cert's SANs. **Cannot fix Render internal-hostname DSNs** — those fail on an untrusted self-signed chain, not on hostname mismatch (§1.3); the knob remains for genuine SNI/SAN-mismatch cases only |
 | `DATABASE_SSL_CA` | extra trust anchor; unused today |
 | `DATABASE_TLS_NO_VERIFY="true"` | **incident rollback hatch** — exact legacy behaviour; engine logs error-level every boot while set (selfTest) |
 
@@ -48,29 +48,55 @@ against all three database hostnames (`dpg-….virginia-postgres.render.com`):
 So for an EXTERNAL-hostname DSN, `rejectUnauthorized: true` works with zero
 additional configuration.
 
-### 1.3 The one unknown, and the staged rollout that resolves it
+### 1.3 The one unknown — RESOLVED on staging 2026-08-17 (see §1.5 for proof)
 
-Whether each service's `DATABASE_URL` (dashboard-managed, value not readable
-from this environment) uses the external or the INTERNAL hostname. The cert's
-SANs cover only the public names, so an internal-hostname DSN fails hostname
-verification with:
+The unknown was whether each service's `DATABASE_URL` (dashboard-managed,
+value not readable from this environment) used the external or the INTERNAL
+hostname. Staging answered it: `securelogic-engine-staging`,
+`securelogic-vendor-extraction-worker-staging`, and
+`securelogic-data-rights-worker-staging` were on internal hostnames and failed;
+the other three staging services connected under verify-default with no
+changes.
 
-    Hostname/IP does not match certificate's altnames
+**CORRECTION — the predicted failure mode was wrong.** This section originally
+predicted internal-hostname DSNs would fail hostname verification
+(`Hostname/IP does not match certificate's altnames`), fixable by
+`DATABASE_SSL_SERVERNAME`. Observed reality (staging, 2026-08-17): Render's
+internal connections do not present the Let's Encrypt certificate at all —
+they present a **self-signed certificate**, failing with:
 
-Rollout (operator):
+    Error: self-signed certificate  (code: DEPTH_ZERO_SELF_SIGNED_CERT)
 
-1. Merge to `develop` → staging auto-deploys. The engine boots
-   `npm run migrate && npm start`, so a live staging engine IS the proof that
-   verification connects. All five staging workers prove the same for their
-   DSNs.
-2. If a staging service fails with the altnames error above: set
-   `DATABASE_SSL_SERVERNAME=<that DB's external hostname>` on that service
-   (dashboard) and redeploy. External hostnames: `<dpg-id>.virginia-postgres.render.com`.
-3. If it fails with an UNTRUSTED-chain error (not expected — §1.2): STOP,
-   set `DATABASE_TLS_NO_VERIFY=true` on the failing service, report. Do not
-   proceed to production.
-4. Production promotion rides the next normal release train — never a
-   standalone force-push. Same per-service checks; same knobs.
+`DATABASE_SSL_SERVERNAME` can never fix that (it only overrides the hostname
+check; the chain itself is untrusted). The §1.2 openssl evidence holds for
+EXTERNAL hostnames only.
+
+**The remedy, proven on staging: repoint `DATABASE_URL` to the database's
+External Database URL** (`<dpg-id>.virginia-postgres.render.com`, from the
+Render dashboard) on the failing service, then redeploy — Render injects env
+at DEPLOY, not restart. Do NOT use `DATABASE_TLS_NO_VERIFY` for this case;
+the hatch is for genuine incidents only.
+
+Failure signatures per service type — deploy status alone is NOT a pass:
+
+- **Engine** (fails safe): `npm run migrate` dies → `update_failed`, prior
+  build stays live. A live engine deploy IS proof (migrate + boot self-test +
+  `/health` `db:connected` all traverse the pool).
+- **Workers** (fail LIVE-but-broken): the deploy reports `live` while every
+  poll tick errors (`*_worker_tick_error` with the code above, every 15s).
+  Only runtime logs show it. A healthy worker tick is silent, so the pass
+  signal is the absence of tick errors from the CURRENT instance — check
+  instance labels; the outgoing instance keeps erroring until SIGTERM.
+
+Production promotion (rides the next normal release train — never a
+standalone force-push):
+
+1. **BEFORE the release reaches `main`**: check each prod service's
+   `DATABASE_URL` hostname form in the dashboard; repoint any
+   internal-hostname value to the External Database URL. Prod workers hit the
+   same live-but-broken trap otherwise.
+2. After promotion: verify engine deploy live + `/health`, then read each
+   worker's runtime logs for tick errors — not `render deploys list`.
 
 Rollback at any point: `DATABASE_TLS_NO_VERIFY=true` on the affected service —
 an env flip, no code revert, no migration. Remember Render injects env at
@@ -85,6 +111,33 @@ DEPLOY, not restart: flip, then redeploy the same SHA.
   runner): 5/5 with the new resolution against the non-TLS harness.
 - Production behaviour without env changes = verified TLS. The only
   environments whose behaviour changes are ones that actually negotiate TLS.
+
+### 1.5 Staging closing proof — 2026-08-17 ≈14:05 UTC: PASSED
+
+All six staging services live on `develop` @ `782df747` (#799 verify-default +
+#800 script-import fix), verified via `render deploys list`, live probes, and
+runtime logs:
+
+- **engine**: two `update_failed` auto-deploys while `DATABASE_URL` was
+  internal (12:44, 13:03 — prior build stayed live, as designed); after the
+  operator repointed to the External Database URL, the manual deploy went
+  live 13:57:47 with `Migrations complete` (13:57:36), `Boot self-test
+  passed`, `/health` → `{"status":"ok","db":"connected"}`.
+- **vendor-extraction-worker**: pre-repoint instance errored on EVERY
+  15-second tick with `DEPTH_ZERO_SELF_SIGNED_CERT` until SIGTERM at
+  14:01:17; post-repoint instance (started 14:00:22) logged zero errors
+  across ~20 DB-touching ticks (`claimNextJob` queries per tick, and this
+  code path is proven loud — same build, same cadence, only the DSN differs).
+- **data-rights-worker**: post-repoint instance clean; its tick also queries
+  the DB every 15s through the shared `resolvePgSsl`-configured pool, so
+  silence is meaningful.
+- **intelligence-worker, posture-worker, app**: live on the same commit since
+  ~13:03 with zero certificate errors — their DSNs already verified.
+- **No service is on the hatch**: zero `pg_tls_verification_disabled`
+  boot-alarm events across all six services.
+
+Remaining for full P0-1 closure: the production rollout in §1.3 (hostname
+check BEFORE the release train, worker-log verification after).
 
 ---
 
