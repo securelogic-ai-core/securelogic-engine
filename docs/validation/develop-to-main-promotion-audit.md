@@ -921,7 +921,7 @@ precisely the distinction §12's hazard note asked for.
 
 ---
 
-## 16. E-1 + E-2 dark production promotion — RELEASE PLAN (prepared 2026-08-16, NOT executed)
+## 16. E-1 + E-2 dark production promotion — RELEASE PLAN (prepared 2026-08-16, EXECUTED 2026-08-17 — outcome in §17)
 
 **Scope:** E-1 (already in production) plus **E-2 Increments 1–3**, their
 supporting fixes, rollbacks and documentation. **Wave 1 remains unauthorized and
@@ -1209,3 +1209,188 @@ sufficient.
 | Lock contention on the nine WORM tables at deploy time | **Clear at pre-flight — 0 granted locks.** Re-check at P4 immediately before the merge |
 | A migration edited or renamed rather than added | **Clear** — additions only |
 | Demo or the four `autoDeploy` holds disturbed | **Clear** — untouched |
+
+---
+
+## 17. E-1 + E-2 dark production promotion — closeout, verified 2026-08-17 10:16–10:20Z
+
+E-2 landed. Tenant erasure is in production **dark**; it activates nothing. This
+section records the outcome and the evidence behind it. It does not restate §16.
+
+### Merge
+
+PR **#797** `release/e1-e2-dark` → `main`, **squash-merged**. Resulting production
+SHA: **`011e1f1d571aee893705ea545dd79e5e47cff14d`**.
+
+Built as the §16.8 tree transplant rather than a merge, because E-1 reached `main`
+by cherry-pick and a plain merge conflicts on five files. The transplant behaved as
+the dry run predicted: the delta against `main` was exactly the 27-file E-2 set.
+
+### The six promoted services — all `live` on `011e1f1d`
+
+| # | Service | Deploy finished | Prior (`5e108365`) |
+|---|---|---|---|
+| 1 | `securelogic-engine` (migrates) | **06:42:36Z** | `deactivated` |
+| 2 | `securelogic-vendor-extraction-worker` | **06:45:45Z** | `deactivated` |
+| 3 | `securelogic-posture-worker` | **06:46:58Z** | `deactivated` |
+| 4 | `securelogic-intelligence-worker` | **06:48:10Z** | `deactivated` |
+| 5 | `securelogic-data-rights-worker` | **06:49:42Z** | `deactivated` |
+| 6 | `securelogic-app` | **06:53:56Z** | `deactivated` |
+
+**§16.8's deploy order is verified by the timestamps, not asserted**: engine first,
+then vendor-extraction → posture → intelligence, **data-rights last of the workers**
+(the only worker carrying E-2 code), **app last overall**. Engine leads the app by
+11m20s. No service failed, so the stop rule did not fire.
+
+The four holds — `securelogic-website`, `securelogic-demo-engine`,
+`securelogic-demo-app`, `securelogic-intelligence-api` — re-read today as
+`autoDeploy: no`. No drift against §11.
+
+### Migrations — `schema_migrations` now **233**, read from the deploy log
+
+Exactly four applied, in strict filename order, from the engine's own boot output:
+
+```
+06:42:24  Migration timeouts: lock_timeout=5s, statement_timeout=300s
+06:42:24  Applied migration: 20261017_worm_guard_consolidation.sql
+06:42:24  Applied migration: 20261018_erasure_authorization.sql
+06:42:25  Applied migration: 20261019_erasure_execution_state.sql
+06:42:25  Applied migration: 20261020_erasure_actor_revalidation.sql
+06:42:25  Migrations complete
+```
+
+229 (§16.4 pre-flight baseline) + 4 = **233**. This reconciles with the file count
+by way of the §16.4 orphan: the tree carries **232** migration *files*, production
+holds one additional stamped row for a renamed filename, so 232 + 1 = 233 rows.
+The whole chain committed inside about a second. The timeout guards printed and
+never fired; no lock contention, no retry.
+
+**This closes a gap the two prior closeouts left open.** §13 recorded the resulting
+count as *not measured*, because no production database credential exists in this
+environment; §14 stated no count at all, resting only on the fact that a `live`
+engine proves the chain committed. It did not need one: the deploy log states which migrations
+committed, and `startCommand` is `npm run migrate && npm start`, so a `live` engine
+is proof the chain exited 0. Future closeouts should read the count this way rather
+than deferring it.
+
+### TDG dark — verified behaviourally at runtime
+
+`tdgFeatureFlag` is declared **before** `requireAuth` on every governance route, so
+an unauthenticated probe distinguishes three states that a bare status code cannot:
+
+| Probe | Result | What it proves |
+|---|---|---|
+| `GET /api/governance/classes` | 404 `{"error":"not_found"}` | **No `path` key → the flag middleware refused it** |
+| `GET /api/governance/retention` | 404, same body | as above |
+| `GET /api/governance/holds` | 404, same body | as above |
+| `GET /api/definitely-not-a-real-route-xyz` | 404 `{"error":"not_found","path":"…"}` | the catch-all, which *does* emit `path` |
+| `GET /api/vendors` | 401 | the auth stack is reachable and unchanged |
+
+The absent `path` key is the discriminator: it proves the governance routes are
+**deployed and registered, then refused by the flag** — not merely absent from the
+build. A 404 alone could not tell those apart, which is the weakness §13 flagged in
+its own dark-state evidence.
+
+Server logs corroborate it independently. The governance probes log router-relative
+(`msg":"GET /governance/classes 404"`) while the fake route logs its full path
+(`msg":"GET /api/definitely-not-a-real-route-xyz 404"`) — the former only happens if
+`dataGovernanceRouter` matched the request.
+
+Configuration agrees: `SECURELOGIC_TENANT_DATA_GOVERNANCE_ENABLED` `"false"` on both
+the engine and the data-rights worker, `SECURELOGIC_TDG_EFFECTIVE_FROM` `""`.
+
+### Erasure remains impossible
+
+`20261018_erasure_authorization.sql` committed at 06:42:24 and creates the role
+`NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT`. A repo-wide
+search finds **no `ALTER ROLE … LOGIN` anywhere** in `db/`, `src/` or `scripts/`;
+the single textual match is the comment in `20261018` describing the future
+authorized act. No erasure credential exists in `render.yaml` or any env, and
+nothing reads an erasure DSN. Increment 4 remains the only thing that changes this,
+and it needs its own authorization.
+
+*Limitation, stated rather than glossed:* production `erasure_agent.rolcanlogin` was
+**not read back**. §16.7's `rolcanlogin = false` was established on the **migrated
+baseline**, not on production. The inference from the applied migration is strong —
+the role is created NOLOGIN and nothing in the codebase grants LOGIN — but it cannot
+exclude a manual out-of-band `ALTER ROLE`. The owed check is one query:
+
+```sql
+SELECT rolcanlogin FROM pg_roles WHERE rolname = 'erasure_agent';  -- EXPECT false
+```
+
+### Wave 1 unchanged — and §12's hazard note is now obsolete
+
+`git diff origin/main origin/develop` is **completely empty**: the trees are
+byte-identical, `render.yaml` included. Every production service block carries the
+Wave 1 experience flags `"false"` or absent, with `SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED`
+still `"true"`.
+
+**This discharges §15's prediction** that after reconciliation the next promotion
+would carry *zero configuration change — code and migrations only*. It did.
+
+It also **retires §12's hazard note**. That note warned that the Wave 1 target state
+was armed in `render.yaml` on `develop`, so reaching `main` plus a Blueprint sync
+would activate Wave 1 with no further review. §15 resolved all 13 differing keys to
+the production-authorized values and moved the target into §12 as documentation. The
+warning was accurate when written and is **no longer true**; anyone reading §12
+should read §15 and this section with it.
+
+*Limitation:* Wave 1 flag values were confirmed from IaC, **not** read back from the
+running processes. Unlike TDG, these flags are evaluated *inside* route handlers
+behind `requireApiKey`, so an unauthenticated probe returns 401 regardless of flag
+state and cannot discriminate. A runtime read remains owed before Stage 2.
+
+### Error and log state
+
+Measured from deploy time forward:
+
+| Service | error/fatal lines | Assessment |
+|---|---|---|
+| `securelogic-engine` | **0** | clean; 5-minute auth-anomaly scans completing, all zeros |
+| `securelogic-app` | **0** | clean |
+| `securelogic-posture-worker` | **0** | clean |
+| `securelogic-vendor-extraction-worker` | **0** | clean |
+| `securelogic-data-rights-worker` | **0** | clean; booted on E-2 code without incident |
+| `securelogic-intelligence-worker` | 52 | **pre-existing — see below** |
+
+The worker's 52 lines are **not caused by this release**. The equivalent window
+*before* the promotion, running `5e108365`, carried **120** of the same lines — a
+higher rate. Both causes are ingestion-layer and untouched by E-1/E-2:
+
+- `signal_insert_failed` — `duplicate key value violates unique constraint
+  "idx_signals_external_id_unique"`. Dedup relies on the constraint throwing rather
+  than `ON CONFLICT DO NOTHING`, so every duplicate is logged at `error`.
+- `feed_fetch_failed` — feed rot: `regulatory_nydfs` and `regulatory_enisa` both
+  return 404, `security_news_theregister` returns malformed XML.
+
+The pipeline still reaches `pipeline_complete`, `cyber_signal_bridge_complete` and
+`worker_complete` on every cycle. **No new P0/P1 attributable to the release.**
+
+### Findings raised by this closeout — none blocking
+
+| # | Finding | Severity |
+|---|---|---|
+| 1 | Email webhook environment mismatch still live: a **staging** sender reaching the **production** receiver at 09:45Z today, `classification:"mismatch"`, `wouldRejectUnderEnforcement:true`, processed anyway in dark mode | P1, pre-existing |
+| 2 | Request-completion log lines emit `requestId` and `statusCode` **twice**, with `"statusCode":200` before the real code — a consumer reading the first occurrence sees 200 for every 404 and 401 | P2, pre-existing |
+| 3 | `signal_insert_failed` logs duplicates at `error` instead of using `ON CONFLICT DO NOTHING` | P2, pre-existing |
+| 4 | Two intelligence feeds 404 and one serves malformed XML | P2, pre-existing |
+
+None touch the E-1/E-2 surface. All four predate this promotion.
+
+### Rollback status
+
+**Not exercised — and not needed.** Rollback Point A stands as §16.9 defines it:
+revert the six services to `5e108365`, leave all four migrations applied, change no
+flag. Safe because every migration is additive and the capability is inert. Schema
+rollback remains a separate act requiring separate authorization, running `3 → 2 → 1`.
+
+### What §17 does NOT close
+
+- **Stage 2 / Wave 1.** Governed by B-5 (Stop Gate B.4, ASK-B, ASK-C C-6, C-9), all
+  human-owed. Unchanged by this closeout. The agentic flags are env-global, so
+  activation is all-tenants-at-once.
+- **E-2 Increment 4.** Issuing an erasure credential is a separate authorized act.
+  Until then the mechanism is present and cannot run.
+- **The two owed read-backs**: production `erasure_agent.rolcanlogin`, and Wave 1
+  flag values as seen from inside the running processes.
