@@ -49,17 +49,84 @@ Repeat runs varied by <3 ms per arm.
 
 ### What these numbers are NOT
 
-**The per-org latency in this harness is synthetic.** The repository records no
-per-org timing for a production Brief run — `scheduler_cron_complete.durationMs`
-is logged but no captured value exists in any document — so the step costs are
-parameters, not observations. Only the **ratio** between the two arms is
-evidence, and it is an **upper bound**: the harness simulates no database
-contention and no Anthropic rate limiting, both of which are real in production
-and both of which push the achieved ratio below 2x.
+**The per-org latency in this harness is synthetic**, so the absolute
+milliseconds say nothing about production and only the *ratio* is evidence. The
+harness simulates neither database contention nor provider rate limiting.
 
-No production speedup is claimed here. The honest claim is: on identical
-workloads, the restructuring removes the serialization, and the observed ratio
-approaches the theoretical ceiling of 2x when contention is absent.
+Supersede this table with the real-duration projection below wherever the two
+disagree.
+
+## Real staging measurement (2026-08-18) — supersedes the synthetic projection
+
+The weekly cron fired on staging while this branch was being built, and the run
+completed cleanly. This is the actual sequential baseline, not a model.
+
+`scheduler_cron_complete`, staging engine (`srv-d7n0rju8bjmc738jbs7g`):
+
+```
+durationMs 39624403  (10.99 h)   active_orgs 13   orgs_processed 13
+briefs_generated 13  emails_sent 7  emails_failed 0  errors []
+```
+
+Per-org durations, derived from consecutive `scheduler_org_start` timestamps
+(last org measured to run completion):
+
+| org | duration | | org | duration |
+|---|---|---|---|---|
+| 0d8f5fa4 | 8.7 min | | 65a1b20b | 9.8 min |
+| 14a6b864 | 8.9 min | | 8c7209e0 | 12.0 min |
+| **295b989a** | **109.6 min** | | a0755951 | 12.1 min |
+| 3b82e322 | 8.3 min | | **b1a3da2d** | **98.8 min** |
+| 3cf08bbb | 9.0 min | | **f70267ce** | **167.0 min** |
+| 44fd5f70 | 15.7 min | | **fe2ede61** | **188.8 min** |
+| 55041494 | 11.0 min | | | |
+
+**median 12.0 min · mean 50.7 min · max 188.8 min.** Four orgs exceed 3x the
+median and account for **86% of the entire run**.
+
+### Projected concurrent runtime, from the real durations
+
+Simulating this branch's worker pool over the measured per-org durations, in
+enumeration order:
+
+| pool | makespan | speedup |
+|---|---|---|
+| 1 (today) | 10.99 h | 1.00x |
+| **2 (this branch)** | **6.24 h** | **1.76x** |
+| 3 | 4.97 h | 2.21x |
+| 4 | 3.76 h | 2.93x |
+
+- Perfect-split bound at pool=2: 5.50 h.
+- **Hard floor: 3.15 h** — the single longest org. No amount of org-level
+  concurrency goes below the longest single org.
+
+So the honest expected improvement is **~11 h → ~6.2 h (1.76x)**, not the
+1.86–1.95x the synthetic harness suggested. The assumption in that projection is
+that per-org duration is unchanged when two orgs run together; two orgs sharing
+the database and the provider may each run slightly slower, which would push the
+result above 6.24 h.
+
+### Where the time actually goes — and why this matters more than concurrency
+
+`brief_enrichment_summary` for **every one of the 13 orgs**: `total 24,
+enriched_count 24, fallback_count 0`. Identical work, zero provider degradation.
+Enrichment finishes 1–2 min before each org's window closes.
+
+The variance is entirely in **ingest**. Each org inserts the same 3,563 NVD +
+1,666 KEV signals with **zero duplicates**, and `processSignal` runs the matcher
+on every one — sequentially, at a measured ~0.09 s/signal for the fastest org
+and ~2 s/signal for the slowest. Ingest is **~98% of per-org time**;
+`matcher_run_for_signal` shows deterministic branches (`vendor_name_ilike`,
+`no_match`), so this is **database-bound, not LLM-bound**.
+
+Two consequences worth recording:
+
+1. Org-level concurrency is the right change but not the big one. The dominant
+   cost is ~5,300 sequential per-signal matcher runs per org per week — 69,000
+   across the estate. That is a separate package.
+2. This run predates the verdict-cache work on this branch's ancestry
+   (`bfe79f78`), which staging does not yet have. Any per-org profile derived
+   from this run must be re-derived after that lands.
 
 ## Provider-facing consequence
 
@@ -91,11 +158,13 @@ a hard gate on a flag that is currently off everywhere.
    long call leaves a single worker to drain the tail. The measured skewed
    profile shows this is still a large improvement over sequential, but the
    degradation is real and scales with how slow the outlier is.
-3. **No per-org timeout exists.** The Anthropic client is constructed with SDK
-   defaults (`timeout` 10 min, `maxRetries` 2, timeouts retried), so a single
-   pathological enrichment call can hold a slot for roughly half an hour before
-   it resolves. A per-org deadline is deliberately NOT in this change; it is
-   the next independent reliability package, design-first.
+3. **There is currently no per-org deadline.** Measured: one org held the
+   single sequential worker for 188.8 min. The Anthropic client also uses SDK
+   defaults (10 min timeout, `maxRetries` 2, timeouts retried), so one call can
+   in the worst case block ~30 min — but that is NOT what the 2026-08-18 run
+   shows. The measured slot-holding cost is the **ingest loop** (~98% of org
+   time, DB-bound), not enrichment. A per-org deadline is deliberately NOT in
+   this change; it is the next independent reliability package, design-first.
 4. **`SECURELOGIC_SOURCE_QUALIFICATION_ENABLED` would create concurrent global
    source-reliability sweeps if enabled, and MUST be addressed before that flag
    is activated.** With the flag on, `recomputeSourceReliability` sweeps the
