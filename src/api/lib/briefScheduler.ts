@@ -94,6 +94,12 @@ import { emitBriefPublished } from "./briefWebhookEmitter.js";
 import { isBriefSendDay, currentBriefWeekStart } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 import { listBriefEligibleOrgIds } from "./briefEligibility.js";
+import {
+  beginLlmRunAccumulation,
+  endLlmRunAccumulation,
+  emptyLlmRunTotals,
+  type LlmRunTotals
+} from "./llm/llmTelemetry.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -140,6 +146,13 @@ export type SchedulerRunSummary = {
   /** Org ids with zero active email recipients on a send day — feeds the recurring delivery-health report; never a generation gate. */
   orgs_without_recipients: string[];
   errors: string[];
+  /**
+   * Token / cost / latency totals for every Anthropic call this run made,
+   * overall and per purpose. `unpriced_calls` counts calls whose model has no
+   * price entry — their spend is NOT in `cost_usd`, so a non-zero value there
+   * means the cost figure is a floor, not a total.
+   */
+  llm: LlmRunTotals;
 };
 
 // ---------------------------------------------------------------------------
@@ -712,7 +725,23 @@ export async function listOrgsWithCurrentBrief(weekStart: Date): Promise<Set<str
  * @returns  Run summary with per-source signal counts, org counts, email counts.
  */
 export async function runScheduler(): Promise<SchedulerRunSummary> {
+  // Measure the whole pass, including the early-return paths. The accumulator
+  // is closed in every exit — a failed run's partial spend is still real money
+  // and must be reported, not dropped.
+  beginLlmRunAccumulation();
+  try {
+    const summary = await runSchedulerPass();
+    summary.llm = endLlmRunAccumulation();
+    return summary;
+  } catch (err) {
+    endLlmRunAccumulation();
+    throw err;
+  }
+}
+
+async function runSchedulerPass(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
+    llm: emptyLlmRunTotals(),
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,

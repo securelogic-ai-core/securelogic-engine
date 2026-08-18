@@ -29,6 +29,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
+import { withLlmCallContext } from "./llm/llmTelemetry.js";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
@@ -237,7 +238,10 @@ export async function runLlmControlMatcherForSignal(
         "LLM control matcher: calling"
       );
 
-      const result = await llmCall(prompt);
+      const result = await withLlmCallContext(
+        { purpose: "llm_control_matcher", organizationId: orgId },
+        () => llmCall(prompt)
+      );
       if (!result.ok) {
         logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
         return 0;

@@ -62,9 +62,43 @@ describe("runSchedulerGuarded — overlap lock", () => {
     vi.mocked(runScheduler).mockRejectedValueOnce(new Error("mid-run explosion") as never);
     vi.mocked(runScheduler).mockResolvedValue({} as never);
 
-    await expect(runSchedulerGuarded("cron")).resolves.toBeUndefined();
+    const failed = await runSchedulerGuarded("cron");
+    expect(failed).toMatchObject({ ran: true, summary: null, error: "mid-run explosion" });
+
     await runSchedulerGuarded("catchup");
 
     expect(runScheduler).toHaveBeenCalledTimes(2);
+  });
+
+  it("the MANUAL trigger is serialized by the same lock as the cron", async () => {
+    // The admin route used to call runScheduler() directly, bypassing the lock
+    // entirely: a manual trigger during the weekly run executed a second full
+    // concurrent pass over every org.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(runScheduler).mockImplementation(async () => {
+      await gate;
+      return {} as never;
+    });
+
+    const cronRun = runSchedulerGuarded("cron");
+    const manual = await runSchedulerGuarded("manual");
+
+    expect(manual).toEqual({ ran: false, reason: "overlap" });
+    expect(runScheduler).toHaveBeenCalledTimes(1);
+
+    release();
+    await cronRun;
+  });
+
+  it("returns the run summary to the caller on success", async () => {
+    const summary = { briefs_generated: 3 };
+    vi.mocked(runScheduler).mockResolvedValue(summary as never);
+
+    const result = await runSchedulerGuarded("manual");
+
+    expect(result).toEqual({ ran: true, summary });
   });
 });
