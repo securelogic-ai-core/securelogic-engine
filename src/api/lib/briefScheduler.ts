@@ -29,7 +29,12 @@
  *       zero active recipients keeps its generated in-platform brief and the
  *       skip is recorded as a delivery-health condition
  *
- * Orgs are processed sequentially to avoid DB and external API contention.
+ * Orgs are processed through a fixed-size worker pool (ORG_CONCURRENCY = 2),
+ * which bounds DB and external-API contention while removing the strict
+ * serialization that made every org wait for the slowest org ahead of it.
+ * Each org task owns a private result and NEVER writes to the run summary;
+ * the scheduler merges those results, in org-enumeration order, once the pool
+ * drains — so concurrency changes wall-clock and nothing else.
  * Signal feeds are fetched ONCE and ingested per-org to avoid repeated
  * external API calls.
  *
@@ -106,6 +111,7 @@ import {
   emptyVerdictCacheTotals,
   type VerdictCacheTotals
 } from "./llm/verdictCacheMetrics.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -113,6 +119,23 @@ import {
 
 /** Look-back window for NVD and brief generation. */
 const WINDOW_DAYS = 7;
+
+/**
+ * How many organizations the weekly run processes at once.
+ *
+ * Deliberately a hard-coded constant, not an env var: the safe value depends
+ * on the Postgres pool (10 per pool, unchanged by this work), the Anthropic
+ * rate limit, and the per-org connection profile — none of which an operator
+ * can reason about from a dashboard field at 3am. It becomes configurable
+ * when a measured run says a different number is right, not before.
+ *
+ * 2 is the conservative first step: it bounds peak connection demand at
+ * roughly twice the sequential profile, which the existing pool absorbs with
+ * large headroom, while still removing the strict serialization that turned
+ * one slow org into every later org's delay.
+ */
+const ORG_CONCURRENCY = 2;
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -166,6 +189,17 @@ export type SchedulerRunSummary = {
    * actually consumed, not modelled.
    */
   verdict_cache: VerdictCacheTotals;
+  /**
+   * How the org fan-out actually behaved this run.
+   *
+   * `peak_in_flight` is MEASURED — an in-flight gauge sampled around each org
+   * task — not derived from `limit`. It exists so "concurrency stayed bounded"
+   * is a checkable claim in a staging run, not an inference from the constant.
+   */
+  org_concurrency: {
+    limit: number;
+    peak_in_flight: number;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -723,6 +757,467 @@ export async function listOrgsWithCurrentBrief(weekStart: Date): Promise<Set<str
 }
 
 // ---------------------------------------------------------------------------
+// Per-org run result — the unit the concurrent fan-out produces
+//
+// Each org task owns a private draft, mutates ONLY that draft, and returns it
+// sealed. Nothing concurrent ever writes to the shared SchedulerRunSummary:
+// that is what makes the counters exact under concurrency rather than
+// "probably fine because JavaScript is single-threaded". (It IS single-
+// threaded, so `summary.x++` could not tear — but read-modify-write across an
+// `await` interleaves freely, and the send/generate paths are full of awaits.
+// Local drafts remove the question entirely instead of reasoning about it.)
+// ---------------------------------------------------------------------------
+
+/** Mutable working copy, private to one org task. */
+type OrgRunDraft = {
+  orgs_processed: number;
+  orgs_skipped: number;
+  briefs_generated: number;
+  emails_sent: number;
+  emails_failed: number;
+  emails_skipped_off_day: number;
+  emails_skipped_no_recipients: number;
+  orgs_without_recipients: string[];
+  errors: string[];
+};
+
+/** Sealed result handed back to the scheduler for merging. */
+export type OrgRunResult = Readonly<{
+  org_id: string;
+  orgs_processed: number;
+  orgs_skipped: number;
+  briefs_generated: number;
+  emails_sent: number;
+  emails_failed: number;
+  emails_skipped_off_day: number;
+  emails_skipped_no_recipients: number;
+  orgs_without_recipients: ReadonlyArray<string>;
+  errors: ReadonlyArray<string>;
+}>;
+
+function emptyOrgRunDraft(): OrgRunDraft {
+  return {
+    orgs_processed: 0,
+    orgs_skipped: 0,
+    briefs_generated: 0,
+    emails_sent: 0,
+    emails_failed: 0,
+    emails_skipped_off_day: 0,
+    emails_skipped_no_recipients: 0,
+    orgs_without_recipients: [],
+    errors: []
+  };
+}
+
+/** Freeze a draft (arrays included) so the merge cannot be aliased into it. */
+function sealOrgResult(orgId: string, draft: OrgRunDraft): OrgRunResult {
+  return Object.freeze({
+    org_id: orgId,
+    orgs_processed: draft.orgs_processed,
+    orgs_skipped: draft.orgs_skipped,
+    briefs_generated: draft.briefs_generated,
+    emails_sent: draft.emails_sent,
+    emails_failed: draft.emails_failed,
+    emails_skipped_off_day: draft.emails_skipped_off_day,
+    emails_skipped_no_recipients: draft.emails_skipped_no_recipients,
+    orgs_without_recipients: Object.freeze([...draft.orgs_without_recipients]),
+    errors: Object.freeze([...draft.errors])
+  });
+}
+
+/**
+ * Fold per-org results into the run summary. THE ONLY writer of these fields.
+ *
+ * Walks `results` in input (org enumeration) order, so `errors` and
+ * `orgs_without_recipients` keep the exact ordering the sequential loop
+ * produced — completion order never leaks into the summary.
+ */
+function mergeOrgResults(
+  summary: SchedulerRunSummary,
+  results: ReadonlyArray<OrgRunResult>
+): void {
+  for (const r of results) {
+    summary.orgs_processed += r.orgs_processed;
+    summary.orgs_skipped += r.orgs_skipped;
+    summary.briefs_generated += r.briefs_generated;
+    summary.emails_sent += r.emails_sent;
+    summary.emails_failed += r.emails_failed;
+    summary.emails_skipped_off_day += r.emails_skipped_off_day;
+    summary.emails_skipped_no_recipients += r.emails_skipped_no_recipients;
+    summary.orgs_without_recipients.push(...r.orgs_without_recipients);
+    summary.errors.push(...r.errors);
+  }
+}
+
+/**
+ * The signal feeds fetched once per run and shared, read-only, by every org.
+ */
+type FetchedFeeds = Readonly<{
+  cisaKevSignals: CyberSignalIngestInput[];
+  nvdSignals: CyberSignalIngestInput[];
+  secEdgarSignals: CyberSignalIngestInput[];
+  federalRegisterSignals: CyberSignalIngestInput[];
+  cisaAlertSignals: CyberSignalIngestInput[];
+  mitreAttackSignals: CyberSignalIngestInput[];
+  mitreAtlasSignals: CyberSignalIngestInput[];
+  threatIntelSignals: CyberSignalIngestInput[];
+  regulatorySignals: CyberSignalIngestInput[];
+}>;
+
+// ---------------------------------------------------------------------------
+// processOrg — the complete per-org pipeline, as one isolated task
+//
+// Identical step order, identical error handling, identical logging to the
+// sequential loop this replaces. The ONLY differences are that it writes to a
+// private draft instead of the shared summary, and that it cannot throw.
+// ---------------------------------------------------------------------------
+
+async function processOrg(
+  orgId: string,
+  feeds: FetchedFeeds,
+  isSendDay: boolean
+): Promise<OrgRunResult> {
+  const orgResult = emptyOrgRunDraft();
+  try {
+    await runOrgPipeline(orgId, feeds, isSendDay, orgResult);
+  } catch (err) {
+    // Defense in depth. Every step inside runOrgPipeline is already
+    // individually try/caught, so arriving here means an unforeseen throw.
+    //
+    // This is a DELIBERATE behaviour change from the sequential loop, and the
+    // only one: there, an unhandled throw escaped runSchedulerPass and killed
+    // the whole run, abandoning every org after it. Under a fan-out that is
+    // worse still — a rejection would surface as a rejected Promise.all and
+    // could abort sibling work. So an unexpected failure is contained to its
+    // own org, recorded in that org's errors, and the run continues.
+    //
+    // Whatever the draft accumulated before the throw is KEPT: partial truth
+    // beats a zeroed result that hides work already done (and money spent).
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} org_task_fatal: ${msg}`);
+    logger.error(
+      { event: "scheduler_org_task_fatal", orgId, err },
+      "Org task threw unexpectedly — isolated to this org, run continues"
+    );
+  }
+  return sealOrgResult(orgId, orgResult);
+}
+
+async function runOrgPipeline(
+  orgId: string,
+  feeds: FetchedFeeds,
+  isSendDay: boolean,
+  orgResult: OrgRunDraft
+): Promise<OrgRunDraft> {
+  logger.info({ event: "scheduler_org_start", orgId }, "Processing org");
+
+  let orgFailed = false;
+
+  // Ingest CISA KEV signals for this org
+  if (feeds.cisaKevSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.cisaKevSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_kev_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "CISA KEV ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} kev_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} kev_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_kev_ingest_failed", orgId, err }, "CISA KEV ingest failed for org");
+    }
+  }
+
+  // Ingest NVD signals for this org
+  if (feeds.nvdSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.nvdSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_nvd_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "NVD ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} nvd_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} nvd_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_nvd_ingest_failed", orgId, err }, "NVD ingest failed for org");
+    }
+  }
+
+  // Ingest SEC EDGAR 8-K Item 1.05 signals for this org
+  if (feeds.secEdgarSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.secEdgarSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_sec_edgar_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "SEC EDGAR ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} sec_edgar_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
+    }
+  }
+
+  // Ingest Federal Register regulatory signals for this org
+  if (feeds.federalRegisterSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.federalRegisterSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_federal_register_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Federal Register ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} federal_register_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} federal_register_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_federal_register_ingest_failed", orgId, err }, "Federal Register ingest failed for org");
+    }
+  }
+
+  // Ingest CISA Alerts signals for this org
+  if (feeds.cisaAlertSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.cisaAlertSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_cisa_alerts_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "CISA Alerts ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} cisa_alerts_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
+    }
+  }
+
+  // Ingest MITRE ATT&CK signals for this org
+  if (feeds.mitreAttackSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.mitreAttackSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_mitre_attack_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "MITRE ATT&CK ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
+    }
+  }
+
+  // Ingest MITRE ATLAS signals for this org
+  if (feeds.mitreAtlasSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.mitreAtlasSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_mitre_atlas_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "MITRE ATLAS ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
+    }
+  }
+
+  // Ingest threat intel RSS signals for this org
+  if (feeds.threatIntelSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.threatIntelSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_threat_intel_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Threat intel RSS ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} threat_intel_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} threat_intel_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_threat_intel_ingest_failed", orgId, err }, "Threat intel RSS ingest failed for org");
+    }
+  }
+
+  // Ingest regulatory signals for this org
+  if (feeds.regulatorySignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.regulatorySignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_regulatory_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Regulatory signals ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} regulatory_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} regulatory_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_regulatory_ingest_failed", orgId, err }, "Regulatory ingest failed for org");
+    }
+  }
+
+  // Generate brief for this org
+  let briefId: string;
+  try {
+    briefId = await generateAndStoreBrief(orgId);
+    orgResult.briefs_generated++;
+    logger.info(
+      { event: "scheduler_brief_generated", orgId, briefId },
+      "Brief generated and published"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} generate_failed: ${msg}`);
+    logger.error({ event: "scheduler_generate_failed", orgId, err }, "Brief generation failed for org");
+    orgResult.orgs_skipped++;
+    orgFailed = true;
+    return orgResult;
+  }
+
+  // Send brief to all active subscribers for this org — Tuesday only.
+  // On an off-day run the brief is generated and stored (above) but NOT
+  // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
+  if (!isSendDay) {
+    orgResult.emails_skipped_off_day++;
+    logger.info(
+      { event: "scheduler_brief_send_skipped_off_day", orgId, briefId, weekday: new Date().getUTCDay() },
+      "Brief generated but email send skipped — not the weekly send day (Tuesday UTC), no Intelligence Brief email"
+    );
+    if (!orgFailed) {
+      orgResult.orgs_processed++;
+    }
+    return orgResult;
+  }
+
+  try {
+    const sendResult = await sendBrief(briefId, orgId);
+    orgResult.emails_sent += sendResult.sent;
+    orgResult.emails_failed += sendResult.failed;
+    if (sendResult.skipped) {
+      // Zero active recipients: the brief above is generated + published and
+      // stays current in-platform — only the email leg is skipped. Recorded
+      // so the delivery-health report can surface uncovered orgs weekly.
+      orgResult.emails_skipped_no_recipients++;
+      orgResult.orgs_without_recipients.push(orgId);
+      logger.info(
+        {
+          event: "scheduler_brief_send_skipped_no_recipients",
+          orgId,
+          briefId,
+          reason: sendResult.message ?? "no_active_subscribers"
+        },
+        "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
+      );
+    }
+    logger.info(
+      {
+        event: "scheduler_brief_sent",
+        orgId,
+        briefId,
+        sent: sendResult.sent,
+        failed: sendResult.failed,
+        skipped: sendResult.skipped,
+        already_sent: sendResult.already_sent
+      },
+      "Brief send completed for org"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} send_failed: ${msg}`);
+    logger.error({ event: "scheduler_send_failed", orgId, briefId, err }, "Brief send failed for org");
+  }
+
+  if (!orgFailed) {
+    orgResult.orgs_processed++;
+  }
+
+  return orgResult;
+}
+
+
+// ---------------------------------------------------------------------------
 // runScheduler — exported entry point
 // ---------------------------------------------------------------------------
 
@@ -759,6 +1254,7 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
     llm: emptyLlmRunTotals(),
     verdict_cache: emptyVerdictCacheTotals(),
+    org_concurrency: { limit: ORG_CONCURRENCY, peak_in_flight: 0 },
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
@@ -1044,8 +1540,21 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
     logger.error({ event: "scheduler_regulatory_failed", err }, "Regulatory feed fetch failed — continuing");
   }
 
-  // ── Step 3: Process each org sequentially ───────────────────────────────
+  // ── Step 3: Process orgs with BOUNDED CONCURRENCY ───────────────────────
+  //
+  // Orgs run through a fixed-size worker pool (ORG_CONCURRENCY). Each worker
+  // pulls the next org the moment it finishes one, so a slow org occupies its
+  // own slot and NOTHING else: the other slot keeps draining the queue. That
+  // pull model — not a chunked `Promise.all` over batches — is what removes
+  // head-of-line blocking within the fan-out.
+  //
+  // Every task returns its OWN sealed result. No task touches `summary`; the
+  // merge below is the single writer, and it walks results in INPUT order, so
+  // counters, `errors`, and `orgs_without_recipients` come out byte-identical
+  // to what the sequential loop produced for the same inputs. Concurrency
+  // therefore changes wall-clock, not the summary.
 
+  const orgsToProcess: string[] = [];
   for (const orgId of orgIds) {
     if (orgsWithCurrentBrief.has(orgId)) {
       summary.orgs_skipped_already_current++;
@@ -1055,311 +1564,61 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
       );
       continue;
     }
-
-    logger.info({ event: "scheduler_org_start", orgId }, "Processing org");
-
-    let orgFailed = false;
-
-    // Ingest CISA KEV signals for this org
-    if (cisaKevSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(cisaKevSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_kev_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "CISA KEV ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} kev_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} kev_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_kev_ingest_failed", orgId, err }, "CISA KEV ingest failed for org");
-      }
-    }
-
-    // Ingest NVD signals for this org
-    if (nvdSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(nvdSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_nvd_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "NVD ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} nvd_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} nvd_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_nvd_ingest_failed", orgId, err }, "NVD ingest failed for org");
-      }
-    }
-
-    // Ingest SEC EDGAR 8-K Item 1.05 signals for this org
-    if (secEdgarSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(secEdgarSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_sec_edgar_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "SEC EDGAR ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} sec_edgar_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
-      }
-    }
-
-    // Ingest Federal Register regulatory signals for this org
-    if (federalRegisterSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(federalRegisterSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_federal_register_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Federal Register ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} federal_register_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} federal_register_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_federal_register_ingest_failed", orgId, err }, "Federal Register ingest failed for org");
-      }
-    }
-
-    // Ingest CISA Alerts signals for this org
-    if (cisaAlertSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(cisaAlertSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_cisa_alerts_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "CISA Alerts ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} cisa_alerts_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
-      }
-    }
-
-    // Ingest MITRE ATT&CK signals for this org
-    if (mitreAttackSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(mitreAttackSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_mitre_attack_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "MITRE ATT&CK ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
-      }
-    }
-
-    // Ingest MITRE ATLAS signals for this org
-    if (mitreAtlasSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(mitreAtlasSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_mitre_atlas_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "MITRE ATLAS ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
-      }
-    }
-
-    // Ingest threat intel RSS signals for this org
-    if (threatIntelSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(threatIntelSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_threat_intel_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Threat intel RSS ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} threat_intel_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} threat_intel_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_threat_intel_ingest_failed", orgId, err }, "Threat intel RSS ingest failed for org");
-      }
-    }
-
-    // Ingest regulatory signals for this org
-    if (regulatorySignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(regulatorySignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_regulatory_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Regulatory signals ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} regulatory_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} regulatory_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_regulatory_ingest_failed", orgId, err }, "Regulatory ingest failed for org");
-      }
-    }
-
-    // Generate brief for this org
-    let briefId: string;
-    try {
-      briefId = await generateAndStoreBrief(orgId);
-      summary.briefs_generated++;
-      logger.info(
-        { event: "scheduler_brief_generated", orgId, briefId },
-        "Brief generated and published"
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`org:${orgId} generate_failed: ${msg}`);
-      logger.error({ event: "scheduler_generate_failed", orgId, err }, "Brief generation failed for org");
-      summary.orgs_skipped++;
-      orgFailed = true;
-      continue;
-    }
-
-    // Send brief to all active subscribers for this org — Tuesday only.
-    // On an off-day run the brief is generated and stored (above) but NOT
-    // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
-    if (!isSendDay) {
-      summary.emails_skipped_off_day++;
-      logger.info(
-        { event: "scheduler_brief_send_skipped_off_day", orgId, briefId, weekday: new Date().getUTCDay() },
-        "Brief generated but email send skipped — not the weekly send day (Tuesday UTC), no Intelligence Brief email"
-      );
-      if (!orgFailed) {
-        summary.orgs_processed++;
-      }
-      continue;
-    }
-
-    try {
-      const sendResult = await sendBrief(briefId, orgId);
-      summary.emails_sent += sendResult.sent;
-      summary.emails_failed += sendResult.failed;
-      if (sendResult.skipped) {
-        // Zero active recipients: the brief above is generated + published and
-        // stays current in-platform — only the email leg is skipped. Recorded
-        // so the delivery-health report can surface uncovered orgs weekly.
-        summary.emails_skipped_no_recipients++;
-        summary.orgs_without_recipients.push(orgId);
-        logger.info(
-          {
-            event: "scheduler_brief_send_skipped_no_recipients",
-            orgId,
-            briefId,
-            reason: sendResult.message ?? "no_active_subscribers"
-          },
-          "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
-        );
-      }
-      logger.info(
-        {
-          event: "scheduler_brief_sent",
-          orgId,
-          briefId,
-          sent: sendResult.sent,
-          failed: sendResult.failed,
-          skipped: sendResult.skipped,
-          already_sent: sendResult.already_sent
-        },
-        "Brief send completed for org"
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`org:${orgId} send_failed: ${msg}`);
-      logger.error({ event: "scheduler_send_failed", orgId, briefId, err }, "Brief send failed for org");
-    }
-
-    if (!orgFailed) {
-      summary.orgs_processed++;
-    }
+    orgsToProcess.push(orgId);
   }
+
+  // The feeds were fetched ONCE above and are read-only from here on: every
+  // org ingests the same arrays. Passing them as one frozen bundle keeps the
+  // per-org task a pure function of (orgId, feeds, isSendDay).
+  const feeds: FetchedFeeds = Object.freeze({
+    cisaKevSignals,
+    nvdSignals,
+    secEdgarSignals,
+    federalRegisterSignals,
+    cisaAlertSignals,
+    mitreAttackSignals,
+    mitreAtlasSignals,
+    threatIntelSignals,
+    regulatorySignals
+  });
+
+  // In-flight gauge. Incremented/decremented around the awaited task body, so
+  // `peak` is the true simultaneous-task high-water mark rather than a claim
+  // derived from the limit constant. Reported in the summary so a staging run
+  // can be checked against the intended bound instead of trusted.
+  let inFlight = 0;
+  let peakInFlight = 0;
+
+  summary.org_concurrency.limit = ORG_CONCURRENCY;
+
+  logger.info(
+    {
+      event: "scheduler_org_fanout_start",
+      pending_orgs: orgsToProcess.length,
+      concurrency_limit: ORG_CONCURRENCY
+    },
+    "Processing orgs with bounded concurrency"
+  );
+
+  const orgResults = await mapWithConcurrency(
+    orgsToProcess,
+    ORG_CONCURRENCY,
+    async (orgId): Promise<OrgRunResult> => {
+      inFlight++;
+      if (inFlight > peakInFlight) peakInFlight = inFlight;
+      try {
+        return await processOrg(orgId, feeds, isSendDay);
+      } finally {
+        inFlight--;
+      }
+    }
+  );
+
+  summary.org_concurrency.peak_in_flight = peakInFlight;
+
+  // ── Step 3b: Merge the per-org results (single writer, input order) ──────
+  mergeOrgResults(summary, orgResults);
+
 
   logger.info(
     {
