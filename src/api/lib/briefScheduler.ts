@@ -190,6 +190,36 @@ export type SchedulerRunSummary = {
    */
   verdict_cache: VerdictCacheTotals;
   /**
+   * Orgs whose task hit the outer safety net — an unforeseen throw, contained.
+   *
+   * Closes an accounting hole found while building the completion telemetry: a
+   * task_fatal org incremented NEITHER orgs_processed NOR orgs_skipped, so it
+   * vanished from the summary's org accounting while still appearing in
+   * `errors`. With this counter the identity
+   *   orgs_processed + orgs_skipped + orgs_task_fatal
+   *     == active_orgs - orgs_skipped_already_current
+   * holds on every path. Existing counters keep their exact prior meaning.
+   */
+  orgs_task_fatal: number;
+  /**
+   * DORMANT — always 0 / empty. No enforcement exists.
+   *
+   * Declared now so the summary shape, the alert path, and any dashboard built
+   * on this run are already correct when a per-org deadline is eventually
+   * approved, instead of needing a schema change at the moment enforcement
+   * lands. Nothing in this file sets these: there is no timer, no clock
+   * comparison, and no abort path anywhere in the org pipeline. A test asserts
+   * they stay zero across every scenario, including the slowest.
+   *
+   * Enabling enforcement in PRODUCTION is blocked on production catch-up being
+   * enabled and validated first — without it a timeout converts a slow org into
+   * a silently missed weekly edition. See
+   * docs/investigation/brief-scheduler-per-org-deadline-design.md §7.
+   */
+  orgs_deadline_exceeded: number;
+  /** DORMANT — always empty. Org ids that hit a deadline, once one exists. */
+  orgs_deadline_exceeded_ids: string[];
+  /**
    * How the org fan-out actually behaved this run.
    *
    * `peak_in_flight` is MEASURED — an in-flight gauge sampled around each org
@@ -327,7 +357,7 @@ async function ingestSignalsForOrg(
 // Throws on any unrecoverable error (rolls back and marks brief failed).
 // ---------------------------------------------------------------------------
 
-async function generateAndStoreBrief(orgId: string): Promise<string> {
+async function generateAndStoreBrief(orgId: string): Promise<GeneratedBrief> {
   const periodEnd = new Date();
   const periodStart = new Date(periodEnd.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
@@ -512,6 +542,20 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     }).catch(() => {});
     throw enrichErr;
   }
+
+  // Provider-degradation counters, read off the items enrichment just returned.
+  //
+  // enrichBriefItems never throws: a failed Claude call degrades that item to a
+  // template fallback and carries `enrichment_status: "fallback"`. Counting
+  // them here is what lets scheduler_org_complete answer "was this org slow, or
+  // was the provider failing?" without a second telemetry channel. Taken BEFORE
+  // the urgency cap, so the denominator is everything enrichment attempted
+  // rather than what survived ranking.
+  const enrichment: EnrichmentCounters = {
+    total: enrichedItems.length,
+    enriched: enrichedItems.filter((i) => i.enrichment_status !== "fallback").length,
+    fallback: enrichedItems.filter((i) => i.enrichment_status === "fallback").length
+  };
 
   // Apply the urgency-bucket cap. After this, cappedItems.length is bounded
   // by BRIEF_MAX_ITEMS — this is what gets persisted and synthesized.
@@ -718,7 +762,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       trigger: "scheduler",
     });
 
-    return briefId;
+    return { briefId, enrichment };
   } catch (err) {
     // Mark the brief 'failed' in a SEPARATE tenant scope so the Phase 3
     // rollback above cannot discard it. Best-effort — never mask the original
@@ -768,6 +812,43 @@ export async function listOrgsWithCurrentBrief(weekStart: Date): Promise<Set<str
 // Local drafts remove the question entirely instead of reasoning about it.)
 // ---------------------------------------------------------------------------
 
+/**
+ * Provider-degradation counters for one org's enrichment pass.
+ *
+ * `fallback > 0` means Claude calls failed and those items shipped as
+ * templates. This is the discriminator that separates "the org was slow" from
+ * "the provider was failing" when reading a slow run — see
+ * docs/investigation/brief-scheduler-per-org-deadline-design.md §6.
+ */
+export type EnrichmentCounters = {
+  total: number;
+  enriched: number;
+  fallback: number;
+};
+
+/** What generateAndStoreBrief hands back: the published id plus what it cost. */
+type GeneratedBrief = {
+  briefId: string;
+  enrichment: EnrichmentCounters;
+};
+
+/**
+ * How one org's task ended.
+ *
+ * `deadline_exceeded` is DORMANT — declared so the metric shape, the log
+ * vocabulary, and the summary counter all exist before any enforcement does,
+ * and so a dashboard built on this event does not need a schema change later.
+ * NOTHING in this file produces it: there is no timer, no clock comparison, and
+ * no abort path. A per-org deadline is a separate, unapproved package
+ * (docs/investigation/brief-scheduler-per-org-deadline-design.md), and it is
+ * explicitly blocked on production catch-up being enabled first.
+ */
+export type OrgCompletionStatus =
+  | "succeeded"
+  | "generate_failed"
+  | "task_fatal"
+  | "deadline_exceeded";
+
 /** Mutable working copy, private to one org task. */
 type OrgRunDraft = {
   orgs_processed: number;
@@ -777,8 +858,11 @@ type OrgRunDraft = {
   emails_failed: number;
   emails_skipped_off_day: number;
   emails_skipped_no_recipients: number;
+  orgs_task_fatal: number;
   orgs_without_recipients: string[];
   errors: string[];
+  /** Null until enrichment runs — a generation failure before it leaves this unset. */
+  enrichment: EnrichmentCounters | null;
 };
 
 /** Sealed result handed back to the scheduler for merging. */
@@ -791,8 +875,10 @@ export type OrgRunResult = Readonly<{
   emails_failed: number;
   emails_skipped_off_day: number;
   emails_skipped_no_recipients: number;
+  orgs_task_fatal: number;
   orgs_without_recipients: ReadonlyArray<string>;
   errors: ReadonlyArray<string>;
+  enrichment: EnrichmentCounters | null;
 }>;
 
 function emptyOrgRunDraft(): OrgRunDraft {
@@ -804,8 +890,10 @@ function emptyOrgRunDraft(): OrgRunDraft {
     emails_failed: 0,
     emails_skipped_off_day: 0,
     emails_skipped_no_recipients: 0,
+    orgs_task_fatal: 0,
     orgs_without_recipients: [],
-    errors: []
+    errors: [],
+    enrichment: null
   };
 }
 
@@ -820,8 +908,10 @@ function sealOrgResult(orgId: string, draft: OrgRunDraft): OrgRunResult {
     emails_failed: draft.emails_failed,
     emails_skipped_off_day: draft.emails_skipped_off_day,
     emails_skipped_no_recipients: draft.emails_skipped_no_recipients,
+    orgs_task_fatal: draft.orgs_task_fatal,
     orgs_without_recipients: Object.freeze([...draft.orgs_without_recipients]),
-    errors: Object.freeze([...draft.errors])
+    errors: Object.freeze([...draft.errors]),
+    enrichment: draft.enrichment === null ? null : Object.freeze({ ...draft.enrichment })
   });
 }
 
@@ -844,6 +934,7 @@ function mergeOrgResults(
     summary.emails_failed += r.emails_failed;
     summary.emails_skipped_off_day += r.emails_skipped_off_day;
     summary.emails_skipped_no_recipients += r.emails_skipped_no_recipients;
+    summary.orgs_task_fatal += r.orgs_task_fatal;
     summary.orgs_without_recipients.push(...r.orgs_without_recipients);
     summary.errors.push(...r.errors);
   }
@@ -872,14 +963,72 @@ type FetchedFeeds = Readonly<{
 // private draft instead of the shared summary, and that it cannot throw.
 // ---------------------------------------------------------------------------
 
+/**
+ * Emit exactly one `scheduler_org_complete` for an org task.
+ *
+ * WHY IT CANNOT FAIL THE RUN
+ * --------------------------
+ * Telemetry is never load-bearing. The whole body is wrapped: a logger that
+ * throws, a serializer that chokes on a field, anything at all — the org's
+ * actual outcome is already computed and sealed by the time this runs, so
+ * swallowing is correct rather than lossy. The alternative, an emit that can
+ * abort an org, would make the observability package a new source of the exact
+ * failure it exists to observe.
+ *
+ * There is deliberately no fallback logging inside the catch: if `logger.info`
+ * just threw, `logger.error` is not a safe recovery.
+ */
+function emitOrgCompletion(
+  orgId: string,
+  durationMs: number,
+  status: OrgCompletionStatus,
+  draft: OrgRunDraft
+): void {
+  try {
+    logger.info(
+      {
+        event: "scheduler_org_complete",
+        organization_id: orgId,
+        duration_ms: durationMs,
+        status,
+        brief_generated: draft.briefs_generated > 0,
+        emails_sent: draft.emails_sent,
+        emails_failed: draft.emails_failed,
+        email_skipped_off_day: draft.emails_skipped_off_day > 0,
+        email_skipped_no_recipients: draft.emails_skipped_no_recipients > 0,
+        error_count: draft.errors.length,
+        // Provider-degradation counters. Null when generation failed before
+        // enrichment ran — distinguishable from a genuine zero.
+        enrichment_total: draft.enrichment?.total ?? null,
+        enrichment_enriched: draft.enrichment?.enriched ?? null,
+        enrichment_fallback: draft.enrichment?.fallback ?? null
+      },
+      "Org processing completed"
+    );
+  } catch {
+    // Never load-bearing.
+  }
+}
+
 async function processOrg(
   orgId: string,
   feeds: FetchedFeeds,
   isSendDay: boolean
 ): Promise<OrgRunResult> {
   const orgResult = emptyOrgRunDraft();
+
+  // Measured from slot admission, NOT from run start: queue time is the
+  // scheduler's to answer for, never charged to the org. Date.now() (not a
+  // monotonic clock) is deliberate — it matches the semantics of the existing
+  // scheduler_cron_complete.durationMs an operator will compare this against.
+  const startedAt = Date.now();
+  let status: OrgCompletionStatus = "succeeded";
+
   try {
     await runOrgPipeline(orgId, feeds, isSendDay, orgResult);
+    // A generation failure returns normally after recording orgs_skipped; that
+    // is a failed org, not a succeeded one.
+    if (orgResult.orgs_skipped > 0) status = "generate_failed";
   } catch (err) {
     // Defense in depth. Every step inside runOrgPipeline is already
     // individually try/caught, so arriving here means an unforeseen throw.
@@ -899,7 +1048,16 @@ async function processOrg(
       { event: "scheduler_org_task_fatal", orgId, err },
       "Org task threw unexpectedly — isolated to this org, run continues"
     );
+    status = "task_fatal";
+    orgResult.orgs_task_fatal++;
   }
+
+  // Exactly one emission per org task, on EVERY exit path — success, recorded
+  // generation failure, and the outer net alike. Placed after the try/catch
+  // rather than in a `finally` so the status assigned in the catch is the one
+  // reported; a `finally` would race the catch's own assignment.
+  emitOrgCompletion(orgId, Date.now() - startedAt, status, orgResult);
+
   return sealOrgResult(orgId, orgResult);
 }
 
@@ -1141,7 +1299,9 @@ async function runOrgPipeline(
   // Generate brief for this org
   let briefId: string;
   try {
-    briefId = await generateAndStoreBrief(orgId);
+    const generated = await generateAndStoreBrief(orgId);
+    briefId = generated.briefId;
+    orgResult.enrichment = generated.enrichment;
     orgResult.briefs_generated++;
     logger.info(
       { event: "scheduler_brief_generated", orgId, briefId },
@@ -1255,6 +1415,10 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
     llm: emptyLlmRunTotals(),
     verdict_cache: emptyVerdictCacheTotals(),
     org_concurrency: { limit: ORG_CONCURRENCY, peak_in_flight: 0 },
+    orgs_task_fatal: 0,
+    // Dormant: no code path increments these. See the type declaration.
+    orgs_deadline_exceeded: 0,
+    orgs_deadline_exceeded_ids: [],
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
@@ -1633,6 +1797,8 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
       emails_skipped_off_day: summary.emails_skipped_off_day,
       emails_skipped_no_recipients: summary.emails_skipped_no_recipients,
       orgs_without_recipients: summary.orgs_without_recipients,
+      orgs_task_fatal: summary.orgs_task_fatal,
+      orgs_deadline_exceeded: summary.orgs_deadline_exceeded,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"

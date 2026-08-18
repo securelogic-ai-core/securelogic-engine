@@ -117,7 +117,12 @@ describe("briefScheduler.ts source — generation decoupled from subscribers (AD
   });
 
   it("generates and publishes BEFORE any recipient resolution — sendBrief is downstream of generateAndStoreBrief", () => {
-    const generateIdx = schedulerSource.indexOf("briefId = await generateAndStoreBrief(orgId)");
+    // Matches the CALL, not the assignment form: generateAndStoreBrief now
+    // returns { briefId, enrichment } so the org-completion telemetry can
+    // report provider-degradation counters. The invariant under test is the
+    // ORDER — generation strictly before any recipient resolution — which is
+    // unchanged.
+    const generateIdx = schedulerSource.indexOf("await generateAndStoreBrief(orgId)");
     const sendIdx = schedulerSource.indexOf("await sendBrief(briefId, orgId)");
     expect(generateIdx).toBeGreaterThan(0);
     expect(sendIdx).toBeGreaterThan(generateIdx);
