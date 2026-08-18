@@ -100,6 +100,12 @@ import {
   emptyLlmRunTotals,
   type LlmRunTotals
 } from "./llm/llmTelemetry.js";
+import {
+  beginVerdictCacheAccumulation,
+  endVerdictCacheAccumulation,
+  emptyVerdictCacheTotals,
+  type VerdictCacheTotals
+} from "./llm/verdictCacheMetrics.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -153,6 +159,13 @@ export type SchedulerRunSummary = {
    * means the cost figure is a floor, not a total.
    */
   llm: LlmRunTotals;
+  /**
+   * Verdict-cache effectiveness for this run. Read together with `llm`:
+   * `llm.by_purpose.llm_control_matcher` is what was PAID, `verdict_cache` is
+   * what was AVOIDED — savings measured from the tokens the original calls
+   * actually consumed, not modelled.
+   */
+  verdict_cache: VerdictCacheTotals;
 };
 
 // ---------------------------------------------------------------------------
@@ -729,12 +742,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   // is closed in every exit — a failed run's partial spend is still real money
   // and must be reported, not dropped.
   beginLlmRunAccumulation();
+  beginVerdictCacheAccumulation();
   try {
     const summary = await runSchedulerPass();
     summary.llm = endLlmRunAccumulation();
+    summary.verdict_cache = endVerdictCacheAccumulation();
     return summary;
   } catch (err) {
     endLlmRunAccumulation();
+    endVerdictCacheAccumulation();
     throw err;
   }
 }
@@ -742,6 +758,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
 async function runSchedulerPass(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
     llm: emptyLlmRunTotals(),
+    verdict_cache: emptyVerdictCacheTotals(),
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
