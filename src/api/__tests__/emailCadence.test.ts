@@ -42,8 +42,11 @@ describe("Intelligence Brief — off-day email send guard (defense-in-depth)", (
   const SOURCE = read("../lib/briefScheduler.ts");
 
   it("imports the send-day predicate", () => {
+    // isBriefSendDay may be imported alongside currentBriefWeekStart (the
+    // shared weekly-window boundary) — the contract is that the send gate
+    // comes from briefSendWindow, the single cadence source of truth.
     expect(SOURCE).toMatch(
-      /import\s*\{\s*isBriefSendDay\s*\}\s*from\s*"\.\/briefSendWindow\.js"/
+      /import\s*\{[^}]*\bisBriefSendDay\b[^}]*\}\s*from\s*"\.\/briefSendWindow\.js"/
     );
   });
 
