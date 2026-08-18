@@ -123,6 +123,35 @@ export const GOVERNED_DATA_CLASSES: readonly GovernedDataClass[] = [
     subjectColumns: [],
     erasureDisposition: "system_ledger",
     classificationCategory: "E"
+  },
+  {
+    key: "llm_verdict_cache",
+    label: "LLM control-matcher verdict cache",
+    tables: ["llm_control_matcher_verdicts"],
+    // A verdict's age is simply when it was computed — there is no "last used"
+    // anchor, and adding one would mean a write on every cache hit.
+    ageColumn: "created_at",
+    ageFallbackColumn: "created_at",
+    // Retention here is STORAGE HYGIENE, not compliance: every input that could
+    // change a verdict is already in its key, so an entry is either still
+    // exactly right or already unreachable. Expiry costs a recompute, never a
+    // wrong answer — which is why this class can be tenant-configurable with a
+    // low floor, unlike the audit ledger above. 90 days captures essentially all
+    // reuse value (a signal's re-ask value is concentrated in the weeks it keeps
+    // being re-ingested).
+    defaultDays: 90,
+    minDays: 7,
+    maxDays: 365,
+    tenantConfigurable: true,
+    dependsOn: [],
+    // NO subject columns: the rows contain no personal data at all (see the
+    // dataClassification entry). This is what makes the category-D ruling of
+    // 2026-08-18 unconditional — organization erasure always covers it, and an
+    // individual's export/erasure never touches it, because there is nothing
+    // in it that relates to a data subject.
+    subjectColumns: [],
+    erasureDisposition: "org_content",
+    classificationCategory: "D"
   }
 ] as const;
 

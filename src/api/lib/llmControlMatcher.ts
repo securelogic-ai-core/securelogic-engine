@@ -30,6 +30,20 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
 import { withLlmCallContext } from "./llm/llmTelemetry.js";
+import {
+  lookupVerdict,
+  reserveVerdict,
+  recordAnsweredVerdict,
+  recordFailedVerdict,
+  type VerdictKey
+} from "./llm/verdictCache.js";
+import {
+  controlInventoryDigest,
+  decideVerdictFailureState,
+  responseFingerprint,
+  classifyTransportFailure,
+  VERDICT_RESERVATION_TIMEOUT_MS
+} from "./llm/verdictCachePolicy.js";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
@@ -57,7 +71,11 @@ export type ControlRow = { id: string; name: string; description: string | null 
 export type ControlMatch = { control_id: string; score: number; reasoning: string };
 
 export type LlmCallResult =
-  | { ok: true; text: string }
+  // Token counts are carried so an ANSWERED verdict can record what the call
+  // actually cost — that is what lets a later cache hit report the exact spend
+  // it avoided instead of a modelled guess. Optional: injected test doubles and
+  // any future non-Anthropic path need not supply them.
+  | { ok: true; text: string; inputTokens?: number; outputTokens?: number }
   | { ok: false; code: "llm_unavailable" | "llm_failed"; detail: string };
 
 export type SignalForControlMatch = {
@@ -183,7 +201,12 @@ async function defaultLlmCall(prompt: string): Promise<LlmCallResult> {
       .map((c) => (c as { type: "text"; text: string }).text)
       .join("")
       .trim();
-    return { ok: true, text };
+    return {
+      ok: true,
+      text,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0
+    };
   } catch (err) {
     return { ok: false, code: "llm_failed", detail: (err as Error)?.message ?? "anthropic call failed" };
   }
@@ -206,6 +229,50 @@ export function shouldRunControlMatcher(
 }
 
 // ---------------------------------------------------------------------------
+// writeControlSuggestions — the persist step, shared by the cache-hit and
+// fresh-verdict paths so a replayed verdict writes IDENTICAL rows to the call
+// that produced it. Caller supplies the tenant scope.
+// ---------------------------------------------------------------------------
+
+async function writeControlSuggestions(
+  orgId: string,
+  signalId: string,
+  matches: ReadonlyArray<{ control_id: string; score: number; reasoning: string }>
+): Promise<number> {
+  let written = 0;
+  for (const m of matches) {
+    const ins = await pg.query<{ id: string }>(
+      `
+      INSERT INTO signal_match_suggestions (
+        organization_id, signal_id, target_type, target_id,
+        match_reason, match_score, match_metadata
+      )
+      VALUES ($1, $2::uuid, 'control', $3::uuid, 'control_llm_match', $4, $5::jsonb)
+      ON CONFLICT (organization_id, signal_id, target_type, target_id)
+        WHERE accepted_at IS NULL AND dismissed_at IS NULL
+        DO NOTHING
+      RETURNING id
+      `,
+      [
+        orgId,
+        signalId,
+        m.control_id,
+        m.score,
+        JSON.stringify({
+          source: "llm",
+          matched_branch: "control_llm",
+          model: LLM_CONTROL_MATCHER_MODEL_ID,
+          prompt_version: LLM_CONTROL_MATCHER_PROMPT_VERSION,
+          reasoning: m.reasoning
+        })
+      ]
+    );
+    if ((ins.rowCount ?? 0) > 0) written++;
+  }
+  return written;
+}
+
+// ---------------------------------------------------------------------------
 // runLlmControlMatcherForSignal — I/O (self-contained, error-swallowing)
 // ---------------------------------------------------------------------------
 
@@ -224,82 +291,172 @@ export async function runLlmControlMatcherForSignal(
   if (!shouldRunControlMatcher(signal)) return 0;
 
   try {
-    return await withTenant(orgId, async () => {
+    // ── Phase 1: inputs + cache lookup + reservation (own tenant scope) ──────
+    //
+    // This scope COMMITS before the LLM call, which two things depend on:
+    // the reservation must be visible to the other matcher invocation sites
+    // (the hourly worker pipeline and the 15-minute KEV poller) for
+    // cross-process stampede control to work at all; and a tenant transaction
+    // must not be held open across a multi-second provider call.
+    const phase1 = await withTenant(orgId, async () => {
       const controlsResult = await pg.query<ControlRow>(
         `SELECT id, name, description FROM controls WHERE organization_id = $1 ORDER BY created_at ASC LIMIT $2`,
         [orgId, MAX_CONTROLS_IN_PROMPT]
       );
       const controls = controlsResult.rows;
-      if (controls.length === 0) return 0;
+      if (controls.length === 0) return null;
 
-      const prompt = buildControlMatcherPrompt({ signal, controls });
+      // The cache key needs the signal's CONTENT identity, not its row id: a
+      // re-ingested CVE gets a new id but the same dedup_hash. Read it here
+      // rather than widening SignalForControlMatch across all three call
+      // sites; if dedup_hash is ever threaded through those types, this lookup
+      // can be dropped.
+      const hashResult = await pg.query<{ dedup_hash: string }>(
+        `SELECT dedup_hash FROM cyber_signals WHERE id = $1 AND organization_id = $2`,
+        [signal.id, orgId]
+      );
+      const dedupHash = hashResult.rows[0]?.dedup_hash;
+      if (!dedupHash) return null;
+
+      const key: VerdictKey = {
+        organizationId: orgId,
+        signalDedupHash: dedupHash,
+        controlInventoryDigest: controlInventoryDigest(controls),
+        promptVersion: LLM_CONTROL_MATCHER_PROMPT_VERSION
+      };
+
+      const lookup = await lookupVerdict(key);
+
+      if (lookup.outcome === "hit") {
+        return { kind: "hit" as const, key, controls, verdict: lookup.verdict };
+      }
+      if (lookup.outcome === "skip") {
+        // Another process holds a live reservation, or the key is
+        // dead-lettered. Either way: make no call and record no verdict.
+        // Suggestions are advisory and re-derived next pass — this defers
+        // work, it does not suppress it.
+        return { kind: "skip" as const, reason: lookup.reason };
+      }
+
+      const reservation = await reserveVerdict(key, new Date(), VERDICT_RESERVATION_TIMEOUT_MS);
+      if (!reservation.claimed) {
+        return { kind: "skip" as const, reason: "reserved_by_other" as const };
+      }
+      return { kind: "compute" as const, key, controls, attempts: reservation.attempts };
+    });
+
+    if (phase1 === null) return 0;
+    if (phase1.kind === "skip") {
       logger.info(
-        { event: "llm_control_matcher_start", orgId, signalId: signal.id, controlCount: controls.length, model: LLM_CONTROL_MATCHER_MODEL_ID },
-        "LLM control matcher: calling"
+        { event: "llm_control_matcher_skipped", orgId, signalId: signal.id, reason: phase1.reason },
+        "LLM control matcher: skipped without calling (reserved elsewhere or dead-lettered)"
       );
+      return 0;
+    }
 
-      const result = await withLlmCallContext(
-        { purpose: "llm_control_matcher", organizationId: orgId },
-        () => llmCall(prompt)
+    const { key, controls } = phase1;
+    const knownIds = new Set(controls.map((c) => c.id.toLowerCase()));
+
+    // ── Cache hit: replay the stored verdict, no provider call ───────────────
+    if (phase1.kind === "hit") {
+      const toWrite = phase1.verdict.matches
+        .filter((m) => m.score >= CONTROL_MATCH_MIN_SCORE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, CONTROL_SUGGESTION_CAP);
+      const written = await withTenant(orgId, () =>
+        writeControlSuggestions(orgId, signal.id, toWrite)
       );
-      if (!result.ok) {
-        logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
-        return 0;
-      }
+      logger.info(
+        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: phase1.verdict.matches.length, written, cached: true },
+        "LLM control matcher: wrote control suggestions from cached verdict"
+      );
+      return written;
+    }
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(stripJsonFences(result.text));
-      } catch {
-        logger.warn({ event: "llm_control_matcher_invalid_json", orgId, signalId: signal.id }, "LLM control matcher: response did not JSON-parse");
-        return 0;
-      }
+    // ── Phase 2: the provider call, with NO DB connection held ───────────────
+    const prompt = buildControlMatcherPrompt({ signal, controls });
+    logger.info(
+      { event: "llm_control_matcher_start", orgId, signalId: signal.id, controlCount: controls.length, model: LLM_CONTROL_MATCHER_MODEL_ID },
+      "LLM control matcher: calling"
+    );
 
-      const knownIds = new Set(controls.map((c) => c.id.toLowerCase()));
-      const validated = validateControlMatcherResponse(parsed, knownIds);
-      if (!validated.ok) {
-        logger.warn({ event: "llm_control_matcher_invalid_shape", orgId, signalId: signal.id, error: validated.error }, "LLM control matcher: invalid response shape");
-        return 0;
-      }
+    const result = await withLlmCallContext(
+      { purpose: "llm_control_matcher", organizationId: orgId },
+      () => llmCall(prompt)
+    );
+
+    // ── Phase 3: settle the verdict (own tenant scope) ───────────────────────
+    if (!result.ok) {
+      const decision = decideVerdictFailureState("transport", phase1.attempts, new Date());
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          failureClass: classifyTransportFailure(result.code),
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
+      return 0;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonFences(result.text));
+    } catch {
+      const decision = decideVerdictFailureState("unparseable", phase1.attempts, new Date());
+      const fingerprint = responseFingerprint(result.text);
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          parseErrorCode: "invalid_json",
+          responseSha256: fingerprint.sha256,
+          responseChars: fingerprint.chars,
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_invalid_json", orgId, signalId: signal.id }, "LLM control matcher: response did not JSON-parse");
+      return 0;
+    }
+
+    const validated = validateControlMatcherResponse(parsed, knownIds);
+    if (!validated.ok) {
+      const decision = decideVerdictFailureState("unparseable", phase1.attempts, new Date());
+      const fingerprint = responseFingerprint(result.text);
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          parseErrorCode: "invalid_shape",
+          responseSha256: fingerprint.sha256,
+          responseChars: fingerprint.chars,
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_invalid_shape", orgId, signalId: signal.id, error: validated.error }, "LLM control matcher: invalid response shape");
+      return 0;
+    }
+
+    return await withTenant(orgId, async () => {
+      // An EMPTY match list is a real, reusable answer — "no controls match"
+      // cost money to learn and must not be re-learned every run.
+      await recordAnsweredVerdict(
+        key,
+        { matches: validated.matches },
+        {
+          model: LLM_CONTROL_MATCHER_MODEL_ID,
+          inputTokens: result.inputTokens ?? 0,
+          outputTokens: result.outputTokens ?? 0
+        }
+      );
 
       const toWrite = validated.matches
         .filter((m) => m.score >= CONTROL_MATCH_MIN_SCORE)
         .sort((a, b) => b.score - a.score)
         .slice(0, CONTROL_SUGGESTION_CAP);
 
-      let written = 0;
-      for (const m of toWrite) {
-        const ins = await pg.query<{ id: string }>(
-          `
-          INSERT INTO signal_match_suggestions (
-            organization_id, signal_id, target_type, target_id,
-            match_reason, match_score, match_metadata
-          )
-          VALUES ($1, $2::uuid, 'control', $3::uuid, 'control_llm_match', $4, $5::jsonb)
-          ON CONFLICT (organization_id, signal_id, target_type, target_id)
-            WHERE accepted_at IS NULL AND dismissed_at IS NULL
-            DO NOTHING
-          RETURNING id
-          `,
-          [
-            orgId,
-            signal.id,
-            m.control_id,
-            m.score,
-            JSON.stringify({
-              source: "llm",
-              matched_branch: "control_llm",
-              model: LLM_CONTROL_MATCHER_MODEL_ID,
-              prompt_version: LLM_CONTROL_MATCHER_PROMPT_VERSION,
-              reasoning: m.reasoning
-            })
-          ]
-        );
-        if ((ins.rowCount ?? 0) > 0) written++;
-      }
+      const written = await writeControlSuggestions(orgId, signal.id, toWrite);
 
       logger.info(
-        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: validated.matches.length, written },
+        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: validated.matches.length, written, cached: false },
         "LLM control matcher: wrote control suggestions"
       );
       return written;
