@@ -58,6 +58,7 @@
 import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { recordSuggestionsSurfaced } from "../lib/suggestionSurfacedTelemetry.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -454,6 +455,20 @@ export async function listSignalMatchSuggestions(req: Request, res: Response): P
 
   try {
     const result = await pg.query(sql, params);
+
+    // Funnel telemetry: these ids are about to be DELIVERED in the response
+    // body, which is the narrowest point at which the application knows a
+    // suggestion actually reached a product surface. Recorded here rather than
+    // at generation time because "nobody valued it" and "nobody ever saw it"
+    // are otherwise indistinguishable, and they lead to opposite product
+    // conclusions. Non-fatal and savepoint-isolated: a telemetry failure can
+    // neither fail this request nor suppress the suggestions.
+    await recordSuggestionsSurfaced(
+      organizationId,
+      result.rows.map((r) => String((r as { id: unknown }).id)),
+      "suggestions_list"
+    );
+
     res.status(200).json({
       count: result.rows.length,
       limit,
