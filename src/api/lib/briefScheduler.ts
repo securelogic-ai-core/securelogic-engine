@@ -91,7 +91,7 @@ import {
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 import { emitBriefPublished } from "./briefWebhookEmitter.js";
-import { isBriefSendDay } from "./briefSendWindow.js";
+import { isBriefSendDay, currentBriefWeekStart } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 import { listBriefEligibleOrgIds } from "./briefEligibility.js";
 
@@ -111,6 +111,14 @@ export type SchedulerRunSummary = {
   active_orgs: number;
   orgs_processed: number;
   orgs_skipped: number;
+  /**
+   * Orgs skipped because they already hold a published brief for the current
+   * weekly window (generated_at >= the most recent Tuesday 07:00 UTC). This is
+   * what makes a rerun — cron re-fire, manual trigger, or catch-up after an
+   * interrupted run — idempotent: completed orgs are never regenerated or
+   * re-emailed; only the missing tail is reconciled.
+   */
+  orgs_skipped_already_current: number;
   signals_fetched: {
     cisa_kev: number;
     nvd: number;
@@ -668,6 +676,27 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// listOrgsWithCurrentBrief — the idempotency skip set
+// ---------------------------------------------------------------------------
+
+/**
+ * Orgs that already hold a published brief for the weekly window starting at
+ * `weekStart`. Cross-org read by design → pgElevated (same enumeration class
+ * as listBriefEligibleOrgIds and the staleness sweep). Exported for testing
+ * and for briefCatchup's completeness check.
+ */
+export async function listOrgsWithCurrentBrief(weekStart: Date): Promise<Set<string>> {
+  const result = await pgElevated.query<{ organization_id: string }>(
+    `SELECT DISTINCT organization_id
+     FROM intelligence_briefs
+     WHERE status = 'published'
+       AND generated_at >= $1`,
+    [weekStart.toISOString()]
+  );
+  return new Set(result.rows.map((r) => r.organization_id));
+}
+
+// ---------------------------------------------------------------------------
 // runScheduler — exported entry point
 // ---------------------------------------------------------------------------
 
@@ -687,6 +716,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
+    orgs_skipped_already_current: 0,
     signals_fetched: {
       cisa_kev: 0,
       nvd: 0,
@@ -739,6 +769,27 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   }
 
   logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Active organizations found");
+
+  // ── Step 1b: Idempotency skip set for the current weekly window ─────────
+  // Orgs that already published this week's edition are skipped entirely
+  // (ingest + generate + send), so a rerun after an interrupted run — the
+  // Tuesday-deploy failure mode — reconciles only the missing tail instead of
+  // regenerating (and re-emailing) completed orgs. FAILS OPEN: if this query
+  // errors, the skip set is empty and the run behaves exactly as before the
+  // idempotency change — a detection failure must never block the weekly
+  // edition. (briefEmailSender's idempotency still prevents double delivery
+  // in that degraded case.)
+  const weekStart = currentBriefWeekStart(new Date());
+  let orgsWithCurrentBrief: Set<string>;
+  try {
+    orgsWithCurrentBrief = await listOrgsWithCurrentBrief(weekStart);
+  } catch (err) {
+    orgsWithCurrentBrief = new Set();
+    logger.warn(
+      { event: "scheduler_current_brief_query_failed", weekStart: weekStart.toISOString(), err },
+      "Failed to load the current-week brief skip set — proceeding without idempotency skips (fail-open)"
+    );
+  }
 
   // ── Step 2: Fetch signal feeds once (global, shared across all orgs) ────
 
@@ -950,6 +1001,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   // ── Step 3: Process each org sequentially ───────────────────────────────
 
   for (const orgId of orgIds) {
+    if (orgsWithCurrentBrief.has(orgId)) {
+      summary.orgs_skipped_already_current++;
+      logger.info(
+        { event: "scheduler_org_skipped_already_current", orgId, weekStart: weekStart.toISOString() },
+        "Org already has this week's published brief — skipping (idempotent rerun)"
+      );
+      continue;
+    }
+
     logger.info({ event: "scheduler_org_start", orgId }, "Processing org");
 
     let orgFailed = false;
@@ -1261,6 +1321,7 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       active_orgs: summary.active_orgs,
       orgs_processed: summary.orgs_processed,
       orgs_skipped: summary.orgs_skipped,
+      orgs_skipped_already_current: summary.orgs_skipped_already_current,
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
