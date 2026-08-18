@@ -93,7 +93,7 @@ import {
   buildRiskActionDraft,
   buildObligationActionDraft
 } from "./actionRecommendationEngine.js";
-import { runLlmControlMatcherForSignal } from "./llmControlMatcher.js";
+import { enqueueControlMatcherJob } from "./controlMatcherQueue.js";
 import { enqueueApplicabilityReassessment } from "./applicabilityReassessment.js";
 import { resolveSlaDueDateWith } from "./findingSlaPolicyRules.js";
 import { createAlertBatcher } from "./alerting/alertService.js";
@@ -1440,6 +1440,21 @@ export async function processSignal(
       signal_id: signalId
     });
 
+    // LLM control matcher — ENQUEUED here, on this same client, rather than
+    // awaited after the commit (see step 7's note below). Committed iff the
+    // processing commits, so a job exists for every signal that reached
+    // processed = TRUE. Enqueueing post-commit would open a window where the
+    // signal is marked processed with no job; re-ingest hits ON CONFLICT DO
+    // NOTHING and never re-processes, so that suggestion would be lost with
+    // nothing able to detect it. Self-gating on the same predicate the inline
+    // call used, so an ineligible signal writes no row and costs nothing.
+    await enqueueControlMatcherJob(client, orgId, {
+      id: signalId,
+      signal_type: signal.signal_type,
+      severity: signal.severity,
+      normalized_summary: signal.normalized_summary
+    });
+
     await client.query("COMMIT");
 
     // Wave-1 (DS-15): emit AFTER the commit so a rollback can never produce a
@@ -1520,21 +1535,22 @@ export async function processSignal(
   }
 
   // ---------------------------------------------------------------
-  // 7. GAP-1: LLM control matcher (suggest-only, AFTER commit, non-fatal).
-  //    Self-gated (flag OFF by default + relevant signal-type + Critical/High
-  //    + API key) so it no-ops cheaply with zero spend when disabled. Never
-  //    throws. Runs here, post-commit, because an LLM call must not block the
-  //    matcher transaction.
+  // 7. GAP-1: LLM control matcher — now ASYNCHRONOUS.
+  //
+  //    It used to run here, inline and awaited: one provider call per
+  //    Critical/High signal, strictly sequential. Measured on staging
+  //    2026-08-18, that put 87.6% of the slowest org's 3.15-hour Brief run
+  //    inside these calls — while the scheduler's overlap lock was held and
+  //    every other org waited — to produce `signal_match_suggestions` rows that
+  //    Brief generation never reads.
+  //
+  //    The work is now a durable job, enqueued above on the processing
+  //    transaction and executed by controlMatcherWorker under the intelligence
+  //    worker. Same matcher, same inputs, same rows; different WHERE and WHEN.
+  //    processSignal therefore no longer makes any provider call, and its
+  //    callers — the Brief scheduler, the ingest routes, the sweeper — no
+  //    longer wait on one.
   // ---------------------------------------------------------------
-  await runLlmControlMatcherForSignal(
-    {
-      id: signalId,
-      signal_type: signal.signal_type,
-      severity: signal.severity,
-      normalized_summary: signal.normalized_summary
-    },
-    orgId
-  );
 
   return {
     finding: createdFinding,
