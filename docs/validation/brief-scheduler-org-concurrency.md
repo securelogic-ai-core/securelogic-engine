@@ -1,5 +1,24 @@
 # Brief scheduler — bounded per-org concurrency: measurement record
 
+> ## CORRECTED BASELINE — authoritative
+>
+> | measure | value |
+> |---|---|
+> | Measured sequential run | **10.99 h** (13 orgs, 13 published, 0 errors) |
+> | Projected concurrency-2 run | **~6.24 h** |
+> | Longest individual org | **~3.15 h** — hard floor at any pool size |
+> | Prior ~4.5 h characterization | **SUPERSEDED — do not use** |
+>
+> Deadline calibration requires **≥ 3 weekly cycles** of `scheduler_org_complete`
+> telemetry collected *after* the verdict cache and bounded concurrency are live,
+> with the threshold set from the observed distribution (ADR-0008).
+>
+> The 3.15 h floor is decomposed in
+> `docs/investigation/brief-scheduler-slowest-org-decomposition.md`: **87.6% of it
+> is sequential LLM control-matcher calls whose output the Brief never reads.**
+> Neither the verdict cache nor org concurrency reduces it.
+
+
 Branch: `perf/brief-scheduler-bounded-org-concurrency`.
 Measured 2026-08-18.
 

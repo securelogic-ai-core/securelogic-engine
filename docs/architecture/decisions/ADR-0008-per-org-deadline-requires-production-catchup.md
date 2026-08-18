@@ -85,14 +85,24 @@ Reasoning:
    four of which published successfully, with zero errors and zero enrichment
    fallbacks. They were slow, not broken.
 
-### Note on the superseded figure
+### Corrected baseline — authoritative, supersedes all earlier figures
 
-The prior working figure for the run has been quoted as ~4.5 hours. The measured
-value is **10.99 h sequential** (`durationMs 39624403`), with **6.24 h**
-projected at `ORG_CONCURRENCY = 2` over the real per-org durations and a hard
-floor of **3.15 h** set by the single longest org. Whichever earlier figure was
-in circulation, it is superseded and must not be used to set a threshold — which
-is the substance of this policy either way.
+| measure | value |
+|---|---|
+| Measured sequential run | **10.99 h** (`durationMs 39624403`) |
+| Projected concurrency-2 run | **~6.24 h** |
+| Longest individual org | **~3.15 h** — hard floor at any pool size |
+| Prior ~4.5 h characterization | **SUPERSEDED — must not be used to set a threshold** |
+
+The 3.15 h floor has since been decomposed
+(`docs/investigation/brief-scheduler-slowest-org-decomposition.md`): **87.6% of
+it is sequential LLM control-matcher calls**, ~1,600–1,900 of them per org per
+week at p50 5.5 s, producing advisory `signal_match_suggestions` that the
+Intelligence Brief does not read. Neither the verdict cache (every key on that
+path is first-time) nor org concurrency (which parallelises across orgs, not
+within one) reduces that floor. That makes the floor an architectural question,
+not a calibration input — a deadline set near 3.15 h would be measuring a
+bottleneck rather than guarding against one.
 
 ### Reassessment trigger
 
