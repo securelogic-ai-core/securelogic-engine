@@ -57,15 +57,24 @@ discrimination.
 
 ## 3. Proposed state model
 
-Three terminal states plus the implicit "absent". A cache entry records **what
-the model said**, not merely "we called it".
+> **SUPERSEDED IN PART — see `llm-verdict-cache-design-addendum.md` §0 ruling 1.**
+> This section is the pre-ruling design. As shipped in migration
+> `20261023_llm_control_matcher_verdicts.sql`, the state set is **five**, not
+> three-plus-absent: `pending` (stampede reservation) and `dead_lettered`
+> (retry budget exhausted) were added, and `unparseable` is **not** reusable.
+> The table below is corrected to match what shipped; the rationale text is
+> retained as the historical record of how the decision was reached.
+
+A cache entry records **what the model said**, not merely "we called it".
 
 | State | Meaning | On a subsequent hit |
 |---|---|---|
 | *(no row)* | Never asked. | Call the model, then write a row. |
 | `answered` | The model returned a parseable verdict; `suggestions` holds it (possibly an empty array — "no controls match" is a real, reusable answer). | Reuse; make no call. |
-| `unparseable` | The model answered but the response failed the parse/validation contract. | Reuse as "no suggestions", make no call — **for this `prompt_version` only.** A bad prompt is a code defect to fix by bumping the version, not by paying for the same malformed answer weekly. |
+| `unparseable` | The model answered but the response failed the parse/validation contract. | **Do NOT reuse** (ruling 1). Persisted for observability only; never satisfies a lookup; stays retryable. *(Originally proposed as reusable "no suggestions" — the operator rejected that: a malformed answer is not evidence that no controls match, and reusing it would silently suppress real suggestions.)* |
 | `failed` | Transport/quota/timeout — the model never really answered. | **Do NOT reuse.** Retry, subject to the backoff below. |
+| `pending` | An in-flight reservation held by one caller (stampede control). | Do not reuse and do not call — skip this pass; reclaimable once the reservation goes stale. |
+| `dead_lettered` | Retry budget exhausted. | Never reused, never auto-retried, and explicitly **not** a cached negative verdict. Needs a human. |
 
 The `failed` distinction is the one that has to be right. Caching a transport
 failure as an answer would silently and permanently suppress control
