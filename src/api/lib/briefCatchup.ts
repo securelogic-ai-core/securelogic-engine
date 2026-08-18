@@ -62,6 +62,7 @@ import { logger } from "../infra/logger.js";
 import { currentBriefWeekStart } from "./briefSendWindow.js";
 import { briefCatchupEnabled } from "./briefCatchupFeatureFlag.js";
 import { sqlBriefEligibleOrg } from "./briefEligibility.js";
+import { sqlMissingCurrentBrief } from "./briefWeeklyEdition.js";
 import { runSchedulerGuarded } from "./schedulerRunner.js";
 
 /** How many missing org ids to name in the trigger log before truncating. */
@@ -84,13 +85,7 @@ export async function findCatchupMissingOrgIds(now: Date): Promise<string[]> {
      FROM organizations o
      WHERE ${sqlBriefEligibleOrg("o")}
        AND o.created_at < $1
-       AND NOT EXISTS (
-         SELECT 1
-         FROM intelligence_briefs b
-         WHERE b.organization_id = o.id
-           AND b.status = 'published'
-           AND b.generated_at >= $1
-       )
+       AND ${sqlMissingCurrentBrief("o", "$1")}
      ORDER BY o.id`,
     [weekStart.toISOString()]
   );
