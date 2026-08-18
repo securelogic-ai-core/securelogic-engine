@@ -272,6 +272,38 @@ async function writeControlSuggestions(
   return written;
 }
 
+/**
+ * What one matcher invocation actually did.
+ *
+ * The numeric return of `runLlmControlMatcherForSignal` cannot distinguish
+ * "wrote nothing because the org has no controls" from "wrote nothing because
+ * the provider failed" — both are 0. Once the work runs asynchronously that
+ * distinction is load-bearing: the job queue must retry the second and not the
+ * first, and the operator must be able to tell a quiet system from a broken one.
+ */
+export type ControlMatcherOutcome = {
+  /** Suggestions written to signal_match_suggestions by THIS invocation. */
+  written: number;
+  /** Stable telemetry label for what happened. */
+  outcome:
+    | "written"
+    | "cache_hit"
+    | "ineligible"
+    | "no_controls"
+    | "deferred"
+    | "exhausted"
+    | "provider_failed"
+    | "unparseable";
+  /**
+   * Could a later re-invocation still produce a verdict?
+   *
+   * True only for failures the verdict cache has left retryable. `exhausted`
+   * (dead-lettered) is false by design — it needs a human, not another attempt —
+   * and the terminal successes are obviously false.
+   */
+  retryable: boolean;
+};
+
 // ---------------------------------------------------------------------------
 // runLlmControlMatcherForSignal — I/O (self-contained, error-swallowing)
 // ---------------------------------------------------------------------------
@@ -288,7 +320,23 @@ export async function runLlmControlMatcherForSignal(
   orgId: string,
   llmCall: (prompt: string) => Promise<LlmCallResult> = defaultLlmCall
 ): Promise<number> {
-  if (!shouldRunControlMatcher(signal)) return 0;
+  return (await runControlMatcherWithOutcome(signal, orgId, llmCall)).written;
+}
+
+/**
+ * The implementation. Identical behaviour to the numeric wrapper above — same
+ * gate, same cache semantics, same rows written, same swallowing of every
+ * failure — but it reports WHICH outcome occurred so an asynchronous caller can
+ * decide whether to retry.
+ */
+export async function runControlMatcherWithOutcome(
+  signal: SignalForControlMatch,
+  orgId: string,
+  llmCall: (prompt: string) => Promise<LlmCallResult> = defaultLlmCall
+): Promise<ControlMatcherOutcome> {
+  if (!shouldRunControlMatcher(signal)) {
+    return { written: 0, outcome: "ineligible", retryable: false };
+  }
 
   try {
     // ── Phase 1: inputs + cache lookup + reservation (own tenant scope) ──────
@@ -345,13 +393,21 @@ export async function runLlmControlMatcherForSignal(
       return { kind: "compute" as const, key, controls, attempts: reservation.attempts };
     });
 
-    if (phase1 === null) return 0;
+    if (phase1 === null) {
+      return { written: 0, outcome: "no_controls", retryable: false };
+    }
     if (phase1.kind === "skip") {
       logger.info(
         { event: "llm_control_matcher_skipped", orgId, signalId: signal.id, reason: phase1.reason },
         "LLM control matcher: skipped without calling (reserved elsewhere or dead-lettered)"
       );
-      return 0;
+      return phase1.reason === "reserved_by_other"
+        // Another process holds the reservation. Retrying is cheap and correct:
+        // the next attempt either replays that winner's cached verdict or
+        // re-claims a reservation the winner abandoned.
+        ? { written: 0, outcome: "deferred", retryable: true }
+        // Dead-lettered keys are never auto-retried — they need a human.
+        : { written: 0, outcome: "exhausted", retryable: false };
     }
 
     const { key, controls } = phase1;
@@ -370,7 +426,7 @@ export async function runLlmControlMatcherForSignal(
         { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: phase1.verdict.matches.length, written, cached: true },
         "LLM control matcher: wrote control suggestions from cached verdict"
       );
-      return written;
+      return { written, outcome: "cache_hit", retryable: false };
     }
 
     // ── Phase 2: the provider call, with NO DB connection held ───────────────
@@ -396,7 +452,11 @@ export async function runLlmControlMatcherForSignal(
         })
       );
       logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
-      return 0;
+      return {
+        written: 0,
+        outcome: "provider_failed",
+        retryable: decision.state !== "dead_lettered"
+      };
     }
 
     let parsed: unknown;
@@ -415,7 +475,11 @@ export async function runLlmControlMatcherForSignal(
         })
       );
       logger.warn({ event: "llm_control_matcher_invalid_json", orgId, signalId: signal.id }, "LLM control matcher: response did not JSON-parse");
-      return 0;
+      return {
+        written: 0,
+        outcome: "unparseable",
+        retryable: decision.state !== "dead_lettered"
+      };
     }
 
     const validated = validateControlMatcherResponse(parsed, knownIds);
@@ -432,7 +496,11 @@ export async function runLlmControlMatcherForSignal(
         })
       );
       logger.warn({ event: "llm_control_matcher_invalid_shape", orgId, signalId: signal.id, error: validated.error }, "LLM control matcher: invalid response shape");
-      return 0;
+      return {
+        written: 0,
+        outcome: "unparseable",
+        retryable: decision.state !== "dead_lettered"
+      };
     }
 
     return await withTenant(orgId, async () => {
@@ -459,10 +527,12 @@ export async function runLlmControlMatcherForSignal(
         { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: validated.matches.length, written, cached: false },
         "LLM control matcher: wrote control suggestions"
       );
-      return written;
+      return { written, outcome: "written" as const, retryable: false };
     });
   } catch (err) {
     logger.warn({ event: "llm_control_matcher_failed", orgId, signalId: signal.id, err }, "LLM control matcher failed (non-fatal)");
-    return 0;
+    // An unforeseen throw (a DB blip settling the verdict, say) leaves no
+    // terminal verdict state, so a later attempt can still succeed.
+    return { written: 0, outcome: "provider_failed" as const, retryable: true };
   }
 }

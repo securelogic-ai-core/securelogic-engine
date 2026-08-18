@@ -130,15 +130,17 @@ describe("runPipeline.ts source — matcher fan-out wiring", () => {
     expect(source).toMatch(/matcher_fanout_unexpected_error/);
   });
 
-  it("imports runLlmControlMatcherForSignal from llmControlMatcher.js (not the matcher service)", () => {
-    // Must come from llmControlMatcher.js directly — cyberSignalProcessingService
-    // does not re-export it.
+  it("imports the control-matcher ENQUEUE (work is now asynchronous, not awaited inline)", () => {
+    // The fan-out must ENQUEUE, never await a provider call inline. Importing
+    // the queue rather than the matcher is what makes that structural.
     expect(source).toMatch(
-      /import\s*\{\s*runLlmControlMatcherForSignal\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/src\/api\/lib\/llmControlMatcher\.js"/
+      /import\s*\{\s*enqueueControlMatcherJob\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/src\/api\/lib\/controlMatcherQueue\.js"/
     );
+    // And the inline matcher must be gone from this file entirely.
+    expect(source).not.toMatch(/runLlmControlMatcherForSignal/);
     // Guard against it sneaking into the cyberSignalProcessingService import.
     expect(source).not.toMatch(
-      /import\s*\{[^}]*runLlmControlMatcherForSignal[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
+      /import\s*\{[^}]*enqueueControlMatcherJob[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
     );
   });
 
@@ -147,7 +149,7 @@ describe("runPipeline.ts source — matcher fan-out wiring", () => {
     // same per-(signal, org) try block — proving it is a sibling, not nested in
     // runMatcherForSignal.
     expect(source).toMatch(
-      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?runLlmControlMatcherForSignal\(signal, org\.id\)[\s\S]*?\}\s*catch/
+      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?enqueueControlMatcherJob\(pg, org\.id, signal\)[\s\S]*?\}\s*catch/
     );
   });
 
