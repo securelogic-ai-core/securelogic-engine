@@ -14,6 +14,7 @@
 import { logger } from "./logger.js";
 import { sendSecurityAlert } from "./alerting.js";
 import { captureException } from "../lib/sentry.js";
+import { recordLlmUsage } from "../lib/llm/llmTelemetry.js";
 
 export interface ProviderQuotaError {
   provider: "anthropic" | "openai";
@@ -148,6 +149,30 @@ interface OpenAILike {
   audio: { transcriptions: { create: (...args: any[]) => Promise<any> } };
 }
 
+/**
+ * Pull the token counts out of a resolved Anthropic response, tolerating both
+ * missing usage (streaming handles, non-Message results) and partial usage
+ * objects. Returns null when the result is not a usage-bearing Message.
+ */
+function extractTokenCounts(message: unknown): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+} | null {
+  if (!message || typeof message !== "object") return null;
+  const usage = (message as { usage?: Record<string, unknown> }).usage;
+  if (!usage || typeof usage !== "object") return null;
+
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    inputTokens: num(usage["input_tokens"]),
+    outputTokens: num(usage["output_tokens"]),
+    cacheReadTokens: num(usage["cache_read_input_tokens"]),
+    cacheWriteTokens: num(usage["cache_creation_input_tokens"])
+  };
+}
+
 export function instrumentAnthropicClient<T extends AnthropicLike>(client: T): T {
   const original = client.messages.create.bind(client.messages);
   // NOT an `async` wrapper. `messages.create` returns the SDK's APIPromise, and
@@ -159,13 +184,38 @@ export function instrumentAnthropicClient<T extends AnthropicLike>(client: T): T
   // server's handler turns into drain-and-exit. Alerting therefore has to
   // observe the rejection WITHOUT replacing the returned object.
   client.messages.create = (...args: any[]) => {
+    const startedAt = Date.now();
+    const model = typeof args[0]?.model === "string" ? (args[0].model as string) : "unknown";
     const result = original(...args);
-    if (result && typeof (result as Promise<unknown>).catch === "function") {
+    if (result && typeof (result as Promise<unknown>).then === "function") {
       // A second, independent subscriber: it never alters what the caller gets
-      // back, and it swallows so this branch cannot itself become an
-      // unhandledRejection. The real caller still sees the original error.
-      void Promise.resolve(result).catch((err: unknown) =>
-        maybeAlertProviderQuotaError(err).catch(() => {}),
+      // back, and it handles BOTH settlements so this branch cannot itself
+      // become an unhandledRejection. The real caller still sees the original
+      // value/error unchanged.
+      void Promise.resolve(result).then(
+        (message: unknown) => {
+          // Token/cost/latency telemetry on the SUCCESS path — the half this
+          // wrapper never observed before. Streaming handles carry no `usage`,
+          // so they record latency only via the null branch below.
+          const tokens = extractTokenCounts(message);
+          if (tokens) {
+            recordLlmUsage({ model, tokens, latencyMs: Date.now() - startedAt, ok: true });
+          }
+        },
+        (err: unknown) => {
+          recordLlmUsage({
+            model,
+            tokens: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0
+            },
+            latencyMs: Date.now() - startedAt,
+            ok: false
+          });
+          void maybeAlertProviderQuotaError(err).catch(() => {});
+        },
       );
     }
     return result;

@@ -27,7 +27,7 @@ import { Router } from "express";
 import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import rateLimit from "express-rate-limit";
 import { logger } from "../infra/logger.js";
-import { runScheduler } from "../lib/briefScheduler.js";
+import { runSchedulerGuarded } from "../lib/schedulerRunner.js";
 
 const router = Router();
 
@@ -96,11 +96,29 @@ router.post("/admin/briefs/run-scheduler", schedulerRateLimit, async (req, res) 
   );
 
   try {
-    const summary = await runScheduler();
+    // Through the SHARED overlap lock, not runScheduler() directly. Calling
+    // the scheduler straight from here bypassed the lock entirely: a manual
+    // trigger during the weekly cron run (or two manual triggers) executed
+    // full concurrent passes over every org — duplicate generation, duplicate
+    // LLM spend, and interleaved writes. 409 is the honest answer when a run
+    // is already in flight.
+    const result = await runSchedulerGuarded("manual");
+
+    if (!result.ran) {
+      logger.warn(
+        { event: "scheduler_manual_trigger_overlap" },
+        "POST /api/admin/briefs/run-scheduler: a scheduler run is already in progress — not starting a second"
+      );
+      return res.status(409).json({ error: "scheduler_run_in_progress" });
+    }
+
+    if (result.summary === null) {
+      return res.status(500).json({ error: "internal_error", detail: result.error });
+    }
 
     return res.status(200).json({
       ok: true,
-      summary
+      summary: result.summary
     });
   } catch (err) {
     logger.error(

@@ -42,13 +42,26 @@
 
 import { schedule } from "node-cron";
 import { logger } from "../infra/logger.js";
-import { runScheduler } from "./briefScheduler.js";
+import { runScheduler, type SchedulerRunSummary } from "./briefScheduler.js";
 import { runDailyDigest } from "./digestScheduler.js";
 import { runWeeklySummary } from "./summaryScheduler.js";
 import { runAuthAnomalyScan } from "./authAnomaly.js";
 import { runDailyPostureSnapshots } from "./postureSnapshotScheduler.js";
 import { runDailySlaBreachSweep } from "./slaBreachScheduler.js";
 import { runBriefStalenessCheck } from "./briefStalenessMonitor.js";
+
+/**
+ * Outcome of a guarded trigger.
+ *
+ * `ran: false` means the lock refused this trigger — the caller must NOT treat
+ * that as a completed run. `ran: true` with `summary: null` means the run
+ * started and threw; the error is reported rather than swallowed so the manual
+ * trigger can answer honestly instead of returning a fake success.
+ */
+export type GuardedRunResult =
+  | { ran: true; summary: SchedulerRunSummary }
+  | { ran: true; summary: null; error: string }
+  | { ran: false; reason: "overlap" };
 
 /** True while a scheduler run is actively in progress. Prevents overlapping runs. */
 let isRunning = false;
@@ -66,13 +79,15 @@ let isScanningAuthAnomalies = false;
  * Never throws — a scheduler error is logged and swallowed so it cannot crash
  * the cron tick or the boot sequence. Exported for briefCatchup.
  */
-export async function runSchedulerGuarded(trigger: "cron" | "catchup"): Promise<void> {
+export async function runSchedulerGuarded(
+  trigger: "cron" | "catchup" | "manual"
+): Promise<GuardedRunResult> {
   if (isRunning) {
     logger.warn(
       { event: "scheduler_overlap_skipped", trigger },
       "Brief scheduler: previous run still in progress — skipping this trigger"
     );
-    return;
+    return { ran: false, reason: "overlap" };
   }
 
   isRunning = true;
@@ -96,12 +111,14 @@ export async function runSchedulerGuarded(trigger: "cron" | "catchup"): Promise<
       },
       "Brief scheduler run completed"
     );
+    return { ran: true, summary };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     logger.error(
       { event: "scheduler_cron_error", trigger, durationMs, err },
       "Brief scheduler threw an unexpected error"
     );
+    return { ran: true, summary: null, error: err instanceof Error ? err.message : String(err) };
   } finally {
     isRunning = false;
   }
