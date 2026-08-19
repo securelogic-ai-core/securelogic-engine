@@ -230,7 +230,14 @@ async function ensureWalkthroughUser(
             totp_enabled          = FALSE,
             totp_secret           = NULL,
             deleted_at            = NULL,
-            deletion_scheduled_at = NULL
+            deletion_scheduled_at = NULL,
+            -- SEC-JWT-EPOCH: re-seeding installs a fresh credential, so it is a
+            -- credential rotation and MUST invalidate outstanding sessions.
+            -- Re-hashing the password alone does NOT do that: requireAuth's
+            -- legacy check short-circuits when password_changed_at IS NULL,
+            -- and this upsert never wrote that column, so before this line a
+            -- pre-reset JWT survived a --reset indefinitely.
+            session_epoch         = users.session_epoch + 1
       WHERE users.organization_id = $1`,
     [orgId, email, name, role, passwordHash]
   );

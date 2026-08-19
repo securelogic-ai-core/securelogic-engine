@@ -174,10 +174,13 @@ describe("POST /api/sso/exchange — status gate at the mint site (review B2 + #
 describe("POST /api/sso/exchange — role is read at exchange time", () => {
   it("the CURRENT role is signed, not one captured when the code was minted", async () => {
     const { signJwt } = await import("../lib/jwt.js");
-    h.userRows = [{ role: "admin", status: "active" }];
+    h.userRows = [{ role: "admin", status: "active", session_epoch: 4 }];
 
     await request(makeApp()).post("/api/sso/exchange").send({ code: CODE });
 
-    expect(signJwt).toHaveBeenCalledWith(USER, ORG, "admin");
+    // SEC-JWT-EPOCH: the epoch is read at exchange time alongside role and
+    // status, so a reset between code issue and redemption invalidates rather
+    // than mints.
+    expect(signJwt).toHaveBeenCalledWith(USER, ORG, "admin", 4);
   });
 });

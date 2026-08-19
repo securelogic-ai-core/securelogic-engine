@@ -79,6 +79,27 @@ export async function requireApiKey(
         return;
       }
 
+      // SEC-JWT-EPOCH: mirrors requireAuth. A session token MUST carry the
+      // epoch it was minted under; absence is invalid session state, not a
+      // compatibility fallback. Checked BEFORE the users lookup so it stays a
+      // pure function of the token and cannot be conflated with — or rescued
+      // by — the fail-closed DB handler below.
+      if (typeof payload.se !== "number") {
+        writeAuditEvent({
+          actorUserId: payload.sub,
+          eventType: "auth.session_epoch_missing",
+          resourceType: "user",
+          resourceId: payload.sub,
+          payload: { route: req.originalUrl, method: req.method },
+          ipAddress: resolveClientIp(req).ip
+        });
+        res.status(401).json({
+          error: "session_epoch_missing",
+          detail: "This session predates a security update. Please sign in again."
+        });
+        return;
+      }
+
       // Live-session enforcement against the users row: status, role, and
       // password recency. Fail CLOSED on DB error: leaked pre-rotation
       // tokens must not replay during a Postgres degradation window. The
@@ -95,8 +116,9 @@ export async function requireApiKey(
           status: string;
           role: string;
           seat_type: string | null;
+          session_epoch: number;
         }>(
-          `SELECT password_changed_at, status, role, seat_type FROM users WHERE id = $1 LIMIT 1`,
+          `SELECT password_changed_at, status, role, seat_type, session_epoch FROM users WHERE id = $1 LIMIT 1`,
           [payload.sub]
         );
         const userRow = pwResult.rows[0] ?? null;
@@ -120,6 +142,14 @@ export async function requireApiKey(
           return;
         }
 
+        // Deterministic invalidation — integer equality, no clock. Subsumes the
+        // legacy timestamp check below and closes its sub-second bypass.
+        if (payload.se !== userRow.session_epoch) {
+          res.status(401).json({ error: "session_invalidated", detail: "This session is no longer valid. Please sign in again." });
+          return;
+        }
+
+        // Legacy timestamp check, retained unchanged (belt and braces).
         const changedAt = userRow.password_changed_at;
         if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
           res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });

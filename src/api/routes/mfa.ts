@@ -70,8 +70,8 @@ const TOTP_OPTS = {
 
 async function buildFullLoginResponse(userId: string, orgId: string, role: string) {
   const [userResult, orgResult] = await Promise.all([
-    pgElevated.query<{ id: string; email: string; name: string }>(
-      `SELECT id, email, name FROM users WHERE id = $1 LIMIT 1`,
+    pgElevated.query<{ id: string; email: string; name: string; session_epoch: number }>(
+      `SELECT id, email, name, session_epoch FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     ),
     pgElevated.query<{ name: string; entitlement_level: string; onboarding_completed_at: string | null }>(
@@ -85,7 +85,9 @@ async function buildFullLoginResponse(userId: string, orgId: string, role: strin
 
   const user  = userResult.rows[0]!;
   const org   = orgResult.rows[0];
-  const token = signJwt(userId, orgId, role);
+  // SEC-JWT-EPOCH: MFA completion mints the real session, so it must carry the
+  // user's current epoch — not the 0 default.
+  const token = signJwt(userId, orgId, role, user.session_epoch);
 
   // Stamp last login — best-effort, never blocks login
   pgElevated.query(
