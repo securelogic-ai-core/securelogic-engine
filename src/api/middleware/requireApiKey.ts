@@ -3,6 +3,13 @@ import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+// Tier-2 auth-anomaly fix: audit events on this surface feed the
+// credential-stuffing / key-probing detectors, which GROUP BY ip_address.
+// `req.ip` here is a ROTATING Cloudflare edge node (see infra/clientIp.ts),
+// which fragmented one client across many identities and kept the anomaly
+// ledger empty for all time. Record the resolved caller instead — same
+// trusted mechanism (CF-Connecting-IP) the enforcing admin controls key on.
+import { resolveClientIp } from "../infra/clientIp.js";
 import { verifyJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 
 declare global {
@@ -47,7 +54,7 @@ export async function requireApiKey(
         eventType: "auth.missing_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(401).json({ error: "api_key_required" });
       return;
@@ -66,7 +73,7 @@ export async function requireApiKey(
           eventType: "auth.invalid_jwt",
           resourceType: "user",
           payload: { route: req.originalUrl, method: req.method },
-          ipAddress: req.ip ?? null
+          ipAddress: resolveClientIp(req).ip
         });
         res.status(401).json({ error: "invalid_token" });
         return;
@@ -104,7 +111,7 @@ export async function requireApiKey(
             resourceType: "user",
             resourceId: payload.sub,
             payload: { route: req.originalUrl, method: req.method, status: userRow?.status ?? "missing" },
-            ipAddress: req.ip ?? null
+            ipAddress: resolveClientIp(req).ip
           });
           res.status(401).json({
             error: "account_inactive",
@@ -133,7 +140,7 @@ export async function requireApiKey(
           eventType: "auth.jwt_bridge_db_failure",
           resourceType: "user",
           payload: { route: req.originalUrl, method: req.method },
-          ipAddress: req.ip ?? null
+          ipAddress: resolveClientIp(req).ip
         });
         res.status(503).json({
           error: "auth_unavailable",
@@ -209,7 +216,7 @@ export async function requireApiKey(
         eventType: "auth.invalid_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(401).json({ error: "invalid_api_key" });
       return;
@@ -230,7 +237,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({ error: "api_key_inactive" });
       return;
@@ -245,7 +252,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({ error: "api_key_revoked" });
       return;
@@ -260,7 +267,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method, expires_at: apiKey.expires_at },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({
         error: "api_key_expired",

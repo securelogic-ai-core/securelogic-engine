@@ -16,6 +16,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { Router, type Request, type Response } from "express";
 import { pg, withTenant } from "../infra/postgres.js";
@@ -238,7 +239,7 @@ const askRateLimit = rateLimit({
       (req as unknown as { organizationContext?: { organizationId?: string | null } })
         .organizationContext?.organizationId ?? null;
     if (orgId) return `org:${orgId}`;
-    return req.ip ? ipKeyGenerator(req.ip) : "unknown";
+    return rateLimitKeyGenerator(req);
   },
   message: {
     error: "rate_limit_exceeded",

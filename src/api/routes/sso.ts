@@ -24,6 +24,7 @@ import * as samlify from "samlify";
 //     withTenant(orgId) so the RLS backstop applies post-flip. GET shares the
 //     elevated loadSsoConfig helper with the login plane (read-only).
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
@@ -70,7 +71,7 @@ const checkDomainLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: "rate_limit_exceeded" },
 });
 
@@ -441,7 +442,7 @@ const exchangeLimiter = rateLimit({
   max: 600,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  keyGenerator: rateLimitKeyGenerator,
   handler: (req, res) => {
     logger.warn(
       { event: "sso_exchange_rate_limited", ip: req.ip ?? null },

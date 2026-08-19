@@ -35,6 +35,14 @@ import { logger } from "../infra/logger.js";
 import { captureException } from "../lib/sentry.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAccountLockout } from "../lib/authAnomaly.js";
+// Tier-2 auth-anomaly fix: see infra/clientIp.ts — auth-surface audit events
+// must record the RESOLVED caller, not the rotating Cloudflare edge address,
+// or the anomaly detectors that GROUP BY ip_address can never accumulate.
+// rateLimitKeyGenerator: the enforcing limiters key on the same resolved
+// client, so a rotating edge cannot dilute a per-caller limit.
+import { resolveClientIp, rateLimitKeyGenerator } from "../infra/clientIp.js";
+// tokenDigest: reset/verification/invite tokens are stored digested, so a
+// database read alone no longer yields a usable credential.
 import { digestToken, isPresentableToken } from "../lib/tokenDigest.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
@@ -60,6 +68,7 @@ const router = Router();
 const signupLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -68,6 +77,7 @@ const signupLimiter = rateLimit({
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -76,6 +86,7 @@ const loginLimiter = rateLimit({
 const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -84,6 +95,7 @@ const forgotPasswordLimiter = rateLimit({
 const verifyLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -495,7 +507,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
         userId,
         organizationId: orgId,
         consentMethod: "signup_checkbox",
-        ipAddress: req.ip,
+        ipAddress: resolveClientIp(req).ip ?? undefined,
         userAgent: req.headers["user-agent"],
       });
 
@@ -519,7 +531,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
       resourceType: "user",
       resourceId: userId,
       payload: { email: email.slice(0, 4) + "***" },
-      ipAddress: req.ip ?? null
+      ipAddress: resolveClientIp(req).ip
     });
 
     // Send the verification email and AWAIT the outcome. The signup is already
@@ -651,7 +663,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       eventType: "auth.email_verified",
       resourceType: "user",
       resourceId: user.id,
-      ipAddress: req.ip ?? null
+      ipAddress: resolveClientIp(req).ip
     });
 
     res.status(200).json({ ok: true, token: jwt });
@@ -811,7 +823,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         eventType: "auth.login_blocked",
         resourceType: "user",
         payload: { reason: "lockout", locked_until: user.lockout_until, email: email.slice(0, 4) + "***" },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(429).json({
         error: "account_locked",
@@ -835,7 +847,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         resourceType: "user",
         resourceId: user.id,
         payload: { reason: user.status, email: email.slice(0, 4) + "***" },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({
         error: "account_pending_deletion",
@@ -855,7 +867,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         resourceType: "user",
         resourceId: user.id,
         payload: { reason: "inactive", email: email.slice(0, 4) + "***" },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({
         error: "account_inactive",
@@ -883,7 +895,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
           email:  email.slice(0, 4) + "***",
           method: "password"
         },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
 
       // B3: Increment failure counter for known users only
@@ -903,7 +915,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
           void recordAccountLockout({
             userId: user.id,
             organizationId: user.organization_id,
-            ip: req.ip ?? null,
+            ip: resolveClientIp(req).ip,
             failedAttempts: newCount,
             lockedUntil: lockoutUntil!,
             maskedEmail: email.slice(0, 4) + "***"
@@ -943,7 +955,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
         resourceType:   "user",
         resourceId:     user.id,
         payload:        { reason: "org_requires_mfa" },
-        ipAddress:      req.ip ?? null
+        ipAddress:      resolveClientIp(req).ip
       });
       res.status(403).json({
         error:  "mfa_enrollment_required",
@@ -996,7 +1008,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       resourceType:   "user",
       resourceId:     user.id,
       payload:        { email: user.email.slice(0, 4) + "***", method: "password" },
-      ipAddress:      req.ip ?? null
+      ipAddress:      resolveClientIp(req).ip
     });
 
     res.status(200).json({
@@ -1032,7 +1044,7 @@ router.post("/auth/logout", requireAuth, (req, res) => {
     eventType: "auth.logout",
     resourceType: "user",
     resourceId: req.jwtPayload?.sub ?? null,
-    ipAddress: req.ip ?? null
+    ipAddress: resolveClientIp(req).ip
   });
 
   logger.info({ event: "customer_logout", userId: req.jwtPayload?.sub }, "Customer logged out");
@@ -1091,7 +1103,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
       eventType: "auth.password_reset_requested",
       resourceType: "user",
       resourceId: user.id,
-      ipAddress: req.ip ?? null
+      ipAddress: resolveClientIp(req).ip
     });
 
     respond();
@@ -1186,7 +1198,7 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       eventType: "auth.password_reset",
       resourceType: "user",
       resourceId: user.id,
-      ipAddress: req.ip ?? null
+      ipAddress: resolveClientIp(req).ip
     });
 
     res.status(200).json({ ok: true });
@@ -1272,7 +1284,7 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       eventType:      "auth.password_changed",
       resourceType:   "user",
       resourceId:     userId,
-      ipAddress:      req.ip ?? null
+      ipAddress:      resolveClientIp(req).ip
     });
 
     logger.info({ event: "password_changed", userId }, "Password changed");
@@ -1436,7 +1448,7 @@ router.post("/auth/admin/unlock-user", requireAuth, async (req, res) => {
       resourceType:   "user",
       resourceId:     targetUserId,
       payload:        { unlocked_by: adminId },
-      ipAddress:      req.ip ?? null
+      ipAddress:      resolveClientIp(req).ip
     });
 
     logger.info({ event: "account_unlocked", adminId, targetUserId }, "Admin unlocked user account");
@@ -1503,7 +1515,7 @@ router.post("/auth/accept-terms", requireAuth, async (req, res) => {
         documentType: docType,
         documentVersion: version,
         consentMethod,
-        ipAddress: req.ip,
+        ipAddress: resolveClientIp(req).ip ?? undefined,
         userAgent: req.headers["user-agent"],
       });
       recorded.push({ documentType: docType, documentVersion: version });

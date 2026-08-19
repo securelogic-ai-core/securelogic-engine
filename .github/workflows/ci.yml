@@ -107,7 +107,11 @@ jobs:
           node-version-file: ".nvmrc"
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=high
+      # Dependency-audit gate (2026-08-17 remediation package): fails on any
+      # UNWAIVED high/critical advisory in PRODUCTION dependencies. Waivers are
+      # named per-GHSA and expiring (.audit-waivers.json). Dev-only advisories
+      # are printed, never gating. Proofs: src/api/__tests__/auditGate.test.ts.
+      - run: node scripts/ci/auditGate.mjs
 
   build:
     name: build

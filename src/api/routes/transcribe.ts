@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import multer from "multer";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import OpenAI from "openai";
@@ -91,7 +92,7 @@ const transcribeRateLimit = rateLimit({
   // adminLockout fix (resolveThrottleIdentity).
   keyGenerator: (req) =>
     (req as any).organizationContext?.organizationId ??
-    (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
+    rateLimitKeyGenerator(req),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many transcription requests. Wait 60 seconds."

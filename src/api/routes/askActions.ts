@@ -36,6 +36,7 @@
  */
 
 import { Router, type NextFunction, type Request, type Response } from "express";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -93,7 +94,7 @@ const confirmRateLimit = rateLimit({
   // (the transcribe limiter's fragmentation lesson).
   keyGenerator: (req) =>
     (req as any).organizationContext?.organizationId ??
-    (req.ip ? ipKeyGenerator(req.ip) : "unknown"),
+    rateLimitKeyGenerator(req),
   message: {
     error: "rate_limit_exceeded",
     message: "Too many confirmation requests. Wait 60 seconds.",
