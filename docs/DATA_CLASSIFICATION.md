@@ -239,6 +239,12 @@ user's own UUID (keeps the scrubbed email globally unique under
 `created_at`, `deletion_scheduled_at`, `deletion_requested_by_user_id`,
 `deletion_reason`. These survive for audit-trail integrity.
 
+`session_epoch` is also preserved. It is a monotonic session counter carrying no
+personal data, and resetting it to `0` could make a stale token whose `se` claim
+is `0` match again. A tombstoned row is `status='deleted'` and is already refused
+earlier in both middlewares, so this is defence in depth — but the counter must
+never travel backwards.
+
 ---
 
 ## Export column exclusions (`exportExcludedColumns`)

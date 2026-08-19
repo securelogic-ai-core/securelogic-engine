@@ -618,7 +618,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       return;
     }
     const result = await pgElevated.query(
-      `SELECT id, organization_id, name, role, email_verification_expires_at
+      `SELECT id, organization_id, name, role, email_verification_expires_at, session_epoch
        FROM users
        WHERE email_verification_token IN ($1, $2) AND email_verified = FALSE
        LIMIT 1`,
@@ -636,6 +636,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       name: string;
       role: string;
       email_verification_expires_at: Date;
+      session_epoch: number;
     };
 
     if (new Date() > new Date(user.email_verification_expires_at)) {
@@ -653,7 +654,7 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       [user.id]
     );
 
-    const jwt = signJwt(user.id, user.organization_id, user.role || "viewer");
+    const jwt = signJwt(user.id, user.organization_id, user.role || "viewer", user.session_epoch);
 
     logger.info({ event: "email_verified", userId: user.id }, "Email verified");
 
@@ -789,9 +790,10 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       lockout_until: Date | null;
       last_failed_login_at: Date | null;
       status: string;
+      session_epoch: number;
     }>(
       `SELECT id, organization_id, name, email, role, password_hash, email_verified, totp_enabled,
-              failed_login_attempts, lockout_until, last_failed_login_at, status
+              failed_login_attempts, lockout_until, last_failed_login_at, status, session_epoch
        FROM users
        WHERE email = $1
        LIMIT 1`,
@@ -997,7 +999,7 @@ router.post("/auth/login", loginLimiter, async (req, res) => {
       && orgResult.rows[0]?.onboarding_completed_at !== undefined;
     const userRole             = user.role || "viewer";
 
-    const jwt = signJwt(user.id, user.organization_id, userRole);
+    const jwt = signJwt(user.id, user.organization_id, userRole, user.session_epoch);
 
     logger.info({ event: "customer_login", userId: user.id }, "Customer logged in");
 
@@ -1177,13 +1179,17 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
     });
 
+    // SEC-JWT-EPOCH: a completed reset invalidates every outstanding session
+    // for this user, deterministically — including one minted in the same
+    // second as the reset, which the iat comparison alone could not catch.
     await pgElevated.query(
       `UPDATE users
        SET password_hash = $1,
            password_changed_at = NOW(),
            password_reset_token = NULL,
            password_reset_expires_at = NULL,
-           updated_at = NOW()
+           updated_at = NOW(),
+           session_epoch = session_epoch + 1
        WHERE id = $2`,
       [newHash, user.id]
     );
@@ -1269,12 +1275,18 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
       type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4
     });
 
-    await pgElevated.query(
+    // SEC-JWT-EPOCH: bump the session generation in the SAME statement that
+    // changes the credential, and read it back — every other device's token
+    // carries the old integer and dies on its next request, deterministically.
+    const pwChange = await pgElevated.query<{ session_epoch: number }>(
       `UPDATE users
-       SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW()
-       WHERE id = $2`,
+       SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW(),
+           session_epoch = session_epoch + 1
+       WHERE id = $2
+       RETURNING session_epoch`,
       [newHash, userId]
     );
+    const newEpoch = pwChange.rows[0]!.session_epoch;
 
     await recordPasswordHash(userId, newHash, pgElevated);
 
@@ -1288,9 +1300,10 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
     });
 
     logger.info({ event: "password_changed", userId }, "Password changed");
-    // Issue a fresh JWT so the current device's session is not immediately
-    // invalidated by the password_changed_at check we added to requireAuth.
-    const freshJwt = signJwt(userId, orgId, req.jwtPayload!.role);
+    // Issue a fresh JWT so the current device's session survives its own
+    // password change. It is minted under the NEW epoch just written above, so
+    // this is exact rather than a race against a second boundary.
+    const freshJwt = signJwt(userId, orgId, req.jwtPayload!.role, newEpoch);
     res.status(200).json({ success: true, token: freshJwt });
   } catch (err) {
     logger.error({ event: "change_password_failed", err }, "POST /api/auth/change-password failed");

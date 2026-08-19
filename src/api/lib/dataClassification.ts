@@ -330,6 +330,12 @@ export const TOMBSTONE_PRESERVED_COLUMNS: readonly string[] = [
   "deletion_scheduled_at", // audit: when the grace window started
   "deletion_requested_by_user_id", // audit: who requested the deletion
   "deletion_reason", // audit: why
+  // SEC-JWT-EPOCH: a monotonic session counter, not personal data. Preserved
+  // rather than scrubbed on purpose — resetting it to 0 could make a stale
+  // token whose `se` is 0 match again. A tombstoned row is status='deleted' and
+  // already blocked earlier in both middlewares, so this is defence in depth,
+  // but the counter must never travel backwards.
+  "session_epoch",
 ];
 
 /**

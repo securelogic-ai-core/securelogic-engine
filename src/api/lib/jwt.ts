@@ -16,6 +16,16 @@ export interface JwtPayload {
   org: string;
   /** User role — 'admin' | 'analyst' | 'viewer' */
   role: string;
+  /**
+   * Session epoch (users.session_epoch) this token was minted under.
+   *
+   * Deliberately OPTIONAL on the type, because a token minted before
+   * SEC-JWT-EPOCH genuinely has no such claim and verifyJwt must still be able
+   * to decode it in order to REJECT it. Absence is invalid session state, not
+   * a compatibility fallback — the middlewares treat a missing `se` as an
+   * immediate 401 (see requireAuth.ts / requireApiKey.ts). Never default it.
+   */
+  se?: number;
   /** Issued-at (Unix seconds) */
   iat: number;
   /** Expiry (Unix seconds) */
@@ -43,16 +53,30 @@ function getSecret(): string {
 }
 
 /**
- * Sign a JWT for the given user + org + role.
+ * Sign a JWT for the given user + org + role + session epoch.
  * Throws if JWT_SECRET is not set.
+ *
+ * `sessionEpoch` MUST be the caller's freshly-read users.session_epoch. The
+ * default of 0 exists only so the signature stays compatible for the MFA and
+ * test paths that mint against a known-zero epoch; passing a stale value
+ * silently mints a session that the middleware will reject on the next
+ * request, which is the safe direction but a bug worth catching in review.
  */
-export function signJwt(sub: string, org: string, role: string = "admin"): string {
+export function signJwt(
+  sub: string,
+  org: string,
+  role: string = "admin",
+  sessionEpoch: number = 0
+): string {
   const header = b64url(
     Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8")
   );
   const now  = Math.floor(Date.now() / 1000);
   const body = b64url(
-    Buffer.from(JSON.stringify({ sub, org, role, iat: now, exp: now + EXPIRY_SECONDS }), "utf8")
+    Buffer.from(
+      JSON.stringify({ sub, org, role, se: sessionEpoch, iat: now, exp: now + EXPIRY_SECONDS }),
+      "utf8"
+    )
   );
 
   const signing = `${header}.${body}`;

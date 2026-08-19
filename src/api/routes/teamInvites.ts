@@ -783,32 +783,41 @@ router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, r
 
     const client = await pg.connect();
     let newUserId: string;
+    // SEC-JWT-EPOCH: set on both branches; see the note at each assignment.
+    let newUserEpoch: number;
 
     try {
       await client.query("BEGIN");
 
       if (existingUser && existingUser.status === "inactive") {
         // Reactivate the removed user with fresh credentials and the invited role.
-        await client.query(
+        // Reactivation installs a NEW credential on a pre-existing user id, so
+        // it is a credential rotation: bump the epoch or any session minted
+        // before the member was removed would resume working on reactivation.
+        const reactivated = await client.query<{ session_epoch: number }>(
           `UPDATE users SET
              status        = 'active',
              name          = $1,
              password_hash = $2,
              role          = $3,
              seat_type     = $4,
-             updated_at    = NOW()
-           WHERE id = $5`,
+             updated_at    = NOW(),
+             session_epoch = session_epoch + 1
+           WHERE id = $5
+           RETURNING session_epoch`,
           [name, passwordHash, invite.role, inviteSeatType, existingUser.id]
         );
-        newUserId = existingUser.id;
+        newUserId    = existingUser.id;
+        newUserEpoch = reactivated.rows[0]!.session_epoch;
       } else {
         const userResult = await client.query(
           `INSERT INTO users (organization_id, email, name, role, seat_type, status, password_hash, email_verified)
            VALUES ($1, $2, $3, $4, $5, 'active', $6, TRUE)
-           RETURNING id`,
+           RETURNING id, session_epoch`,
           [invite.organization_id, invite.email, name, invite.role, inviteSeatType, passwordHash]
         );
-        newUserId = userResult.rows[0].id as string;
+        newUserId    = userResult.rows[0].id as string;
+        newUserEpoch = userResult.rows[0].session_epoch as number;
 
         // Record consent for the newly created user in the same transaction.
         // Reactivated (previously-inactive) users follow the UPDATE branch above
@@ -838,7 +847,7 @@ router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, r
       client.release();
     }
 
-    const jwt = signJwt(newUserId, invite.organization_id, invite.role);
+    const jwt = signJwt(newUserId, invite.organization_id, invite.role, newUserEpoch);
 
     logger.info(
       { event: "invite_accepted", userId: newUserId, orgId: invite.organization_id },
