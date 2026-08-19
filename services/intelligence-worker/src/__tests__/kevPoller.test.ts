@@ -77,6 +77,7 @@ import { fetchCisaKevSignals } from "../../../../src/api/lib/cisaKevAdapter.js";
 import { pg } from "../../../../src/api/infra/postgres.js";
 import { runMatcherForSignal } from "../../../../src/api/lib/cyberSignalProcessingService.js";
 import { enqueueControlMatcherJob } from "../../../../src/api/lib/controlMatcherQueue.js";
+import { logger } from "../../../../src/api/infra/logger.js";
 
 const mockedFetchKev = vi.mocked(fetchCisaKevSignals);
 const mockedPgQuery = vi.mocked(pg.query);
@@ -219,7 +220,7 @@ describe("runKevPoll — behaviour", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     // Default matcher behavior: returns no_match. Individual fan-out
     // tests override this with mockResolvedValueOnce.
     mockedRunMatcher.mockResolvedValue({
@@ -374,7 +375,7 @@ describe("runKevPoll — matcher fan-out", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     mockedRunMatcher.mockResolvedValue({
       matched_vendor_id: null,
       matched_ai_system_id: null,
@@ -566,7 +567,7 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     mockedRunMatcher.mockResolvedValue({
       matched_vendor_id: null,
       matched_ai_system_id: null,
@@ -620,10 +621,28 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
       rows: [{ id: "org-A" }, { id: "org-B" }]
     } as never);
 
+    const infoSpy = vi.spyOn(logger, "info");
     await runKevPoll();
 
     // One control-matcher call per (signal, org) pair: 2 × 2 = 4.
     expect(mockedControlMatcher).toHaveBeenCalledTimes(4);
+
+    // REGRESSION GUARD: controlSuggestionsQueued counts the enqueue calls that
+    // actually returned a job id. enqueueControlMatcherJob resolves `string | null`
+    // — a null (or any falsy stand-in) means "not queued" and must NOT be counted.
+    // A stale numeric mock left over from the synchronous runLlmControlMatcherForSignal
+    // era resolved 0, which is falsy, silently pinning this counter at 0 while the
+    // log line still claimed to report queued jobs. Nothing asserted it, so only the
+    // worker tsconfig build caught the drift. Assert the counter tracks the calls.
+    const fanout = infoSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === "kev_matcher_fanout_complete"
+    );
+    expect(fanout).toBeDefined();
+    expect(fanout![0]).toMatchObject({
+      controlMatcherCalls: 4,
+      controlSuggestionsQueued: 4
+    });
+    infoSpy.mockRestore();
     // enqueueControlMatcherJob(db, orgId, signal) — db first, then the pair.
     const ctrlPairs = mockedControlMatcher.mock.calls.map((c) => ({
       signalId: (c[2] as { id: string }).id,
