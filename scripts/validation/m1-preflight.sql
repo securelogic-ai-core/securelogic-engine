@@ -21,7 +21,7 @@
 --   G7  no table uses FORCE ROW LEVEL SECURITY (the A2 path we did not take)
 --   G8  app_request holds USAGE on all sequences
 --   G9  service-state: no live session is already connected as app_request
---       (pre-flip expectation; rerun post-flip with m1_expect_flipped=1)
+--       (pre-flip expectation; rerun post-flip with m1.expect_flipped=1)
 
 \set ON_ERROR_STOP 1
 
