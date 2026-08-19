@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 // (the subscriber row is what CREATES the relationship), so the upsert uses
 // the elevated channel.
 import { pgElevated } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { validateBriefSignup } from "../lib/briefSignupValidation.js";
 
@@ -18,6 +19,7 @@ const router = Router();
 const signupLimiter = rateLimit({
   windowMs: 60_000,
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }

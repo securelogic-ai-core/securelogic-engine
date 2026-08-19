@@ -24,6 +24,7 @@
 
 import crypto from "node:crypto";
 import { Router } from "express";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import rateLimit from "express-rate-limit";
 import { logger } from "../infra/logger.js";
 import { runScheduler } from "../lib/briefScheduler.js";
@@ -38,6 +39,7 @@ const router = Router();
 const schedulerRateLimit = rateLimit({
   windowMs: 60_000,
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
