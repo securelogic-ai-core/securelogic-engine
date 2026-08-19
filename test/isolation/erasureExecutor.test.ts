@@ -585,11 +585,19 @@ describe("the certificate and the audit trail", () => {
 /* ─────────────────────────── PURE GATE ───────────────────────────────────── */
 
 describe("the execution gate refuses on each condition independently", () => {
+  // Every instant below is derived from this ONE constant, deliberately.
+  // Previously `now` was captured as `new Date()` here while the "expired"
+  // fixture below built `new Date(Date.now() - 1)` moments later. If >=1ms
+  // elapsed between the two — which module-load timing decides, not the code
+  // under test — the "expired" approval was actually in the FUTURE relative to
+  // the frozen `now`, so the gate CORRECTLY returned no refusal and the
+  // assertion failed. The 1ms margin was the defect, never the gate.
+  const NOW = new Date();
   const base = {
     status: "approved", dryRun: false, requestedByUserId: "u1", approvedByUserId: "u2",
-    approvalExpiresAt: new Date(Date.now() + 3600_000), scopeFingerprint: "fp",
+    approvalExpiresAt: new Date(NOW.getTime() + 3600_000), scopeFingerprint: "fp",
     observedFingerprint: "fp", organizationExists: true, activeLegalHolds: 0,
-    requesterStillAuthorized: true, approverStillAuthorized: true, now: new Date(),
+    requesterStillAuthorized: true, approverStillAuthorized: true, now: NOW,
   };
   it("passes only when everything holds", () => {
     expect(evaluateExecutionGate(base).proceed).toBe(true);
@@ -598,7 +606,7 @@ describe("the execution gate refuses on each condition independently", () => {
     ["dry run", { dryRun: true }, "dry_run_certificate"],
     ["self approved", { approvedByUserId: "u1" }, "self_approved"],
     ["no approver", { approvedByUserId: null }, "not_approved"],
-    ["expired", { approvalExpiresAt: new Date(Date.now() - 1) }, "approval_expired"],
+    ["expired", { approvalExpiresAt: new Date(NOW.getTime() - 1) }, "approval_expired"],
     ["no expiry", { approvalExpiresAt: null }, "approval_expired"],
     ["unbound scope", { scopeFingerprint: null }, "missing_scope_binding"],
     ["scope changed", { observedFingerprint: "different" }, "scope_changed"],
