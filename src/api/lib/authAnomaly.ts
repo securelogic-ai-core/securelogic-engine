@@ -23,7 +23,7 @@
 
 import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
-import { writeAuditEvent } from "./auditLog.js";
+import { writeAuditEvent, writeAuditEventAwaited } from "./auditLog.js";
 import { sendSecurityAlert } from "../infra/alerting.js";
 
 // ---------------------------------------------------------------------------
@@ -148,12 +148,36 @@ async function handleAnomaly(
 ): Promise<boolean> {
   if (!(await claimAnomalySlot(anomalyType, ip))) return false;
 
-  writeAuditEvent({
+  // AWAITED, deliberately. auth_anomaly_alerts keeps only (type, subject,
+  // timestamps, count) — the hit counts, thresholds and window live ONLY in
+  // this audit row, so it is the sole durable record of the evidence. That is
+  // exactly the case auditLog.ts reserves for the awaited variant: "wrong for
+  // the small set of actions whose only durable record IS the audit row".
+  // Fire-and-forget here also raced the caller: the slot is claimed
+  // synchronously, so a lost write cost BOTH the record and — via the
+  // LEDGER_COOLDOWN_HOURS suppression on the claim that already succeeded —
+  // the next re-alert for that IP.
+  const persisted = await writeAuditEventAwaited({
     eventType: "security.auth_anomaly_detected",
     resourceType: "ip_address",
     payload: { anomaly_type: anomalyType, ip, ...detail },
     ipAddress: ip
   });
+
+  if (!persisted) {
+    // Surfaced, never silently counted as handled. The cooldown slot is already
+    // claimed, so this IP will not re-alert until the cooldown lapses — an
+    // operator needs to see that the detection evidence did not land. Returning
+    // false keeps it out of alertsFired rather than reporting a success whose
+    // record does not exist. The slot is deliberately NOT released: re-claiming
+    // would risk a duplicate detection row for the same IP and window.
+    logger.error(
+      { event: "auth_anomaly_detection_record_failed", anomalyType, ip, ...detail },
+      "Auth-anomaly detection record FAILED to persist — the alert slot is already " +
+        "claimed, so this IP will not re-alert until the cooldown lapses"
+    );
+    return false;
+  }
 
   try {
     await sendSecurityAlert({ kind: anomalyType, summary, detail: { ip, ...detail } });
