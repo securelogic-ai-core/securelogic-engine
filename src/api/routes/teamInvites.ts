@@ -19,6 +19,7 @@ import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { rateLimitKeyGenerator } from "../infra/clientIp.js";
+import { digestToken, isPresentableToken } from "../lib/tokenDigest.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -258,7 +259,7 @@ router.post(
           `INSERT INTO org_invites (organization_id, invited_by_user_id, email, role, seat_type, token)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id, email, role, seat_type, expires_at, status`,
-          [orgId, userId, email, role, seatType, token]
+          [orgId, userId, email, role, seatType, digestToken(token)]
         );
         invite = result.rows[0] as Record<string, unknown>;
       } catch (err: unknown) {
@@ -600,6 +601,10 @@ router.get("/team/invites/:token/preview", asTenant(async (req, res) => {
       return;
     }
 
+    if (!isPresentableToken(token)) {
+      res.status(200).json({ valid: false, reason: "not_found" });
+      return;
+    }
     const result = await pg.query<{
       email: string;
       role: string;
@@ -614,9 +619,9 @@ router.get("/team/invites/:token/preview", asTenant(async (req, res) => {
        FROM org_invites i
        JOIN organizations o ON o.id = i.organization_id
        LEFT JOIN users u ON u.id = i.invited_by_user_id
-       WHERE i.token = $1
+       WHERE i.token IN ($1, $2)
        LIMIT 1`,
-      [token]
+      [digestToken(String(token)), token]
     );
 
     if (result.rows.length === 0) {
@@ -700,6 +705,10 @@ router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, r
     const password = String(passwordRaw);
 
     // Look up invite
+    if (!isPresentableToken(token)) {
+      res.status(404).json({ error: "invite_not_found" });
+      return;
+    }
     const inviteResult = await pg.query<{
       id: string;
       organization_id: string;
@@ -711,9 +720,9 @@ router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, r
     }>(
       `SELECT id, organization_id, email, role, seat_type, status, expires_at
        FROM org_invites
-       WHERE token = $1
+       WHERE token IN ($1, $2)
        LIMIT 1`,
-      [token]
+      [digestToken(String(token)), token]
     );
 
     if (inviteResult.rows.length === 0) {

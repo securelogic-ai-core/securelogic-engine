@@ -41,6 +41,9 @@ import { recordAccountLockout } from "../lib/authAnomaly.js";
 // rateLimitKeyGenerator: the enforcing limiters key on the same resolved
 // client, so a rotating edge cannot dilute a per-caller limit.
 import { resolveClientIp, rateLimitKeyGenerator } from "../infra/clientIp.js";
+// tokenDigest: reset/verification/invite tokens are stored digested, so a
+// database read alone no longer yields a usable credential.
+import { digestToken, isPresentableToken } from "../lib/tokenDigest.js";
 import { signJwt, signMfaChallenge } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { checkPasswordReuse, recordPasswordHash } from "../lib/passwordHistory.js";
@@ -485,7 +488,7 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
                             email_verified, email_verification_token, email_verification_expires_at)
          VALUES ($1, $2, $3, 'admin', $4, FALSE, $5, $6)
          RETURNING id`,
-        [orgId, email, name, passwordHash, verificationToken, verificationExpires]
+        [orgId, email, name, passwordHash, digestToken(verificationToken), verificationExpires]
       );
       userId = userResult.rows[0].id as string;
 
@@ -607,12 +610,19 @@ router.post("/auth/verify-email", verifyLimiter, async (req, res) => {
       return;
     }
 
+    // Token-at-rest: presented tokens are plain 64-hex BY SHAPE — anything
+    // else (including a stolen stored `sha256:` digest) can never redeem. The
+    // dual lookup honours legacy raw-stored rows through their 24 h TTL.
+    if (!isPresentableToken(token)) {
+      res.status(404).json({ error: "token_not_found_or_already_verified" });
+      return;
+    }
     const result = await pgElevated.query(
       `SELECT id, organization_id, name, role, email_verification_expires_at
        FROM users
-       WHERE email_verification_token = $1 AND email_verified = FALSE
+       WHERE email_verification_token IN ($1, $2) AND email_verified = FALSE
        LIMIT 1`,
-      [token]
+      [digestToken(token), token]
     );
 
     if (result.rows.length === 0) {
@@ -732,7 +742,7 @@ router.post("/auth/resend-verification", forgotPasswordLimiter, async (req, res)
            email_verification_expires_at = $2,
            updated_at = NOW()
        WHERE id = $3`,
-      [verificationToken, verificationExpires, user.id]
+      [digestToken(verificationToken), verificationExpires, user.id]
     );
 
     const verificationUrl = `${getAppBaseUrl()}/verify-email?token=${verificationToken}`;
@@ -1076,7 +1086,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
            password_reset_expires_at = $2,
            updated_at = NOW()
        WHERE id = $3`,
-      [resetToken, resetExpires, user.id]
+      [digestToken(resetToken), resetExpires, user.id]
     );
 
     const resetUrl = `${getAppBaseUrl()}/reset-password?token=${resetToken}`;
@@ -1126,17 +1136,24 @@ router.post("/auth/reset-password", verifyLimiter, async (req, res) => {
       res.status(400).json(pwErrReset);
       return;
     }
+    if (!isPresentableToken(token)) {
+      res.status(404).json({ error: "token_not_found_or_expired" });
+      return;
+    }
 
     const result = await pgElevated.query<{
       id: string;
       organization_id: string;
       password_reset_expires_at: Date;
     }>(
+      // Token-at-rest: shape-validate BEFORE any lookup — a stolen stored
+      // `sha256:` digest must never reach the legacy raw-equality arm.
+      // (The package's own proof test caught exactly this omission.)
       `SELECT id, organization_id, password_reset_expires_at
        FROM users
-       WHERE password_reset_token = $1
+       WHERE password_reset_token IN ($1, $2)
        LIMIT 1`,
-      [token]
+      [digestToken(String(token)), token]
     );
 
     if (result.rows.length === 0) {
