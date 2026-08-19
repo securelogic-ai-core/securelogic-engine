@@ -29,6 +29,8 @@ const STUFFING_IP = "203.0.113.77";
 const PROBING_IP = "203.0.113.88";
 const QUIET_IP = "203.0.113.99";
 const STALE_IP = "203.0.113.111";
+/** Every identity this test creates. All assertions are scoped to these. */
+const FIXTURE_IPS = [STUFFING_IP, PROBING_IP, QUIET_IP, STALE_IP];
 
 let pool: Pool;
 let anomaly: typeof import("../../src/api/lib/authAnomaly.js");
@@ -101,8 +103,16 @@ describe("Tier-2 auth-anomaly ledger over real SQL", () => {
     expect(first.apiKeyProbingIps).toBe(1);
     expect(first.alertsFired).toBe(2);
 
+    // Scoped to THIS test's fixture IPs. The suite shares one database and
+    // performs no inter-file cleanup, so an unscoped read over
+    // auth_anomaly_alerts / security_audit_log would let any other file's rows
+    // decide this result. Scoping removes that coupling without relaxing what
+    // is asserted: both over-threshold IPs must still appear, and the
+    // below-threshold and out-of-window IPs must still be absent.
     const ledger = await pool.query<{ anomaly_type: string; subject: string; alert_count: number }>(
-      `SELECT anomaly_type, subject, alert_count FROM auth_anomaly_alerts ORDER BY anomaly_type`
+      `SELECT anomaly_type, subject, alert_count FROM auth_anomaly_alerts
+        WHERE subject = ANY($1::text[]) ORDER BY anomaly_type`,
+      [FIXTURE_IPS]
     );
     expect(ledger.rows).toEqual([
       expect.objectContaining({ anomaly_type: "api_key_probing", subject: PROBING_IP }),
@@ -115,7 +125,9 @@ describe("Tier-2 auth-anomaly ledger over real SQL", () => {
     // The detection is also durably recorded in the audit log itself.
     const detections = await pool.query(
       `SELECT ip_address FROM security_audit_log
-        WHERE event_type = 'security.auth_anomaly_detected' ORDER BY ip_address`
+        WHERE event_type = 'security.auth_anomaly_detected'
+          AND ip_address = ANY($1::text[]) ORDER BY ip_address`,
+      [FIXTURE_IPS]
     );
     expect(detections.rows.map(r => r.ip_address)).toEqual([STUFFING_IP, PROBING_IP].sort());
 
@@ -126,7 +138,48 @@ describe("Tier-2 auth-anomaly ledger over real SQL", () => {
     expect(second.apiKeyProbingIps).toBe(1);
     expect(second.alertsFired).toBe(0);
 
-    const after = await pool.query(`SELECT count(*)::int AS n FROM auth_anomaly_alerts`);
+    const after = await pool.query(
+      `SELECT count(*)::int AS n FROM auth_anomaly_alerts WHERE subject = ANY($1::text[])`,
+      [FIXTURE_IPS]
+    );
     expect(after.rows[0].n).toBe(2); // no new rows, only the original claims
+  }, 60_000);
+
+  it("is unaffected by unrelated anomaly rows left in the shared database", async () => {
+    // The suite shares one database and does not clean between files, so this
+    // test must hold with foreign rows present. Plant both kinds of noise a
+    // neighbouring file could leave — a ledger claim and a detection audit row
+    // for an IP this test knows nothing about — and re-assert.
+    const FOREIGN_IP = "198.51.100.5";
+    await pool.query(
+      `INSERT INTO auth_anomaly_alerts (anomaly_type, subject) VALUES ('api_key_probing', $1)
+         ON CONFLICT (anomaly_type, subject) DO NOTHING`,
+      [FOREIGN_IP]
+    );
+    await pool.query(
+      `INSERT INTO security_audit_log (event_type, resource_type, payload, ip_address)
+       VALUES ('security.auth_anomaly_detected', 'ip_address', '{}'::jsonb, $1)`,
+      [FOREIGN_IP]
+    );
+
+    const detections = await pool.query(
+      `SELECT ip_address FROM security_audit_log
+        WHERE event_type = 'security.auth_anomaly_detected'
+          AND ip_address = ANY($1::text[]) ORDER BY ip_address`,
+      [FIXTURE_IPS]
+    );
+    expect(detections.rows.map(r => r.ip_address)).toEqual([STUFFING_IP, PROBING_IP].sort());
+
+    const ledger = await pool.query<{ subject: string }>(
+      `SELECT subject FROM auth_anomaly_alerts WHERE subject = ANY($1::text[])`,
+      [FIXTURE_IPS]
+    );
+    expect(ledger.rows.map(r => r.subject).sort()).toEqual([STUFFING_IP, PROBING_IP].sort());
+    // And the foreign rows really were present — otherwise this proves nothing.
+    const foreign = await pool.query(
+      `SELECT count(*)::int AS n FROM auth_anomaly_alerts WHERE subject = $1`,
+      [FOREIGN_IP]
+    );
+    expect(foreign.rows[0].n).toBe(1);
   }, 60_000);
 });

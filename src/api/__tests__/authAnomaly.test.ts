@@ -12,12 +12,20 @@ const { pgQuerySpy, sendSecurityAlertSpy } = vi.hoisted(() => ({
 
 vi.mock("../infra/postgres.js", () => ({ pg: { query: pgQuerySpy }, pgElevated: { query: pgQuerySpy } }));
 vi.mock("../infra/alerting.js", () => ({ sendSecurityAlert: sendSecurityAlertSpy }));
-vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
+vi.mock("../lib/auditLog.js", () => ({
+  writeAuditEvent: vi.fn(),
+  // Anomaly DETECTION rows are awaited: the audit row is the only durable
+  // record of the evidence, so the handler must not report success before it
+  // lands. Defaults to persisted; the failure path is exercised explicitly.
+  writeAuditEventAwaited: vi.fn(async () => true)
+}));
 
 import { recordAccountLockout, runAuthAnomalyScan } from "../lib/authAnomaly.js";
-import { writeAuditEvent } from "../lib/auditLog.js";
+import { writeAuditEvent, writeAuditEventAwaited } from "../lib/auditLog.js";
 
 const auditSpy = writeAuditEvent as unknown as ReturnType<typeof vi.fn>;
+/** Detection rows go through the AWAITED writer. */
+const detectionSpy = writeAuditEventAwaited as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   pgQuerySpy.mockReset();
@@ -88,6 +96,7 @@ describe("runAuthAnomalyScan", () => {
     const result = await runAuthAnomalyScan();
 
     expect(result).toEqual({ credentialStuffingIps: 0, apiKeyProbingIps: 0, alertsFired: 0 });
+    expect(detectionSpy).not.toHaveBeenCalled();
     expect(auditSpy).not.toHaveBeenCalled();
     expect(sendSecurityAlertSpy).not.toHaveBeenCalled();
   });
@@ -108,7 +117,7 @@ describe("runAuthAnomalyScan", () => {
     const claimSql = pgQuerySpy.mock.calls[1]?.[0] as string;
     expect(claimSql).toMatch(/ON CONFLICT \(anomaly_type, subject\) DO UPDATE/);
 
-    expect(auditSpy).toHaveBeenCalledWith(
+    expect(detectionSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "security.auth_anomaly_detected",
         ipAddress: "5.5.5.5",
@@ -145,7 +154,7 @@ describe("runAuthAnomalyScan", () => {
     const probeSql = pgQuerySpy.mock.calls[1]?.[0] as string;
     expect(probeSql).toMatch(/auth\.invalid_api_key/);
 
-    expect(auditSpy).toHaveBeenCalledWith(
+    expect(detectionSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: "security.auth_anomaly_detected",
         payload: expect.objectContaining({ anomaly_type: "api_key_probing", invalid_key_hits: 30 })
@@ -157,6 +166,33 @@ describe("runAuthAnomalyScan", () => {
     expect(result).toMatchObject({ apiKeyProbingIps: 1, alertsFired: 1 });
   });
 
+  it("does NOT report an alert as handled when the detection record fails to persist", async () => {
+    // The audit row is the only durable record of the evidence (the ledger keeps
+    // just type/subject/timestamps/count). If it does not land, the detection
+    // must not be counted as fired — silently reporting success would claim an
+    // alert whose record does not exist.
+    pgQuerySpy
+      .mockResolvedValueOnce({ rows: [{ ip_address: "9.9.9.9", account_count: "20" }] }) // stuffing scan
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "ledger-x" }] }) // claim — won
+      .mockResolvedValueOnce({ rows: [] }); // probing scan
+    detectionSpy.mockResolvedValueOnce(false); // the audit row did not land
+
+    const result = await runAuthAnomalyScan();
+
+    expect(detectionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "security.auth_anomaly_detected" })
+    );
+    // Not counted, and no operator alert claiming a detection we cannot show.
+    expect(result).toMatchObject({ credentialStuffingIps: 1, alertsFired: 0 });
+    expect(sendSecurityAlertSpy).not.toHaveBeenCalled();
+    // The slot was claimed exactly once — the failure path must not re-claim,
+    // which would risk a duplicate detection row for the same IP and window.
+    const claimCalls = pgQuerySpy.mock.calls.filter(
+      c => typeof c[0] === "string" && /ON CONFLICT \(anomaly_type, subject\) DO UPDATE/.test(c[0] as string)
+    );
+    expect(claimCalls).toHaveLength(1);
+  });
+
   it("records the detection audit event even when webhook delivery fails", async () => {
     pgQuerySpy
       .mockResolvedValueOnce({ rows: [{ ip_address: "5.5.5.5", account_count: "15" }] }) // stuffing scan
@@ -166,7 +202,7 @@ describe("runAuthAnomalyScan", () => {
 
     const result = await runAuthAnomalyScan();
 
-    expect(auditSpy).toHaveBeenCalledWith(
+    expect(detectionSpy).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: "security.auth_anomaly_detected" })
     );
     // Delivery failed but the detection was still counted + recorded.
