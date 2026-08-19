@@ -1,0 +1,4 @@
+{
+  "_doc": "Named, expiring waivers for the CI dependency-audit gate (scripts/ci/auditGate.mjs). Each waiver covers EXACTLY the GHSA id it names, until `expires` (YYYY-MM-DD, inclusive), and requires operator approval recorded in `approvedBy`/`reason`. Blanket or permanent suppressions are not representable on purpose.",
+  "waivers": []
+}
