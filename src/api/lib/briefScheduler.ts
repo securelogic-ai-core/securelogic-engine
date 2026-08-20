@@ -29,7 +29,12 @@
  *       zero active recipients keeps its generated in-platform brief and the
  *       skip is recorded as a delivery-health condition
  *
- * Orgs are processed sequentially to avoid DB and external API contention.
+ * Orgs are processed through a fixed-size worker pool (ORG_CONCURRENCY = 2),
+ * which bounds DB and external-API contention while removing the strict
+ * serialization that made every org wait for the slowest org ahead of it.
+ * Each org task owns a private result and NEVER writes to the run summary;
+ * the scheduler merges those results, in org-enumeration order, once the pool
+ * drains — so concurrency changes wall-clock and nothing else.
  * Signal feeds are fetched ONCE and ingested per-org to avoid repeated
  * external API calls.
  *
@@ -91,9 +96,22 @@ import {
 } from "./briefSynthesizer.js";
 import { sendBrief } from "./briefEmailSender.js";
 import { emitBriefPublished } from "./briefWebhookEmitter.js";
-import { isBriefSendDay } from "./briefSendWindow.js";
+import { isBriefSendDay, currentBriefWeekStart } from "./briefSendWindow.js";
 import { maybeAlertBriefDelivery } from "./briefDeliveryHealth.js";
 import { listBriefEligibleOrgIds } from "./briefEligibility.js";
+import {
+  beginLlmRunAccumulation,
+  endLlmRunAccumulation,
+  emptyLlmRunTotals,
+  type LlmRunTotals
+} from "./llm/llmTelemetry.js";
+import {
+  beginVerdictCacheAccumulation,
+  endVerdictCacheAccumulation,
+  emptyVerdictCacheTotals,
+  type VerdictCacheTotals
+} from "./llm/verdictCacheMetrics.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -101,6 +119,23 @@ import { listBriefEligibleOrgIds } from "./briefEligibility.js";
 
 /** Look-back window for NVD and brief generation. */
 const WINDOW_DAYS = 7;
+
+/**
+ * How many organizations the weekly run processes at once.
+ *
+ * Deliberately a hard-coded constant, not an env var: the safe value depends
+ * on the Postgres pool (10 per pool, unchanged by this work), the Anthropic
+ * rate limit, and the per-org connection profile — none of which an operator
+ * can reason about from a dashboard field at 3am. It becomes configurable
+ * when a measured run says a different number is right, not before.
+ *
+ * 2 is the conservative first step: it bounds peak connection demand at
+ * roughly twice the sequential profile, which the existing pool absorbs with
+ * large headroom, while still removing the strict serialization that turned
+ * one slow org into every later org's delay.
+ */
+const ORG_CONCURRENCY = 2;
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,6 +146,14 @@ export type SchedulerRunSummary = {
   active_orgs: number;
   orgs_processed: number;
   orgs_skipped: number;
+  /**
+   * Orgs skipped because they already hold a published brief for the current
+   * weekly window (generated_at >= the most recent Tuesday 07:00 UTC). This is
+   * what makes a rerun — cron re-fire, manual trigger, or catch-up after an
+   * interrupted run — idempotent: completed orgs are never regenerated or
+   * re-emailed; only the missing tail is reconciled.
+   */
+  orgs_skipped_already_current: number;
   signals_fetched: {
     cisa_kev: number;
     nvd: number;
@@ -132,6 +175,61 @@ export type SchedulerRunSummary = {
   /** Org ids with zero active email recipients on a send day — feeds the recurring delivery-health report; never a generation gate. */
   orgs_without_recipients: string[];
   errors: string[];
+  /**
+   * Token / cost / latency totals for every Anthropic call this run made,
+   * overall and per purpose. `unpriced_calls` counts calls whose model has no
+   * price entry — their spend is NOT in `cost_usd`, so a non-zero value there
+   * means the cost figure is a floor, not a total.
+   */
+  llm: LlmRunTotals;
+  /**
+   * Verdict-cache effectiveness for this run. Read together with `llm`:
+   * `llm.by_purpose.llm_control_matcher` is what was PAID, `verdict_cache` is
+   * what was AVOIDED — savings measured from the tokens the original calls
+   * actually consumed, not modelled.
+   */
+  verdict_cache: VerdictCacheTotals;
+  /**
+   * Orgs whose task hit the outer safety net — an unforeseen throw, contained.
+   *
+   * Closes an accounting hole found while building the completion telemetry: a
+   * task_fatal org incremented NEITHER orgs_processed NOR orgs_skipped, so it
+   * vanished from the summary's org accounting while still appearing in
+   * `errors`. With this counter the identity
+   *   orgs_processed + orgs_skipped + orgs_task_fatal
+   *     == active_orgs - orgs_skipped_already_current
+   * holds on every path. Existing counters keep their exact prior meaning.
+   */
+  orgs_task_fatal: number;
+  /**
+   * DORMANT — always 0 / empty. No enforcement exists.
+   *
+   * Declared now so the summary shape, the alert path, and any dashboard built
+   * on this run are already correct when a per-org deadline is eventually
+   * approved, instead of needing a schema change at the moment enforcement
+   * lands. Nothing in this file sets these: there is no timer, no clock
+   * comparison, and no abort path anywhere in the org pipeline. A test asserts
+   * they stay zero across every scenario, including the slowest.
+   *
+   * Enabling enforcement in PRODUCTION is blocked on production catch-up being
+   * enabled and validated first — without it a timeout converts a slow org into
+   * a silently missed weekly edition. See
+   * docs/investigation/brief-scheduler-per-org-deadline-design.md §7.
+   */
+  orgs_deadline_exceeded: number;
+  /** DORMANT — always empty. Org ids that hit a deadline, once one exists. */
+  orgs_deadline_exceeded_ids: string[];
+  /**
+   * How the org fan-out actually behaved this run.
+   *
+   * `peak_in_flight` is MEASURED — an in-flight gauge sampled around each org
+   * task — not derived from `limit`. It exists so "concurrency stayed bounded"
+   * is a checkable claim in a staging run, not an inference from the constant.
+   */
+  org_concurrency: {
+    limit: number;
+    peak_in_flight: number;
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -259,7 +357,7 @@ async function ingestSignalsForOrg(
 // Throws on any unrecoverable error (rolls back and marks brief failed).
 // ---------------------------------------------------------------------------
 
-async function generateAndStoreBrief(orgId: string): Promise<string> {
+async function generateAndStoreBrief(orgId: string): Promise<GeneratedBrief> {
   const periodEnd = new Date();
   const periodStart = new Date(periodEnd.getTime() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
@@ -444,6 +542,20 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
     }).catch(() => {});
     throw enrichErr;
   }
+
+  // Provider-degradation counters, read off the items enrichment just returned.
+  //
+  // enrichBriefItems never throws: a failed Claude call degrades that item to a
+  // template fallback and carries `enrichment_status: "fallback"`. Counting
+  // them here is what lets scheduler_org_complete answer "was this org slow, or
+  // was the provider failing?" without a second telemetry channel. Taken BEFORE
+  // the urgency cap, so the denominator is everything enrichment attempted
+  // rather than what survived ranking.
+  const enrichment: EnrichmentCounters = {
+    total: enrichedItems.length,
+    enriched: enrichedItems.filter((i) => i.enrichment_status !== "fallback").length,
+    fallback: enrichedItems.filter((i) => i.enrichment_status === "fallback").length
+  };
 
   // Apply the urgency-bucket cap. After this, cappedItems.length is bounded
   // by BRIEF_MAX_ITEMS — this is what gets persisted and synthesized.
@@ -650,7 +762,7 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
       trigger: "scheduler",
     });
 
-    return briefId;
+    return { briefId, enrichment };
   } catch (err) {
     // Mark the brief 'failed' in a SEPARATE tenant scope so the Phase 3
     // rollback above cannot discard it. Best-effort — never mask the original
@@ -668,6 +780,604 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// listOrgsWithCurrentBrief — the idempotency skip set
+// ---------------------------------------------------------------------------
+
+/**
+ * Orgs that already hold a published brief for the weekly window starting at
+ * `weekStart`. Cross-org read by design → pgElevated (same enumeration class
+ * as listBriefEligibleOrgIds and the staleness sweep). Exported for testing
+ * and for briefCatchup's completeness check.
+ */
+export async function listOrgsWithCurrentBrief(weekStart: Date): Promise<Set<string>> {
+  const result = await pgElevated.query<{ organization_id: string }>(
+    `SELECT DISTINCT organization_id
+     FROM intelligence_briefs
+     WHERE status = 'published'
+       AND generated_at >= $1`,
+    [weekStart.toISOString()]
+  );
+  return new Set(result.rows.map((r) => r.organization_id));
+}
+
+// ---------------------------------------------------------------------------
+// Per-org run result — the unit the concurrent fan-out produces
+//
+// Each org task owns a private draft, mutates ONLY that draft, and returns it
+// sealed. Nothing concurrent ever writes to the shared SchedulerRunSummary:
+// that is what makes the counters exact under concurrency rather than
+// "probably fine because JavaScript is single-threaded". (It IS single-
+// threaded, so `summary.x++` could not tear — but read-modify-write across an
+// `await` interleaves freely, and the send/generate paths are full of awaits.
+// Local drafts remove the question entirely instead of reasoning about it.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider-degradation counters for one org's enrichment pass.
+ *
+ * `fallback > 0` means Claude calls failed and those items shipped as
+ * templates. This is the discriminator that separates "the org was slow" from
+ * "the provider was failing" when reading a slow run — see
+ * docs/investigation/brief-scheduler-per-org-deadline-design.md §6.
+ */
+export type EnrichmentCounters = {
+  total: number;
+  enriched: number;
+  fallback: number;
+};
+
+/** What generateAndStoreBrief hands back: the published id plus what it cost. */
+type GeneratedBrief = {
+  briefId: string;
+  enrichment: EnrichmentCounters;
+};
+
+/**
+ * How one org's task ended.
+ *
+ * `deadline_exceeded` is DORMANT — declared so the metric shape, the log
+ * vocabulary, and the summary counter all exist before any enforcement does,
+ * and so a dashboard built on this event does not need a schema change later.
+ * NOTHING in this file produces it: there is no timer, no clock comparison, and
+ * no abort path. A per-org deadline is a separate, unapproved package
+ * (docs/investigation/brief-scheduler-per-org-deadline-design.md), and it is
+ * explicitly blocked on production catch-up being enabled first.
+ */
+export type OrgCompletionStatus =
+  | "succeeded"
+  | "generate_failed"
+  | "task_fatal"
+  | "deadline_exceeded";
+
+/** Mutable working copy, private to one org task. */
+type OrgRunDraft = {
+  orgs_processed: number;
+  orgs_skipped: number;
+  briefs_generated: number;
+  emails_sent: number;
+  emails_failed: number;
+  emails_skipped_off_day: number;
+  emails_skipped_no_recipients: number;
+  orgs_task_fatal: number;
+  orgs_without_recipients: string[];
+  errors: string[];
+  /** Null until enrichment runs — a generation failure before it leaves this unset. */
+  enrichment: EnrichmentCounters | null;
+};
+
+/** Sealed result handed back to the scheduler for merging. */
+export type OrgRunResult = Readonly<{
+  org_id: string;
+  orgs_processed: number;
+  orgs_skipped: number;
+  briefs_generated: number;
+  emails_sent: number;
+  emails_failed: number;
+  emails_skipped_off_day: number;
+  emails_skipped_no_recipients: number;
+  orgs_task_fatal: number;
+  orgs_without_recipients: ReadonlyArray<string>;
+  errors: ReadonlyArray<string>;
+  enrichment: EnrichmentCounters | null;
+}>;
+
+function emptyOrgRunDraft(): OrgRunDraft {
+  return {
+    orgs_processed: 0,
+    orgs_skipped: 0,
+    briefs_generated: 0,
+    emails_sent: 0,
+    emails_failed: 0,
+    emails_skipped_off_day: 0,
+    emails_skipped_no_recipients: 0,
+    orgs_task_fatal: 0,
+    orgs_without_recipients: [],
+    errors: [],
+    enrichment: null
+  };
+}
+
+/** Freeze a draft (arrays included) so the merge cannot be aliased into it. */
+function sealOrgResult(orgId: string, draft: OrgRunDraft): OrgRunResult {
+  return Object.freeze({
+    org_id: orgId,
+    orgs_processed: draft.orgs_processed,
+    orgs_skipped: draft.orgs_skipped,
+    briefs_generated: draft.briefs_generated,
+    emails_sent: draft.emails_sent,
+    emails_failed: draft.emails_failed,
+    emails_skipped_off_day: draft.emails_skipped_off_day,
+    emails_skipped_no_recipients: draft.emails_skipped_no_recipients,
+    orgs_task_fatal: draft.orgs_task_fatal,
+    orgs_without_recipients: Object.freeze([...draft.orgs_without_recipients]),
+    errors: Object.freeze([...draft.errors]),
+    enrichment: draft.enrichment === null ? null : Object.freeze({ ...draft.enrichment })
+  });
+}
+
+/**
+ * Fold per-org results into the run summary. THE ONLY writer of these fields.
+ *
+ * Walks `results` in input (org enumeration) order, so `errors` and
+ * `orgs_without_recipients` keep the exact ordering the sequential loop
+ * produced — completion order never leaks into the summary.
+ */
+function mergeOrgResults(
+  summary: SchedulerRunSummary,
+  results: ReadonlyArray<OrgRunResult>
+): void {
+  for (const r of results) {
+    summary.orgs_processed += r.orgs_processed;
+    summary.orgs_skipped += r.orgs_skipped;
+    summary.briefs_generated += r.briefs_generated;
+    summary.emails_sent += r.emails_sent;
+    summary.emails_failed += r.emails_failed;
+    summary.emails_skipped_off_day += r.emails_skipped_off_day;
+    summary.emails_skipped_no_recipients += r.emails_skipped_no_recipients;
+    summary.orgs_task_fatal += r.orgs_task_fatal;
+    summary.orgs_without_recipients.push(...r.orgs_without_recipients);
+    summary.errors.push(...r.errors);
+  }
+}
+
+/**
+ * The signal feeds fetched once per run and shared, read-only, by every org.
+ */
+type FetchedFeeds = Readonly<{
+  cisaKevSignals: CyberSignalIngestInput[];
+  nvdSignals: CyberSignalIngestInput[];
+  secEdgarSignals: CyberSignalIngestInput[];
+  federalRegisterSignals: CyberSignalIngestInput[];
+  cisaAlertSignals: CyberSignalIngestInput[];
+  mitreAttackSignals: CyberSignalIngestInput[];
+  mitreAtlasSignals: CyberSignalIngestInput[];
+  threatIntelSignals: CyberSignalIngestInput[];
+  regulatorySignals: CyberSignalIngestInput[];
+}>;
+
+// ---------------------------------------------------------------------------
+// processOrg — the complete per-org pipeline, as one isolated task
+//
+// Identical step order, identical error handling, identical logging to the
+// sequential loop this replaces. The ONLY differences are that it writes to a
+// private draft instead of the shared summary, and that it cannot throw.
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit exactly one `scheduler_org_complete` for an org task.
+ *
+ * WHY IT CANNOT FAIL THE RUN
+ * --------------------------
+ * Telemetry is never load-bearing. The whole body is wrapped: a logger that
+ * throws, a serializer that chokes on a field, anything at all — the org's
+ * actual outcome is already computed and sealed by the time this runs, so
+ * swallowing is correct rather than lossy. The alternative, an emit that can
+ * abort an org, would make the observability package a new source of the exact
+ * failure it exists to observe.
+ *
+ * There is deliberately no fallback logging inside the catch: if `logger.info`
+ * just threw, `logger.error` is not a safe recovery.
+ */
+function emitOrgCompletion(
+  orgId: string,
+  durationMs: number,
+  status: OrgCompletionStatus,
+  draft: OrgRunDraft
+): void {
+  try {
+    logger.info(
+      {
+        event: "scheduler_org_complete",
+        organization_id: orgId,
+        duration_ms: durationMs,
+        status,
+        brief_generated: draft.briefs_generated > 0,
+        emails_sent: draft.emails_sent,
+        emails_failed: draft.emails_failed,
+        email_skipped_off_day: draft.emails_skipped_off_day > 0,
+        email_skipped_no_recipients: draft.emails_skipped_no_recipients > 0,
+        error_count: draft.errors.length,
+        // Provider-degradation counters. Null when generation failed before
+        // enrichment ran — distinguishable from a genuine zero.
+        enrichment_total: draft.enrichment?.total ?? null,
+        enrichment_enriched: draft.enrichment?.enriched ?? null,
+        enrichment_fallback: draft.enrichment?.fallback ?? null
+      },
+      "Org processing completed"
+    );
+  } catch {
+    // Never load-bearing.
+  }
+}
+
+async function processOrg(
+  orgId: string,
+  feeds: FetchedFeeds,
+  isSendDay: boolean
+): Promise<OrgRunResult> {
+  const orgResult = emptyOrgRunDraft();
+
+  // Measured from slot admission, NOT from run start: queue time is the
+  // scheduler's to answer for, never charged to the org. Date.now() (not a
+  // monotonic clock) is deliberate — it matches the semantics of the existing
+  // scheduler_cron_complete.durationMs an operator will compare this against.
+  const startedAt = Date.now();
+  let status: OrgCompletionStatus = "succeeded";
+
+  try {
+    await runOrgPipeline(orgId, feeds, isSendDay, orgResult);
+    // A generation failure returns normally after recording orgs_skipped; that
+    // is a failed org, not a succeeded one.
+    if (orgResult.orgs_skipped > 0) status = "generate_failed";
+  } catch (err) {
+    // Defense in depth. Every step inside runOrgPipeline is already
+    // individually try/caught, so arriving here means an unforeseen throw.
+    //
+    // This is a DELIBERATE behaviour change from the sequential loop, and the
+    // only one: there, an unhandled throw escaped runSchedulerPass and killed
+    // the whole run, abandoning every org after it. Under a fan-out that is
+    // worse still — a rejection would surface as a rejected Promise.all and
+    // could abort sibling work. So an unexpected failure is contained to its
+    // own org, recorded in that org's errors, and the run continues.
+    //
+    // Whatever the draft accumulated before the throw is KEPT: partial truth
+    // beats a zeroed result that hides work already done (and money spent).
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} org_task_fatal: ${msg}`);
+    logger.error(
+      { event: "scheduler_org_task_fatal", orgId, err },
+      "Org task threw unexpectedly — isolated to this org, run continues"
+    );
+    status = "task_fatal";
+    orgResult.orgs_task_fatal++;
+  }
+
+  // Exactly one emission per org task, on EVERY exit path — success, recorded
+  // generation failure, and the outer net alike. Placed after the try/catch
+  // rather than in a `finally` so the status assigned in the catch is the one
+  // reported; a `finally` would race the catch's own assignment.
+  emitOrgCompletion(orgId, Date.now() - startedAt, status, orgResult);
+
+  return sealOrgResult(orgId, orgResult);
+}
+
+async function runOrgPipeline(
+  orgId: string,
+  feeds: FetchedFeeds,
+  isSendDay: boolean,
+  orgResult: OrgRunDraft
+): Promise<OrgRunDraft> {
+  logger.info({ event: "scheduler_org_start", orgId }, "Processing org");
+
+  let orgFailed = false;
+
+  // Ingest CISA KEV signals for this org
+  if (feeds.cisaKevSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.cisaKevSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_kev_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "CISA KEV ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} kev_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} kev_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_kev_ingest_failed", orgId, err }, "CISA KEV ingest failed for org");
+    }
+  }
+
+  // Ingest NVD signals for this org
+  if (feeds.nvdSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.nvdSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_nvd_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "NVD ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} nvd_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} nvd_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_nvd_ingest_failed", orgId, err }, "NVD ingest failed for org");
+    }
+  }
+
+  // Ingest SEC EDGAR 8-K Item 1.05 signals for this org
+  if (feeds.secEdgarSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.secEdgarSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_sec_edgar_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "SEC EDGAR ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} sec_edgar_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
+    }
+  }
+
+  // Ingest Federal Register regulatory signals for this org
+  if (feeds.federalRegisterSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.federalRegisterSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_federal_register_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Federal Register ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} federal_register_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} federal_register_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_federal_register_ingest_failed", orgId, err }, "Federal Register ingest failed for org");
+    }
+  }
+
+  // Ingest CISA Alerts signals for this org
+  if (feeds.cisaAlertSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.cisaAlertSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_cisa_alerts_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "CISA Alerts ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} cisa_alerts_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
+    }
+  }
+
+  // Ingest MITRE ATT&CK signals for this org
+  if (feeds.mitreAttackSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.mitreAttackSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_mitre_attack_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "MITRE ATT&CK ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
+    }
+  }
+
+  // Ingest MITRE ATLAS signals for this org
+  if (feeds.mitreAtlasSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.mitreAtlasSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_mitre_atlas_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "MITRE ATLAS ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
+    }
+  }
+
+  // Ingest threat intel RSS signals for this org
+  if (feeds.threatIntelSignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.threatIntelSignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_threat_intel_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Threat intel RSS ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} threat_intel_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} threat_intel_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_threat_intel_ingest_failed", orgId, err }, "Threat intel RSS ingest failed for org");
+    }
+  }
+
+  // Ingest regulatory signals for this org
+  if (feeds.regulatorySignals.length > 0) {
+    try {
+      const result = await ingestSignalsForOrg(feeds.regulatorySignals, orgId);
+      logger.info(
+        {
+          event: "scheduler_regulatory_ingested",
+          orgId,
+          inserted: result.inserted,
+          skippedDuplicate: result.skippedDuplicate,
+          skippedInvalid: result.skippedInvalid,
+          errors: result.errors.length
+        },
+        "Regulatory signals ingested for org"
+      );
+      for (const e of result.errors) {
+        orgResult.errors.push(`org:${orgId} regulatory_ingest: ${e}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      orgResult.errors.push(`org:${orgId} regulatory_ingest_fatal: ${msg}`);
+      logger.error({ event: "scheduler_regulatory_ingest_failed", orgId, err }, "Regulatory ingest failed for org");
+    }
+  }
+
+  // Generate brief for this org
+  let briefId: string;
+  try {
+    const generated = await generateAndStoreBrief(orgId);
+    briefId = generated.briefId;
+    orgResult.enrichment = generated.enrichment;
+    orgResult.briefs_generated++;
+    logger.info(
+      { event: "scheduler_brief_generated", orgId, briefId },
+      "Brief generated and published"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} generate_failed: ${msg}`);
+    logger.error({ event: "scheduler_generate_failed", orgId, err }, "Brief generation failed for org");
+    orgResult.orgs_skipped++;
+    orgFailed = true;
+    return orgResult;
+  }
+
+  // Send brief to all active subscribers for this org — Tuesday only.
+  // On an off-day run the brief is generated and stored (above) but NOT
+  // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
+  if (!isSendDay) {
+    orgResult.emails_skipped_off_day++;
+    logger.info(
+      { event: "scheduler_brief_send_skipped_off_day", orgId, briefId, weekday: new Date().getUTCDay() },
+      "Brief generated but email send skipped — not the weekly send day (Tuesday UTC), no Intelligence Brief email"
+    );
+    if (!orgFailed) {
+      orgResult.orgs_processed++;
+    }
+    return orgResult;
+  }
+
+  try {
+    const sendResult = await sendBrief(briefId, orgId);
+    orgResult.emails_sent += sendResult.sent;
+    orgResult.emails_failed += sendResult.failed;
+    if (sendResult.skipped) {
+      // Zero active recipients: the brief above is generated + published and
+      // stays current in-platform — only the email leg is skipped. Recorded
+      // so the delivery-health report can surface uncovered orgs weekly.
+      orgResult.emails_skipped_no_recipients++;
+      orgResult.orgs_without_recipients.push(orgId);
+      logger.info(
+        {
+          event: "scheduler_brief_send_skipped_no_recipients",
+          orgId,
+          briefId,
+          reason: sendResult.message ?? "no_active_subscribers"
+        },
+        "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
+      );
+    }
+    logger.info(
+      {
+        event: "scheduler_brief_sent",
+        orgId,
+        briefId,
+        sent: sendResult.sent,
+        failed: sendResult.failed,
+        skipped: sendResult.skipped,
+        already_sent: sendResult.already_sent
+      },
+      "Brief send completed for org"
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    orgResult.errors.push(`org:${orgId} send_failed: ${msg}`);
+    logger.error({ event: "scheduler_send_failed", orgId, briefId, err }, "Brief send failed for org");
+  }
+
+  if (!orgFailed) {
+    orgResult.orgs_processed++;
+  }
+
+  return orgResult;
+}
+
+
+// ---------------------------------------------------------------------------
 // runScheduler — exported entry point
 // ---------------------------------------------------------------------------
 
@@ -683,10 +1393,36 @@ async function generateAndStoreBrief(orgId: string): Promise<string> {
  * @returns  Run summary with per-source signal counts, org counts, email counts.
  */
 export async function runScheduler(): Promise<SchedulerRunSummary> {
+  // Measure the whole pass, including the early-return paths. The accumulator
+  // is closed in every exit — a failed run's partial spend is still real money
+  // and must be reported, not dropped.
+  beginLlmRunAccumulation();
+  beginVerdictCacheAccumulation();
+  try {
+    const summary = await runSchedulerPass();
+    summary.llm = endLlmRunAccumulation();
+    summary.verdict_cache = endVerdictCacheAccumulation();
+    return summary;
+  } catch (err) {
+    endLlmRunAccumulation();
+    endVerdictCacheAccumulation();
+    throw err;
+  }
+}
+
+async function runSchedulerPass(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
+    llm: emptyLlmRunTotals(),
+    verdict_cache: emptyVerdictCacheTotals(),
+    org_concurrency: { limit: ORG_CONCURRENCY, peak_in_flight: 0 },
+    orgs_task_fatal: 0,
+    // Dormant: no code path increments these. See the type declaration.
+    orgs_deadline_exceeded: 0,
+    orgs_deadline_exceeded_ids: [],
     active_orgs: 0,
     orgs_processed: 0,
     orgs_skipped: 0,
+    orgs_skipped_already_current: 0,
     signals_fetched: {
       cisa_kev: 0,
       nvd: 0,
@@ -739,6 +1475,27 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   }
 
   logger.info({ event: "scheduler_orgs_found", count: orgIds.length }, "Active organizations found");
+
+  // ── Step 1b: Idempotency skip set for the current weekly window ─────────
+  // Orgs that already published this week's edition are skipped entirely
+  // (ingest + generate + send), so a rerun after an interrupted run — the
+  // Tuesday-deploy failure mode — reconciles only the missing tail instead of
+  // regenerating (and re-emailing) completed orgs. FAILS OPEN: if this query
+  // errors, the skip set is empty and the run behaves exactly as before the
+  // idempotency change — a detection failure must never block the weekly
+  // edition. (briefEmailSender's idempotency still prevents double delivery
+  // in that degraded case.)
+  const weekStart = currentBriefWeekStart(new Date());
+  let orgsWithCurrentBrief: Set<string>;
+  try {
+    orgsWithCurrentBrief = await listOrgsWithCurrentBrief(weekStart);
+  } catch (err) {
+    orgsWithCurrentBrief = new Set();
+    logger.warn(
+      { event: "scheduler_current_brief_query_failed", weekStart: weekStart.toISOString(), err },
+      "Failed to load the current-week brief skip set — proceeding without idempotency skips (fail-open)"
+    );
+  }
 
   // ── Step 2: Fetch signal feeds once (global, shared across all orgs) ────
 
@@ -947,313 +1704,85 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
     logger.error({ event: "scheduler_regulatory_failed", err }, "Regulatory feed fetch failed — continuing");
   }
 
-  // ── Step 3: Process each org sequentially ───────────────────────────────
+  // ── Step 3: Process orgs with BOUNDED CONCURRENCY ───────────────────────
+  //
+  // Orgs run through a fixed-size worker pool (ORG_CONCURRENCY). Each worker
+  // pulls the next org the moment it finishes one, so a slow org occupies its
+  // own slot and NOTHING else: the other slot keeps draining the queue. That
+  // pull model — not a chunked `Promise.all` over batches — is what removes
+  // head-of-line blocking within the fan-out.
+  //
+  // Every task returns its OWN sealed result. No task touches `summary`; the
+  // merge below is the single writer, and it walks results in INPUT order, so
+  // counters, `errors`, and `orgs_without_recipients` come out byte-identical
+  // to what the sequential loop produced for the same inputs. Concurrency
+  // therefore changes wall-clock, not the summary.
 
+  const orgsToProcess: string[] = [];
   for (const orgId of orgIds) {
-    logger.info({ event: "scheduler_org_start", orgId }, "Processing org");
-
-    let orgFailed = false;
-
-    // Ingest CISA KEV signals for this org
-    if (cisaKevSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(cisaKevSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_kev_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "CISA KEV ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} kev_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} kev_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_kev_ingest_failed", orgId, err }, "CISA KEV ingest failed for org");
-      }
-    }
-
-    // Ingest NVD signals for this org
-    if (nvdSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(nvdSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_nvd_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "NVD ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} nvd_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} nvd_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_nvd_ingest_failed", orgId, err }, "NVD ingest failed for org");
-      }
-    }
-
-    // Ingest SEC EDGAR 8-K Item 1.05 signals for this org
-    if (secEdgarSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(secEdgarSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_sec_edgar_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "SEC EDGAR ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} sec_edgar_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} sec_edgar_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_sec_edgar_ingest_failed", orgId, err }, "SEC EDGAR ingest failed for org");
-      }
-    }
-
-    // Ingest Federal Register regulatory signals for this org
-    if (federalRegisterSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(federalRegisterSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_federal_register_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Federal Register ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} federal_register_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} federal_register_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_federal_register_ingest_failed", orgId, err }, "Federal Register ingest failed for org");
-      }
-    }
-
-    // Ingest CISA Alerts signals for this org
-    if (cisaAlertSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(cisaAlertSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_cisa_alerts_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "CISA Alerts ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} cisa_alerts_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} cisa_alerts_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_cisa_alerts_ingest_failed", orgId, err }, "CISA Alerts ingest failed for org");
-      }
-    }
-
-    // Ingest MITRE ATT&CK signals for this org
-    if (mitreAttackSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(mitreAttackSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_mitre_attack_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "MITRE ATT&CK ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} mitre_attack_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} mitre_attack_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_mitre_attack_ingest_failed", orgId, err }, "MITRE ATT&CK ingest failed for org");
-      }
-    }
-
-    // Ingest MITRE ATLAS signals for this org
-    if (mitreAtlasSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(mitreAtlasSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_mitre_atlas_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "MITRE ATLAS ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} mitre_atlas_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} mitre_atlas_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_mitre_atlas_ingest_failed", orgId, err }, "MITRE ATLAS ingest failed for org");
-      }
-    }
-
-    // Ingest threat intel RSS signals for this org
-    if (threatIntelSignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(threatIntelSignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_threat_intel_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Threat intel RSS ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} threat_intel_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} threat_intel_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_threat_intel_ingest_failed", orgId, err }, "Threat intel RSS ingest failed for org");
-      }
-    }
-
-    // Ingest regulatory signals for this org
-    if (regulatorySignals.length > 0) {
-      try {
-        const result = await ingestSignalsForOrg(regulatorySignals, orgId);
-        logger.info(
-          {
-            event: "scheduler_regulatory_ingested",
-            orgId,
-            inserted: result.inserted,
-            skippedDuplicate: result.skippedDuplicate,
-            skippedInvalid: result.skippedInvalid,
-            errors: result.errors.length
-          },
-          "Regulatory signals ingested for org"
-        );
-        for (const e of result.errors) {
-          summary.errors.push(`org:${orgId} regulatory_ingest: ${e}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.errors.push(`org:${orgId} regulatory_ingest_fatal: ${msg}`);
-        logger.error({ event: "scheduler_regulatory_ingest_failed", orgId, err }, "Regulatory ingest failed for org");
-      }
-    }
-
-    // Generate brief for this org
-    let briefId: string;
-    try {
-      briefId = await generateAndStoreBrief(orgId);
-      summary.briefs_generated++;
+    if (orgsWithCurrentBrief.has(orgId)) {
+      summary.orgs_skipped_already_current++;
       logger.info(
-        { event: "scheduler_brief_generated", orgId, briefId },
-        "Brief generated and published"
+        { event: "scheduler_org_skipped_already_current", orgId, weekStart: weekStart.toISOString() },
+        "Org already has this week's published brief — skipping (idempotent rerun)"
       );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`org:${orgId} generate_failed: ${msg}`);
-      logger.error({ event: "scheduler_generate_failed", orgId, err }, "Brief generation failed for org");
-      summary.orgs_skipped++;
-      orgFailed = true;
       continue;
     }
-
-    // Send brief to all active subscribers for this org — Tuesday only.
-    // On an off-day run the brief is generated and stored (above) but NOT
-    // emailed; this is the defense-in-depth guard for manual/off-schedule runs.
-    if (!isSendDay) {
-      summary.emails_skipped_off_day++;
-      logger.info(
-        { event: "scheduler_brief_send_skipped_off_day", orgId, briefId, weekday: new Date().getUTCDay() },
-        "Brief generated but email send skipped — not the weekly send day (Tuesday UTC), no Intelligence Brief email"
-      );
-      if (!orgFailed) {
-        summary.orgs_processed++;
-      }
-      continue;
-    }
-
-    try {
-      const sendResult = await sendBrief(briefId, orgId);
-      summary.emails_sent += sendResult.sent;
-      summary.emails_failed += sendResult.failed;
-      if (sendResult.skipped) {
-        // Zero active recipients: the brief above is generated + published and
-        // stays current in-platform — only the email leg is skipped. Recorded
-        // so the delivery-health report can surface uncovered orgs weekly.
-        summary.emails_skipped_no_recipients++;
-        summary.orgs_without_recipients.push(orgId);
-        logger.info(
-          {
-            event: "scheduler_brief_send_skipped_no_recipients",
-            orgId,
-            briefId,
-            reason: sendResult.message ?? "no_active_subscribers"
-          },
-          "Brief generated and published; email skipped — org has no active recipients (delivery-health condition, not a generation gate)"
-        );
-      }
-      logger.info(
-        {
-          event: "scheduler_brief_sent",
-          orgId,
-          briefId,
-          sent: sendResult.sent,
-          failed: sendResult.failed,
-          skipped: sendResult.skipped,
-          already_sent: sendResult.already_sent
-        },
-        "Brief send completed for org"
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`org:${orgId} send_failed: ${msg}`);
-      logger.error({ event: "scheduler_send_failed", orgId, briefId, err }, "Brief send failed for org");
-    }
-
-    if (!orgFailed) {
-      summary.orgs_processed++;
-    }
+    orgsToProcess.push(orgId);
   }
+
+  // The feeds were fetched ONCE above and are read-only from here on: every
+  // org ingests the same arrays. Passing them as one frozen bundle keeps the
+  // per-org task a pure function of (orgId, feeds, isSendDay).
+  const feeds: FetchedFeeds = Object.freeze({
+    cisaKevSignals,
+    nvdSignals,
+    secEdgarSignals,
+    federalRegisterSignals,
+    cisaAlertSignals,
+    mitreAttackSignals,
+    mitreAtlasSignals,
+    threatIntelSignals,
+    regulatorySignals
+  });
+
+  // In-flight gauge. Incremented/decremented around the awaited task body, so
+  // `peak` is the true simultaneous-task high-water mark rather than a claim
+  // derived from the limit constant. Reported in the summary so a staging run
+  // can be checked against the intended bound instead of trusted.
+  let inFlight = 0;
+  let peakInFlight = 0;
+
+  summary.org_concurrency.limit = ORG_CONCURRENCY;
+
+  logger.info(
+    {
+      event: "scheduler_org_fanout_start",
+      pending_orgs: orgsToProcess.length,
+      concurrency_limit: ORG_CONCURRENCY
+    },
+    "Processing orgs with bounded concurrency"
+  );
+
+  const orgResults = await mapWithConcurrency(
+    orgsToProcess,
+    ORG_CONCURRENCY,
+    async (orgId): Promise<OrgRunResult> => {
+      inFlight++;
+      if (inFlight > peakInFlight) peakInFlight = inFlight;
+      try {
+        return await processOrg(orgId, feeds, isSendDay);
+      } finally {
+        inFlight--;
+      }
+    }
+  );
+
+  summary.org_concurrency.peak_in_flight = peakInFlight;
+
+  // ── Step 3b: Merge the per-org results (single writer, input order) ──────
+  mergeOrgResults(summary, orgResults);
+
 
   logger.info(
     {
@@ -1261,12 +1790,15 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
       active_orgs: summary.active_orgs,
       orgs_processed: summary.orgs_processed,
       orgs_skipped: summary.orgs_skipped,
+      orgs_skipped_already_current: summary.orgs_skipped_already_current,
       briefs_generated: summary.briefs_generated,
       emails_sent: summary.emails_sent,
       emails_failed: summary.emails_failed,
       emails_skipped_off_day: summary.emails_skipped_off_day,
       emails_skipped_no_recipients: summary.emails_skipped_no_recipients,
       orgs_without_recipients: summary.orgs_without_recipients,
+      orgs_task_fatal: summary.orgs_task_fatal,
+      orgs_deadline_exceeded: summary.orgs_deadline_exceeded,
       error_count: summary.errors.length
     },
     "Brief scheduler run completed"

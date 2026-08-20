@@ -24,6 +24,8 @@ import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorke
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
 import { startExportFilePurgeWorker } from "./workers/exportFilePurgeWorker.js";
+import { startUnprocessedSignalSweeper } from "./workers/unprocessedSignalSweeper.js";
+import { startOrphanBriefReaper } from "./workers/orphanBriefReaper.js";
 import { createApp } from "./app.js";
 
 /* =========================================================
@@ -183,6 +185,12 @@ startWebhookRetryWorker();
 // of the data-export lifecycle). Registered always;
 // SECURELOGIC_EXPORT_PURGE_DISABLED=true is the ops brake.
 startExportFilePurgeWorker();
+// Crash-recovery for the weekly Brief run's two silent-loss modes: signals
+// committed but never processed, and briefs stranded mid-generation when the
+// process died. Both sweep on boot then hourly, and both carry an ops brake
+// (SECURELOGIC_SIGNAL_SWEEPER_DISABLED / SECURELOGIC_BRIEF_REAPER_DISABLED).
+startUnprocessedSignalSweeper();
+startOrphanBriefReaper();
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info(

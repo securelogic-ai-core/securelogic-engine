@@ -35,6 +35,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
+import { withLlmCallContext } from "./llm/llmTelemetry.js";
+import { mapWithConcurrency } from "./concurrency.js";
 import { z } from "zod";
 import { logger } from "../infra/logger.js";
 import { CLUSTER_KEY_FP_PREFIX } from "./signals/clusterKey.js";
@@ -1271,12 +1273,16 @@ async function enrichItemWithClaude(
     `  Choose exactly one. Do not invent other values.`;
 
   try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      system: CLAUDE_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }]
-    });
+    const message = await withLlmCallContext(
+      { purpose: "brief_item_enrichment", organizationId },
+      () =>
+        client.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 1024,
+          system: CLAUDE_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userPrompt }]
+        })
+    );
 
     const text = message.content
       .filter((c) => c.type === "text")
@@ -1413,12 +1419,25 @@ async function enrichItemWithClaude(
  * the April-incident signature (100% identical template Actions). */
 const ENRICHMENT_DEGRADED_THRESHOLD = 0.5;
 
+/**
+ * Maximum enrichment calls in flight at once.
+ *
+ * Was unbounded (`Promise.all` over the whole shortlist = 24 simultaneous
+ * Anthropic requests per org, and nothing tying that number to
+ * ENRICHMENT_SHORTLIST if the cap ever moved). A burst that trips the
+ * provider's rate limit does not fail loudly here — every failure degrades
+ * silently into a template fallback item, which is the April-incident
+ * signature. Bounding the fan-out keeps the batch inside the provider's
+ * envelope while staying comfortably faster than serial.
+ */
+export const ENRICHMENT_CONCURRENCY = 6;
+
 export async function enrichBriefItems(
   items: ReadonlyArray<BriefItem>,
   organizationId: string | null = null
 ): Promise<BriefItem[]> {
-  const enriched = await Promise.all(
-    items.map((item) => enrichItemWithClaude(item, organizationId))
+  const enriched = await mapWithConcurrency(items, ENRICHMENT_CONCURRENCY, (item) =>
+    enrichItemWithClaude(item, organizationId)
   );
 
   // IQP Q5: per-cycle enrichment telemetry — fallback is observable and

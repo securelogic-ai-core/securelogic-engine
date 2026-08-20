@@ -37,7 +37,8 @@ import {
 // Post-matcher sibling on the worker fan-out. Imported from llmControlMatcher.js
 // directly (cyberSignalProcessingService re-exports nothing here — confirmed).
 // Mirrors processSignal phase 7, which runs the control matcher AFTER its commit.
-import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
+import { enqueueControlMatcherJob } from "../../../../src/api/lib/controlMatcherQueue.js";
+import { pg, withTenant } from "../../../../src/api/infra/postgres.js";
 import { createSignalWebhookBatcher } from "../../../../src/api/lib/signalWebhookEmitter.js";
 import { buildDedupHash } from "../../../../src/api/lib/cyberSignalNormalizer.js";
 import { projectUnprojectedGlobalSignals, ageIntelligenceEvents } from "../../../../src/api/lib/signals/intelligenceEventStore.js";
@@ -226,7 +227,7 @@ async function fanOutMatcherToActiveOrgs(
   pairsFailed: number;
   matchesProduced: number;
   controlMatcherCalls: number;
-  controlSuggestionsWritten: number;
+  controlSuggestionsQueued: number;
   elapsedMs: number;
 }> {
   const start = Date.now();
@@ -238,7 +239,7 @@ async function fanOutMatcherToActiveOrgs(
   // this cycle, and how many control suggestions it wrote. Surfaced so LLM call
   // volume is visible BEFORE it scales with active-org count.
   let controlMatcherCalls = 0;
-  let controlSuggestionsWritten = 0;
+  let controlSuggestionsQueued = 0;
 
   if (signals.length === 0) {
     return {
@@ -247,7 +248,7 @@ async function fanOutMatcherToActiveOrgs(
       pairsFailed: 0,
       matchesProduced: 0,
       controlMatcherCalls: 0,
-      controlSuggestionsWritten: 0,
+      controlSuggestionsQueued: 0,
       elapsedMs: 0
     };
   }
@@ -269,7 +270,7 @@ async function fanOutMatcherToActiveOrgs(
       pairsFailed: 0,
       matchesProduced: 0,
       controlMatcherCalls: 0,
-      controlSuggestionsWritten: 0,
+      controlSuggestionsQueued: 0,
       elapsedMs: Date.now() - start
     };
   }
@@ -285,7 +286,7 @@ async function fanOutMatcherToActiveOrgs(
       pairsFailed: 0,
       matchesProduced: 0,
       controlMatcherCalls: 0,
-      controlSuggestionsWritten: 0,
+      controlSuggestionsQueued: 0,
       elapsedMs: Date.now() - start
     };
   }
@@ -325,16 +326,25 @@ async function fanOutMatcherToActiveOrgs(
           }
         }
 
-        // Post-matcher sibling — LLM control matcher (suggest-only, self-gated,
-        // never throws). Runs AFTER the base matcher per (signal, org), mirroring
-        // processSignal phase 7 which runs it after its commit. NOT placed inside
-        // runMatcherForSignal: that function is shared with processSignal (which
-        // already calls the control matcher), so nesting it there would double-fire
-        // on the web path and run an LLM call inside the matcher transaction.
+        // Post-matcher sibling — LLM control suggestions, now ENQUEUED rather
+        // than awaited. Previously this awaited one provider call per
+        // (signal, org) inline, serialising the fan-out behind provider
+        // latency. The work now runs on the durable `jobs` queue, executed by
+        // controlMatcherWorker in this same service, so the fan-out's wall
+        // clock no longer includes it. Same gate, same matcher, same rows.
+        // Still not placed inside runMatcherForSignal: that function is shared
+        // with processSignal, which enqueues on its own transaction, so
+        // nesting here would double-enqueue on the web path.
         // signal carries normalized_summary (set at the bridge push site), which
         // is the field the control-matcher prompt consumes.
         controlMatcherCalls++;
-        controlSuggestionsWritten += await runLlmControlMatcherForSignal(signal, org.id);
+        // Its own tenant scope: unlike processSignal there is no open
+        // processing transaction here to ride on, and the fan-out has already
+        // committed this (signal, org) pair's matcher work.
+        const queuedId = await withTenant(org.id, () =>
+          enqueueControlMatcherJob(pg, org.id, signal)
+        );
+        if (queuedId) controlSuggestionsQueued++;
       } catch (err) {
         pairsFailed++;
         logger.warn(
@@ -377,10 +387,10 @@ async function fanOutMatcherToActiveOrgs(
       pairsFailed,
       matchesProduced,
       controlMatcherCalls,
-      controlSuggestionsWritten,
+      controlSuggestionsQueued,
       elapsedMs
     },
-    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced, ${controlMatcherCalls} control-matcher calls (${controlSuggestionsWritten} suggestions) in ${elapsedMs}ms`
+    `Matcher fan-out complete — ${pairsSucceeded}/${pairsAttempted} pairs succeeded, ${matchesProduced} matches produced, ${controlMatcherCalls} control-matcher candidates (${controlSuggestionsQueued} suggestion jobs queued) in ${elapsedMs}ms`
   );
 
   return {
@@ -389,7 +399,7 @@ async function fanOutMatcherToActiveOrgs(
     pairsFailed,
     matchesProduced,
     controlMatcherCalls,
-    controlSuggestionsWritten,
+    controlSuggestionsQueued,
     elapsedMs
   };
 }

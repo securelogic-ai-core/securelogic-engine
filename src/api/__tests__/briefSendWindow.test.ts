@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isBriefSendDay } from "../lib/briefSendWindow.js";
+import { isBriefSendDay, currentBriefWeekStart } from "../lib/briefSendWindow.js";
 
 /**
  * Intelligence Brief email delivery runs once a week, on Tuesday (UTC) only.
@@ -51,5 +51,42 @@ describe("isBriefSendDay — weekly Tuesday email gate (UTC)", () => {
     expect(isBriefSendDay(new Date("2026-06-24T02:00:00Z"))).toBe(false);
     // …and a Monday-evening-US instant that is already Tuesday in UTC DOES.
     expect(isBriefSendDay(new Date("2026-06-23T02:00:00Z"))).toBe(true);
+  });
+});
+
+/**
+ * currentBriefWeekStart() is the shared idempotency boundary between the
+ * scheduler's per-org skip and the catch-up's completeness check: the most
+ * recent Tuesday 07:00:00 UTC at or before `now`. These tests pin the
+ * boundary — especially the Tuesday pre-07:00 case, where the current edition
+ * is still LAST week's because the cron has not fired yet.
+ *
+ * 2026-07-07 is a Tuesday.
+ */
+describe("currentBriefWeekStart — weekly edition window boundary (UTC)", () => {
+  const THIS_TUESDAY = "2026-07-07T07:00:00.000Z";
+  const LAST_TUESDAY = "2026-06-30T07:00:00.000Z";
+
+  it("Tuesday exactly at 07:00:00 UTC starts the NEW window (cron fire instant is inclusive)", () => {
+    expect(currentBriefWeekStart(new Date("2026-07-07T07:00:00Z")).toISOString()).toBe(THIS_TUESDAY);
+  });
+
+  it("Tuesday after 07:00 UTC is inside this week's window", () => {
+    expect(currentBriefWeekStart(new Date("2026-07-07T18:30:00Z")).toISOString()).toBe(THIS_TUESDAY);
+  });
+
+  it("Tuesday BEFORE 07:00 UTC still belongs to LAST week's window", () => {
+    expect(currentBriefWeekStart(new Date("2026-07-07T06:59:59Z")).toISOString()).toBe(LAST_TUESDAY);
+  });
+
+  it("Wednesday through the following Monday stay inside this week's window", () => {
+    expect(currentBriefWeekStart(new Date("2026-07-08T00:00:00Z")).toISOString()).toBe(THIS_TUESDAY); // Wed
+    expect(currentBriefWeekStart(new Date("2026-07-10T12:00:00Z")).toISOString()).toBe(THIS_TUESDAY); // Fri
+    expect(currentBriefWeekStart(new Date("2026-07-13T10:00:00Z")).toISOString()).toBe(THIS_TUESDAY); // Mon
+  });
+
+  it("crosses a month boundary correctly", () => {
+    // 2026-08-01 is a Saturday; the most recent Tuesday 07:00 is 2026-07-28.
+    expect(currentBriefWeekStart(new Date("2026-08-01T12:00:00Z")).toISOString()).toBe("2026-07-28T07:00:00.000Z");
   });
 });

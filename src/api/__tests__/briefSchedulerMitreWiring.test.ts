@@ -150,11 +150,11 @@ describe("briefScheduler.ts source — MITRE wiring shape", () => {
   it("ingests both MITRE batches per-org under the canonical ingested-event names", () => {
     // Mirrors the per-org ingest blocks for the other five sources.
     expect(schedulerSource).toMatch(
-      /if\s*\(\s*mitreAttackSignals\.length\s*>\s*0\s*\)/
+      /if\s*\(\s*feeds\.mitreAttackSignals\.length\s*>\s*0\s*\)/
     );
     expect(schedulerSource).toMatch(/scheduler_mitre_attack_ingested/);
     expect(schedulerSource).toMatch(
-      /if\s*\(\s*mitreAtlasSignals\.length\s*>\s*0\s*\)/
+      /if\s*\(\s*feeds\.mitreAtlasSignals\.length\s*>\s*0\s*\)/
     );
     expect(schedulerSource).toMatch(/scheduler_mitre_atlas_ingested/);
   });

@@ -36,7 +36,11 @@ vi.mock("../../../../src/api/infra/postgres.js", () => {
   // kevPoller now runs elevated (pgElevated). Point pg at the same handle so
   // the existing mockedPgQuery assertions keep intercepting the calls.
   const handle = { query: vi.fn(), connect: vi.fn() };
-  return { pg: handle, pgElevated: handle };
+  return {
+    pg: handle,
+    pgElevated: handle,
+    withTenant: vi.fn(async (_org: string, fn: () => Promise<unknown>) => fn())
+  };
 });
 
 // Mock runMatcherForSignal so the fan-out path is observable without
@@ -60,20 +64,25 @@ vi.mock("../../../../src/api/lib/cyberSignalProcessingService.js", () => ({
 // Mock the LLM control matcher (the post-matcher sibling wired into the fan-out)
 // so its invocation is observable without touching the real withTenant/LLM path.
 // Resolves a suggestion count (number), matching the real signature.
+vi.mock("../../../../src/api/lib/controlMatcherQueue.js", () => ({
+  enqueueControlMatcherJob: vi.fn().mockResolvedValue("job-1")
+}));
 vi.mock("../../../../src/api/lib/llmControlMatcher.js", () => ({
-  runLlmControlMatcherForSignal: vi.fn().mockResolvedValue(0)
+  runLlmControlMatcherForSignal: vi.fn().mockResolvedValue(0),
+  shouldRunControlMatcher: vi.fn(() => true)
 }));
 
 import { runKevPoll } from "../kevPoller.js";
 import { fetchCisaKevSignals } from "../../../../src/api/lib/cisaKevAdapter.js";
 import { pg } from "../../../../src/api/infra/postgres.js";
 import { runMatcherForSignal } from "../../../../src/api/lib/cyberSignalProcessingService.js";
-import { runLlmControlMatcherForSignal } from "../../../../src/api/lib/llmControlMatcher.js";
+import { enqueueControlMatcherJob } from "../../../../src/api/lib/controlMatcherQueue.js";
+import { logger } from "../../../../src/api/infra/logger.js";
 
 const mockedFetchKev = vi.mocked(fetchCisaKevSignals);
 const mockedPgQuery = vi.mocked(pg.query);
 const mockedRunMatcher = vi.mocked(runMatcherForSignal);
-const mockedControlMatcher = vi.mocked(runLlmControlMatcherForSignal);
+const mockedControlMatcher = vi.mocked(enqueueControlMatcherJob);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const schedulerSourcePath = path.resolve(here, "../scheduler.ts");
@@ -174,15 +183,15 @@ describe("kevPoller.ts source — shape", () => {
     expect(kevPollerSource).toMatch(/ON\s+CONFLICT\s*\(\s*dedup_hash\s*\)\s*WHERE\s+organization_id\s+IS\s+NULL\s+DO\s+NOTHING/);
   });
 
-  it("imports runLlmControlMatcherForSignal from llmControlMatcher.js (not from the matcher service)", () => {
+  it("imports the control-matcher ENQUEUE (work is now asynchronous, not awaited inline)", () => {
     // Must come from llmControlMatcher.js directly — cyberSignalProcessingService
     // does not re-export it.
     expect(kevPollerSource).toMatch(
-      /import\s*\{\s*runLlmControlMatcherForSignal\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/src\/api\/lib\/llmControlMatcher\.js"/
+      /import\s*\{\s*enqueueControlMatcherJob\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/src\/api\/lib\/controlMatcherQueue\.js"/
     );
     // Guard against it sneaking into the cyberSignalProcessingService import.
     expect(kevPollerSource).not.toMatch(
-      /import\s*\{[^}]*runLlmControlMatcherForSignal[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
+      /import\s*\{[^}]*enqueueControlMatcherJob[^}]*\}\s*from\s*"[^"]*cyberSignalProcessingService\.js"/
     );
   });
 
@@ -191,7 +200,7 @@ describe("kevPoller.ts source — shape", () => {
     // same per-(signal, org) try block — proving it is a sibling, not nested in
     // runMatcherForSignal.
     expect(kevPollerSource).toMatch(
-      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?runLlmControlMatcherForSignal\(signal, org\.id\)[\s\S]*?\}\s*catch/
+      /runMatcherForSignal\(signal, org\.id\)[\s\S]*?enqueueControlMatcherJob\(pg, org\.id, signal\)[\s\S]*?\}\s*catch/
     );
   });
 
@@ -211,7 +220,7 @@ describe("runKevPoll — behaviour", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     // Default matcher behavior: returns no_match. Individual fan-out
     // tests override this with mockResolvedValueOnce.
     mockedRunMatcher.mockResolvedValue({
@@ -366,7 +375,7 @@ describe("runKevPoll — matcher fan-out", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     mockedRunMatcher.mockResolvedValue({
       matched_vendor_id: null,
       matched_ai_system_id: null,
@@ -558,7 +567,7 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
     mockedPgQuery.mockReset();
     mockedRunMatcher.mockReset();
     mockedControlMatcher.mockReset();
-    mockedControlMatcher.mockResolvedValue(0);
+    mockedControlMatcher.mockResolvedValue("job-1");
     mockedRunMatcher.mockResolvedValue({
       matched_vendor_id: null,
       matched_ai_system_id: null,
@@ -612,12 +621,31 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
       rows: [{ id: "org-A" }, { id: "org-B" }]
     } as never);
 
+    const infoSpy = vi.spyOn(logger, "info");
     await runKevPoll();
 
     // One control-matcher call per (signal, org) pair: 2 × 2 = 4.
     expect(mockedControlMatcher).toHaveBeenCalledTimes(4);
+
+    // REGRESSION GUARD: controlSuggestionsQueued counts the enqueue calls that
+    // actually returned a job id. enqueueControlMatcherJob resolves `string | null`
+    // — a null (or any falsy stand-in) means "not queued" and must NOT be counted.
+    // A stale numeric mock left over from the synchronous runLlmControlMatcherForSignal
+    // era resolved 0, which is falsy, silently pinning this counter at 0 while the
+    // log line still claimed to report queued jobs. Nothing asserted it, so only the
+    // worker tsconfig build caught the drift. Assert the counter tracks the calls.
+    const fanout = infoSpy.mock.calls.find(
+      (c) => (c[0] as { event?: string })?.event === "kev_matcher_fanout_complete"
+    );
+    expect(fanout).toBeDefined();
+    expect(fanout![0]).toMatchObject({
+      controlMatcherCalls: 4,
+      controlSuggestionsQueued: 4
+    });
+    infoSpy.mockRestore();
+    // enqueueControlMatcherJob(db, orgId, signal) — db first, then the pair.
     const ctrlPairs = mockedControlMatcher.mock.calls.map((c) => ({
-      signalId: (c[0] as { id: string }).id,
+      signalId: (c[2] as { id: string }).id,
       orgId: c[1]
     }));
     expect(ctrlPairs).toContainEqual({ signalId: "sig-1", orgId: "org-A" });
@@ -627,7 +655,7 @@ describe("runKevPoll — LLM control matcher fan-out", () => {
 
     // The control matcher receives the SAME signal struct (carrying
     // normalized_summary) that the base matcher does — the field its prompt reads.
-    const firstCtrlSignal = mockedControlMatcher.mock.calls[0]![0] as {
+    const firstCtrlSignal = mockedControlMatcher.mock.calls[0]![2] as {
       id: string;
       normalized_summary: string;
     };
