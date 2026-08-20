@@ -74,6 +74,109 @@ const RECOVERY_EVENTS = new Set([
    HELPERS
    ========================================================= */
 
+/* ---------------------------------------------------------
+   BILLING-EVENT ORDERING (SL-BILL-1 PR-D, defect D5)
+   --------------------------------------------------------- */
+
+/**
+ * The identity of the Stripe event authorising a billing-state write.
+ *
+ * `createdAt` is event.created — STRIPE's clock in whole seconds, never ours.
+ * Our receipt time is exactly what must not decide ordering: receipt order IS
+ * the thing that goes wrong.
+ */
+type EventOrdering = {
+  createdAt: number;
+  eventId: string;
+};
+
+/** What a guarded billing-state write actually did. */
+type SyncOutcome = "applied" | "stale" | "duplicate" | "not_found" | "error";
+
+function orderingOf(event: Stripe.Event): EventOrdering {
+  return { createdAt: event.created, eventId: event.id };
+}
+
+/**
+ * THE ORDERING RULE, as a SQL predicate.
+ *
+ * Every billing-state UPDATE carries `AND ${ORDERING_PREDICATE}` and advances
+ * the watermark in the same statement, so the compare and the write are one
+ * atomic operation. There is no read-then-write window for two concurrent
+ * deliveries to race through, and no lock is required.
+ *
+ * Given the incoming event.created ($created) and event.id ($eventId):
+ *
+ *   watermark IS NULL          → APPLY. No billing event has ever been applied
+ *                                to this org; the first one wins by definition.
+ *                                Every pre-existing row starts here.
+ *   created > watermark        → APPLY. Strictly newer.
+ *   created = watermark, and
+ *     id = stored id           → SUPPRESS as a duplicate. Belt to
+ *                                claimWebhookEvent's braces: that gate already
+ *                                stops a re-delivery, but this makes the write
+ *                                itself idempotent even if the gate is ever
+ *                                bypassed, reordered or removed.
+ *     id ≠ stored id           → APPLY. Two DIFFERENT events sharing one
+ *                                second are genuinely concurrent as far as
+ *                                event.created can tell, and Stripe exposes no
+ *                                finer ordering signal. Suppressing here would
+ *                                risk dropping a legitimate recovery — the
+ *                                exact failure this package exists to prevent —
+ *                                so the tie applies and the later writer wins.
+ *                                See the same-second caveat in the PR.
+ *   created < watermark        → SUPPRESS as stale. THIS IS D5: a delayed
+ *                                past_due landing after the recovery active
+ *                                must not downgrade a customer who has paid.
+ *
+ * The rule is deliberately symmetric — it guards revocations exactly as it
+ * guards grants. Exempting revocations would preserve the "access can always be
+ * withdrawn" instinct but would re-open D5 outright, because D5 IS a stale
+ * revocation. A genuinely-older revocation that arrives late is therefore
+ * suppressed too; it is logged at warn level so it is visible rather than
+ * silent, and the terminal Stripe events that matter (subscription.deleted) are
+ * both rare and followed by further events.
+ */
+function orderingPredicate(createdParam: number, idParam: number): string {
+  return `(
+           stripe_billing_event_at IS NULL
+        OR stripe_billing_event_at < to_timestamp($${createdParam})
+        OR (
+             stripe_billing_event_at = to_timestamp($${createdParam})
+             AND stripe_billing_event_id IS DISTINCT FROM $${idParam}
+           )
+      )`;
+}
+
+/**
+ * Why a guarded UPDATE matched no row: the org does not exist, or the ordering
+ * predicate rejected the event. Only called on rowCount 0, so it costs nothing
+ * on the normal path.
+ */
+async function classifySuppression(
+  orgId: string,
+  ordering: EventOrdering
+): Promise<"stale" | "duplicate" | "not_found"> {
+  try {
+    const { rows } = await pg.query<{
+      stripe_billing_event_at: Date | null;
+      stripe_billing_event_id: string | null;
+    }>(
+      `SELECT stripe_billing_event_at, stripe_billing_event_id
+         FROM organizations WHERE id = $1 LIMIT 1`,
+      [orgId]
+    );
+    const row = rows[0];
+    if (!row) return "not_found";
+    if (row.stripe_billing_event_id === ordering.eventId) return "duplicate";
+    return "stale";
+  } catch {
+    // Classification is for the log line only. It must never change the
+    // outcome of the event, so an error here degrades to the general case.
+    return "stale";
+  }
+}
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -598,8 +701,9 @@ async function syncOrgEntitlement(
   subscriptionId: string | null,
   rawSubscriptionTier: string | null,
   subscriptionStatus: string | null,
-  apiKeyId: string | null
-): Promise<void> {
+  apiKeyId: string | null,
+  ordering: EventOrdering
+): Promise<SyncOutcome> {
   const level = tierToDbLevel(entitlement.tier);
 
   // On a successful grant, clear any stale payment_failed_at stamp.
@@ -644,8 +748,13 @@ async function syncOrgEntitlement(
              stripe_subscription_id     = COALESCE($4, stripe_subscription_id),
              stripe_subscription_tier   = COALESCE($5, stripe_subscription_tier),
              stripe_subscription_status = COALESCE($6, stripe_subscription_status),
-             payment_failed_at          = CASE WHEN $7 THEN NULL ELSE payment_failed_at END
+             payment_failed_at          = CASE WHEN $7 THEN NULL ELSE payment_failed_at END,
+             -- The watermark advances with the write it authorises, in the
+             -- same statement as the WHERE clause that checks it (D5).
+             stripe_billing_event_at    = to_timestamp($8),
+             stripe_billing_event_id    = $9
        WHERE id = $2
+         AND ${orderingPredicate(8, 9)}
       `,
       [
         level,
@@ -655,6 +764,8 @@ async function syncOrgEntitlement(
         rawSubscriptionTier,
         subscriptionStatus,
         clearPaymentFailed,
+        ordering.createdAt,
+        ordering.eventId,
       ]
     );
 
@@ -663,21 +774,40 @@ async function syncOrgEntitlement(
     const rows = updateResult.rowCount ?? 0;
 
     if (rows === 0) {
+      // rowCount 0 is now ambiguous: the row may not exist, or the ordering
+      // predicate may have suppressed a stale/duplicate event. Classify it, so
+      // "we deliberately ignored an out-of-order event" never reads in the logs
+      // as "the org is missing".
+      const outcome = await classifySuppression(orgId, ordering);
       logger.warn(
-        { event: "stripe_webhook_db_sync_no_match", orgId, apiKeyId, level },
-        "stripeWebhook: organizations row not found — entitlement not updated"
+        {
+          event:
+            outcome === "not_found"
+              ? "stripe_webhook_db_sync_no_match"
+              : "stripe_webhook_event_suppressed",
+          reason: outcome,
+          orgId,
+          apiKeyId,
+          level,
+          eventId: ordering.eventId,
+          eventCreated: ordering.createdAt,
+        },
+        outcome === "not_found"
+          ? "stripeWebhook: organizations row not found — entitlement not updated"
+          : "stripeWebhook: out-of-order or duplicate billing event — entitlement NOT changed"
       );
-    } else {
-      logger.info(
-        { event: "stripe_webhook_db_sync_ok", orgId, apiKeyId, level, customerId },
-        "stripeWebhook: organizations.entitlement_level updated"
-      );
+      return outcome;
     }
+
+    logger.info(
+      { event: "stripe_webhook_db_sync_ok", orgId, apiKeyId, level, customerId },
+      "stripeWebhook: organizations.entitlement_level updated"
+    );
 
     // Paid-tier upgrade: auto-subscribe the org's primary (oldest) user to the
     // Intelligence Brief if the org has no active subscriber yet. Best-effort —
     // failures are logged but never bubble up to the webhook handler.
-    if (rows > 0 && (level === "professional" || level === "premium")) {
+    if (level === "professional" || level === "premium") {
       try {
         const subscribeResult = await pg.query(
           `
@@ -717,6 +847,7 @@ async function syncOrgEntitlement(
         );
       }
     }
+    return "applied";
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -730,6 +861,11 @@ async function syncOrgEntitlement(
       { event: "stripe_webhook_db_sync_failed", err },
       "stripeWebhook: failed to sync entitlement to DB (non-fatal)"
     );
+    // The watermark did NOT advance — the whole statement rolled back — so the
+    // event stays replayable. Stripe still gets its 200 (a non-200 here would
+    // have it retry the entire event, including the outbound Stripe calls
+    // elsewhere in this handler), but nothing is recorded as applied.
+    return "error";
   } finally {
     client.release();
   }
@@ -811,22 +947,65 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
     return;
   }
 
+  const ordering = orderingOf(event);
+  const invoiceSubId = extractInvoiceSubscriptionId(obj);
+
   try {
+    // Two guards, both in the WHERE clause so the check and the write stay one
+    // atomic statement:
+    //
+    //   D6 — SUBSCRIPTION GUARD. This used to match on stripe_customer_id
+    //   alone, so ANY failed invoice for the customer stamped the org as
+    //   delinquent, including one belonging to a superseded subscription left
+    //   behind by a tier change. The guard is written to bite only when both
+    //   sides are known: an org with no stored subscription id, or an invoice
+    //   with no subscription on it, still stamps exactly as before.
+    //
+    //   D5 — ORDERING. A stale payment failure must not re-stamp an org that
+    //   has already recovered under a newer event.
     const result = await pg.query(
       `
       UPDATE organizations
-      SET payment_failed_at = NOW()
-      WHERE stripe_customer_id = $1
+         SET payment_failed_at       = NOW(),
+             stripe_billing_event_at = to_timestamp($2),
+             stripe_billing_event_id = $3
+       WHERE stripe_customer_id = $1
+         AND ($4::text IS NULL
+              OR stripe_subscription_id IS NULL
+              OR stripe_subscription_id = $4)
+         AND ${orderingPredicate(2, 3)}
       `,
-      [customerId]
+      [customerId, ordering.createdAt, ordering.eventId, invoiceSubId]
     );
+
+    const rowsUpdated = result.rowCount ?? 0;
+
+    if (rowsUpdated === 0) {
+      // No row matched. Either the customer is unknown to us, the invoice is
+      // for a superseded subscription, or the event lost the ordering check.
+      // Whichever it is, NOT stamping is the correct outcome — but it must be
+      // visible, because "we ignored a payment failure" is not a quiet fact.
+      logger.warn(
+        {
+          event: "stripe_payment_failed_not_stamped",
+          customerId,
+          invoiceId: obj?.id ?? null,
+          invoiceSubId,
+          eventId: ordering.eventId,
+          eventCreated: ordering.createdAt
+        },
+        "invoice.payment_failed: no row stamped — unknown customer, superseded subscription, or out-of-order event"
+      );
+      return;
+    }
 
     logger.warn(
       {
         event: "stripe_payment_failed",
         customerId,
-        rowsUpdated: result.rowCount ?? 0,
+        rowsUpdated,
         invoiceId: obj?.id ?? null,
+        invoiceSubId,
         amountDue: obj?.amount_due ?? null
       },
       "invoice.payment_failed: payment_failed_at stamped — access NOT revoked"
@@ -997,22 +1176,36 @@ async function handlePaymentRecovered(
 
   const entitlement: EntitlementRecord = { tier, activeSubscription: true };
 
-  if (apiKeyId) {
-    await setEntitlementInRedis(apiKeyId, entitlement);
-  }
-
   // subscriptionStatus is passed as null on purpose: a paid invoice does not
   // carry subscription status, and syncOrgEntitlement COALESCEs, so the stored
   // status is left for the accompanying customer.subscription.updated to set.
-  await syncOrgEntitlement(
+  const outcome = await syncOrgEntitlement(
     orgId,
     entitlement,
     customerId,
     invoiceSubId,
     priceRawTier,
     null,
-    apiKeyId
+    apiKeyId,
+    orderingOf(event)
   );
+
+  if (outcome !== "applied") {
+    // A recovery that loses the ordering check is NOT silently swallowed: the
+    // customer is still delinquent as far as our state is concerned, and that
+    // has to be visible. The stamp is deliberately left in place.
+    logger.warn(
+      { event: "stripe_payment_recovered_not_applied", orgId, invoiceId, outcome },
+      "invoice paid: restore was not applied — see stripe_webhook_event_suppressed"
+    );
+    return { restored: false, reason: outcome };
+  }
+
+  // Mirror to Redis only after the authoritative write survived the ordering
+  // check — same reasoning as the grant path.
+  if (apiKeyId) {
+    await setEntitlementInRedis(apiKeyId, entitlement);
+  }
 
   logger.info(
     {
@@ -1293,18 +1486,30 @@ export async function stripeWebhook(
     // When the event carried no valid api_key_id (resolved via customer-id),
     // there is no key to write; skip the cache and let the authoritative
     // Postgres sync below stand.
-    if (apiKeyId) {
-      await setEntitlementInRedis(apiKeyId, entitlement);
-    }
-    await syncOrgEntitlement(
+    const syncOutcome = await syncOrgEntitlement(
       orgId,
       entitlement,
       customerId,
       subscriptionId,
       rawSubscriptionTier,
       subscriptionStatus,
-      apiKeyId
+      apiKeyId,
+      orderingOf(event)
     );
+
+    if (syncOutcome === "stale" || syncOutcome === "duplicate") {
+      respond({ received: true, updated: false, suppressed: syncOutcome });
+      return;
+    }
+
+    // The Redis mirror is written only AFTER the authoritative Postgres write
+    // succeeds. It used to be written first, which meant a suppressed or failed
+    // sync still left a stale tier in the cache — the cache disagreeing with
+    // the source of truth in exactly the situations where ordering was already
+    // in doubt.
+    if (apiKeyId) {
+      await setEntitlementInRedis(apiKeyId, entitlement);
+    }
 
     // Record the org's one-time Platform trial the moment it actually begins.
     // Set at trial START (not at checkout creation) so an abandoned checkout

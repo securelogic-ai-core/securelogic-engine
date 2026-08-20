@@ -27,91 +27,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /* ── Simulated organizations row ─────────────────────────────────────────── */
 
-type OrgRow = {
-  id: string;
-  entitlement_level: string | null;
-  plan: string | null;
-  payment_failed_at: string | null;
-  stripe_customer_id: string | null;
-  stripe_subscription_id: string | null;
-  stripe_subscription_status: string | null;
-  stripe_subscription_tier: string | null;
-  max_monitored_entities: number | null;
-  max_members: number | null;
-};
+// The store and the SQL mock live in support/stripeWebhookHarness.ts so this
+// file and the ordering suite (PR-D) share ONE simulation of the real
+// statements — including the ordering predicate — rather than two that can
+// drift apart.
+import { ORG, anOrg } from "./support/stripeWebhookHarness.js";
 
-const ORG: { row: OrgRow } = { row: null as unknown as OrgRow };
-
-function anOrg(over: Partial<OrgRow> = {}): OrgRow {
+vi.mock("../infra/postgres.js", async () => {
+  const { queryMock } = await import("./support/stripeWebhookHarness.js");
   return {
-    id: "org-1",
-    entitlement_level: "premium",
-    plan: "premium",
-    payment_failed_at: null,
-    stripe_customer_id: "cus_1",
-    stripe_subscription_id: "sub_1",
-    stripe_subscription_status: "active",
-    stripe_subscription_tier: "platform",
-    max_monitored_entities: 50,
-    max_members: 10,
-    ...over,
+    pg: {
+      query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
+      connect: async () => ({
+        query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
+        release: () => {},
+      }),
+    },
   };
-}
-
-/**
- * The mock speaks the same SQL the handler writes. The UPDATE arm mirrors the
- * real statement's semantics exactly: COALESCE on the Stripe mirror columns,
- * and payment_failed_at cleared ONLY when the grant is for an active
- * subscription ($7). Getting that arm wrong would make the whole file lie.
- */
-const queryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
-  const org = ORG.row;
-
-  if (/SELECT id\s+FROM organizations\s+WHERE stripe_customer_id/i.test(sql)) {
-    return org && org.stripe_customer_id === params[0]
-      ? { rows: [{ id: org.id }], rowCount: 1 }
-      : { rows: [], rowCount: 0 };
-  }
-
-  if (/FROM organizations WHERE id = \$1/i.test(sql) && /^\s*SELECT/i.test(sql)) {
-    return org && org.id === params[0] ? { rows: [org], rowCount: 1 } : { rows: [], rowCount: 0 };
-  }
-
-  if (/UPDATE organizations/i.test(sql) && /SET entitlement_level/i.test(sql)) {
-    const [level, orgId, customerId, subId, rawTier, status, clearFailed] = params as [
-      string, string, string | null, string | null, string | null, string | null, boolean
-    ];
-    if (!org || org.id !== orgId) return { rows: [], rowCount: 0 };
-    org.entitlement_level = level;
-    org.plan = level;
-    org.stripe_customer_id = org.stripe_customer_id ?? customerId;
-    org.stripe_subscription_id = subId ?? org.stripe_subscription_id;
-    org.stripe_subscription_tier = rawTier ?? org.stripe_subscription_tier;
-    org.stripe_subscription_status = status ?? org.stripe_subscription_status;
-    if (clearFailed) org.payment_failed_at = null;
-    return { rows: [], rowCount: 1 };
-  }
-
-  if (/UPDATE organizations/i.test(sql) && /SET payment_failed_at = NOW\(\)/i.test(sql)) {
-    if (!org || org.stripe_customer_id !== params[0]) return { rows: [], rowCount: 0 };
-    org.payment_failed_at = "2026-08-20T00:00:00.000Z";
-    return { rows: [], rowCount: 1 };
-  }
-
-  return { rows: [], rowCount: 0 };
 });
-
-const fakeClient = {
-  query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
-  release: vi.fn(),
-};
-
-vi.mock("../infra/postgres.js", () => ({
-  pg: {
-    query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
-    connect: async () => fakeClient,
-  },
-}));
 
 vi.mock("../infra/logger.js", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -320,7 +253,13 @@ describe("PR-C — invoice.paid converges the full failure → recovery sequence
 
     await deliver({ ...invoicePaidLegacyShape(), type: "invoice.payment_succeeded" });
 
-    expect(ORG.row).toEqual(afterFirst);
+    // BILLING STATE is identical. The ordering watermark is metadata about
+    // which event was applied last, not billing state, and it legitimately
+    // advances — the two events are different events for the same payment.
+    const billingState = ({ stripe_billing_event_at, stripe_billing_event_id, ...rest }:
+      typeof ORG.row) => rest;
+    expect(billingState(ORG.row)).toEqual(billingState(afterFirst));
+    expect(ORG.row.stripe_billing_event_id).not.toBe(afterFirst.stripe_billing_event_id);
     // Counted once: the second event observes an already-healthy org.
     const recovered = (logger.info as ReturnType<typeof vi.fn>).mock.calls
       .map(([ctx]) => ctx as { event?: string; wasDelinquent?: boolean })
