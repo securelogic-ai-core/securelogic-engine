@@ -46,6 +46,7 @@ import intelligenceRouter from "./intelligence.js";
 import assessRouter from "./assess.js";
 import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
+import findingRiskLinksRouter from "./findingRiskLinks.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
@@ -478,6 +479,10 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // /findings/export.csv is otherwise captured by GET /findings/:id, which
   // rejects "export.csv" as a non-UUID id (staging EXP-1).
   router.use("/api", findingsExportRouter);
+  // MUST mount before findingsRouter and risksRouter: both own /findings/:id
+  // and /risks/:id, and a parameterised route registered first would capture
+  // /findings/:id/risk-links as an id of "risk-links".
+  router.use("/api", findingRiskLinksRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);

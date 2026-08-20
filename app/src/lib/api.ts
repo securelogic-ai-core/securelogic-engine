@@ -7819,3 +7819,72 @@ export async function startVendorEngagementMonitoring(
     return { failure: { error: "monitoring_start_failed" } };
   }
 }
+
+
+/* ── Findings ↔ Risk Register (SL-RISK-LINK) ─────────────────────────────── */
+
+export interface FindingRiskLink {
+  risk_id: string;
+  link_type: "linked" | "promoted";
+  note: string | null;
+  created_at: string;
+  created_by_user_id: string | null;
+  risk_title: string;
+  risk_domain: string;
+  risk_rating: string;
+  risk_status: string;
+}
+
+export interface RiskSupportingFinding {
+  finding_id: string;
+  link_type: "linked" | "promoted";
+  note: string | null;
+  created_at: string;
+  finding_title: string;
+  finding_severity: string;
+  finding_status: string;
+  finding_source_type: string;
+  finding_due_date: string | null;
+}
+
+/**
+ * The register entries this finding supports. An EMPTY list is the normal,
+ * correct answer for most findings — standalone is the default and is never
+ * changed by automation — so callers must render "not linked" as a state, not
+ * as an absence of data.
+ */
+export async function getFindingRiskLinks(
+  token: string,
+  findingId: string
+): Promise<FindingRiskLink[]> {
+  try {
+    const res = await engineFetch(`/api/findings/${findingId}/risk-links`, token);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { links?: FindingRiskLink[] };
+    return body.links ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The findings that EVIDENCE this register entry.
+ *
+ * Distinct from findings raised FROM a risk (`source_type='risk'`), which the
+ * risk page already shows. One is "this risk produced work"; this is "this is
+ * why we believe the risk is real". Conflating them would let a register entry
+ * look evidenced by findings it generated itself.
+ */
+export async function getRiskSupportingFindings(
+  token: string,
+  riskId: string
+): Promise<RiskSupportingFinding[]> {
+  try {
+    const res = await engineFetch(`/api/risks/${riskId}/findings`, token);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { findings?: RiskSupportingFinding[] };
+    return body.findings ?? [];
+  } catch {
+    return [];
+  }
+}

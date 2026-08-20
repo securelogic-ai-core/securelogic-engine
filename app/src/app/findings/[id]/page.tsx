@@ -9,11 +9,15 @@ import {
   getRiskAcceptancesForFinding,
   type Finding,
   type Action,
+  getFindingRiskLinks,
+  getRisks,
+  getAuthMe,
 } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
+import { RiskRegisterPanel } from "./RiskRegisterPanel";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -441,13 +445,21 @@ export default async function FindingDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData, teamData] = await Promise.all([
+  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe] = await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
     // Org members, so remediation work can be ASSIGNED from the finding you are
     // looking at. Read-only and best-effort: if the team endpoint is unavailable the
     // owner controls simply do not render, and the tab degrades to what it was.
     getTeamMembers(token),
+    // The register entries this finding already supports. An empty list is the
+    // NORMAL answer — standalone is the default — so the panel renders it as a
+    // decision not yet taken, not as missing data.
+    getFindingRiskLinks(token, id),
+    // Candidates to link to. Bounded: the picker is for attaching a finding to
+    // a risk someone already accepted into the register, not for browsing it.
+    getRisks(token, { limit: 100, active: true }),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
   ]);
 
   if (!findingData) redirect("/findings");
@@ -571,6 +583,18 @@ export default async function FindingDetailPage({
               </div>
             </div>
           )}
+
+          {/* Risk Register — deliberately ABOVE remediation. The first question
+              about a finding is whether the organization is carrying it as a
+              risk; what work it spawned is the second. */}
+          <RiskRegisterPanel
+            findingId={finding.id}
+            links={riskLinks}
+            availableRisks={(registerRisks?.risks ?? []).map((r) => ({
+              id: r.id, title: r.title, risk_rating: r.risk_rating ?? "Unrated",
+            }))}
+            canDecide={(authMe?.role ?? "viewer") !== "viewer"}
+          />
 
           {/* Remediation Actions */}
           <RemediationActionsSection finding={finding} actions={actions} />
