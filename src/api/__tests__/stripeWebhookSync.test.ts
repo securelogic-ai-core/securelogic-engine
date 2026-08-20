@@ -75,20 +75,38 @@ describe("stripeWebhook.ts: org resolution", () => {
 describe("stripeWebhook.ts: idempotency gate (C3)", () => {
   it("calls claimWebhookEvent before any downstream side-effect call", () => {
     // The gate must sit before downstream entitlement writes so a duplicate
-    // event_id short-circuits without re-running side effects. UPDATE strings
-    // inside helper-function bodies appear earlier in source than the main
-    // handler, so the right anchors are the CALL sites of those helpers.
-    const claimCallIdx = SOURCE.indexOf('claimWebhookEvent("stripe"');
-    const redisCallIdx = SOURCE.indexOf("await setEntitlementInRedis(apiKeyId");
-    const syncCallIdx = SOURCE.indexOf("await syncOrgEntitlement(");
-    const paymentFailedCallIdx = SOURCE.indexOf("await handlePaymentFailed(");
+    // event_id short-circuits without re-running side effects.
+    //
+    // Anchors are the CALL sites, and the search window is the MAIN HANDLER
+    // BODY only. Both matter: helper bodies appear earlier in source than the
+    // handler that calls them, so searching the whole file compares a helper's
+    // internals against the handler's control flow and reports a false
+    // ordering violation — which is exactly what happened when
+    // handlePaymentRecovered (SL-BILL-1 PR-C) added a setEntitlementInRedis
+    // call inside a helper defined above the handler. Nothing about the
+    // runtime order changed; the anchor was wrong.
+    //
+    // The runtime invariant is proven behaviourally in
+    // stripeRecoveryConvergence.test.ts ("a duplicate event id is still
+    // short-circuited before any recovery write").
+    const handlerIdx = SOURCE.indexOf("export async function stripeWebhook(");
+    expect(handlerIdx).toBeGreaterThan(-1);
+    const MAIN = SOURCE.slice(handlerIdx);
+
+    const claimCallIdx = MAIN.indexOf('claimWebhookEvent("stripe"');
+    const redisCallIdx = MAIN.indexOf("await setEntitlementInRedis(apiKeyId");
+    const syncCallIdx = MAIN.indexOf("await syncOrgEntitlement(");
+    const paymentFailedCallIdx = MAIN.indexOf("await handlePaymentFailed(");
+    const paymentRecoveredCallIdx = MAIN.indexOf("await handlePaymentRecovered(");
     expect(claimCallIdx).toBeGreaterThan(-1);
     expect(redisCallIdx).toBeGreaterThan(-1);
     expect(syncCallIdx).toBeGreaterThan(-1);
     expect(paymentFailedCallIdx).toBeGreaterThan(-1);
+    expect(paymentRecoveredCallIdx).toBeGreaterThan(-1);
     expect(claimCallIdx).toBeLessThan(redisCallIdx);
     expect(claimCallIdx).toBeLessThan(syncCallIdx);
     expect(claimCallIdx).toBeLessThan(paymentFailedCallIdx);
+    expect(claimCallIdx).toBeLessThan(paymentRecoveredCallIdx);
   });
 
   it("short-circuits the duplicate path with idempotent_replay:true (200)", () => {
