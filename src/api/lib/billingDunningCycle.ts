@@ -132,11 +132,16 @@ export async function claimDunningStage(
 export async function markCyclesRecovered(organizationId: string): Promise<string[]> {
   try {
     const result = await pgElevated.query<{ id: string }>(
+      // Deliberately NOT gated on lapsed_at IS NULL. A cycle that reached
+      // lockout and THEN recovered is a recovered cycle — that is the entire
+      // point of dunning, and excluding it would make the recovery rate
+      // under-count exactly the saves that mattered most. lapsed_at is left in
+      // place beside recovered_at, so the pair distinguishes "recovered before
+      // lockout" from "recovered after lockout".
       `UPDATE billing_dunning_cycles
           SET recovered_at = NOW()
         WHERE organization_id = $1
           AND recovered_at IS NULL
-          AND lapsed_at IS NULL
         RETURNING id`,
       [organizationId]
     );
@@ -170,5 +175,34 @@ export async function markCycleLapsed(cycleId: string): Promise<boolean> {
       "billingDunningCycle: could not mark cycle lapsed (non-fatal)"
     );
     return false;
+  }
+}
+
+/**
+ * Close every open cycle for an org as lapsed — access was actually withdrawn.
+ * Returns the ids closed, so the caller can emit one telemetry event per cycle
+ * rather than one per webhook.
+ *
+ * `recovered_at IS NULL` guard: a cycle that already recovered is never
+ * retroactively lapsed by a late terminal event.
+ */
+export async function markCyclesLapsed(organizationId: string): Promise<string[]> {
+  try {
+    const result = await pgElevated.query<{ id: string }>(
+      `UPDATE billing_dunning_cycles
+          SET lapsed_at = NOW()
+        WHERE organization_id = $1
+          AND lapsed_at IS NULL
+          AND recovered_at IS NULL
+        RETURNING id`,
+      [organizationId]
+    );
+    return result.rows.map((r) => r.id);
+  } catch (err) {
+    logger.error(
+      { event: "billing_dunning_cycles_lapse_failed", orgId: organizationId, err },
+      "billingDunningCycle: could not mark cycles lapsed (non-fatal)"
+    );
+    return [];
   }
 }

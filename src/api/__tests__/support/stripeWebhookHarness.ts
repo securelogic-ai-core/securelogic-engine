@@ -81,6 +81,24 @@ export const queryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
       : { rows: [], rowCount: 0 };
   }
 
+  if (/SELECT name FROM organizations WHERE id/i.test(sql)) {
+    return org && org.id === params[0]
+      ? { rows: [{ name: "Test Org" }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
+  }
+
+  // Verified admins — the dunning email's recipients. Two of them, so a test
+  // that asserts "one email" cannot pass by accident on a single-recipient org.
+  if (/SELECT email, name FROM users/i.test(sql)) {
+    return {
+      rows: [
+        { email: "admin1@example.com", name: "Admin One" },
+        { email: "admin2@example.com", name: "Admin Two" },
+      ],
+      rowCount: 2,
+    };
+  }
+
   if (/^\s*SELECT/i.test(sql) && /FROM organizations WHERE id = \$1/i.test(sql)) {
     return org && org.id === params[0] ? { rows: [org], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
@@ -235,21 +253,29 @@ export const elevatedQueryMock = vi.fn(async (sql: string, params: unknown[] = [
 
   if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET recovered_at/i.test(sql)) {
     const [orgId] = params as [string];
+    // Matches the statement: NOT gated on lapsed_at, because a cycle that
+    // reached lockout and then recovered is a recovered cycle.
     const hit = CYCLES.rows.filter(
-      (r) => r.organization_id === orgId && r.recovered_at === null && r.lapsed_at === null
+      (r) => r.organization_id === orgId && r.recovered_at === null
     );
     hit.forEach((r) => { r.recovered_at = NOW_ISO; });
     return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };
   }
 
   if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET lapsed_at/i.test(sql)) {
-    const [cycleId] = params as [string];
-    const row = CYCLES.rows.find((r) => r.id === cycleId);
-    if (!row || row.lapsed_at !== null || row.recovered_at !== null) {
-      return { rows: [], rowCount: 0 };
-    }
-    row.lapsed_at = NOW_ISO;
-    return { rows: [{ id: row.id }], rowCount: 1 };
+    // Two callers, two predicates: markCycleLapsed(id) closes one cycle,
+    // markCyclesLapsed(orgId) closes every open cycle for an org.
+    const byOrg = /WHERE organization_id/i.test(sql);
+    const [key] = params as [string];
+    const hit = byOrg
+      ? CYCLES.rows.filter(
+          (r) => r.organization_id === key && r.lapsed_at === null && r.recovered_at === null
+        )
+      : CYCLES.rows.filter(
+          (r) => r.id === key && r.lapsed_at === null && r.recovered_at === null
+        );
+    hit.forEach((r) => { r.lapsed_at = NOW_ISO; });
+    return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };
   }
 
   return queryMock(sql, params);
