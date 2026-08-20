@@ -2,33 +2,27 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import {
+  vendorAssuranceUploadErrorMessage,
+  isStorageFailure,
+} from "@/lib/evidenceErrorCopy";
 
-const ENGINE_ERROR_LABELS: Record<string, string> = {
-  no_file_uploaded:           "Choose a PDF file before submitting.",
-  unsupported_file_type:      "Only PDF files are accepted.",
-  file_too_large:             "PDF exceeds the 25 MB upload limit.",
-  vendor_not_found:           "Vendor was not found for this organization.",
-  vendor_id_must_be_uuid:     "Vendor ID is invalid.",
-  invalid_document_type_hint: "Document type is not a recognized SOC report type.",
-  original_filename_required: "File name could not be read — re-select the PDF.",
-  blob_put_failed:            "Storage upload failed. Try again in a moment.",
-  upload_failed:              "Upload failed. Please try again.",
-  // Proxy-level failures (see app/src/app/api/vendor-assurance/upload/route.ts):
-  form_data_invalid:          "Upload was rejected before reaching the engine (multipart body could not be read).",
-  unauthenticated:            "Session expired. Please sign in and retry.",
-  // The vendor-assurance feature flag middleware returns {error:"not_found"}
-  // when SECURELOGIC_VENDOR_ASSURANCE_ENABLED is not "true". Treat that case
-  // distinctly so it isn't confused with a generic upload failure.
-  not_found:                  "Vendor-assurance is not available on this environment yet.",
-};
-
+/**
+ * SL-EVID-1: the label table moved to lib/evidenceErrorCopy so every upload
+ * surface shares one vocabulary — and so `storage_unavailable`, which this
+ * form had no entry for, stops rendering as
+ * "Upload failed (storage_unavailable). [HTTP 503]".
+ */
 function humanizeError(code: string): string {
-  return ENGINE_ERROR_LABELS[code] ?? `Upload failed (${code}).`;
+  return vendorAssuranceUploadErrorMessage(code) ?? `Upload failed (${code}).`;
 }
 
 function composeError(code: string, detail: string | null, status: number): string {
   const base = humanizeError(code);
-  const trimmedDetail = detail && detail.trim().length > 0 ? detail.trim() : null;
+  // A storage fault's detail is about our infrastructure, never about the
+  // customer's file, so it is dropped rather than appended (SL-EVID-1).
+  const trimmedDetail =
+    !isStorageFailure(code) && detail && detail.trim().length > 0 ? detail.trim() : null;
   // Surface the engine's `detail` field when it adds information not already
   // implied by the code (e.g. invalid_document_type_hint enumerates the
   // allowed values). Suppress when the code label already covers it.
@@ -37,7 +31,7 @@ function composeError(code: string, detail: string | null, status: number): stri
   }
   // For codes we don't have a friendly label for, append the HTTP status so
   // operators can distinguish auth vs route vs feature-flag failures.
-  if (!ENGINE_ERROR_LABELS[code]) {
+  if (vendorAssuranceUploadErrorMessage(code) === null) {
     return `${base} [HTTP ${status}]`;
   }
   return base;

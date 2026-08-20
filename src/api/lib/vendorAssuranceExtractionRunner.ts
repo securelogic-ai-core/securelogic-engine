@@ -26,6 +26,10 @@ import { getVendorAssurancePdfStream } from "./vendorAssuranceStorage.js";
 import { extractPdfText } from "./vendorAssurancePdfExtractor.js";
 import { runSocExtraction, RAW_EXCERPT_BYTES, type SocExtractionResult } from "./claudeSocExtractor.js";
 import { refreshCuecMappingsForDocument } from "./vendorAssuranceCuecMatcher.js";
+import {
+  classifyStorageFailure,
+  STORAGE_FAILURE_DETAIL,
+} from "./blobStorageReadiness.js";
 
 async function streamToBuffer(body: unknown): Promise<Buffer> {
   if (body == null) throw new Error("empty body");
@@ -205,14 +209,32 @@ export async function runExtraction(args: {
       payload: { document_type_hint: documentTypeHint }
     });
 
-    // 1. Pull the PDF bytes from R2.
+    // 1. Pull the PDF bytes from R2. SL-EVID-1: this happens BEFORE the parser
+    //    runs, so a failure here says nothing about the document. It is
+    //    recorded as a storage fault, with a detail the customer can act on and
+    //    the SDK's env-var wording left in the log where it belongs.
     let pdfBytes: Buffer;
     try {
       const obj = await getVendorAssurancePdfStream({ organizationId, documentId });
       pdfBytes = await streamToBuffer(obj.Body);
     } catch (err) {
-      const detail = (err as Error)?.message ?? "blob fetch failed";
-      await markFailed(documentId, organizationId, "pdf_unparseable", `blob fetch: ${detail}`);
+      const verdict = classifyStorageFailure(err);
+      logger.error(
+        {
+          event: "vendor_assurance_blob_fetch_failed",
+          organizationId,
+          documentId,
+          storage_failure_kind: verdict.kind,
+          err,
+        },
+        "Vendor-assurance PDF could not be read back from object storage",
+      );
+      await markFailed(
+        documentId,
+        organizationId,
+        verdict.documentErrorCode,
+        STORAGE_FAILURE_DETAIL[verdict.documentErrorCode],
+      );
       return;
     }
 

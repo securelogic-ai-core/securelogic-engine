@@ -158,7 +158,6 @@ import {
   createOrgRateLimiter
 } from "../middleware/apiRateLimiter.js";
 
-import { pg } from "../infra/postgres.js";
 import { requireAdminNetwork } from "../middleware/requireAdminNetwork.js";
 import { adminLockout } from "../middleware/adminLockout.js";
 import { requireAdminKey } from "../middleware/requireAdminKey.js";
@@ -178,6 +177,8 @@ type RoutesOptions = {
   publicApiDisabled: boolean;
 };
 
+import { handleHealth } from "./healthHandler.js";
+
 export function buildRoutes(opts: RoutesOptions): Router {
   const router = Router();
 
@@ -185,22 +186,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // HEALTH + VERSION
   // =========================================================
 
-  router.get("/health", async (_req: Request, res: Response) => {
-    try {
-      await pg.query("SELECT 1");
-      res.status(200).json({
-        status: "ok",
-        db: "connected",
-        timestamp: new Date().toISOString(),
-      });
-    } catch {
-      res.status(503).json({
-        status: "degraded",
-        db: "unreachable",
-        timestamp: new Date().toISOString(),
-      });
-    }
-  });
+  // Handler extracted to routes/healthHandler.ts (SL-EVID-1) so the DB + object
+  // storage readiness reporting is unit-testable without the whole route tree.
+  router.get("/health", handleHealth);
 
   router.all("/health", (req: Request, res: Response) => {
     res.status(405).json({

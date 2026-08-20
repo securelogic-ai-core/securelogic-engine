@@ -13,6 +13,10 @@ import {
   type VendorAssuranceCuecsResponse,
 } from "@/lib/api";
 import { groupExtractedFields } from "@/lib/vendorAssurance/fieldGroups";
+import {
+  vendorDocumentFailureMessage,
+  isStorageFailure,
+} from "@/lib/evidenceErrorCopy";
 import PdfPreviewLoader from "@/components/vendorAssurance/PdfPreviewLoader";
 import DocumentActions from "@/components/vendorAssurance/DocumentActions";
 import CoverSheetSection from "@/components/vendorAssurance/CoverSheetSection";
@@ -20,14 +24,6 @@ import CuecSection from "@/components/vendorAssurance/CuecSection";
 import ExceptionSection from "@/components/vendorAssurance/ExceptionSection";
 
 const PAGE_BG = "#020617";
-
-const ERROR_MESSAGES: Record<string, string> = {
-  pdf_image_only:   "The uploaded PDF appears to be image-only or scanned. Phase 1 does not perform OCR; please upload a text-bearing PDF.",
-  pdf_unparseable:  "The PDF could not be parsed (it may be corrupt, password-protected, or in an unsupported format).",
-  llm_unavailable:  "The extraction model is not configured for this environment (ANTHROPIC_API_KEY absent).",
-  llm_invalid_json: "The extraction model returned a response that did not match the expected schema. Re-upload to retry.",
-  llm_failed:       "The extraction model call failed. Re-upload to retry.",
-};
 
 function indexByField<T extends { field_name: string }>(rows: T[]): Record<string, T> {
   const out: Record<string, T> = {};
@@ -148,9 +144,19 @@ export default async function VendorAssuranceDocumentPage({
       <div style={{ maxWidth: 1500, margin: "0 auto", padding: "24px 32px 64px" }}>
         {isFailed && (
           <section style={{ marginBottom: 20, padding: 16, border: "1px solid #b91c1c", borderRadius: 8, background: "rgba(127,29,29,0.15)" }}>
-            <strong style={{ color: "#fca5a5" }}>Extraction failed{document.processing_error_code ? `: ${document.processing_error_code}` : ""}</strong>
+            {/* SL-EVID-1: neither the raw code nor the stored detail is rendered.
+                The heading no longer says "Extraction failed" for a storage
+                fault — nothing was extracted because nothing was read. */}
+            <strong style={{ color: "#fca5a5" }}>
+              {isStorageFailure(document.processing_error_code)
+                ? "Document not saved"
+                : "Extraction failed"}
+            </strong>
             <p style={{ marginTop: 6, color: "#fca5a5", fontSize: 13 }}>
-              {(document.processing_error_code && ERROR_MESSAGES[document.processing_error_code]) ?? document.processing_error_detail ?? "No further detail recorded."}
+              {vendorDocumentFailureMessage(
+                document.processing_error_code,
+                document.processing_error_detail,
+              )}
             </p>
           </section>
         )}

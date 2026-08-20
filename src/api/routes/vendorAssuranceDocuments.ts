@@ -36,6 +36,10 @@ import multer from "multer";
 import { createHash } from "node:crypto";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import {
+  classifyStorageFailure,
+  STORAGE_FAILURE_DETAIL,
+} from "../lib/blobStorageReadiness.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -253,9 +257,10 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
   const sha256 = createHash("sha256").update(req.file.buffer).digest("hex");
 
   // Insert the document row first to obtain an id; we then stream to R2 with
-  // the id baked into the storage_key. If the R2 put fails, we mark the row
-  // as extraction_failed:pdf_unparseable and return 500 — the caller should
-  // re-upload.
+  // the id baked into the storage_key. If the R2 put fails, the row is marked
+  // extraction_failed with a STORAGE error code (SL-EVID-1) — never
+  // `pdf_unparseable`, which would tell the customer their document was
+  // corrupt when the document was never read.
   const insertResult = await withTenant(organizationId, () =>
     pg.query<{ id: string; created_at: string }>(
     `INSERT INTO vendor_assurance_documents (
@@ -290,23 +295,41 @@ export async function uploadVendorAssuranceDocument(req: Request, res: Response)
     });
     storageKey = putResult.key;
   } catch (err) {
-    // Rewind: mark the row failed so the operator/UI can see the cause.
+    // SL-EVID-1: classify before recording. The bytes never reached storage, so
+    // nothing here is evidence about the PDF — the failure belongs to the
+    // storage layer and is recorded as such.
+    const verdict = classifyStorageFailure(err);
+
+    // Rewind: mark the row failed so the operator/UI can see the cause. The
+    // detail is customer-visible on the document page, so it carries the
+    // classification, never the SDK message (which names R2 env vars).
     await withTenant(organizationId, () =>
       pg.query(
         `UPDATE vendor_assurance_documents
             SET processing_status = 'extraction_failed',
-                processing_error_code = 'pdf_unparseable',
+                processing_error_code = $4,
                 processing_error_detail = $3,
                 updated_at = NOW()
           WHERE id = $1 AND organization_id = $2`,
-        [documentId, organizationId, `blob put: ${(err as Error)?.message ?? "failed"}`.slice(0, 4000)]
+        [
+          documentId,
+          organizationId,
+          STORAGE_FAILURE_DETAIL[verdict.documentErrorCode],
+          verdict.documentErrorCode,
+        ]
       )
     );
     logger.error(
-      { event: "vendor_assurance_blob_put_failed", organizationId, documentId, err },
-      "Vendor-assurance PDF upload to R2 failed"
+      {
+        event: "vendor_assurance_blob_put_failed",
+        organizationId,
+        documentId,
+        storage_failure_kind: verdict.kind,
+        err,
+      },
+      "Vendor-assurance PDF upload to object storage failed"
     );
-    res.status(500).json({ error: "blob_put_failed" });
+    res.status(verdict.httpStatus).json({ error: verdict.apiError });
     return;
   }
 

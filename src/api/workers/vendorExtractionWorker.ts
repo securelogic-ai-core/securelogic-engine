@@ -37,7 +37,8 @@
  *  • TERMINAL input faults — `pdf_image_only`, `llm_invalid_json` — throw a
  *    TerminalExtractionError (a NonRetryableJobError) → job `failed`, no retry,
  *    document marked `extraction_failed` with its typed code for the UI.
- *  • TRANSIENT faults — worker restart / redeploy reclaim, R2 blip,
+ *  • TRANSIENT faults — worker restart / redeploy reclaim, object-storage
+ *    faults (`storage_unavailable`/`storage_error`, SL-EVID-1),
  *    `llm_unavailable`/`llm_failed`, `pdf_unparseable`, any unexpected error —
  *    requeue with exponential backoff, then `dead_lettered` at max attempts. The
  *    document stays `extracting` while retrying and only flips to
@@ -64,6 +65,10 @@ import {
   classifyExtractionError,
   decideFailureState,
 } from "../lib/vendorExtractionWorkerPolicy.js";
+import {
+  classifyStorageFailure,
+  STORAGE_FAILURE_DETAIL,
+} from "../lib/blobStorageReadiness.js";
 
 // Re-export the DB-free policy surface so callers import everything from here.
 export {
@@ -322,16 +327,29 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
       payload: { document_type_hint: documentTypeHint, job_id: job.id },
     });
 
-    // 1. Pull the PDF bytes from R2. A fetch failure is TRANSIENT (R2 blip);
-    //    wrap it with the runner's typed code so a terminal dead-letter still
-    //    writes a coherent document error.
+    // 1. Pull the PDF bytes from R2. A fetch failure is TRANSIENT (an R2 blip,
+    //    or storage the operator has not wired up yet) and is retried with
+    //    backoff. SL-EVID-1: it is classified as a STORAGE fault, never as
+    //    `pdf_unparseable` — the parser has not run, so the document's
+    //    readability is not yet in evidence.
     let pdfBytes: Buffer;
     try {
       pdfBytes = await fetchPdf(orgId, documentId);
     } catch (fetchErr) {
+      const verdict = classifyStorageFailure(fetchErr);
+      logger.error(
+        {
+          event: "vendor_extraction_blob_fetch_failed",
+          org_id: orgId,
+          document_id: documentId,
+          storage_failure_kind: verdict.kind,
+          err: fetchErr,
+        },
+        "vendor-extraction job: PDF could not be read back from object storage",
+      );
       throw classifyExtractionError(
-        "pdf_unparseable",
-        `blob fetch: ${(fetchErr as Error)?.message ?? "failed"}`,
+        verdict.documentErrorCode,
+        STORAGE_FAILURE_DETAIL[verdict.documentErrorCode],
       );
     }
 

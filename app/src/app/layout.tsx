@@ -56,6 +56,13 @@ export default async function RootLayout({
     // Flips the header to the enterprise-workflow information architecture and the
     // "Review Suggested Links" queue reskin. Flag off = legacy nav byte-for-byte.
     risk_workspace: process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true",
+    // SL-NAV-1 — derived, not a flag of its own. The Approvals queue holds two
+    // independent families (treatment approvals behind risk-lifecycle, risk
+    // acceptances behind risk-acceptance) and is worth showing when EITHER is
+    // live. Both off → the page is an empty shell, so the nav entry stays dark.
+    approvals:
+      process.env.SECURELOGIC_RISK_LIFECYCLE_ENABLED === "true" ||
+      process.env.SECURELOGIC_RISK_ACCEPTANCE_ENABLED === "true",
     // The Briefing (Briefing Initiative B1) — DARK (default off). Relabels the
     // workspace nav's home entry "Briefing"; only takes effect together with
     // risk_workspace (the legacy nav is never touched).

@@ -114,6 +114,7 @@ import {
   exportVendorAssuranceDocumentPdf
 } from "../routes/vendorAssuranceDocuments.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { BlobStorageNotConfiguredError } from "../lib/blobStorageConfig.js";
 
 const ORG_A = "11111111-1111-4111-8111-111111111111";
 const ORG_B = "22222222-2222-4222-8222-222222222222";
@@ -344,6 +345,116 @@ describe("uploadVendorAssuranceDocument", () => {
     // Blob put failed before the enqueue point — no job row is created.
     expect(
       pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(false);
+    // SL-EVID-1: whatever else this row says, it must not blame the customer's PDF.
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /pdf_unparseable/.test(c[0] as string))
+    ).toBe(false);
+  });
+
+  // --- SL-EVID-1: a storage fault is recorded as a storage fault -------------
+  //
+  // Before this package all three of these paths wrote
+  // `processing_error_code = 'pdf_unparseable'`, so an engine with no R2
+  // credentials told the customer their SOC 2 report was corrupt.
+
+  it("SL-EVID-1: storage NOT CONFIGURED → 503 storage_unavailable, document marked storage_unavailable (never pdf_unparseable)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // quota SUM
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT document
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }); // UPDATE failed-status
+    putVendorAssurancePdfSpy.mockRejectedValueOnce(new BlobStorageNotConfiguredError());
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "soc2.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status, json } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    // 503, not 500: this is an environment the operator has to fix, and the
+    // status code is the one routes/evidence.ts already uses for it.
+    expect(status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith({ error: "storage_unavailable" });
+
+    const failUpdate = pgQuerySpy.mock.calls.find(
+      (c) => typeof c[0] === "string" && /processing_status = 'extraction_failed'/.test(c[0] as string)
+    );
+    expect(failUpdate).toBeDefined();
+    expect((failUpdate![1] as unknown[])[3]).toBe("storage_unavailable");
+    expect(failUpdate![0]).not.toMatch(/pdf_unparseable/);
+    expect((failUpdate![1] as unknown[])[3]).not.toBe("pdf_unparseable");
+
+    // The stored detail is read back by the customer-facing detail page, so it
+    // must not carry the SDK's env-var wording.
+    const detail = String((failUpdate![1] as unknown[])[2] ?? "");
+    expect(detail).not.toMatch(/R2_/);
+    expect(detail).not.toMatch(/env var/i);
+
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(false);
+  });
+
+  it("SL-EVID-1: storage ACCESS failure → 500 blob_put_failed, document marked storage_error (never pdf_unparseable)", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // quota SUM
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT document
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }); // UPDATE failed-status
+    putVendorAssurancePdfSpy.mockRejectedValueOnce(
+      Object.assign(new Error("Access Denied"), { name: "AccessDenied" })
+    );
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID },
+      file: { buffer: Buffer.from("%PDF"), originalname: "soc2.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status, json } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({ error: "blob_put_failed" });
+
+    const failUpdate = pgQuerySpy.mock.calls.find(
+      (c) => typeof c[0] === "string" && /processing_status = 'extraction_failed'/.test(c[0] as string)
+    );
+    expect(failUpdate).toBeDefined();
+    expect((failUpdate![1] as unknown[])[3]).toBe("storage_error");
+    expect(failUpdate![0]).not.toMatch(/pdf_unparseable/);
+    expect((failUpdate![1] as unknown[])[3]).not.toBe("pdf_unparseable");
+  });
+
+  it("SL-EVID-1: a healthy upload is untouched — 202, blob written, extraction enqueued", async () => {
+    pgQuerySpy
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ "?column?": 1 }] }) // vendor pre-flight
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ total_bytes: "0", document_count: "0" }] }) // quota SUM
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, created_at: "x" }] }) // INSERT document
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{}] }) // UPDATE storage_key
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // INSERT INTO jobs
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "pending" }] }); // SELECT
+    putVendorAssurancePdfSpy.mockResolvedValueOnce({
+      key: `org/${ORG_A}/vendor-assurance/${DOC_ID}/original.pdf`,
+      byteSize: 4
+    });
+
+    const req = buildReq({
+      body: { vendor_id: VENDOR_ID, document_type_hint: "soc2_type2" },
+      file: { buffer: Buffer.from("%PDF"), originalname: "soc2.pdf", size: 4, mimetype: "application/pdf" }
+    });
+    const { res, status } = buildRes();
+    await uploadVendorAssuranceDocument(req as never, res as never);
+
+    expect(status).toHaveBeenCalledWith(202);
+    expect(putVendorAssurancePdfSpy).toHaveBeenCalled();
+    expect(
+      pgQuerySpy.mock.calls.some((c) => typeof c[0] === "string" && /INSERT INTO jobs/.test(c[0] as string))
+    ).toBe(true);
+    expect(
+      pgQuerySpy.mock.calls.some(
+        (c) => typeof c[0] === "string" && /processing_status = 'extraction_failed'/.test(c[0] as string)
+      )
     ).toBe(false);
   });
 

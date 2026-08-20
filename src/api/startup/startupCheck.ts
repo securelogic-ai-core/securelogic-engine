@@ -5,6 +5,8 @@
  * the async portion of startup validation:
  *   - RESEND_API_KEY presence warning (email delivery will fail silently if absent)
  *   - Database connectivity probe (SELECT 1 — required to proceed in all environments)
+ *   - Object-storage REACHABILITY probe (SL-EVID-1 — non-fatal; distinguishes
+ *     "not configured" from "configured but unreachable")
  *
  * The following are validated synchronously in validateEnv.ts (called before this):
  *   - NODE_ENV           — must be set; unknown values are fatal
@@ -27,6 +29,7 @@ import {
   assertSafeWebhookUrl,
   UnsafeWebhookUrlError,
 } from "../lib/webhookUrlSafety.js";
+import { logBlobStorageReadinessAtStartup } from "../lib/blobStorageReadiness.js";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -173,6 +176,23 @@ export async function startupCheck(): Promise<void> {
 
   // SSRF audit of existing webhook URLs (A10-G1). Non-fatal — just logs.
   await auditExistingWebhookUrls();
+
+  // SL-EVID-1: object-storage readiness. This is a REACHABILITY probe, not an
+  // env-var presence check — the failure mode it exists to catch is five
+  // well-formed R2 variables pointing at a bucket that cannot be reached.
+  // Non-fatal by design: production has served customers without object
+  // storage since launch, so exiting here would take the engine down rather
+  // than surface the gap. `logBlobStorageReadinessAtStartup` swallows nothing
+  // and throws nothing; the guard below is belt-and-braces so a probe fault can
+  // never block boot.
+  try {
+    await logBlobStorageReadinessAtStartup();
+  } catch (err) {
+    logger.error(
+      { event: "startup_storage_probe_failed", err },
+      "Object storage readiness probe failed (non-fatal) — startup continues"
+    );
+  }
 
   if (isProd) {
     logger.info(

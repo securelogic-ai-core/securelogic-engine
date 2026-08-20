@@ -47,7 +47,14 @@ export type VendorExtractionErrorCode =
   | "pdf_image_only"
   | "llm_unavailable"
   | "llm_invalid_json"
-  | "llm_failed";
+  | "llm_failed"
+  // SL-EVID-1 — object-storage faults. Deliberately DISJOINT from every content
+  // code above: the bytes never reached the parser, so nothing about the
+  // customer's document is being asserted. Both are transient (absent from
+  // TERMINAL_EXTRACTION_ERROR_CODES) because the operator fixing storage should
+  // let a retry succeed on the document already on file.
+  | "storage_unavailable"
+  | "storage_error";
 
 /**
  * TERMINAL input faults (settled, spec §F.5): `pdf_image_only` and
