@@ -99,7 +99,9 @@ export const queryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
     };
   }
 
-  if (/^\s*SELECT/i.test(sql) && /FROM organizations WHERE id = \$1/i.test(sql)) {
+  // Whitespace-tolerant: the webhook writes this on one line, the request
+  // middleware across several.
+  if (/^\s*SELECT/i.test(sql) && /FROM organizations\s+WHERE id = \$1/i.test(sql)) {
     return org && org.id === params[0] ? { rows: [org], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
 
@@ -252,11 +254,14 @@ export const elevatedQueryMock = vi.fn(async (sql: string, params: unknown[] = [
   }
 
   if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET recovered_at/i.test(sql)) {
-    const [orgId] = params as [string];
+    // Two callers: markCyclesRecovered(orgId) closes every open cycle for an
+    // org; the sweep closes ONE orphaned cycle by id.
+    const byOrg = /WHERE organization_id/i.test(sql);
+    const [key] = params as [string];
     // Matches the statement: NOT gated on lapsed_at, because a cycle that
     // reached lockout and then recovered is a recovered cycle.
     const hit = CYCLES.rows.filter(
-      (r) => r.organization_id === orgId && r.recovered_at === null
+      (r) => (byOrg ? r.organization_id === key : r.id === key) && r.recovered_at === null
     );
     hit.forEach((r) => { r.recovered_at = NOW_ISO; });
     return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };

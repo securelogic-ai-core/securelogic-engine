@@ -210,6 +210,28 @@ services:
       - key: TRIAL_PERIOD_DAYS
         value: "14"
 
+      # SL-BILL-1 PR-F: payment-failure grace period. DARK (default off).
+      #
+      # OFF is exactly today's behaviour: Stripe's past_due update revokes
+      # entitlement on the FIRST failed charge, the customer 403s across the
+      # gated route surface, and the dunning emails say "access has been
+      # suspended" because graceState() reports lapsed.
+      #
+      # ON, customer-visible: past_due stops revoking, entitlement is held for
+      # SECURELOGIC_BILLING_GRACE_DAYS from the FIRST failure (Stripe's clock),
+      # the emails switch to "access continues until DATE", the Day 7 / Day 14
+      # notices start being sent, and the reconciling sweep starts.
+      #
+      # GRACE_DAYS MUST AGREE WITH THE STRIPE DASHBOARD RETRY WINDOW
+      # (Billing > Revenue recovery > Retries). A grace period longer than the
+      # retry window promises access after Stripe has already cancelled; one
+      # shorter locks out a customer Stripe is still collecting from. Read the
+      # Dashboard before flipping this.
+      - key: SECURELOGIC_BILLING_GRACE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BILLING_GRACE_DAYS
+        value: "15"
+
       # Dormant-engine enablement — PRODUCTION (operator-authorized 2026-06-24).
       # The "match → surface → what to do next" engine, live. All three are
       # read from process.env at signal-processing time; disable any one by
@@ -608,6 +630,28 @@ services:
         value: "false"
       - key: TRIAL_PERIOD_DAYS
         value: "14"
+
+      # SL-BILL-1 PR-F: payment-failure grace period. DARK (default off).
+      #
+      # OFF is exactly today's behaviour: Stripe's past_due update revokes
+      # entitlement on the FIRST failed charge, the customer 403s across the
+      # gated route surface, and the dunning emails say "access has been
+      # suspended" because graceState() reports lapsed.
+      #
+      # ON, customer-visible: past_due stops revoking, entitlement is held for
+      # SECURELOGIC_BILLING_GRACE_DAYS from the FIRST failure (Stripe's clock),
+      # the emails switch to "access continues until DATE", the Day 7 / Day 14
+      # notices start being sent, and the reconciling sweep starts.
+      #
+      # GRACE_DAYS MUST AGREE WITH THE STRIPE DASHBOARD RETRY WINDOW
+      # (Billing > Revenue recovery > Retries). A grace period longer than the
+      # retry window promises access after Stripe has already cancelled; one
+      # shorter locks out a customer Stripe is still collecting from. Read the
+      # Dashboard before flipping this.
+      - key: SECURELOGIC_BILLING_GRACE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BILLING_GRACE_DAYS
+        value: "15"
 
       # Dormant-engine enablement — STAGING (lockstep with the prod engine block).
       # All three signal-engine capabilities on; disable any by setting "false".
