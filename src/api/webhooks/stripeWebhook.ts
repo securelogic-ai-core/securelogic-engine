@@ -44,9 +44,17 @@ const REVOKE_EVENTS = new Set([
 
 /**
  * Events that flag a payment failure.
- * Access is NOT revoked — payment_failed_at is stamped on the api_key row
- * for observability and dunning UX. Stripe will handle eventual cancellation
- * via customer.subscription.updated (past_due → canceled) after its retry cycle.
+ *
+ * This event itself does not change entitlement: it stamps
+ * organizations.payment_failed_at (NOT api_keys — see handlePaymentFailed) so
+ * the billing UI can surface the delinquency.
+ *
+ * Access IS revoked, moments later and by a different event: Stripe follows the
+ * failure with customer.subscription.updated (status past_due), which
+ * classifySubscriptionEvent maps to tier 'free' → entitlement_level 'starter'.
+ * There is no grace period today. Do not read this block as "the customer keeps
+ * access during Stripe's retry cycle" — they do not, and the previous wording
+ * here said exactly that.
  *
  * Register in Stripe Dashboard: invoice.payment_failed
  */
@@ -957,10 +965,12 @@ async function cancelPriorBriefSubscriptions(
 
 /**
  * Handles invoice.payment_failed: stamps payment_failed_at on the
- * organizations row so the billing UI can surface a dunning state. Does
- * NOT revoke access — Stripe will send customer.subscription.updated
- * (past_due) and eventually customer.subscription.deleted after its retry
- * cycle, which will revoke.
+ * organizations row so the billing UI can surface a dunning state.
+ *
+ * This handler does not revoke access, but the org loses it anyway: the
+ * customer.subscription.updated (past_due) event that Stripe sends alongside
+ * the failure downgrades entitlement_level to 'starter'. Revocation therefore
+ * happens at the FIRST failure, not at the end of Stripe's retry cycle.
  */
 async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
   const obj = event.data.object as any;
