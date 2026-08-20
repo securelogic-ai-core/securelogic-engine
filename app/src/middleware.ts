@@ -5,10 +5,14 @@ import {
   getSessionSecret,
   getIdleSeconds,
   getAbsoluteSeconds,
+  getEngineProbeSeconds,
   evaluateSession,
   unsealSession,
   sealSession,
-  type SessionExpiryReason,
+  jwtSessionEpochState,
+  isEngineProbeDue,
+  probeEngineSession,
+  type SessionTeardownReason,
 } from "@/lib/sessionPolicy";
 
 /**
@@ -47,10 +51,18 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
-function expiredRedirect(request: NextRequest, reason: SessionExpiryReason): NextResponse {
+function expiredRedirect(request: NextRequest, reason: SessionTeardownReason): NextResponse {
   const url = new URL("/login", request.url);
   // "idle" gets its own copy; "absolute"/"invalid" surface as a generic expiry.
-  url.searchParams.set("reason", reason === "idle" ? "idle" : "expired");
+  // The two engine-invalidation reasons pass through verbatim so the login page
+  // can explain WHY — "a security update" reads very differently from "your
+  // password was changed", and a user who did neither deserves the true one.
+  const param =
+    reason === "idle" ? "idle" :
+    reason === "security_update" ? "security_update" :
+    reason === "session_invalidated" ? "session_invalidated" :
+    "expired";
+  url.searchParams.set("reason", param);
   const { pathname, search } = request.nextUrl;
   if (pathname !== "/") url.searchParams.set("redirect", pathname + search);
   const res = NextResponse.redirect(url);
@@ -89,9 +101,50 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return expiredRedirect(request, decision.reason ?? "invalid");
   }
 
-  if (decision.shouldPersist) {
+  // ── Engine session reconciliation (SEC-JWT-EPOCH) ────────────────────────
+  //
+  // Everything above validates the APP cookie's own timers. It says nothing
+  // about whether the ENGINE still honours the JWT inside it. Without this
+  // block a user whose engine session was invalidated keeps a valid cookie,
+  // sails past middleware, and lands on a page whose every engine call 401s —
+  // rendering an empty, entitlement-downgraded app that still claims they are
+  // signed in. Reconcile the two here, where the cookie can actually be
+  // cleared (a server component cannot write cookies).
+  //
+  // Legacy API-key sessions carry no JWT and no epoch; they are untouched.
+  const jwtToken = typeof claims.jwtToken === "string" ? claims.jwtToken : null;
+  let engineCheckedAt = claims.engineCheckedAt;
+
+  if (jwtToken) {
+    // 1. Offline, zero-I/O: a token minted before SEC-JWT-EPOCH has no `se`
+    //    claim. This is the whole deploy blast radius and costs nothing.
+    if (jwtSessionEpochState(jwtToken) === "absent") {
+      return expiredRedirect(request, "security_update");
+    }
+
+    // 2. A STALE epoch is only knowable from the engine — one throttled probe.
+    //    Anything short of a definite "invalid" leaves the session alone.
+    if (isEngineProbeDue(engineCheckedAt, now, getEngineProbeSeconds())) {
+      const verdict = await probeEngineSession(jwtToken);
+      if (verdict === "invalid") {
+        return expiredRedirect(request, "session_invalidated");
+      }
+      // Stamp on "unknown" too, so an engine outage cannot turn every
+      // navigation into another doomed probe on the critical path.
+      engineCheckedAt = now;
+    }
+  }
+
+  const probeStamped = engineCheckedAt !== claims.engineCheckedAt;
+
+  if (decision.shouldPersist || probeStamped) {
     const resealed = await sealSession(
-      { ...claims, loginAt: decision.loginAt, lastActivityAt: decision.lastActivityAt },
+      {
+        ...claims,
+        loginAt: decision.loginAt,
+        lastActivityAt: decision.lastActivityAt,
+        engineCheckedAt,
+      },
       secret,
       getAbsoluteSeconds()
     );

@@ -241,7 +241,7 @@ function LoginForm() {
       title="Sign in"
       subtitle="Access your SecureLogic AI account."
     >
-      {(reason === "idle" || reason === "expired" || reason === "session_invalidated") && (
+      {(reason === "idle" || reason === "expired" || reason === "session_invalidated" || reason === "security_update") && (
         <div
           style={{
             background:   "rgba(59,130,246,0.1)",
@@ -254,8 +254,10 @@ function LoginForm() {
             lineHeight:   "1.5",
           }}
         >
-          {reason === "session_invalidated"
-            ? "Your session was invalidated because your password was changed. Please sign in again."
+          {reason === "security_update"
+            ? "You were signed out by a security update to how sessions are verified. Nothing is wrong with your account \u2014 please sign in again."
+            : reason === "session_invalidated"
+            ? "Your session is no longer valid. This happens when the account password is changed or access is reset. Please sign in again."
             : reason === "expired"
             ? "Your session expired. Please sign in again."
             : "You were signed out due to inactivity. Please sign in again."}
