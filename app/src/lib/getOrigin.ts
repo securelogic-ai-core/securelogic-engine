@@ -9,8 +9,16 @@
  * real URL.
  */
 export function getOrigin(request: Request): string {
-  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  const forwardedProto = request.headers.get("x-forwarded-proto");
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (host) return `${proto}://${host}`;
+  if (host) {
+    // Behind a proxy, x-forwarded-proto is authoritative. Its ABSENCE means we
+    // are not behind one — local development — so the request's own scheme is
+    // the right answer. Defaulting to https there handed the browser an
+    // https:// URL for an http:// dev server (#823). Inert in staging and
+    // production, where Render always sets the header.
+    const proto = forwardedProto ?? new URL(request.url).protocol.replace(":", "");
+    return `${proto}://${host}`;
+  }
   return new URL(request.url).origin;
 }
