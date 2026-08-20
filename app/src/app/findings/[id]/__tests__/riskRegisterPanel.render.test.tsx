@@ -17,10 +17,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
+// Typed to the real action signatures, not inferred from a zero-arg stub:
+// the assertions read mock.calls[0][1], which a `() => {}` mock types as a
+// zero-length tuple and tsc rejects.
 const actions = vi.hoisted(() => ({
-  linkFindingToRisk: vi.fn(async () => ({})),
-  unlinkFindingFromRisk: vi.fn(async () => ({})),
-  promoteFindingToRisk: vi.fn(async () => ({})),
+  linkFindingToRisk: vi.fn(
+    async (_findingId: string, _riskId: string, _note?: string) => ({} as { error?: string })
+  ),
+  unlinkFindingFromRisk: vi.fn(
+    async (_findingId: string, _riskId: string) => ({} as { error?: string })
+  ),
+  promoteFindingToRisk: vi.fn(
+    async (_findingId: string, _rating: Record<string, unknown>) => ({} as { error?: string })
+  ),
 }));
 
 vi.mock("../riskLinkActions", () => actions);
@@ -161,7 +170,7 @@ describe("promotion asks the human for the rating", () => {
     fireEvent.click(screen.getByRole("button", { name: /Create register entry/i }));
 
     await waitFor(() => expect(actions.promoteFindingToRisk).toHaveBeenCalled());
-    const sent = actions.promoteFindingToRisk.mock.calls[0]![1] as Record<string, unknown>;
+    const sent = actions.promoteFindingToRisk.mock.calls[0]![1];
     for (const key of [
       "likelihood", "impact", "risk_rating",
       "inherent_likelihood", "inherent_impact", "inherent_rating",
