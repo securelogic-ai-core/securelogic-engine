@@ -31,10 +31,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // file and the ordering suite (PR-D) share ONE simulation of the real
 // statements — including the ordering predicate — rather than two that can
 // drift apart.
-import { ORG, anOrg } from "./support/stripeWebhookHarness.js";
+import { ORG, anOrg, resetCycles } from "./support/stripeWebhookHarness.js";
 
 vi.mock("../infra/postgres.js", async () => {
-  const { queryMock } = await import("./support/stripeWebhookHarness.js");
+  const { queryMock, elevatedQueryMock } = await import("./support/stripeWebhookHarness.js");
   return {
     pg: {
       query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
@@ -42,6 +42,11 @@ vi.mock("../infra/postgres.js", async () => {
         query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
         release: () => {},
       }),
+    },
+    // billingDunningCycle.ts writes here: a provider callback has no tenant
+    // scope, so the cycle row is written cross-org by design.
+    pgElevated: {
+      query: (sql: string, params?: unknown[]) => elevatedQueryMock(sql, params ?? []),
     },
   };
 });
@@ -146,6 +151,7 @@ beforeEach(() => {
   claimMock.mockResolvedValue({ firstSeen: true });
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   ORG.row = anOrg();
+  resetCycles();
 });
 
 /* ── The defect ──────────────────────────────────────────────────────────── */
