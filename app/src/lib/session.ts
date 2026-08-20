@@ -36,6 +36,14 @@ export interface SessionData {
   // loginAt is stamped once (absolute cap), lastActivityAt slides (idle cap).
   loginAt?: number;
   lastActivityAt?: number;
+
+  /**
+   * When middleware last asked the ENGINE whether this session's JWT is still
+   * valid (SEC-JWT-EPOCH). Owned by middleware; throttles the probe to once per
+   * SESSION_ENGINE_PROBE_SECONDS. Declared here so a route handler's
+   * session.save() round-trips it instead of dropping it.
+   */
+  engineCheckedAt?: number;
 }
 
 /**
