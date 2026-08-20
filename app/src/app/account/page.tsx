@@ -84,7 +84,16 @@ export default async function AccountPage({
   const userName      = authMe?.name ?? session.name ?? "";
   const userEmail     = authMe?.email ?? session.email ?? "";
   const isPaid        = me.entitlementLevel === "premium" || me.entitlementLevel === "professional";
-  const hasPaymentFailure = me.billingActive === false && me.entitlementLevel !== "starter";
+  // ── Delinquency visibility (SL-BILL-1 D1) ──────────────────────────────
+  // Keyed on the payment_failed_at stamp from GET /api/billing/subscription —
+  // the authoritative dunning signal, written by invoice.payment_failed and
+  // cleared only by a successful grant. It must NOT be inferred from the
+  // entitlement level: Stripe's past_due update downgrades the org to
+  // 'starter', so the previous `entitlementLevel !== "starter"` conjunct was
+  // unsatisfiable exactly when the customer was locked out and needed telling.
+  // billingActive alone is no substitute either — it is false for every free
+  // org, which never had a payment to fail.
+  const hasPaymentFailure = Boolean(subscription?.payment_failed_at);
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel, me.stripeSubscriptionTier);
