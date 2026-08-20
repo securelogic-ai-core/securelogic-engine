@@ -109,11 +109,22 @@ describe("Platform free trial (PR-C2): Platform-only, flag-gated, one per org", 
     expect(BILLING).toMatch(/trial_period_days:\s*trialPeriodDays\(\)/);
   });
 
-  it("re-trial guard reads trial_started_at and fails closed with 409 trial_already_used", () => {
+  it("re-trial guard reads trial_started_at and DROPS the trial rather than refusing the checkout", () => {
     expect(BILLING).toMatch(
       /SELECT trial_started_at FROM organizations WHERE id = \$1/
     );
-    expect(BILLING).toMatch(/status\(409\)[\s\S]{0,160}trial_already_used/);
+
+    // The one-trial-per-org policy is unchanged; how it is enforced is not.
+    // This used to 409 with `trial_already_used` and tell the customer to
+    // "subscribe without a trial from Manage Billing" — which is a DEAD END on
+    // the re-subscription path, because ruling P6 cancels the subscription at
+    // the end of dunning and the Stripe portal has nothing left to manage for a
+    // cancelled one. We were refusing money to enforce a policy that simply
+    // dropping the trial already enforces (SL-BILL-1 PR-H).
+    expect(BILLING).not.toMatch(/status\(409\)[\s\S]{0,160}trial_already_used/);
+    expect(BILLING).toMatch(/applyTrialForThisSession = false/);
+    // And the session must be built from the narrowed flag, not the raw one.
+    expect(BILLING).toMatch(/const trialFields = applyTrialForThisSession/);
   });
 
   it("checks the re-trial guard BEFORE creating the checkout session", () => {

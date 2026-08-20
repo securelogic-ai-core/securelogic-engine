@@ -1322,7 +1322,7 @@ async function handlePaymentRecovered(
   // confirmation email: recovery can be observed more than once (this event and
   // a following subscription.updated(active) both restore entitlement), and
   // only the caller that actually flipped recovered_at sends mail.
-  const recoveredCycles = await markCyclesRecovered(orgId);
+  const recoveredCycles = await markCyclesRecovered(orgId, invoiceSubId);
   if (recoveredCycles.length > 0) {
     for (const closedCycleId of recoveredCycles) {
       // The NUMERATOR of the recovery rate. Emitted per cycle, not per webhook,

@@ -257,11 +257,17 @@ export const elevatedQueryMock = vi.fn(async (sql: string, params: unknown[] = [
     // Two callers: markCyclesRecovered(orgId) closes every open cycle for an
     // org; the sweep closes ONE orphaned cycle by id.
     const byOrg = /WHERE organization_id/i.test(sql);
-    const [key] = params as [string];
+    const [key, subId] = params as [string, string | null | undefined];
     // Matches the statement: NOT gated on lapsed_at, because a cycle that
-    // reached lockout and then recovered is a recovered cycle.
+    // reached lockout and then recovered is a recovered cycle — but SCOPED by
+    // subscription, so a re-subscription's first invoice does not close a cycle
+    // that belonged to the cancelled one.
+    const scoped = /stripe_subscription_id = \$2/i.test(sql);
     const hit = CYCLES.rows.filter(
-      (r) => (byOrg ? r.organization_id === key : r.id === key) && r.recovered_at === null
+      (r) =>
+        (byOrg ? r.organization_id === key : r.id === key) &&
+        r.recovered_at === null &&
+        (!scoped || subId == null || r.stripe_subscription_id === null || r.stripe_subscription_id === subId)
     );
     hit.forEach((r) => { r.recovered_at = NOW_ISO; });
     return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };

@@ -94,6 +94,41 @@ export default async function AccountPage({
   // billingActive alone is no substitute either — it is false for every free
   // org, which never had a payment to fail.
   const hasPaymentFailure = Boolean(subscription?.payment_failed_at);
+
+  // ── The three billing states (SL-BILL-1 PR-H) ──────────────────────────
+  // grace_state comes from the ENGINE, computed by the same graceWindow
+  // function the request path enforces with and the dunning emails are worded
+  // from. It is NOT re-derived here: three implementations of one rule is two
+  // too many, and the one that drifts is the one the customer reads.
+  //
+  // The states differ in what the customer can DO, which is the whole point:
+  //
+  //   in_grace  — the subscription is still live and Stripe is still retrying,
+  //               so updating the card fixes it. The PORTAL is the right action.
+  //   suspended — under ruling P6 the end of dunning CANCELS the subscription,
+  //               and a cancelled subscription cannot be revived by a card
+  //               update: the portal has nothing left to update. Sending them
+  //               there is a dead end at the exact moment they are trying to
+  //               pay us. CHECKOUT is the right action.
+  const graceState = subscription?.grace_state ?? (hasPaymentFailure ? "lapsed" : "healthy");
+  const inGrace = hasPaymentFailure && graceState === "in_grace";
+  const isSuspended = hasPaymentFailure && graceState === "lapsed";
+  const graceEndsLabel = subscription?.grace_ends_at
+    ? new Date(subscription.grace_ends_at).toLocaleDateString("en-US", {
+        month: "long", day: "numeric", year: "numeric",
+      })
+    : null;
+  // The plan to offer back. The tier they last held, so a returning Platform
+  // customer is not silently offered Brief Pro.
+  const resubscribeTier =
+    me.stripeSubscriptionTier === "platform_annual" ? "platform_annual"
+    : me.stripeSubscriptionTier === "teams" ? "teams"
+    : me.stripeSubscriptionTier === "professional" ? "professional"
+    : "platform";
+  const resubscribeLabel = planDisplayName(
+    resubscribeTier === "professional" || resubscribeTier === "teams" ? "professional" : "premium",
+    resubscribeTier,
+  );
   const isPlatform    = isPaid;
   const isAdmin       = userRole === "admin";
   const planName      = planDisplayName(me.entitlementLevel, me.stripeSubscriptionTier);
@@ -156,20 +191,57 @@ export default async function AccountPage({
         </p>
       </div>
 
-      {hasPaymentFailure && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4 flex items-start justify-between gap-4">
+      {inGrace && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg px-5 py-4 flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold text-red-800 mb-1">Payment failed</p>
-            <p className="text-sm text-red-700">
-              Your last payment could not be processed. Please update your billing details to restore full access.
+            <p className="text-sm font-semibold text-amber-900 mb-1">Payment failed</p>
+            <p className="text-sm text-amber-800">
+              We couldn&apos;t process your last payment. {graceEndsLabel
+                ? <>Your access continues until <strong>{graceEndsLabel}</strong> — update your payment method before then and nothing will be interrupted.</>
+                : <>Update your payment method to keep your access uninterrupted.</>}
             </p>
           </div>
           {isAdmin && (
             <BillingPortalForm
-              label="Update Billing"
+              label="Update Payment Method"
               formClassName="flex-shrink-0"
-              buttonClassName="text-sm font-semibold text-red-700 border border-red-300 hover:border-red-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+              buttonClassName="text-sm font-semibold text-amber-900 border border-amber-300 hover:border-amber-500 px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
             />
+          )}
+        </div>
+      )}
+
+      {isSuspended && (
+        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-red-800 mb-1">Your access is suspended</p>
+              <p className="text-sm text-red-700">
+                We couldn&apos;t collect payment, so your subscription ended.{" "}
+                <strong>Nothing has been deleted</strong> — your findings, vendors,
+                assessments and history are exactly where you left them and return the
+                moment you subscribe again.
+              </p>
+            </div>
+            {isAdmin && (
+              // Checkout, NOT the portal. The subscription is cancelled: there
+              // is no payment method left to update, and the portal would be a
+              // dead end for a customer trying to give us money.
+              <form action="/api/billing/checkout" method="POST" className="flex-shrink-0">
+                <input type="hidden" name="tier" value={resubscribeTier} />
+                <button
+                  type="submit"
+                  className="bg-red-700 hover:bg-red-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  Resubscribe to {resubscribeLabel}
+                </button>
+              </form>
+            )}
+          </div>
+          {!isAdmin && (
+            <p className="mt-2 text-xs text-red-600">
+              Ask an admin in your organization to restore the subscription.
+            </p>
           )}
         </div>
       )}

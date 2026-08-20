@@ -39,7 +39,10 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 
 import AccountPage from "../page";
 
-const BANNER = /Your last payment could not be processed/i;
+const GRACE_BANNER = /Your access continues until/i;
+const SUSPENDED_BANNER = /Your access is suspended/i;
+/** Either delinquency banner — used where the test is about REACHABILITY. */
+const BANNER = /We couldn.t process your last payment|Your access is suspended/i;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,7 +80,7 @@ describe("D1 — the dunning banner survives the past_due downgrade", () => {
     expect(screen.getByText(BANNER)).toBeInTheDocument();
   });
 
-  it("offers the admin the billing-portal recovery control alongside it", async () => {
+  it("offers the admin a recovery control alongside it", async () => {
     api.getMe.mockResolvedValue(aMe({ entitlementLevel: "starter", billingActive: false }));
     api.getSubscription.mockResolvedValue(
       aSubscription({
@@ -89,7 +92,10 @@ describe("D1 — the dunning banner survives the past_due downgrade", () => {
 
     await renderPage(AccountPage, { searchParams: sp({}) });
 
-    expect(screen.getByRole("button", { name: /Update Billing/i })).toBeInTheDocument();
+    // Which control depends on the state — see billingStates.render.test.tsx.
+    // What D1 guarantees is that SOME way back is offered at all.
+    expect(screen.getByRole("button", { name: /Resubscribe|Update Payment Method/i }))
+      .toBeInTheDocument();
   });
 
   it("does not render for a healthy paying org", async () => {

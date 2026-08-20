@@ -1379,6 +1379,15 @@ export interface SubscriptionInfo {
   stripe_customer_id: string | null;
   current_period_end: string | null;
   payment_failed_at: string | null;
+  /**
+   * The ENGINE's grace decision, not a client-side derivation. Computed by the
+   * same graceWindow function that the request path enforces with and the
+   * dunning emails are worded from, so /account cannot tell a customer
+   * something different from what the platform is doing.
+   */
+  grace_state: "healthy" | "in_grace" | "lapsed";
+  /** ISO date access ends, present only while grace_state is "in_grace". */
+  grace_ends_at: string | null;
   subscription_tier: string | null;
   /** ISO timestamp the trial converts to a paid subscription (trialing only). */
   trial_end: string | null;
