@@ -118,20 +118,95 @@ Three consequences, stated plainly:
 Recorded because it would otherwise be discovered at the worst possible moment:
 by a design partner, in production, being told their file is corrupt.
 
-## 7. Unfreeze conditions
+## 7. Unfreeze conditions and the ratified merge sequence
+
+### 7.1 Ratified 2026-08-21 — promote first, merge second
+
+**Operator decision: the candidate `65cd3330` stays intact. Nothing merges into
+`develop` until the promotion completes.**
+
+The alternative — merging the held PRs as soon as #826 clears — was considered
+and declined. It would re-mint the candidate, re-open R-1 blocker **K-1** (green
+CI on the exact candidate SHA), require a fresh CI cycle on the new SHA, and
+redeploy staging. The migration set would be unchanged, so the rollback
+rehearsal and migration inventory in R-1 §C–§D would survive; but the SHA-specific
+evidence would need re-cutting for no gain, because **none of the held PRs is a
+promotion blocker**:
+
+| Held PR | Blocks promotion? | Why it can wait |
+|---|---|---|
+| #854 — R-1 / freeze / VA-3 evidence | No | Documentation |
+| #855 — clean-SOC 2 extraction fix | No | The defect is **identical on `main` and `develop`**; promoting neither creates nor worsens it |
+| #827 — storage-fault error truthfulness | No | Same: pre-existing and identical on both branches |
+| Dependabot ×12 | No | The security remediation reaches production through **this promotion**, not through a bump into a frozen branch |
+
+The cost of this ordering is that Vendor Assurance is not demonstrable on
+staging until after the promotion, because staging tracks `develop` and the
+extraction fix cannot reach it before then. That is accepted deliberately —
+see `docs/validation/VA-3-RERUN-PLAN.md` §0.1, option C.
+
+### 7.2 The sequence
+
+```
+  1.  #826 / Tier 2 observation completes at the 2026-08-25T07:00Z window
+      └─ 27-box checklist, live log evidence, recorded on the issue
+  2.  R-1 blockers K-2 … K-5 closed (operator: OP-1, OP-2, OP-4, OP-5, OP-6)
+  3.  R-4 / B-5 ruling recorded — dark or target state
+  4.  PROMOTE  develop(65cd3330) -> main   as a true merge commit
+      └─ acceptance test: resolved tree == origin/develop^{tree}   (R-1 §F.4)
+      └─ verify origin/main..origin/develop == 0 afterwards
+  5.  Production deploy observed green on all six services
+  ──────────────  FREEZE LIFTS HERE  ──────────────
+  6.  Merge #854   (evidence; documentation only)
+  7.  Merge #855   (extraction fix)      <- MUST follow #854, see 7.3
+  8.  Merge #827   (storage-fault error truthfulness)
+  9.  Merge the 12 Dependabot PRs
+ 10.  Staging redeploys on the new develop
+ 11.  Execute the VA-3 re-run  (docs/validation/VA-3-RERUN-PLAN.md)
+```
+
+Steps 6–9 are a second, small release that a later promotion carries. That is
+the pattern R-1 §M recommends: separate "does the release deploy safely" from
+"is the feature ready", so a feature slipping does not drag the deploy risk with
+it.
+
+### 7.3 #855 must merge after #854, and there is a one-file conflict
+
+`src/api/__tests__/va3CleanSoc2ExtractionRepro.test.ts` exists in **both** PRs,
+with deliberately opposite assertions:
+
+| | #854 | #855 |
+|---|---|---|
+| Role | **characterisation** — records the defect as it stands | **failing-first regression test** |
+| Asserts | `[]` is rejected (pre-fix behaviour) | `[]` is accepted (fixed behaviour) |
+
+Merging #854 first and #855 second produces a conflict on that single file.
+**Resolution: take #855's version.** Merging in the other order would leave a
+test asserting the broken behaviour on a tree where it is fixed, and CI would
+fail — loudly, which is the safe direction, but avoid it.
+
+### 7.4 Unfreeze triggers
 
 Unfreeze when **any** of the following holds:
 
-- The promotion completes (`origin/main..origin/develop` = 0); or
+- The promotion completes (`origin/main..origin/develop` = 0) — the expected path; or
 - The promotion is abandoned by operator decision; or
 - A NO-GO condition in R-1 §M fires and the boundary is deliberately re-cut.
 
-On unfreeze, merge the held PRs in this order: **#827 first** (it closes a
-customer-visible production defect), then Dependabot, then the rest.
+### 7.5 If the freeze is broken early anyway
 
-If the freeze must be broken before then, **K-1 re-opens and R-1 §D must be
-re-run against the new tree.** The rehearsal harness is reproducible from the
-R-1 pack §D.
+**K-1 re-opens.** Re-mint the candidate, re-run CI on the new SHA, and update
+R-1 §A. R-1 §D does **not** need re-running unless `db/migrations/` changed —
+the rehearsal is about the migration set, not the tree. Confirm with:
+
+```
+comm -13 <(git ls-tree -r --name-only origin/main db/migrations | LC_ALL=C sort) \
+         <(git ls-tree -r --name-only origin/develop db/migrations | LC_ALL=C sort)
+```
+
+If that still lists exactly `20261021`–`20261036`, the rehearsal stands. The
+harness is reproducible from R-1 §D. **Use `LC_ALL=C`** — locale collation
+orders migrations differently from Node's `Array.sort()` and will mislead you.
 
 ---
 
