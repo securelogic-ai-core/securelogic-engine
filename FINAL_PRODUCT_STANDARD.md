@@ -40,6 +40,26 @@ The product must connect:
 
 If a feature does not reinforce this operating-layer model, it is suspect.
 
+#### Supportability (added 2026-08-21)
+
+A capability is not finished when it works — it is finished when someone can
+support it. For any package changing customer-facing behaviour, ask once:
+
+> Does this change introduce or materially change a customer-visible failure mode,
+> an operator recovery action, a security escalation path, or a support diagnostic?
+
+If **yes**, the corresponding support runbook is created or updated in the same
+package. If **no**, nothing is required and nothing should be said — a ritual
+answer to a question nobody asked turns a real check into noise.
+
+Behaviour behind a flag that is **off in production** is not yet reachable by a
+customer: the runbook belongs to the package that turns the flag **on**.
+
+See `docs/runbooks/support/` — `DEFINITION-OF-DONE.md` for the boundary,
+`SUPPORT-AUTHORITY-MODEL.md` for what each support level may do. The standing
+principle is that **support does not manipulate production database state to solve
+customer problems**; any exception must be a named, documented procedure.
+
 ### 4. Decision-quality standard
 Every premium intelligence output must help a user:
 - understand what changed
