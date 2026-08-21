@@ -18,6 +18,19 @@ export type FindingImportRow = {
   source_reference_id?: string;
   cvss_score?: string;
   cvss_vector?: string;
+  /** SL-VULN-1. Names WHAT the weakness is, not which occurrence it is. */
+  cve_id?: string;
+  cwe_id?: string;
+  /** Which CVSS revision produced cvss_score — a bare score is ambiguous. */
+  cvss_version?: string;
+  /**
+   * What the SOURCE said about its own observation window. Passed through
+   * as stated; the platform never maintains these. Re-importing the same
+   * vulnerability creates a NEW finding — it does not advance last_seen_at
+   * on an existing one, because no per-occurrence identity exists.
+   */
+  first_seen_at?: string;
+  last_seen_at?: string;
   /** The pen-test engagement this row came from (pen_test rows only). */
   source_id?: string;
   description?: string;
@@ -80,6 +93,11 @@ export async function importFindings(rows: FindingImportRow[]): Promise<FindingI
     if (row.source_reference_id) body.source_reference_id = row.source_reference_id;
     if (row.cvss_score)          body.cvss_score          = row.cvss_score;
     if (row.cvss_vector)         body.cvss_vector         = row.cvss_vector;
+    if (row.cve_id)              body.cve_id              = row.cve_id;
+    if (row.cwe_id)              body.cwe_id              = row.cwe_id;
+    if (row.cvss_version)        body.cvss_version        = row.cvss_version;
+    if (row.first_seen_at)       body.first_seen_at       = row.first_seen_at;
+    if (row.last_seen_at)        body.last_seen_at        = row.last_seen_at;
     if (row.source_id)           body.source_id           = row.source_id;
     if (row.description)    body.description    = row.description;
     if (row.domain)         body.domain         = row.domain;

@@ -50,7 +50,8 @@ export const FINDING_SOURCE_TYPES = new Set([
   "asset_assessment",
   "intelligence_event",
   "vendor_engagement",
-  "pen_test"
+  "pen_test",
+  "vulnerability"
 ]);
 
 /**
@@ -75,7 +76,12 @@ export const USER_CREATABLE_SOURCE_TYPES = new Set([
   // something a pipeline produces — so unlike cyber_signal it is user-creatable
   // by design. source_id points at a pen_test_engagements row the caller's org
   // owns; that ownership is verified in the route, not here.
-  "pen_test"
+  "pen_test",
+  // A vulnerability is reported BY a scanner, an advisory, a researcher or a
+  // person — it is not minted by a pipeline, so it is user-creatable. Unlike
+  // pen_test it names no source table: source_id must be null, enforced in the
+  // route where the other pointer types are checked.
+  "vulnerability"
 ]);
 
 /**
@@ -184,7 +190,27 @@ export type FindingCreateInput = {
   source_reference_id: string | null;
   cvss_score: number | null;
   cvss_vector: string | null;
+  /** The CVE identifier of the weakness. Names WHAT it is, not which occurrence. */
+  cve_id: string | null;
+  /** The CWE weakness class. */
+  cwe_id: string | null;
+  /** Which CVSS revision produced cvss_score — a bare score is ambiguous without it. */
+  cvss_version: string | null;
+  /**
+   * What the SOURCE says about its own observation window. Source-asserted and
+   * never maintained by the platform: re-import creates a new finding rather
+   * than advancing last_seen_at. Not recurrence tracking.
+   */
+  first_seen_at: string | null;
+  last_seen_at: string | null;
 };
+
+/** Published CVSS revisions. A bare "3" or "3.1a" is refused rather than stored. */
+export const VALID_CVSS_VERSIONS = new Set(["2.0", "3.0", "3.1", "4.0"]);
+
+/** MITRE dropped the four-digit sequence cap in 2014, so 4+ digits. */
+const CVE_RE = /^CVE-\d{4}-\d{4,}$/i;
+const CWE_RE = /^CWE-\d{1,5}$/i;
 
 export type FindingCreateResult =
   | { input: FindingCreateInput }
@@ -403,6 +429,76 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
     cvss_score = Math.round(n * 10) / 10;
   }
 
+  // ── vulnerability identifiers (SL-VULN-1) ──────────────────────────────
+  // Format-checked, not merely stored. A malformed identifier is worse than an
+  // absent one: it looks like data and fails every lookup and cross-reference
+  // a customer later runs against it. Normalised to upper case so
+  // "cve-2026-10001" and "CVE-2026-10001" are one value, never two.
+  let cve_id: string | null = null;
+  if (isNonEmptyString(b["cve_id"])) {
+    const raw = (b["cve_id"] as string).trim();
+    if (!CVE_RE.test(raw)) {
+      return {
+        error: "invalid_cve_id",
+        detail: "cve_id must look like CVE-2026-10001."
+      };
+    }
+    cve_id = raw.toUpperCase();
+  }
+
+  let cwe_id: string | null = null;
+  if (isNonEmptyString(b["cwe_id"])) {
+    const raw = (b["cwe_id"] as string).trim();
+    if (!CWE_RE.test(raw)) {
+      return {
+        error: "invalid_cwe_id",
+        detail: "cwe_id must look like CWE-79."
+      };
+    }
+    cwe_id = raw.toUpperCase();
+  }
+
+  let cvss_version: string | null = null;
+  if (isNonEmptyString(b["cvss_version"])) {
+    const raw = (b["cvss_version"] as string).trim();
+    if (!VALID_CVSS_VERSIONS.has(raw)) {
+      return {
+        error: "invalid_cvss_version",
+        detail: `Must be one of: ${[...VALID_CVSS_VERSIONS].join(", ")}`
+      };
+    }
+    cvss_version = raw;
+  }
+
+  // first/last seen — SOURCE-ASSERTED observation timestamps, not recurrence.
+  // Full timestamps rather than dates: a scanner reports an instant, and
+  // truncating it to a day would lose the ordering between two same-day runs.
+  const seen: Record<string, string | null> = { first_seen_at: null, last_seen_at: null };
+  for (const field of ["first_seen_at", "last_seen_at"] as const) {
+    if (b[field] === undefined || b[field] === null || b[field] === "") continue;
+    if (typeof b[field] !== "string") {
+      return { error: `${field}_must_be_iso_timestamp_or_null` };
+    }
+    const parsed = new Date(b[field] as string);
+    if (Number.isNaN(parsed.getTime())) {
+      return {
+        error: `invalid_${field}`,
+        detail: `${field} must be an ISO 8601 timestamp.`
+      };
+    }
+    seen[field] = parsed.toISOString();
+  }
+
+  // Refused here as well as by the column CHECK, so an importer gets a 400 it
+  // can explain against the offending row instead of a 500 from the driver.
+  if (seen["first_seen_at"] && seen["last_seen_at"] &&
+      seen["last_seen_at"]! < seen["first_seen_at"]!) {
+    return {
+      error: "invalid_seen_window",
+      detail: "last_seen_at cannot be earlier than first_seen_at."
+    };
+  }
+
   return {
     input: {
       title,
@@ -421,7 +517,12 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
       source_severity,
       source_reference_id,
       cvss_score,
-      cvss_vector
+      cvss_vector,
+      cve_id,
+      cwe_id,
+      cvss_version,
+      first_seen_at: seen["first_seen_at"] ?? null,
+      last_seen_at: seen["last_seen_at"] ?? null
     }
   };
 }
