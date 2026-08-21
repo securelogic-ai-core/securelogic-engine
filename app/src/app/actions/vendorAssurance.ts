@@ -22,6 +22,7 @@ import {
   createCuecMapping as engineCreateCuecMapping,
   updateCuecMapping as engineUpdateCuecMapping,
   updateCuecReviewStatus as engineUpdateCuecReviewStatus,
+  promoteCuecToFinding as enginePromoteCuecToFinding,
   searchControls as engineSearchControls,
   type ControlSummary,
 } from "@/lib/api";
@@ -130,6 +131,61 @@ export async function createManualCuecMapping(
   return { ok: true };
 }
 
+/**
+ * VA-2. Record what the reviewer concluded about this vendor requirement.
+ *
+ * `gap` asserts that the requirement applies to this organisation and it does
+ * NOT meet it — the only determination that justifies remediation work, and the
+ * only one the engine requires a reason for. Recording it does not create the
+ * work: promotion is a separate, deliberate act (see promoteCuecGapToFinding).
+ */
+export async function determineCuec(
+  cuecId: string,
+  documentId: string,
+  determination: "not_applicable" | "satisfied" | "gap",
+  reason?: string,
+): Promise<VendorAssuranceActionState> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+
+  // Checked here as well as in the engine so the reviewer gets an immediate,
+  // specific message rather than a round-trip error code.
+  if (determination === "gap" && (!reason || reason.trim().length === 0)) {
+    return {
+      ok: false,
+      error:
+        "Recording a gap says this organisation does not meet a control the vendor " +
+        "requires of it. Please say why, so the determination can be defended later.",
+    };
+  }
+
+  const result = await engineUpdateCuecReviewStatus(token, cuecId, determination, reason);
+  if ("error" in result) return { ok: false, error: result.error };
+  revalidateDocument(documentId);
+  return { ok: true };
+}
+
+/**
+ * Turn a determined gap into an ordinary SecureLogic Finding.
+ *
+ * Severity is the reviewer's call and has no default: it sets the remediation
+ * deadline through the organisation's own SLA policy, and a deadline nobody
+ * chose is a deadline nobody owns.
+ */
+export async function promoteCuecGapToFinding(
+  cuecId: string,
+  documentId: string,
+  severity: "Critical" | "High" | "Moderate" | "Low",
+): Promise<VendorAssuranceActionState> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await enginePromoteCuecToFinding(token, cuecId, severity);
+  if ("error" in result) return { ok: false, error: result.error };
+  revalidateDocument(documentId);
+  return { ok: true };
+}
+
+/** @deprecated VA-2 — use determineCuec. Kept so existing callers keep working. */
 export async function markCuecNoMatch(cuecId: string, documentId: string, reason?: string): Promise<VendorAssuranceActionState> {
   const token = await sessionToken();
   if (!token) return { ok: false, error: "Not authenticated" };
