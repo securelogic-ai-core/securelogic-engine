@@ -34,10 +34,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { ORG, anOrg } from "./support/stripeWebhookHarness.js";
+import { ORG, anOrg, resetCycles } from "./support/stripeWebhookHarness.js";
 
 vi.mock("../infra/postgres.js", async () => {
-  const { queryMock } = await import("./support/stripeWebhookHarness.js");
+  const { queryMock, elevatedQueryMock } = await import("./support/stripeWebhookHarness.js");
   return {
     pg: {
       query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
@@ -45,6 +45,11 @@ vi.mock("../infra/postgres.js", async () => {
         query: (sql: string, params?: unknown[]) => queryMock(sql, params ?? []),
         release: () => {},
       }),
+    },
+    // billingDunningCycle.ts writes here: a provider callback has no tenant
+    // scope, so the cycle row is written cross-org by design.
+    pgElevated: {
+      query: (sql: string, params?: unknown[]) => elevatedQueryMock(sql, params ?? []),
     },
   };
 });
@@ -149,6 +154,7 @@ beforeEach(() => {
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   process.env.STRIPE_PRICE_ID_PLATFORM = PLATFORM_PRICE;
   ORG.row = anOrg();
+  resetCycles();
 });
 
 const suppressions = () =>

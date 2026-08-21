@@ -112,7 +112,7 @@ export const queryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
   }
 
   // The guarded payment-failure stamp.
-  if (/UPDATE organizations/i.test(sql) && /SET payment_failed_at\s+= NOW\(\)/i.test(sql)) {
+  if (/UPDATE organizations/i.test(sql) && /SET\s+payment_failed_at/i.test(sql)) {
     const [customerId, created, eventId, invoiceSubId] =
       params as [string, number, string, string | null];
     if (!org || org.stripe_customer_id !== customerId) return { rows: [], rowCount: 0 };
@@ -128,9 +128,129 @@ export const queryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
       org.stripe_billing_event_at = created;
       org.stripe_billing_event_id = eventId;
     }
-    org.payment_failed_at = "2026-08-20T00:00:00.000Z";
-    return { rows: [], rowCount: 1 };
+    // RULING R1: COALESCE — the FIRST failure of the cycle wins, stamped from
+    // Stripe's clock. Retries find a value and leave it alone. The harness
+    // mirrors whichever the statement actually asks for, so a failing-first
+    // proof measures the code.
+    const stampFromEvent = new Date(created * 1000).toISOString();
+    if (/COALESCE\(payment_failed_at/i.test(sql)) {
+      org.payment_failed_at = org.payment_failed_at ?? stampFromEvent;
+    } else {
+      org.payment_failed_at = stampFromEvent;
+    }
+    return {
+      rows: [{
+        id: org.id,
+        payment_failed_at: org.payment_failed_at,
+        stripe_subscription_status: org.stripe_subscription_status,
+      }],
+      rowCount: 1,
+    };
   }
 
   return { rows: [], rowCount: 0 };
+});
+
+
+/* ── Simulated billing_dunning_cycles ────────────────────────────────────── */
+
+export type CycleRow = {
+  id: string;
+  organization_id: string;
+  cycle_started_at: string;
+  stripe_subscription_id: string | null;
+  first_event_id: string | null;
+  notified_day0_at: string | null;
+  notified_day7_at: string | null;
+  notified_day14_at: string | null;
+  recovered_at: string | null;
+  lapsed_at: string | null;
+};
+
+export const CYCLES: { rows: CycleRow[] } = { rows: [] };
+
+export function resetCycles(): void {
+  CYCLES.rows = [];
+}
+
+const NOW_ISO = "2026-09-01T00:00:00.000Z";
+let cycleSeq = 0;
+
+/**
+ * The elevated pool, which is where billingDunningCycle.ts writes — a Stripe
+ * webhook is a provider callback with no tenant scope, so the cycle row is
+ * written cross-org by design. This mirrors the UNIQUE (organization_id,
+ * cycle_started_at) constraint and the conditional stage claims, because those
+ * ARE the notification-idempotency mechanism: getting them wrong here would let
+ * a "sends exactly once" test pass against code that sends eight times.
+ */
+export const elevatedQueryMock = vi.fn(async (sql: string, params: unknown[] = []) => {
+  const asIso = (v: unknown) =>
+    v instanceof Date ? v.toISOString() : String(v);
+
+  if (/INSERT INTO billing_dunning_cycles/i.test(sql)) {
+    const [orgId, startedAt, subId, eventId] = params as [string, unknown, string | null, string | null];
+    const started = asIso(startedAt);
+    const clash = CYCLES.rows.find(
+      (r) => r.organization_id === orgId && r.cycle_started_at === started
+    );
+    if (clash) return { rows: [], rowCount: 0 };
+    const row: CycleRow = {
+      id: `cycle-${++cycleSeq}`,
+      organization_id: orgId,
+      cycle_started_at: started,
+      stripe_subscription_id: subId,
+      first_event_id: eventId,
+      notified_day0_at: null,
+      notified_day7_at: null,
+      notified_day14_at: null,
+      recovered_at: null,
+      lapsed_at: null,
+    };
+    CYCLES.rows.push(row);
+    return { rows: [{ id: row.id }], rowCount: 1 };
+  }
+
+  if (/SELECT id FROM billing_dunning_cycles/i.test(sql)) {
+    const [orgId, startedAt] = params as [string, unknown];
+    const started = asIso(startedAt);
+    const row = CYCLES.rows.find(
+      (r) => r.organization_id === orgId && r.cycle_started_at === started
+    );
+    return row ? { rows: [{ id: row.id }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+
+  if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET notified_day(\d+)_at/i.test(sql)) {
+    const stage = /notified_day0_at/.test(sql) ? "notified_day0_at"
+      : /notified_day7_at/.test(sql) ? "notified_day7_at"
+      : "notified_day14_at";
+    const [cycleId] = params as [string];
+    const row = CYCLES.rows.find((r) => r.id === cycleId);
+    if (!row || row[stage] !== null || row.recovered_at !== null) {
+      return { rows: [], rowCount: 0 };
+    }
+    row[stage] = NOW_ISO;
+    return { rows: [{ id: row.id }], rowCount: 1 };
+  }
+
+  if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET recovered_at/i.test(sql)) {
+    const [orgId] = params as [string];
+    const hit = CYCLES.rows.filter(
+      (r) => r.organization_id === orgId && r.recovered_at === null && r.lapsed_at === null
+    );
+    hit.forEach((r) => { r.recovered_at = NOW_ISO; });
+    return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };
+  }
+
+  if (/UPDATE billing_dunning_cycles/i.test(sql) && /SET lapsed_at/i.test(sql)) {
+    const [cycleId] = params as [string];
+    const row = CYCLES.rows.find((r) => r.id === cycleId);
+    if (!row || row.lapsed_at !== null || row.recovered_at !== null) {
+      return { rows: [], rowCount: 0 };
+    }
+    row.lapsed_at = NOW_ISO;
+    return { rows: [{ id: row.id }], rowCount: 1 };
+  }
+
+  return queryMock(sql, params);
 });
