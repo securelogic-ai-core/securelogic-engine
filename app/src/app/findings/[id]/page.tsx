@@ -498,6 +498,19 @@ export default async function FindingDetailPage({
             currentUserId={session.userId ?? null}
             openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
             homeLabel={findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
+            /* Carried into the workspace so activating it does not remove
+               Finding ↔ Risk visibility. Same component, same data, same
+               permissions as the legacy layout — one implementation, not two. */
+            riskRegister={
+              <RiskRegisterPanel
+                findingId={finding.id}
+                links={riskLinks}
+                availableRisks={(registerRisks?.risks ?? []).map((r) => ({
+                  id: r.id, title: r.title, risk_rating: r.risk_rating ?? "Unrated",
+                }))}
+                canDecide={(authMe?.role ?? "viewer") !== "viewer"}
+              />
+            }
           >
             {/* R-3: the recommendation is ADVISORY guidance — distinct from the
                 executable actions below it. Labeled so the two are never conflated. */}

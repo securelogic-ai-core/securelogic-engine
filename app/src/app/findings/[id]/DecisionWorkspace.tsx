@@ -549,6 +549,7 @@ export function DecisionWorkspace({
   openActionCount = 0,
   homeLabel = "Findings",
   children,
+  riskRegister,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -581,6 +582,15 @@ export function DecisionWorkspace({
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
+  /**
+   * The Risk Register relationship panel (SL-RISK-LINK), passed in from the
+   * server page which owns the fetch. Rendered as its own zone ABOVE the tabs,
+   * not inside one: whether the organization is carrying this finding as a risk
+   * is a governance fact about the finding, and hiding it behind a tab would
+   * make activating this workspace REMOVE a capability the legacy layout shows
+   * unconditionally.
+   */
+  riskRegister?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1128,6 +1138,13 @@ export function DecisionWorkspace({
           <ImpactRow label="Third-party" dim={bi.third_party} entities={affected.vendors} />
         </div>
       </div>
+
+      {/* ZONE F — Risk Register (SL-RISK-LINK). Above the tabs, deliberately:
+          "is the organization carrying this as a risk?" is a governance fact
+          about the finding, and putting it inside a tab would mean activating
+          this workspace REMOVED a capability the legacy layout shows
+          unconditionally. */}
+      {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
 
       {/* Tab strip — executive zones A–C stay above; the detail body splits into
           Overview (context) and Remediation (recommendation + actions). */}

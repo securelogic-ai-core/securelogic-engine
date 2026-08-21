@@ -73,13 +73,13 @@ export function RiskRegisterPanel({
   const unlinked = availableRisks.filter((r) => !links.some((l) => l.risk_id === r.id));
 
   return (
-    <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+    <section className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <div className="flex items-start justify-between gap-4 mb-4">
         <div>
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          <h2 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
             Risk Register
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs mt-1" style={{ color: "#64748b" }}>
             {links.length === 0
               ? "This finding is standalone. Most findings should stay that way."
               : `Supporting ${links.length} register ${links.length === 1 ? "entry" : "entries"}.`}
@@ -91,7 +91,7 @@ export function RiskRegisterPanel({
               <button
                 type="button"
                 onClick={() => setMode("link")}
-                className="text-sm font-medium text-slate-700 border border-slate-300 hover:border-slate-400 px-3 py-1.5 rounded-lg transition-colors"
+                className="text-sm font-medium border border-brand-line hover:opacity-80 px-3 py-1.5 rounded-lg transition-colors" style={{ color: "#cbd5e1" }}
               >
                 Link to a risk
               </button>
@@ -107,31 +107,31 @@ export function RiskRegisterPanel({
         )}
       </div>
 
-      {error && <p className="mb-3 text-sm text-red-700">{error}</p>}
+      {error && <p className="mb-3 text-sm" style={{ color: "#fca5a5" }}>{error}</p>}
 
       {links.length > 0 && (
         <ul className="space-y-2 mb-4">
           {links.map((l) => (
             <li
               key={l.risk_id}
-              className="flex items-start justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2"
+              className="flex items-start justify-between gap-3 border border-brand-line rounded-lg px-3 py-2"
             >
               <div className="min-w-0">
-                <Link href={`/risks/${l.risk_id}`} className="text-sm font-medium text-teal-700 hover:underline">
+                <Link href={`/risks/${l.risk_id}`} className="text-sm font-medium hover:underline" style={{ color: "#5eead4" }}>
                   {l.risk_title}
                 </Link>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-xs mt-0.5" style={{ color: "#64748b" }}>
                   {l.risk_rating} · {l.risk_domain} · {l.risk_status}
                   {l.link_type === "promoted" && " · promoted from this finding"}
                 </p>
-                {l.note && <p className="text-xs text-slate-600 mt-1 italic">{l.note}</p>}
+                {l.note && <p className="text-xs mt-1 italic" style={{ color: "#94a3b8" }}>{l.note}</p>}
               </div>
               {canDecide && (
                 <button
                   type="button"
                   disabled={pending}
                   onClick={() => run(() => unlinkFindingFromRisk(findingId, l.risk_id))}
-                  className="text-xs text-slate-500 hover:text-red-700 flex-shrink-0 disabled:opacity-50"
+                  className="text-xs hover:opacity-80 flex-shrink-0 disabled:opacity-50" style={{ color: "#94a3b8" }}
                 >
                   {/* Unlink, never delete: both objects outlive the relationship. */}
                   Unlink
@@ -143,13 +143,13 @@ export function RiskRegisterPanel({
       )}
 
       {mode === "link" && (
-        <div className="border-t border-slate-200 pt-4 space-y-3">
-          <label className="block text-xs font-medium text-slate-600">
+        <div className="border-t border-brand-line pt-4 space-y-3">
+          <label className="block text-xs font-medium" style={{ color: "#94a3b8" }}>
             Existing register entry
             <select
               value={riskId}
               onChange={(e) => setRiskId(e.target.value)}
-              className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="mt-1 block w-full border border-brand-line rounded-lg px-3 py-2 text-sm" style={{ background: "#020617", color: "#e2e8f0" }}
             >
               <option value="">Choose a risk…</option>
               {unlinked.map((r) => (
@@ -157,12 +157,12 @@ export function RiskRegisterPanel({
               ))}
             </select>
           </label>
-          <label className="block text-xs font-medium text-slate-600">
+          <label className="block text-xs font-medium" style={{ color: "#94a3b8" }}>
             Why this finding evidences that risk (optional)
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              className="mt-1 block w-full border border-brand-line rounded-lg px-3 py-2 text-sm" style={{ background: "#020617", color: "#e2e8f0" }}
             />
           </label>
           <div className="flex gap-2">
@@ -174,7 +174,7 @@ export function RiskRegisterPanel({
             >
               Link
             </button>
-            <button type="button" onClick={() => setMode("idle")} className="text-sm text-slate-500 px-2">
+            <button type="button" onClick={() => setMode("idle")} className="text-sm px-2" style={{ color: "#94a3b8" }}>
               Cancel
             </button>
           </div>
@@ -182,8 +182,8 @@ export function RiskRegisterPanel({
       )}
 
       {mode === "promote" && (
-        <div className="border-t border-slate-200 pt-4 space-y-3">
-          <p className="text-xs text-slate-500">
+        <div className="border-t border-brand-line pt-4 space-y-3">
+          <p className="text-xs" style={{ color: "#64748b" }}>
             This creates a new Risk Register entry from this finding. Title and domain
             carry over; you rate it.
           </p>
@@ -193,13 +193,13 @@ export function RiskRegisterPanel({
             ["Residual (after controls)", "residual_likelihood", "residual_impact", "residual_rating", LIKELIHOODS],
           ] as const).map(([label, lk, im, rt, options]) => (
             <div key={label}>
-              <p className="text-xs font-medium text-slate-600 mb-1">{label}</p>
+              <p className="text-xs font-medium mb-1" style={{ color: "#94a3b8" }}>{label}</p>
               <div className="grid grid-cols-3 gap-2">
                 <select
                   aria-label={`${label} likelihood`}
                   value={rating[lk]}
                   onChange={(e) => setRating({ ...rating, [lk]: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                  className="border border-brand-line rounded-lg px-2 py-1.5 text-sm" style={{ background: "#020617", color: "#e2e8f0" }}
                 >
                   {options.map((o) => <option key={o} value={o}>{o.replace(/_/g, " ")}</option>)}
                 </select>
@@ -207,7 +207,7 @@ export function RiskRegisterPanel({
                   aria-label={`${label} impact`}
                   value={rating[im]}
                   onChange={(e) => setRating({ ...rating, [im]: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                  className="border border-brand-line rounded-lg px-2 py-1.5 text-sm" style={{ background: "#020617", color: "#e2e8f0" }}
                 >
                   {SEVERITIES.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
@@ -215,7 +215,7 @@ export function RiskRegisterPanel({
                   aria-label={`${label} rating`}
                   value={rating[rt]}
                   onChange={(e) => setRating({ ...rating, [rt]: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-2 py-1.5 text-sm"
+                  className="border border-brand-line rounded-lg px-2 py-1.5 text-sm" style={{ background: "#020617", color: "#e2e8f0" }}
                 >
                   {SEVERITIES.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
@@ -234,7 +234,7 @@ export function RiskRegisterPanel({
                   entry to the register, and the two should never be one word. */}
               Create register entry
             </button>
-            <button type="button" onClick={() => setMode("idle")} className="text-sm text-slate-500 px-2">
+            <button type="button" onClick={() => setMode("idle")} className="text-sm px-2" style={{ color: "#94a3b8" }}>
               Cancel
             </button>
           </div>
@@ -242,7 +242,7 @@ export function RiskRegisterPanel({
       )}
 
       {!canDecide && links.length === 0 && (
-        <p className="text-xs text-slate-400">
+        <p className="text-xs" style={{ color: "#64748b" }}>
           Only analysts and admins can put a finding on the Risk Register.
         </p>
       )}
