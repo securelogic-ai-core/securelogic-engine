@@ -129,7 +129,10 @@ export async function claimDunningStage(
  * Plural by design: an org with more than one open cycle is already anomalous,
  * and closing all of them is the convergent answer.
  */
-export async function markCyclesRecovered(organizationId: string): Promise<string[]> {
+export async function markCyclesRecovered(
+  organizationId: string,
+  subscriptionId: string | null
+): Promise<string[]> {
   try {
     const result = await pgElevated.query<{ id: string }>(
       // Deliberately NOT gated on lapsed_at IS NULL. A cycle that reached
@@ -138,12 +141,24 @@ export async function markCyclesRecovered(organizationId: string): Promise<strin
       // under-count exactly the saves that mattered most. lapsed_at is left in
       // place beside recovered_at, so the pair distinguishes "recovered before
       // lockout" from "recovered after lockout".
+      //
+      // SCOPED BY SUBSCRIPTION (PR-H). A dunning recovery pays the SAME
+      // subscription that failed; a RE-SUBSCRIPTION after cancellation pays a
+      // different one. Closing an old cycle on a new subscription's first
+      // invoice would credit the dunning emails with a sale they did not make,
+      // and would drop the whole gap — potentially weeks — into
+      // median_hours_to_recovery. Both sides must be known for the guard to
+      // bite: an unknown subscription on either side falls back to closing
+      // every open cycle, which is the prior behaviour.
       `UPDATE billing_dunning_cycles
           SET recovered_at = NOW()
         WHERE organization_id = $1
           AND recovered_at IS NULL
+          AND ($2::text IS NULL
+               OR stripe_subscription_id IS NULL
+               OR stripe_subscription_id = $2)
         RETURNING id`,
-      [organizationId]
+      [organizationId, subscriptionId]
     );
     return result.rows.map((r) => r.id);
   } catch (err) {
