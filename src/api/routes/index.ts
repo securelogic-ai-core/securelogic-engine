@@ -38,6 +38,7 @@ import adminOpsOverviewRouter from "./adminOpsOverview.js";
 import adminOpsHealthRouter from "./adminOpsHealth.js";
 import adminApiKeysRouter from "./adminApiKeys.js";
 import adminOrganizationsRouter from "./adminOrganizations.js";
+import adminDunningMetricsRouter from "./adminDunningMetrics.js";
 import adminAuditLogRouter from "./adminAuditLog.js";
 import issuesRouter from "./issues.js";
 import intelligenceRouter from "./intelligence.js";
@@ -347,6 +348,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminOpsHealthRouter);
   router.use("/admin", adminApiKeysRouter);
   router.use("/admin", adminOrganizationsRouter);
+  router.use("/admin", adminDunningMetricsRouter);
   router.use("/admin", adminAuditLogRouter);
 
   // =========================================================

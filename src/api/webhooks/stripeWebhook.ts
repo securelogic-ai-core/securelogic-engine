@@ -16,6 +16,7 @@ import {
   openDunningCycle,
   claimDunningStage,
   markCyclesRecovered,
+  markCyclesLapsed,
 } from "../lib/billingDunningCycle.js";
 
 /* =========================================================
@@ -1051,7 +1052,7 @@ async function sendDunningEmails(args: {
     const result = await sendEmail({ to: admin.email, subject, html });
     logger.info(
       {
-        event: "stripe_dunning_email",
+        event: "billing_dunning_notified",
         orgId: args.orgId,
         stage: args.stage,
         graceState: state,
@@ -1222,6 +1223,22 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
       subscriptionId: invoiceSubId,
       eventId: ordering.eventId,
     });
+
+    if (cycleId && isNew) {
+      // The canonical start of a dunning cycle. Distinct from the raw
+      // stripe_payment_failed line above, which fires on every retry: this one
+      // fires once per delinquency and is the DENOMINATOR of the recovery rate.
+      logger.warn(
+        {
+          event: "billing_dunning_started",
+          orgId: org.id,
+          cycleId,
+          cycleStartedAt: org.payment_failed_at,
+          subscriptionId: invoiceSubId,
+        },
+        "dunning: cycle opened"
+      );
+    }
 
     if (cycleId && isNew && (await claimDunningStage(cycleId, 0))) {
       try {
@@ -1443,6 +1460,20 @@ async function handlePaymentRecovered(
   // only the caller that actually flipped recovered_at sends mail.
   const recoveredCycles = await markCyclesRecovered(orgId);
   if (recoveredCycles.length > 0) {
+    for (const closedCycleId of recoveredCycles) {
+      // The NUMERATOR of the recovery rate. Emitted per cycle, not per webhook,
+      // so a second observation of the same recovery cannot inflate it.
+      logger.info(
+        {
+          event: "billing_dunning_recovered",
+          orgId,
+          cycleId: closedCycleId,
+          invoiceId,
+          stripeEventType: event.type,
+        },
+        "dunning: cycle recovered"
+      );
+    }
     try {
       await sendPaymentRecoveredEmails(orgId);
     } catch (err) {
@@ -1755,6 +1786,31 @@ export async function stripeWebhook(
     // in doubt.
     if (apiKeyId) {
       await setEntitlementInRedis(apiKeyId, entitlement);
+    }
+
+    // Access was actually withdrawn: close any open dunning cycle as lapsed.
+    // This is the OTHER terminal outcome, and without it the recovery rate has
+    // no denominator that ever closes — cycles would sit open forever and the
+    // metric would drift toward optimism as long-dead delinquencies accumulate.
+    //
+    // What counts as "lapsed" follows enforcement rather than the calendar: with
+    // grace off, past_due revokes immediately and the cycle lapses on day 0;
+    // with grace on (PR-F), only a terminal Stripe state revokes. Both are the
+    // same statement — "the customer lost access during this cycle".
+    if (!entitlement.activeSubscription) {
+      const lapsed = await markCyclesLapsed(orgId);
+      for (const lapsedCycleId of lapsed) {
+        logger.warn(
+          {
+            event: "billing_dunning_lapsed",
+            orgId,
+            cycleId: lapsedCycleId,
+            subscriptionStatus,
+            stripeEventType: eventType,
+          },
+          "dunning: cycle lapsed — access withdrawn"
+        );
+      }
     }
 
     // Record the org's one-time Platform trial the moment it actually begins.
