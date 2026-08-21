@@ -92,12 +92,16 @@ describe("an IP alone cannot identify a host", () => {
   });
 
   it("does NOT warn when a resolvable identifier accompanies the IP", () => {
-    for (const companion of [
+    // Typed explicitly: a bare array of differing object literals infers a UNION
+    // whose members carry optional-undefined props, which does not satisfy
+    // Record<string, string>.
+    const companions: Array<Record<string, string>> = [
       { Host: "web01" },
       { "DNS Name": "web01.corp.example" },
       { ARN: "arn:aws:ec2:us-east-1:1:instance/i-abc" },
       { "CMDB ID": "ASSET-0042" },
-    ]) {
+    ];
+    for (const companion of companions) {
       const v = validateRow(row({ IP: "10.0.4.12", ...companion }));
       expect(v.warnings.join(" ")).not.toMatch(/cannot identify an asset/i);
     }
