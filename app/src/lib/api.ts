@@ -6235,7 +6235,22 @@ export async function rejectVendorAssuranceDocument(
 // CUEC matcher package: cuecs + N:M control mappings + control search
 // ---------------------------------------------------------------------------
 
-export type CuecReviewStatus = "pending" | "reviewed_no_match";
+/**
+ * VA-1/VA-2. The old vocabulary was ["pending","reviewed_no_match"], and
+ * `reviewed_no_match` conflated "this does not apply to us" with "this applies
+ * and we do not do it" — which is why a reviewed document could never produce
+ * remediation work. `reviewed_no_match` remains readable so legacy rows render,
+ * but the review UI offers only the four explicit outcomes.
+ */
+export type CuecReviewStatus =
+  | "pending"
+  | "not_applicable"
+  | "satisfied"
+  | "gap"
+  | "reviewed_no_match";
+
+/** The determinations a reviewer may now record. */
+export const CUEC_DETERMINATIONS = ["not_applicable", "satisfied", "gap"] as const;
 export type CuecMappingStatus = "suggested" | "accepted" | "dismissed";
 export type CuecMappingSource = "auto" | "manual";
 
@@ -6264,6 +6279,20 @@ export type VendorAssuranceCuec = {
   review_status_reason: string | null;
   review_status_updated_by_user_id: string | null;
   review_status_updated_at: string | null;
+  /** Snapshot of the mapped controls and their state at determination time. */
+  gap_basis: {
+    determined_at?: string;
+    determined_status?: string;
+    mapped_controls?: Array<{
+      control_id: string; control_name: string;
+      implementation_status: string | null; maturity_level: string | null;
+      last_tested_at: string | null;
+    }>;
+    mapped_control_count?: number;
+    basis?: string;
+  } | null;
+  /** The finding this gap produced, if promoted. NULL is the normal state. */
+  promoted_finding_id: string | null;
   created_at: string;
   updated_at: string;
   mappings: VendorAssuranceCuecMapping[];
@@ -6383,6 +6412,32 @@ export async function updateCuecMapping(
 }
 
 /** POST /cuecs/:id/review-status — set/clear the "no applicable control in inventory" marker. */
+/**
+ * Promote a CUEC gap into an ordinary Finding.
+ *
+ * Explicit by design: recording a gap and opening remediation work are two
+ * different acts, so this is never called automatically. Severity is REQUIRED —
+ * it drives the SLA, and a deadline the platform invented would have no author.
+ */
+export async function promoteCuecToFinding(
+  token: string,
+  cuecId: string,
+  severity: "Critical" | "High" | "Moderate" | "Low",
+): Promise<VendorAssuranceActionResult<{ finding: { id: string; title: string; severity: string; due_date: string | null }; created: boolean }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/promote-to-finding`,
+      token,
+      { method: "POST", body: JSON.stringify({ severity }) },
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_promotion_failed") };
+    return body as { finding: { id: string; title: string; severity: string; due_date: string | null }; created: boolean };
+  } catch {
+    return { error: "cuec_promotion_failed" };
+  }
+}
+
 export async function updateCuecReviewStatus(
   token: string,
   cuecId: string,
@@ -6393,7 +6448,17 @@ export async function updateCuecReviewStatus(
     const res = await engineFetch(
       `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/review-status`,
       token,
-      { method: "POST", body: JSON.stringify(reviewStatus === "reviewed_no_match" && reason && reason.trim().length > 0 ? { review_status: reviewStatus, reason: reason.trim() } : { review_status: reviewStatus }) }
+      // A reason accompanies any determination that carries one. The engine
+      // REQUIRES it on `gap` — asserting the organisation fails an obligation
+      // has to be explained — and ignores it when clearing back to pending.
+      {
+        method: "POST",
+        body: JSON.stringify(
+          reviewStatus !== "pending" && reason && reason.trim().length > 0
+            ? { review_status: reviewStatus, reason: reason.trim() }
+            : { review_status: reviewStatus },
+        ),
+      }
     );
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { error: String(body["error"] ?? "cuec_review_status_update_failed") };

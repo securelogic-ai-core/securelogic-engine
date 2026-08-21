@@ -28,6 +28,7 @@ import {
   clearCuecNoMatch,
 } from "@/app/actions/vendorAssurance";
 import ControlPicker from "./ControlPicker";
+import CuecDeterminationPanel from "./CuecDeterminationPanel";
 
 type Props = {
   documentId: string;
@@ -192,6 +193,11 @@ export default function CuecMappingCard({ documentId, cuec, highConfidenceThresh
         {reasonForm}
         {error && <div style={{ marginTop: 8, fontSize: 12, color: "#fca5a5" }}>{error}</div>}
       </div>
+      {/* VA-2. Mapping answers "which of our controls covers this". The
+          determination answers "and do we actually meet it" — the question that
+          turns a vendor's report into remediation work. */}
+      <CuecDeterminationPanel documentId={documentId} cuec={cuec} canDecide />
+
     </article>
   );
 }
