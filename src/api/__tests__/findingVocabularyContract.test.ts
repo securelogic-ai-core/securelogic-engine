@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { resolve } from "path";
 import {
   FINDING_SOURCE_TYPES,
@@ -27,10 +27,29 @@ import {
  *     declaring local copies.
  */
 
-const MIGRATION = readFileSync(
-  resolve(__dirname, "../../../db/migrations/20260823_findings_intelligence_event.sql"),
-  "utf8"
-);
+/**
+ * The CHECK is read from the LATEST migration that redefines it, not from a
+ * named file.
+ *
+ * Pinning a specific migration is how this contract went stale: 20260928 added
+ * `vendor_engagement` to the database CHECK, the test kept reading the 20260823
+ * file, and FINDING_SOURCE_TYPES drifted out of sync with the schema for
+ * months without failing. The constant's whole purpose is to mirror the
+ * database, so the test has to follow the database.
+ */
+const MIGRATIONS_DIR = resolve(__dirname, "../../../db/migrations");
+
+function latestSourceTypeCheck(): string {
+  const file = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .reverse()
+    .find((f) => readFileSync(resolve(MIGRATIONS_DIR, f), "utf8").includes("findings_source_type_check\n  CHECK (source_type IN ("));
+  if (!file) throw new Error("No migration defines findings_source_type_check");
+  return readFileSync(resolve(MIGRATIONS_DIR, file), "utf8");
+}
+
+const MIGRATION = latestSourceTypeCheck();
 
 function parseCheckValues(sql: string): Set<string> {
   const checkIdx = sql.indexOf("findings_source_type_check");
@@ -44,7 +63,10 @@ function parseCheckValues(sql: string): Set<string> {
 describe("D-15: filter vocabulary == DB CHECK", () => {
   it("FINDING_SOURCE_TYPES matches the migration CHECK exactly", () => {
     const dbSet = parseCheckValues(MIGRATION);
-    expect(dbSet.size).toBe(15);
+    // No hard-coded count: the number changes every time a source is added,
+    // and a stale literal here would fail for the wrong reason and teach the
+    // next person to bump it without checking the set.
+    expect(dbSet.size).toBeGreaterThanOrEqual(15);
     expect([...FINDING_SOURCE_TYPES].sort()).toEqual([...dbSet].sort());
   });
 

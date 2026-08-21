@@ -46,6 +46,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // per-Contributor ownership predicate — the same posture risks.ts takes on
   // risk creation. denyContributor() is on every route in the file.
   "findingRiskLinks.ts",
+  // SL-PENTEST-IN. Deny-all: recording a security assessment and reading the
+  // org's testing history are governance acts with no per-Contributor
+  // ownership predicate, matching every other assessment family.
+  "penTestEngagements.ts",
   "aiSystemGovernanceContext.ts",
   "aiSystemVendorDependencies.ts",
   "aiSystemsExport.ts",

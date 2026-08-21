@@ -20,10 +20,13 @@ const FIELDS: Array<{ key: keyof FindingImportRow; label: string; required?: boo
   { key: "likelihood",     label: "Likelihood" },
   { key: "due_date",       label: "Due Date (YYYY-MM-DD)" },
   { key: "recommendation", label: "Recommendation" },
+  { key: "source_reference_id", label: "Report Reference ID" },
+  { key: "cvss_score",     label: "CVSS Score (0-10)" },
+  { key: "cvss_vector",    label: "CVSS Vector" },
 ];
 
 const VALID_SEVERITIES   = new Set(["Critical", "High", "Moderate", "Low"]);
-const VALID_SOURCE_TYPES = new Set(["manual", "assessment", "control_test", "vendor_review", "signal", "risk"]);
+const VALID_SOURCE_TYPES = new Set(["manual", "assessment", "control_test", "vendor_review", "signal", "risk", "pen_test"]);
 const VALID_PRIORITIES   = new Set(["immediate", "near_term", "planned", "watch"]);
 const VALID_LIKELIHOODS  = new Set(["very_high", "high", "medium", "low", "very_low"]);
 const ISO_DATE_RE        = /^\d{4}-\d{2}-\d{2}$/;
@@ -51,6 +54,11 @@ const AUTO_MAP_RULES: Record<keyof FindingImportRow, string[]> = {
   likelihood:     ["likelihood", "probability", "chance"],
   due_date:       ["due date", "due", "deadline", "remediation date", "target date"],
   recommendation: ["recommendation", "remediation", "fix", "action", "suggested fix"],
+  source_severity:     ["source severity", "original severity", "reported severity"],
+  source_reference_id: ["finding id", "reference", "ref", "report id", "issue id", "finding ref"],
+  cvss_score:          ["cvss", "cvss score", "cvss base score", "score"],
+  cvss_vector:         ["cvss vector", "vector", "cvss string"],
+  source_id:           [],
 };
 
 // Scan the first up to 5 rows of raw sheet data to find the real header row.
@@ -109,9 +117,17 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
   const rawPriority = get("priority");
   const priority = rawPriority?.toLowerCase().trim().replace(/\s+/g, "_");
 
+  // The severity column is captured TWICE on purpose: once mapped to a
+  // canonical value when it maps, and once verbatim as source_severity. The
+  // verbatim value is what lets the engine record an Informational finding
+  // faithfully instead of the importer inventing a level for it.
+  const rawSeverity = get("source_severity") ?? get("severity");
+  const canonical = normalizeSeverity(get("severity"));
+
   return {
     title:          get("title") ?? "",
-    severity:       normalizeSeverity(get("severity")),
+    severity:       canonical && VALID_SEVERITIES.has(canonical) ? canonical : undefined,
+    source_severity: rawSeverity,
     source_type,
     description:    get("description"),
     domain:         get("domain"),
@@ -119,6 +135,9 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
     likelihood,
     due_date:       get("due_date"),
     recommendation: get("recommendation"),
+    source_reference_id: get("source_reference_id"),
+    cvss_score:     get("cvss_score"),
+    cvss_vector:    get("cvss_vector"),
   };
 }
 
@@ -131,8 +150,26 @@ type RowValidation = "valid" | "warning" | "invalid";
 function validateRow(row: FindingImportRow): { status: RowValidation; warnings: string[] } {
   const warnings: string[] = [];
   if (!row.title.trim()) return { status: "invalid", warnings: ["Title is required"] };
-  if (!row.severity || !VALID_SEVERITIES.has(row.severity)) {
-    return { status: "invalid", warnings: ["Severity is required and must be: Critical, High, Moderate, Low"] };
+  if (!row.severity) {
+    // A severity that does not map is no longer a rejected row. If the report's
+    // own value was captured, the finding is imported WITHOUT a canonical
+    // severity — which means no remediation SLA — and the warning says so
+    // plainly. Guessing a level here is how an "Informational" observation
+    // silently acquires a deadline.
+    if (!row.source_severity) {
+      return { status: "invalid", warnings: ["Severity is required, or map a Source Severity column"] };
+    }
+    // Deliberately non-committal about the OUTCOME. The mapping table lives on
+    // the server — duplicating it here is how two implementations start
+    // disagreeing about what a customer's report said — so the preview states
+    // what it knows ("this is not one of ours") and what the two possible
+    // results are, rather than guessing which one applies.
+    warnings.push(
+      `Severity "${row.source_severity}" is not one of Critical/High/Moderate/Low. ` +
+      `It will be normalised on import: recognised equivalents (e.g. Medium, P2, a CVSS score) ` +
+      `map to a SecureLogic severity; Informational and unrecognised values are imported with ` +
+      `no canonical severity and no remediation SLA`
+    );
   }
   if (!VALID_SOURCE_TYPES.has(row.source_type)) {
     warnings.push(`Source type "${row.source_type}" is not valid — will default to "manual"`);
@@ -153,6 +190,10 @@ function cleanRow(row: FindingImportRow): FindingImportRow {
   return {
     title:          row.title.trim(),
     severity:       row.severity,
+    source_severity: row.source_severity || undefined,
+    source_reference_id: row.source_reference_id || undefined,
+    cvss_score:     row.cvss_score || undefined,
+    cvss_vector:    row.cvss_vector || undefined,
     source_type:    VALID_SOURCE_TYPES.has(row.source_type) ? row.source_type : "manual",
     description:    row.description || undefined,
     domain:         row.domain || undefined,
@@ -219,6 +260,13 @@ function ProgressBar({ step }: { step: Step }) {
 // ─────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * Row-level helpers, exported for unit test. The severity rules are the whole
+ * substance of pen-test intake and they must be assertable without mounting a
+ * file-upload flow.
+ */
+export const __testing = { normalizeRow, validateRow, cleanRow };
 
 export function FindingsImportClient({
   homeLabel = "Findings",
@@ -560,7 +608,13 @@ function PreviewStep({ previewRows, importing, error, onBack, onImport }: {
                       {status === "invalid" && <span style={{ color: "#fca5a5" }}>✗</span>}
                     </td>
                     <td className="px-4 py-3 font-medium" style={{ color: status === "invalid" ? "#64748b" : "#f1f5f9" }}>{row.title || <em style={{ color: "#475569" }}>empty</em>}</td>
-                    <td className="px-4 py-3" style={{ color: SEVERITY_COLORS[row.severity] ?? "#94a3b8" }}>{row.severity || "—"}</td>
+                    {/* Shows what will actually be stored. A row with no
+                        canonical severity displays the report's own word, so a
+                        reviewer sees "Informational" rather than an em-dash
+                        that reads as missing data. */}
+                    <td className="px-4 py-3" style={{ color: row.severity ? SEVERITY_COLORS[row.severity] ?? "#94a3b8" : "#94a3b8" }}>
+                      {row.severity ?? (row.source_severity ? `${row.source_severity} · normalised on import` : "—")}
+                    </td>
                     <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.source_type || "—"}</td>
                     <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.priority || "—"}</td>
                   </tr>

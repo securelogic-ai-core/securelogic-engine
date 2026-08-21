@@ -60,8 +60,14 @@ export type MyWorkTopItem = {
   title: string;
   /** WHY it ranks: the finding severity or action priority, display-ready. */
   urgency: string;
-  /** 0 = Critical/Immediate … 3 = Low/Watch; drives the label's color tier. */
-  urgencyRank: 0 | 1 | 2 | 3;
+  /**
+   * 0 = Critical/Immediate … 3 = Low/Watch; drives the label's color tier.
+   * 4 = no canonical severity — a finding the source called Informational, or
+   * whose value could not be mapped. It carries no SLA, so it sorts BELOW Low
+   * rather than beside it: ranking it with work that has a real deadline would
+   * misrepresent what needs attention first.
+   */
+  urgencyRank: 0 | 1 | 2 | 3 | 4;
   overdue: boolean;
   /** ISO due date; null = none set. */
   dueDate: string | null;
@@ -108,8 +114,9 @@ export function rankMyWorkItems(
       kind: "finding",
       id: f.id,
       title: f.title,
-      urgency: f.severity,
-      urgencyRank: FINDING_URGENCY[f.severity] ?? 3,
+      // No canonical severity ranks BELOW Low, not beside it.
+      urgency: f.severity ?? "No severity",
+      urgencyRank: f.severity ? FINDING_URGENCY[f.severity] ?? 3 : 4,
       overdue: dueMs < nowMs,
       dueDate: f.due_date,
       href: `/findings/${f.id}`,

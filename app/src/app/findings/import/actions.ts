@@ -6,8 +6,20 @@ const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
 export type FindingImportRow = {
   title: string;
-  severity: string;
+  /**
+   * The canonical severity, when the row's value maps to one. Left undefined
+   * when it does not — the engine then derives it from source_severity, or
+   * records that the finding has none. The importer never guesses.
+   */
+  severity?: string;
   source_type: string;
+  /** What the report actually said, verbatim. Always sent when present. */
+  source_severity?: string;
+  source_reference_id?: string;
+  cvss_score?: string;
+  cvss_vector?: string;
+  /** The pen-test engagement this row came from (pen_test rows only). */
+  source_id?: string;
   description?: string;
   domain?: string;
   priority?: string;
@@ -58,9 +70,17 @@ export async function importFindings(rows: FindingImportRow[]): Promise<FindingI
   for (const row of rows) {
     const body: Record<string, string> = {
       title: row.title,
-      severity: row.severity,
       source_type: row.source_type,
     };
+    // Omitted deliberately when the row's severity did not map: the engine
+    // normalises source_severity itself, so the mapping table lives in one
+    // place and an Informational finding is never assigned a level here.
+    if (row.severity)            body.severity            = row.severity;
+    if (row.source_severity)     body.source_severity     = row.source_severity;
+    if (row.source_reference_id) body.source_reference_id = row.source_reference_id;
+    if (row.cvss_score)          body.cvss_score          = row.cvss_score;
+    if (row.cvss_vector)         body.cvss_vector         = row.cvss_vector;
+    if (row.source_id)           body.source_id           = row.source_id;
     if (row.description)    body.description    = row.description;
     if (row.domain)         body.domain         = row.domain;
     if (row.priority)       body.priority       = row.priority;
