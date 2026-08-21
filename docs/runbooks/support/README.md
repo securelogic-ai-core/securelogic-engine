@@ -41,71 +41,77 @@ the fiction this directory exists to avoid.
 
 ## Runbook status
 
-### Written
+**Reconciled 2026-08-21 against `develop@58cccb2c`.** The set below is decided by
+what becomes reachable, not by what exists in code.
 
-| ID | Title | Domain | Sev |
-|---|---|---|---|
-| SR-001 | Customer cannot log in | Authentication | SEV2 |
-| SR-009 | Suspected cross-tenant exposure | Security | **SEV1** |
+### The reconciliation that matters
 
-### Required before Sept 15 — not yet written
+The accumulated `develop` → `main` release splits into two groups, because
+**promotion alone does not make everything customer-visible**:
 
-These cover functionality that **is** live in production today.
+**Live on promotion — unflagged.** Vulnerability findings, per-asset occurrences,
+the observation ledger, Risk Register linking/promotion, the SLA settings UI,
+pen-test intake, and the dunning/recovery billing paths. These routes read no
+feature flag, so the release that promotes them makes them reachable.
 
-| ID | Title | Domain | Why it matters |
-|---|---|---|---|
-| SR-002 | Email verification not received | Authentication | Blocks first login; Resend suppression is a known failure mode |
-| SR-003 | Payment failure / card declined | Billing | Money; customer-visible banner |
-| SR-004 | Account suspended or entitlement wrong | Billing | Blocks a paying customer from all work |
-| SR-005 | Document or evidence upload failure | Documents | Blocks audit evidence collection |
-| SR-006 | Findings import failure | Findings | High-volume onboarding path |
-| SR-007 | Intelligence Brief not received | Email / AI | The subscription deliverable |
-| SR-008 | App or engine unavailable | Availability | SEV1 platform event |
-| SR-010 | Suspected account compromise | Security | **SEV1** |
-| SR-011 | Data export or erasure request failure | Data & Privacy | Regulatory deadline |
-| SR-012 | Ask / AI generation failure | AI | `ASK_ENABLED` is ON in production |
+**Still flag-gated after promotion.** Verified against `render.yaml` production
+values: risk acceptance (`RISK_ACCEPTANCE_ENABLED` — *not declared* in prod),
+Decision Workspace (`false`), Risk Workspace (`false`), finding closure gate
+(`false`), and billing grace (`false` in prod **and** staging). Their runbooks stay
+deferred to the **flag flip**, not the promotion.
 
-### Deferred — functionality not yet in production
+### READY — written, grounded in current code
 
-> **RULED 2026-08-21: a deferred runbook is a RELEASE-READINESS REQUIREMENT of the
-> release that promotes its capability to production.**
->
-> Deferral is not a backlog entry that a release can outrun. When a capability
-> below reaches production, its runbook ships **with** that promotion — a
-> promotion that makes a customer-visible failure mode reachable while its runbook
-> is still unwritten is **not release-ready**, however green its CI is.
->
-> This is the same discipline as the Definition of Done, applied at the release
-> boundary instead of the PR boundary: the PR that builds dark behaviour owes
-> nothing, and the release that lights it up owes the runbook.
+| ID | Title | Domain | Sev | Gate |
+|---|---|---|---|---|
+| SR-001 | Customer cannot log in | Auth | SEV2 | Live today |
+| SR-002 | Verification email not received | Auth/Email | SEV2 | Live today |
+| SR-003 | Payment failed / card declined | Billing | SEV3→2 | Promotion |
+| SR-004 | Access lost or entitlement wrong | Billing | SEV2 | Promotion |
+| SR-005 | Document/evidence upload fails | Documents | SEV2 | Live today |
+| SR-007 | Brief not received | Email/Intel | SEV3 | Live today |
+| SR-008 | Application or engine unavailable | Availability | **SEV1** | Live today |
+| SR-009 | Suspected cross-tenant exposure | Security | **SEV1** | Live today |
+| SR-010 | Suspected account compromise | Security | **SEV1** | Live today |
+| SR-011 | Export or data-rights failure | Data/Privacy | SEV2 | Live / partly gated |
+| SR-012 | Ask or AI generation fails | AI | SEV3 | Live today |
+| SR-013 | Credential or API key exposure | Security | **SEV1** | Live today |
+| SR-014 | Inbound vulnerability report | Security | **SEV1** | Live today |
+| SR-020 | Vulnerability import failure | Vulnerability | SEV3 | Promotion |
+| SR-022 | No canonical severity / no SLA | Vulnerability | SEV4 | Promotion |
+| SR-023 | Asset cannot be resolved | Vulnerability/Asset | SEV3 | Promotion |
+| SR-024 | Affected-assets count unexpected | Vulnerability/Asset | SEV3 | Promotion |
+| SR-025 | Still active after fix / reappeared | Vulnerability/Asset | SEV3 | Promotion |
+| SR-026 | Scan scope / absence disagreement | Vulnerability/Asset | SEV3 | Promotion |
+| SR-030 | Risk Register link or promotion issue | Findings/Risk | SEV3 | Promotion |
+| SR-033 | Remediation SLA missing or wrong | Findings | SEV3 | Promotion |
+| SR-041 | Paid but access not restored | Billing | **SEV2** | Promotion |
+| SR-042 | Cannot resubscribe / Checkout fails | Billing | SEV2 | Promotion |
 
-Tracked against named gates, not forgotten.
+**SR-021 (CVE/CWE/CVSS normalization) is deliberately not a separate runbook.**
+Identifier-format rejections are covered by SR-020's error-code table and severity
+normalization by SR-022. A third file would duplicate both and give an agent two
+places to look for one answer.
 
-| Prospective ID | Topic | Required by this promotion |
+### DEFERRED — gated on a flag flip, not on the promotion
+
+| Prospective ID | Topic | Required when |
 |---|---|---|
-| SR-020 | Vulnerability import failure | SL-VULN-1 reaching `main` |
-| SR-021 | CVE/CWE/CVSS normalization issue | SL-VULN-1 |
-| SR-022 | Vulnerability has no SLA (Informational/unmapped) | SL-VULN-1 |
-| SR-023 | Asset cannot be resolved from scan identifiers | SL-OCC-1 (#843/#844) |
-| SR-024 | Occurrence not updating / duplicate suspected | SL-OCC-1 |
-| SR-025 | Reported remediated but still active; reappearance | SL-OCC-2 (#845) |
-| SR-026 | Conflicting source/scanner observations | SL-OCC-2 |
-| SR-030 | Finding cannot be linked to Risk Register | SL-RISK-LINK reaching `main` |
-| SR-031 | Risk exception / acceptance issue | SL-EXC-1 |
-| SR-032 | Finding cannot be closed (closure gate) | Closure gate ON in production |
-| SR-033 | Remediation SLA missing or incorrect | SL-SLA-UI |
-| SR-040 | Billing grace period behaviour | `BILLING_GRACE_ENABLED` ON |
-| SR-041 | Stripe webhook / recovery failure | SL-BILL-1 reaching `main` |
-| SR-042 | Resubscription / Checkout failure | SL-BILL-1 |
-| SR-050 | SSO configuration or authentication failure | First SSO customer |
+| SR-031 | Risk exception / acceptance issue | `RISK_ACCEPTANCE_ENABLED` → true in prod |
+| SR-032 | Finding cannot be closed (closure gate) | `FINDING_CLOSURE_GATE_ENABLED` → true |
+| SR-034 | Decision Workspace behaviour | `DECISION_WORKSPACE_ENABLED` → true |
+| SR-040 | Billing grace period | `BILLING_GRACE_ENABLED` → true |
+| SR-050 | SSO configuration / authentication failure | First SSO customer |
+| SR-060 | Scanner connector failures | **SL-OCC-3 does not exist** — do not document connectors as available |
 
-### Not applicable yet
+**Under the ratified rule, each of these is a release-readiness requirement of the
+change that turns its flag on** — not a backlog item that flip can outrun.
 
-- Scanner connector failures — no connector exists (SL-OCC-3 unauthorized)
-- Object storage unavailability — write with SR-005 once storage behaviour is
-  confirmed against production, not inferred
+### MFA and session invalidation
 
----
+Covered within SR-001 (lockout, session) and SR-010 (compromise) rather than as
+separate files. MFA has no distinct customer-visible failure mode today beyond
+those paths; if one emerges, it gets its own ID.
 
 ## Conventions
 

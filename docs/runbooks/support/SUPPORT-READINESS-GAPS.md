@@ -78,6 +78,38 @@ hunt.
 
 **Needed:** surface a correlation id on customer-facing error states.
 
+### Evidence from the Sept 15 runbook set (SUP-OBS-6 … 21)
+
+Written while grounding 23 runbooks in real code. Each is a question a runbook
+actually asks that support cannot answer today. **This is the requirements list for
+the post-launch Support Operations Console** — derived from real diagnostics rather
+than from imagining a screen.
+
+| ID | What support cannot see | Runbook | Impact |
+|---|---|---|---|
+| **SUP-OBS-6** | Engine-side reason behind a generic import failure | SR-020 | Escalation |
+| **SUP-OBS-7** | Whether a severity was `no_severity` (source said none) or `unmapped` (we couldn't read it) — **different answers to the customer** | SR-022 | Wrong explanation |
+| **SUP-OBS-8** | Which identifiers SecureLogic holds for an asset | SR-023 | Most common follow-up in that runbook |
+| **SUP-OBS-9** | Which source reported an occurrence, and when it last did | SR-025 | Central to "why is it still showing?" |
+| **SUP-OBS-10** | **Scan-run history: what a run covered and why it closed nothing** | SR-026 | **Highest-value gap in the vulnerability domain** |
+| **SUP-OBS-11** | An organization's storage quota usage | SR-005 | Cannot confirm a quota error |
+| **SUP-OBS-12** | No status page or shared incident view | SR-008 | L1 learns of outages from customers |
+| **SUP-OBS-13** | Per-org billing/entitlement state | SR-003, SR-004, SR-041 | Three runbooks blocked on one gap |
+| **SUP-OBS-14** | Seat assignment for a user | SR-004 | Cannot separate seat from billing |
+| **SUP-OBS-15** | An org's configured SLA policy | SR-033 | Depends on the customer reading it out |
+| **SUP-OBS-16** | Login history / active sessions | SR-010 | "Where has my account been used?" is unanswerable |
+| **SUP-OBS-17** | Per-API-key usage history | SR-013 | Blast radius after exposure cannot be assessed |
+| **SUP-OBS-18** | Whether a customer is actually rate-limited | SR-012 | Cannot confirm the cause |
+| **SUP-OBS-19** | Data-rights request state | SR-011 | **The workflow with the hardest external deadline** |
+| **SUP-OBS-20** | Whether a provider billing event was received | SR-041 | Central question of a SEV2 runbook |
+| **SUP-OBS-21** | Environment plan/price configuration | SR-042 | A past defect (transposed price IDs) was invisible from support |
+
+**Concentration worth noting:** SUP-OBS-1, 3, 13 and 19 between them account for
+most escalations across the whole set. A console addressing those four — auth
+state, email delivery, billing/entitlement state, data-rights state — would convert
+the majority of these runbooks from "escalate" to "answer", far more than a broad
+read-only view would.
+
 ## Process gaps
 
 ### SUP-SEC-1 — No incident-response process exists *(launch blocker for security)*
@@ -123,7 +155,33 @@ is confidently wrong rather than absent.
 
 **Needed:** re-validate against `develop` or mark it superseded.
 
-## Sept 1 security validation intake
+## Sept 1 security validation intake — where findings go
+
+**The path a confirmed finding takes is the product's own lifecycle.** Using
+SecureLogic for SecureLogic's own security findings is deliberate: it is the same
+discipline we ask customers for, and it produces the audit trail.
+
+```
+ZAP / Burp / CI scan finding
+   └─ triaged by Security (SR-014 if reported externally)
+      └─ Vulnerability Finding            source_type='vulnerability', CVE/CWE/CVSS where applicable
+         └─ Affected asset / occurrence    where a specific asset is implicated
+            └─ Severity                    canonical, or none if Informational (SR-022)
+               └─ SLA                      from the org policy, at creation (SR-033)
+                  └─ Remediation           actions and owners
+                     └─ Risk Register      where the exposure warrants an entry (SR-030)
+                        └─ Exception       if it cannot be fixed inside the SLA
+                           └─ Evidence     what was changed and verified
+                              └─ Retest    re-observation; a recurrence is recorded, not hidden (SR-025)
+                                 └─ Closure  a human governance decision (ADR-0009)
+```
+
+**Two rules carry over from ADR-0009 and must not be shortcut for our own
+findings:** a retest that still sees the issue is a recurrence recorded at the
+occurrence level, and closure remains a human decision — not something a clean
+rescan performs.
+
+### Where operational lessons land
 
 Operational findings from the planned OWASP ZAP / Burp Suite work should land
 **here and in the affected runbook**, not in test notes:
