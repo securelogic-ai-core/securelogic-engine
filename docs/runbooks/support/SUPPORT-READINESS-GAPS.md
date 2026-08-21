@@ -112,6 +112,20 @@ state, email delivery, billing/entitlement state, data-rights state — would co
 the majority of these runbooks from "escalate" to "answer", far more than a broad
 read-only view would.
 
+> **Priorities re-derived 2026-08-21** — `docs/launch/SEPT15-LAUNCH-RECONCILIATION.md`
+> §5 re-rates the items in this register against Sept 15 rather than carrying
+> their original priority forward. Summary of the changes:
+>
+> | Item | Now | Why |
+> |---|---|---|
+> | **SUP-OBS-4** (cross-tenant exposure detection) | **P1, Oct 15** | Highest severity in the register, and it also partially answers the tabletop's TT-2. Not a Sept 15 blocker only because prevention is strong and detection is the gap |
+> | **SUP-OBS-23** (extraction observability) | **P2** | Follows directly from the L1-is-triage ruling: support escalates rather than diagnoses |
+> | **SUP-OBS-1 / 3 / 5**, Support Operations Console | **P2, Oct 15+** | Ruled post-launch; a privileged cross-tenant read surface must not be hurried |
+> | **SUP-SEC-1 TT-1** (named legal/privacy reviewer) | **P0 for Sept 15** | Costs nothing, and without it §12 has a hole exactly where a SEV1 needs it |
+> | **SUP-SEC-1 TT-4** (log retention) + one live exercise | **P1 for Sept 15** | Evidence that expires before an investigation starts is not evidence |
+> | **SUP-PROC-1** (validated recovery) | **P2 — accepted launch limitation, unchanged** | The ruling against manufacturing untested procedures stands |
+> | **SUP-PROC-2** (stale operator runbook) | **P1 for Sept 15** | A staleness warning was added to the runbook head 2026-08-21; re-validation is still owed |
+
 ## Process gaps
 
 ### SUP-SEC-1 — Incident-response process — **MINIMUM PROCESS NOW EXISTS, gaps remain**

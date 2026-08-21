@@ -15,6 +15,44 @@
 | 4 | [#432](https://github.com/securelogic-ai-core/securelogic-engine/issues/432) | SEC-H2 — HTTP rate limiters in-memory / per-replica | High | P2 | **No** | M (~1–2d) | Redis (already wired); soft dep on #433 keying |
 | 5 | [#431](https://github.com/securelogic-ai-core/securelogic-engine/issues/431) | SEC-H1 — SSO session JWT transmitted in URL | High | P2 (deferred) | **No** — *must-fix-before-SSO-GA* | M–H (~2–4d) | Design decision (form_post vs one-time code); shares JWT-revocation store with finding M8 |
 
+## Release-parity gap (added 2026-08-21, Sept 15 reconciliation)
+
+| ID | Title | Severity | Priority | Promotion-gate | Effort | Dependencies |
+|---|---|---|---|---|---|---|
+| **REL-SEC-1** | **Production is running without every security fix merged since #799** | High | **P0 — launch** | **It IS the promotion** | S (the promotion itself) | #826 Tier 2 gate; prod DSN repoint; B-5 ruling |
+
+### REL-SEC-1 — the fixes are written, merged, and not where the customers are
+
+Verified by ancestry check on 2026-08-21: **none** of the following is on `main`,
+and production engine is serving `011e1f1d`.
+
+| Commit | Fix |
+|---|---|
+| `a6c3e6cd` (#799) | Verify Postgres TLS certificates by default — closes the 2026-05 audit **Critical** |
+| `903518bd` (#807) | Digest reset / verification / invite tokens at rest |
+| `8868859d` (#819) | Deterministic session invalidation via `users.session_epoch` |
+| `8484b366` (#820) | Sign the user out when the engine invalidates their session |
+| `f817998c` (#825) | SSO callback redirects to the public origin, not the internal host |
+| `842f499d` (#814) | Rate limiters key on the resolved client, not the rotating Cloudflare edge |
+| `4a945257` (#813) | Auth-anomaly detectors get a real client identity |
+| `9e0af404` (#812) | High-severity dependency advisories remediated; CI audit gate restored |
+
+**Why it is filed here rather than as a release chore.** Each of these was
+triaged as a security defect, fixed, reviewed and merged — and every day since
+2026-08-17 production has run the vulnerable version. The remediation is complete
+in engineering terms and incomplete in every term that matters to a customer.
+
+**The one thing that must happen first.** #799 makes TLS certificate verification
+mandatory, and internal Render DSNs fail `SELF_SIGNED`. **Each production
+service's `DATABASE_URL` must be repointed to the External Database URL form
+before this release reaches `main`**, or the workers fail live-but-broken —
+they have no HTTP endpoint, so `/health` probes cannot see it
+(`docs/validation/p0-hardening-batch.md` §1.3).
+
+**Sequencing:** `docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §11 (R-1…R-5) and
+§14. Recommended as a **dark** promotion so it changes no customer-visible
+behaviour while delivering the whole batch.
+
 ## Support & incident-response gaps (added 2026-08-21, SUPPORT-1/2 audit)
 
 | ID | Title | Severity | Priority | Promotion-gate | Effort | Dependencies |

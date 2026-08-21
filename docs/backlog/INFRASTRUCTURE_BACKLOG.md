@@ -11,7 +11,7 @@
 |---|---|---|---|---|---|---|
 | 1 | INF-1 | Three services run outside Blueprint ownership | P2 | **No** — not a promotion blocker | S to decide, M–L to adopt | Operator ownership ruling; demo DB migration-drift reconciliation |
 
-| 2 | PLAT-ASSET-1 | Asset inventory is effectively unpopulated | P1 | **No** — but gates the customer-visible truth of per-asset vulnerability tracking | M–L | Ownership ruling: import vs connector vs manual onboarding |
+| 2 | PLAT-ASSET-1 | Asset inventory is effectively unpopulated | **P0 as a *decision* / P2 as a *build*** (re-rated 2026-08-21) | **No** — but gates the customer-visible truth of per-asset vulnerability tracking, and therefore a Sept 15 advertising claim | XS to decide, L to build | Ownership ruling: import vs connector vs manual onboarding |
 
 ## Item detail
 
@@ -41,6 +41,26 @@ decision before it is an engineering one:
 
 **Explicitly NOT authorized:** asset-inventory connectors, scanner connectors
 (SL-OCC-3), or any integration work. This item is the **decision**, not the build.
+
+> **RE-RATED 2026-08-21 (`docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §5, P0-F).**
+> Split into two items with different priorities, because they have different
+> sizes and different deadlines:
+>
+> - **The ruling is P0 for Sept 15 and XS.** It decides an advertising claim, and
+>   the claim must be settled before GTM copy is written. Recommended answer:
+>   **per-asset exposure is NOT part of the Sept 15 story**; SL-VULN-1 alone tells
+>   a truthful vulnerability story at the finding level.
+> - **The build is P2 and L.** Verified 2026-08-21: `/api/assets*` is **404 in
+>   production** — the route chain puts `SECURELOGIC_ASSET_REGISTRY_ENABLED`
+>   first, and the routes additionally require the per-org `enterprise_context`
+>   capability. So the build branch does not stop at "populate the estate"; it
+>   runs back through the Enterprise Context activation gates (AD-17 grant, edge
+>   cap H1, graph load test H2). That cannot land before Sept 15.
+>
+> If the ruling is "not in the Sept 15 story", the only work owed before launch is
+> **TRUTH-1** (XS): make the Affected Assets panel distinguish *"no assets in
+> inventory"* from *"no affected assets"*, so an empty substrate never renders as
+> a confident zero.
 
 **Related:** `docs/runbooks/support/SR-023-asset-resolution-failure.md`,
 migrations `20261033`–`20261035`, `assetDetailPersistence.ts`

@@ -1,5 +1,24 @@
 # SecureLogic AI — Operator Runbook (Production Launch)
 
+> **⚠️ STALE — DO NOT FOLLOW THE BILLING SECTIONS. 2026-08-21.**
+>
+> This runbook last changed 2026-07-21 and **predates the entire SL-BILL-1
+> dunning package** (#828–#835, merged to `develop` 2026-08-21): the event-ordering
+> watermark, `invoice.paid` as the canonical recovery event, the derived grace
+> period, dunning metrics and the suspended → Checkout → restored path. The billing
+> flows described below have since changed.
+>
+> Tracked as **SUP-PROC-2** in `docs/runbooks/support/SUPPORT-READINESS-GAPS.md`,
+> which names this "the most dangerous document in the repository for support
+> purposes, because it is confidently wrong rather than absent." Re-validation
+> against `develop` is a **P1 item before Sept 15**
+> (`docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §9).
+>
+> Until then: treat every billing procedure here as unverified, and see
+> `docs/runbooks/support/SR-003-payment-failure.md`,
+> `SR-041-billing-webhook-recovery-failure.md` and
+> `SR-042-resubscription-checkout-failure.md` for the current support guidance.
+
 > **Status:** definitive launch runbook for the **operator-only** gates that block the `develop → main` promotion.
 >
 > **⚠ RE-BASELINED 2026-07-21 (Sprint-1 operator rulings D-A–D-E — see `SPRINT_1.md`).** The promotion object is now the composite `develop` head (266 commits / 65 staged migrations), promoted as a single true merge; the 2026-07-02 promote (`main` = `512cfa5a`) is archived historical evidence. **Gates 1–4 below remain valid as written** (correct display labels: Brief Pro / **Brief Team**). **The Gate 5 body below is OBSOLETE** — its `20260706`–`20260712` set and seat-cap pre-flight are already applied to production; execute **Gate 5′** from `PART_B_PREFLIGHT.md` §1 instead (65-file F-1 SQL, PF-1 staging-grant check, batch-application ruling). **Gate 6 (NEW, ruling D-D):** the authenticated staging walkthrough is a formal gate — see `SPRINT_1.md` §Gate 6.

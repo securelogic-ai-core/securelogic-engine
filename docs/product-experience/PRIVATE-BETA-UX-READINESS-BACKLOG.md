@@ -1698,3 +1698,52 @@ than the fifty-two fixes it catalogues.
 | 2026-08-03 | **Session 4 — the wedge product + remaining surfaces.** Walked the current Brief and a full-analysis page, `/queue`, `/frameworks`, `/obligations`, `/policies`, `/risks`, `/actions`, `/vendor-assurance/queue`, `/search`. Added §3e (BR-1…BR-5, QU-1, QU-2, FW-1, RG-1, VA-1, VA-2, AC-1, SR-1). Two new release blockers in the revenue product. QU-2 refines RC-2's remedy. |
 | 2026-08-03 | **Session 3 — Root-cause analysis.** Traced a finding through UI + API; measured 300 unique findings of 551. Added §3d (RC-1…RC-3), theme T8, and the finding-detail strengths register. Reclassified B-1/W-7/W-8/W-9 as symptoms of RC-1. Corrected an overestimate of duplication (3%, not widespread). |
 | 2026-08-03 | **Session 2 — Enterprise Trust Review.** Walked `/briefs`, `/controls`, `/evidence`, `/getting-started`, `/settings/sso`, `/settings/security`, `/audit-log` and an invalid URL, as **both** the admin approver and the member analyst. Added §3c with TR-1…TR-10, the trust-theme table, and the root trust pattern. Three new release blockers. |
+
+---
+
+## 8. Code-verified finding, 2026-08-21 reconciliation
+
+### NAV-1 — The approver queue is nav-orphaned in the navigation model production runs
+
+**Severity: release blocker for the exception workflow. Effort: XS.**
+
+`app/src/lib/navigation.ts` carries two navigation models, selected by
+`RISK_WORKSPACE_ENABLED`. **Production runs the legacy `NAV_ITEMS`** (the flag is
+`false` on the production app; `true` on staging).
+
+`/approvals` — the page that renders `RiskAcceptanceApprovals`, the org-wide
+queue of pending risk acceptances awaiting an approver — is declared **only in
+`WORKSPACE_NAV_ITEMS`**, inside the "Risk Operations" group. The legacy model's
+"Risk" group contains Findings, Actions and Risk Register, and no Approvals.
+
+**The consequence.** In production, an approver has no navigation path to the
+queue of decisions awaiting them. They can reach a proposal only by typing the
+URL or being sent one. `LAUNCH_READINESS.md` flagged the missing approver queue
+as a CX gap in July; the queue was subsequently built — and then landed in the
+half of the nav production does not render.
+
+**Why this is the same defect BL-4 already fixed once.** Vendor Assurance had
+exactly this shape: a first-class workspace declared only in
+`WORKSPACE_NAV_ITEMS`, live in the engine, unreachable in production's menu. The
+BL-4 ruling declared it in **both** models so it survives either flag state. The
+comment recording that ruling sits fifteen lines above the group that still omits
+Approvals.
+
+**Compounding it:** `SECURELOGIC_RISK_ACCEPTANCE_ENABLED` is **undeclared in the
+production engine block** of `render.yaml` (it is `true` on staging). It is off,
+which is correct, but nothing in IaC says so — the same invisible-flag defect
+REPORT-1 found and fixed for `SECURELOGIC_RISK_INTELLIGENCE_ENABLED`. An
+undeclared flag is invisible to the operator as well as to the customer.
+
+**Remedy.** Declare `/approvals` in both nav models, pin it with a render test,
+and declare the flag explicitly in the production block with a comment saying why
+it is off. Tracked as **P1-B / P1-C** in
+`docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §9.
+
+**Evidence:** `app/src/lib/navigation.ts` (legacy `NAV_ITEMS` "Risk" group vs
+`WORKSPACE_NAV_ITEMS` "Risk Operations" group), `app/src/app/approvals/page.tsx`,
+`render.yaml` production engine block. Verified on `develop@4fe16808`.
+
+| Date | Change |
+|---|---|
+| 2026-08-21 | **§8 opened.** NAV-1 added from the Sept 15 program reconciliation — code-verified, not walked. Note that §7's Session 1 walked `/approvals` successfully **on staging**, where `RISK_WORKSPACE_ENABLED` is `true`; that walkthrough could not have surfaced this, because the defect exists only in the production nav model. |
