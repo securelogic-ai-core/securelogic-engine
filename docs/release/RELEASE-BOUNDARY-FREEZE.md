@@ -157,6 +157,10 @@ see `docs/validation/VA-3-RERUN-PLAN.md` §0.1, option C.
       └─ verify origin/main..origin/develop == 0 afterwards
   5.  Production deploy observed green on all six services
   ──────────────  FREEZE LIFTS HERE  ──────────────
+  ── ADR-0010 decision due 2026-08-28 (product owner) ──
+      └─ gates ADVERTISING Vendor Assurance, not the promotion
+      └─ Options 1 and 2 need a migration, so the 08-29 schema
+         cutoff makes an undecided ADR choose Option 3/4 by default
   6.  Merge #854   (evidence; documentation only)
   7.  Merge #855   (extraction fix)      <- MUST follow #854, see 7.3
   8.  Merge #827   (storage-fault error truthfulness)

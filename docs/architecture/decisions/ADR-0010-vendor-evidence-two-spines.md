@@ -5,9 +5,14 @@
   the evidence, and the options, so the answer is deliberate rather than
   emergent.
 - **Date raised:** 2026-08-21
-- **Decision owner:** product owner / platform architect
-- **Needed by:** before Sept 15, if Vendor Assurance is to be advertised as a
-  complete workflow. It is **not** a promotion blocker.
+- **Decision owner:** **the product owner**, per the ADR-0009 convention
+  ("Ruled by the product owner"). Not delegable to implementation: every option
+  below is a product-model position about how third-party risk is practised, not
+  a technical preference.
+- **Decision due: Thursday 2026-08-28.** See "Why this date" below.
+- **Not a promotion blocker.** The `develop`→`main` promotion may proceed
+  without this. It gates *advertising* Vendor Assurance as a complete workflow,
+  which is a different gate.
 - **Applies to:** `vendor_assurance_documents`, `vendor_assurance_cuecs`,
   `vendor_engagements`, `evidence`, `evidence_analysis`,
   `requirement_responses`, `vendorExtractionWorker`,
@@ -16,6 +21,37 @@
   ADR-0006 (platform scope boundaries).
 - **Evidence:** `docs/validation/VA-3-RERUN-PLAN.md` §0.2 gate 12,
   `docs/validation/VA-3-STAGING-EXERCISE.md`.
+
+---
+
+## Why this date
+
+**2026-08-28 is derived, not chosen.** The reconciliation splits the cutoff
+(`SEPT15-LAUNCH-RECONCILIATION.md` §13):
+
+- **Schema cutoff — Friday 2026-08-29.** Any package altering a migration must
+  merge by then.
+- **Feature cutoff — Friday 2026-09-05.** Non-schema work may land until then.
+
+**Options 1 and 2 both require a migration.** So if this decision slips past
+Friday 2026-08-29, they stop being available for Sept 15 — and the decision
+gets made by the calendar rather than by anyone. Option 3 or 4 would win by
+default, without having been chosen.
+
+**Thursday 2026-08-28** leaves one working day to open the migration if the
+answer is Option 1, and it falls immediately after the recommended promotion
+window (Aug 26–27), so the decision is taken with the promotion behind it rather
+than competing for the same attention.
+
+If the answer is Option 4 — the recommendation — the schema cutoff does not
+bind, because it needs no migration. It must still clear the **feature cutoff of
+Sept 5**, and it should be built early enough that the VA-3 re-run exercises it
+rather than being run twice.
+
+**If no decision is recorded by 2026-08-28**, treat that as choosing "no schema
+change before Sept 15", record it here explicitly as such, and note that Options
+1 and 2 are deferred past launch. An expired deadline that nobody writes down is
+how a default becomes an accident.
 
 ---
 
