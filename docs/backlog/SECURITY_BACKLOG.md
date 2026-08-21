@@ -15,6 +15,36 @@
 | 4 | [#432](https://github.com/securelogic-ai-core/securelogic-engine/issues/432) | SEC-H2 — HTTP rate limiters in-memory / per-replica | High | P2 | **No** | M (~1–2d) | Redis (already wired); soft dep on #433 keying |
 | 5 | [#431](https://github.com/securelogic-ai-core/securelogic-engine/issues/431) | SEC-H1 — SSO session JWT transmitted in URL | High | P2 (deferred) | **No** — *must-fix-before-SSO-GA* | M–H (~2–4d) | Design decision (form_post vs one-time code); shares JWT-revocation store with finding M8 |
 
+## Support & incident-response gaps (added 2026-08-21, SUPPORT-1/2 audit)
+
+| ID | Title | Severity | Priority | Promotion-gate | Effort | Dependencies |
+|---|---|---|---|---|---|---|
+| **SUP-SEC-1** | **No formal Incident Response process** | High | **P1 — launch** | **No** (not a code gate) — but a **soft-launch readiness gate** | S–M | Named security owner; legal/privacy reviewer identified |
+
+### SUP-SEC-1 — No formal Incident Response process
+
+**Status: IN PROGRESS — minimum IR program authorized 2026-08-21.**
+
+The repository contains no `SECURITY.md`, no incident-response process, no
+vulnerability-disclosure policy and no defined notification path. Four **SEV1**
+security support runbooks (SR-009 cross-tenant exposure, SR-010 account
+compromise, SR-013 credential exposure, SR-014 inbound vulnerability report)
+therefore escalate to a named human **and stop** — there is no defined process
+behind that escalation.
+
+**Why it is a launch item and not a code item.** Nothing here blocks a deploy.
+It blocks the honest claim that SecureLogic — a security and GRC product — can
+respond to a security incident in its own platform. The gap is most acute for
+cross-tenant exposure, which is simultaneously the highest-impact scenario and the
+one with the least defined follow-through.
+
+**Explicitly NOT in scope:** building an IR application, a SOC, or an on-call
+rotation that does not exist. The deliverable is a process a small team can
+actually execute.
+
+**Related:** `docs/runbooks/support/SUPPORT-READINESS-GAPS.md`,
+`docs/security/INCIDENT-RESPONSE.md` (this package), `docs/DR_PLAN.md` §7–§8.
+
 ## Notes
 
 - **Priority ≠ severity for #431:** it is the most severe finding by impact (credential leakage) but the lowest launch-urgency because SSO is **out of initial launch scope** — its exposure is contingent on SSO going live. It is classified **must-fix-before-SSO-GA**, and re-escalates to promotion-relevant only if SSO GA is pulled into the launch (see the reclassification recorded on the issue).

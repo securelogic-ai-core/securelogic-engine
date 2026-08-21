@@ -11,7 +11,40 @@
 |---|---|---|---|---|---|---|
 | 1 | INF-1 | Three services run outside Blueprint ownership | P2 | **No** — not a promotion blocker | S to decide, M–L to adopt | Operator ownership ruling; demo DB migration-drift reconciliation |
 
+| 2 | PLAT-ASSET-1 | Asset inventory is effectively unpopulated | P1 | **No** — but gates the customer-visible truth of per-asset vulnerability tracking | M–L | Ownership ruling: import vs connector vs manual onboarding |
+
 ## Item detail
+
+### PLAT-ASSET-1 — Asset inventory is effectively unpopulated
+
+**Status: OPEN — no owner. Surfaced by the SL-OCC-1/2 packages, 2026-08-21.**
+
+Per-asset vulnerability tracking is built, merged and verified on `develop`
+(SL-OCC-1a/1b, SL-OCC-2). The **substrate is empty**: staging holds **24 assets and
+2 endpoints**, 0 `canonical_product_external_ids` and 0 `asset_product_identities`,
+against 5,340 findings.
+
+**The consequence is precise:** the capability is real, but a customer will see
+**"0 affected assets"** on every vulnerability until their estate exists in
+SecureLogic. Occurrences can only attach to assets the organization already has —
+deliberately, because the importer never creates an asset (a placeholder host would
+be indistinguishable from a real one and would corrupt every exposure count that
+follows).
+
+**This is the gap between *built* and *visibly true*,** and it is a product/GTM
+decision before it is an engineering one:
+
+- who populates the estate — the customer by import, a connector, or onboarding?
+- is per-asset vulnerability tracking part of the Sept 15 story? If yes, this is a
+  launch dependency. If no, SL-VULN-1 alone still tells a truthful vulnerability
+  story at the finding level.
+
+**Explicitly NOT authorized:** asset-inventory connectors, scanner connectors
+(SL-OCC-3), or any integration work. This item is the **decision**, not the build.
+
+**Related:** `docs/runbooks/support/SR-023-asset-resolution-failure.md`,
+migrations `20261033`–`20261035`, `assetDetailPersistence.ts`
+(`DETAIL_ASSET_CAP = 10_000`).
 
 ### INF-1 — `demo-engine`, `demo-app` and `intelligence-api` are outside Blueprint ownership
 

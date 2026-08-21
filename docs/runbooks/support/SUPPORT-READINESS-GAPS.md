@@ -112,7 +112,27 @@ read-only view would.
 
 ## Process gaps
 
-### SUP-SEC-1 — No incident-response process exists *(launch blocker for security)*
+### SUP-SEC-1 — Incident-response process — **MINIMUM PROCESS NOW EXISTS, gaps remain**
+
+> **UPDATED 2026-08-21.** `docs/security/INCIDENT-RESPONSE.md` and `SECURITY.md`
+> now exist. The four SEV1 runbooks no longer terminate at a named human: escalation
+> leads into a defined process with acknowledgement, triage, declaration, evidence
+> preservation, containment authority, communications ownership and closure.
+>
+> **SUP-SEC-1 is NOT closed.** A paper tabletop
+> (`docs/security/TABLETOP-cross-tenant-exposure.md`) walked the highest-risk
+> scenario and found three things documentation cannot fix:
+>
+> | | Finding | Why it blocks |
+> |---|---|---|
+> | **TT-1** | **No named legal/privacy reviewer** | §12 cannot be executed *during* a live SEV1 — the notification decision has nobody to make it |
+> | **TT-2** | **Cannot determine who else saw exposed data** | Reads are not audited at row level, so impact is reasoned about rather than evidenced |
+> | **TT-4** | **Log retention unverified** | Evidence may expire before an investigation starts |
+>
+> Plus: no live exercise has been run with real people, and one person holds
+> Security Owner, Incident Owner and operator.
+
+### SUP-SEC-1 (original) — No incident-response process existed
 
 There is no `SECURITY.md`, no IR runbook, no vulnerability-disclosure policy and
 no defined severity/notification path in the repository. SR-009 and SR-010

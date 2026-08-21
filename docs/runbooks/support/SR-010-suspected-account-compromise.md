@@ -51,9 +51,11 @@ late costs whatever the attacker did in between.
 
 **The named security owner (the platform owner), immediately.**
 
-There is **no formal incident-response process** in this repository — no
-`SECURITY.md`, no IR runbook, no disclosure policy. This runbook therefore stops at
-escalation by design and does not invent one. See **SUP-SEC-1**.
+**What happens next is now defined** — `docs/security/INCIDENT-RESPONSE.md`.
+The Security Owner acknowledges, triages and declares. Compromise with any
+suspicion of data access is SEV1 (§2). Containment — session invalidation, key
+revocation — is authorised by the Security Owner and executed by Engineering (§8);
+it is not a support action.
 
 ## What Security will need
 
