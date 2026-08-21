@@ -52,7 +52,7 @@ and so the failures are not discovered as surprises mid-exercise.
 
 | Gate | Prediction | Why |
 |---|---|---|
-| **12 — engagement leg** | **FAIL (structural)** | `vendor_assurance_documents` has **no `engagement_id` column**, and `20260919_vendor_engagements.sql` contains no reference to assurance documents. The two spines are **unlinked in the data model, in both directions**. No UI can render an edge that does not exist. |
+| **12 — engagement leg** | **N/A — pending ADR-0010** | `vendor_assurance_documents` has **no `engagement_id` column**, and `20260919_vendor_engagements.sql` contains no reference to assurance documents. The two spines are **unlinked in the data model, in both directions**, and they never reference each other in code either. This is **not a defect of the exercise but an unanswered architecture question** — see `docs/architecture/decisions/ADR-0010-vendor-evidence-two-spines.md`. Record it as N/A, not FAIL: the gate asks for an edge the product has never decided should exist. |
 | **12 — Finding back-links** | **FAIL (UI)** | `app/src/app/findings/[id]/page.tsx` renders only a `source_type` label ("Vendor Assessment"). It contains **no** reference to the vendor, document, CUEC or reviewer. Provenance is **one-directional**: `CuecDeterminationPanel` links CUEC → Finding, but nothing links Finding → CUEC. A user who arrives at the Finding cannot get back. |
 | **16 — determination audit** | **DEGRADED** | Findings have a history UI (`HistorySection`, `GET /api/findings/:id/history`). The Vendor Assurance side has **no audit surface at all** — no `resourcePath=` anywhere under `app/src/app/vendor-assurance` or `app/src/components/vendorAssurance`. The determination audit event exists (`vendor_assurance.cuec.promoted_to_finding`) but is reachable only by API or SQL. |
 
@@ -273,7 +273,7 @@ Record each leg separately; do not collapse them into one verdict.
 | Leg | Data exists? | UI shows it? | Predicted |
 |---|---|---|---|
 | Vendor | Yes — `findings.source_id` = vendor id | **No** | **FAIL (UI)** |
-| **Engagement** | **No — no such column or FK** | No | **FAIL (structural)** |
+| **Engagement** | **No — no such column or FK** | No | **N/A — ADR-0010** |
 | Source document | Only transitively, CUEC → document | **No** | **FAIL (UI)** |
 | Source CUEC | Yes — `vendor_assurance_cuecs.promoted_finding_id` (reverse lookup) | **No** | **FAIL (UI)** |
 | Reviewer determination | Yes — on the CUEC row | **No** | **FAIL (UI)** |
@@ -285,6 +285,12 @@ Record each leg separately; do not collapse them into one verdict.
   `VA-3-STAGING-EXERCISE.md` §6.
 - **Do not mark this PASS on the strength of that query.** The gate asks whether
   a user can traverse the chain. Today they cannot.
+- **The engagement leg is N/A, not FAIL.** Vendor Assurance and Vendor
+  Engagements are two independent evidence spines that share only `vendors.id` —
+  separate tables, separate storage helpers, separate workers, separate finding
+  source types, and no reference to each other in schema or code. Whether they
+  should converge is an open decision (**ADR-0010**), not a bug this re-run can
+  find. Scoring it FAIL would report a missing feature as a broken one.
 
 ### Gate 13 — the Finding is in the standard workflow
 
@@ -486,12 +492,13 @@ Document → Extraction → Human Review → CUEC Determination
 **Honest expectation: DEGRADED.** The extraction fix unblocks gates 5–11 and
 13–15. It does not create the Finding→provenance UI that gate 12 asks for, and
 it does not create an engagement↔document relationship that does not exist in
-the schema.
+the schema — **and that second one should not be treated as in scope for VA-3 at
+all** until ADR-0010 is decided.
 
 **Vendor Assurance should not be called DONE on a DEGRADED result.** The
 remaining work is a scoped UI package — a provenance block on the Finding detail
-page for `source_type='vendor_review'` — plus a decision on whether the
-engagement spine and the document spine are meant to be linked at all. That
-second question is an architecture decision, not a bug, and it should be
-answered deliberately before Sept 15 rather than discovered in front of a design
-partner.
+page for `source_type='vendor_review'`, which is Option 4 in ADR-0010 — plus the
+ADR-0010 decision itself on whether the engagement spine and the document spine
+are meant to converge. That second question is an architecture decision, not a
+bug, and it should be answered deliberately, with a design partner in the room,
+rather than discovered in front of one.
