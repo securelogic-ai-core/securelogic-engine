@@ -43,6 +43,11 @@ obligations. The second customer does not yet know.
 1. **Do not ask the customer to send you the data.** Ask them to keep it and not
    share it further. A screenshot forwarded through a support inbox spreads the
    exposure into more systems.
+1a. **If the customer has already attached a screenshot or the data** — which is
+   what usually happens — do **not** open it into another tool, forward it, or paste
+   it anywhere. Leave it where it arrived, note that it exists, and tell Security it
+   is in the ticket. Deleting it destroys evidence; spreading it widens the exposure.
+   *(Added from the 2026-08-21 tabletop, finding TT-7.)*
 2. **Record the facts you already have** — time with timezone, what page or
    export, which organization reported it, what they described. Do not paste the
    exposed content into a ticket.
@@ -73,11 +78,17 @@ obligations. The second customer does not yet know.
 **The named security owner (the platform owner), immediately, by the fastest
 channel available.**
 
-SecureLogic has **no formal incident-response process** as of 2026-08-21: there
-is no `SECURITY.md`, IR runbook or disclosure policy in the repository. This
-runbook therefore stops at escalation by design and does not invent an IR
-framework. Establishing one is an open launch gap
-(see `SUPPORT-READINESS-GAPS.md`, gap **SUP-SEC-1**).
+**What happens next is now defined.** The Security Owner acknowledges, triages,
+and — for suspected cross-tenant exposure — **declares a SEV1 incident before
+confirmation**. See `docs/security/INCIDENT-RESPONSE.md`:
+§5 escalation path · §7 evidence preservation · §8 containment authority ·
+§12 legal/privacy determination.
+
+**Your part ends at escalation and evidence.** You are not expected to investigate,
+contain, or determine whether data was exposed.
+
+If the Security Owner has not acknowledged a SEV1 within 4 hours, notify them by a
+second channel — **silence is not a hold** (INCIDENT-RESPONSE §5).
 
 ## What Security will need from you
 

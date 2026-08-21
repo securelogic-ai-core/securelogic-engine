@@ -44,8 +44,10 @@ Treat it exactly as if it were public.
 
 ## Escalate to
 
-**The named security owner, immediately.** No formal IR process exists — see
-**SUP-SEC-1**.
+**The named Security Owner, immediately.** The process behind that escalation is
+`docs/security/INCIDENT-RESPONSE.md` — §8 covers rotation authority, including the
+constraint that `FIELD_ENCRYPTION_KEY` and `MFA_SECRET_KEY` **cannot be rotated ad
+hoc** without a migration plan (`DR_PLAN.md` §4d).
 
 ## What Security will need
 
