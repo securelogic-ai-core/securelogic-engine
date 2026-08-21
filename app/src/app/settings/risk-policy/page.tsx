@@ -1,14 +1,16 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getRiskSettingsServer } from "@/lib/api";
+import { getRiskSettingsServer, getAuthMe } from "@/lib/api";
 import { RiskPolicyClient } from "./RiskPolicyClient";
+import { RemediationSlaSection } from "./RemediationSlaSection";
 
 /**
  * RR-5 — Org-level risk-policy settings page.
  *
- * Currently exposes one section: Review Cadence Policy. Future RR-N
- * sections (acceptance workflow, escalation, KRIs) will land here as
+ * Two sections: Review Cadence Policy (how often a RISK is re-examined) and
+ * Remediation SLA (how long a FINDING may stay open before it is breached).
+ * Future RR-N sections (acceptance workflow, escalation, KRIs) land here as
  * additional rows on the same page rather than as new tabs.
  */
 export default async function RiskPolicySettingsPage() {
@@ -16,7 +18,14 @@ export default async function RiskPolicySettingsPage() {
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const settings = await getRiskSettingsServer(token);
+  const [settings, authMe] = await Promise.all([
+    getRiskSettingsServer(token),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
+  ]);
+  // The engine already gates PUT /orgs/me/risk-settings on requireAdminRole,
+  // so this only decides whether to render controls a non-admin cannot use.
+  // Enforcement stays server-side.
+  const canEdit = authMe?.role === "admin";
 
   // Documented defaults — kept in sync with src/api/lib/riskCadence.ts
   // DEFAULT_CADENCE_BY_RATING. Used as the initial form state when
@@ -94,6 +103,15 @@ export default async function RiskPolicySettingsPage() {
       <RiskPolicyClient
         initialCadence={initialCadence}
         isDefault={isDefault}
+      />
+
+      {/* Remediation SLA — the org policy that gives new findings their due
+          date. Distinct from the review cadence above: cadence is how often a
+          RISK is re-examined, the SLA is how long a FINDING may stay open. */}
+      <RemediationSlaSection
+        initialSla={settings?.finding_sla_by_severity ?? null}
+        cadenceByRating={initialCadence}
+        canEdit={canEdit}
       />
     </div>
   );
