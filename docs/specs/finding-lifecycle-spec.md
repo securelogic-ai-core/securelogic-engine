@@ -162,6 +162,14 @@ includes closed actions" (count semantics move to open-Action-only for work surf
 - Every governance transition is entitlement-gated + audited; separation-of-duties where
   the Risk lifecycle requires it.
 - Flag-off (`DECISION_WORKSPACE` off) is byte-identical to the legacy finding detail.
+- **A vulnerability reappearing on an asset does NOT reopen the Finding** (ADR-0009,
+  ACCEPTED 2026-08-21). `operational_status` is derived from `decision_state`, so an
+  automatic reopen would be the engine reversing a human governance decision made through
+  the closure gate. Recurrence is preserved and surfaced at the OCCURRENCE level
+  (`finding_asset_occurrences.reappeared_count`); reopening remains an explicit authorized
+  human action. Occurrence PRESENCE (`present|absent|remediated`) is a third axis that is
+  independent of both axes above and never writes either. Asserted by
+  `src/api/__tests__/recurrenceDoesNotReopen.test.ts`.
 
 ## Appendix — CANONICAL_DOMAIN_MODEL.md amendment (applied in the C0 doc-sync)
 
