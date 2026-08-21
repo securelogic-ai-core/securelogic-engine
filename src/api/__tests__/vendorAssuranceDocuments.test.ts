@@ -1551,15 +1551,22 @@ describe("updateVendorAssuranceCuecReviewStatus", () => {
 
   it("200 set reviewed_no_match (with reason); audits vendor_assurance.cuec.review_status_updated", async () => {
     pgQuerySpy
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID, promoted_finding_id: null }] }) // cur
+      // VA-1: a determined state now snapshots its basis first — the accepted
+      // control mappings and their implementation_status at decision time.
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // gap_basis mapping lookup
       .mockResolvedValueOnce({ rowCount: 1, rows: [cuecRow({ review_status: "reviewed_no_match", review_status_reason: "we outsource this", review_status_updated_by_user_id: USER_ID, review_status_updated_at: "2026-05-12T01:00:00Z" })] }); // UPDATE
     const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "reviewed_no_match", reason: "we outsource this" } });
     const { res, status, json } = buildRes();
     await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
     expect(status).toHaveBeenCalledWith(200);
-    const updSql = pgQuerySpy.mock.calls[1]?.[0] as string;
-    expect(updSql).toMatch(/review_status = 'reviewed_no_match'/);
-    expect(pgQuerySpy.mock.calls[1]?.[1]).toEqual([CUEC_ID, ORG_A, "we outsource this", USER_ID]);
+    // Asserted by CONTENT, not call index: a pre-flight query should not break a
+    // test about which UPDATE ran.
+    const sqls = pgQuerySpy.mock.calls.map((c) => String(c[0]));
+    const updIdx = sqls.findIndex((t) => /UPDATE vendor_assurance_cuecs/.test(t) && /review_status = \$3/.test(t));
+    expect(updIdx).toBeGreaterThan(-1);
+    expect(pgQuerySpy.mock.calls[updIdx]?.[1]?.slice(0, 5))
+      .toEqual([CUEC_ID, ORG_A, "reviewed_no_match", "we outsource this", USER_ID]);
     const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
     const ev = auditCalls.find((c) => c[0]?.eventType === "vendor_assurance.cuec.review_status_updated");
     expect(ev?.[0]?.payload).toMatchObject({ review_status: "reviewed_no_match" });
@@ -1569,12 +1576,13 @@ describe("updateVendorAssuranceCuecReviewStatus", () => {
 
   it("200 clear back to pending (drops reason/by/at; params are [cuecId, org] only)", async () => {
     pgQuerySpy
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID }] }) // cur
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ document_id: DOC_ID, promoted_finding_id: null }] }) // cur
       .mockResolvedValueOnce({ rowCount: 1, rows: [cuecRow({ review_status: "pending" })] }); // UPDATE
     const req = buildReq({ params: { cuecId: CUEC_ID }, body: { review_status: "pending", reason: "ignored" } });
     const { res, status } = buildRes();
     await updateVendorAssuranceCuecReviewStatus(req as never, res as never);
     expect(status).toHaveBeenCalledWith(200);
+    // Clearing takes no basis snapshot — there is no determination to explain.
     const updSql = pgQuerySpy.mock.calls[1]?.[0] as string;
     expect(updSql).toMatch(/review_status = 'pending'/);
     expect(pgQuerySpy.mock.calls[1]?.[1]).toEqual([CUEC_ID, ORG_A]);

@@ -69,6 +69,10 @@ import {
   MATCH_SCORE_HIGH_CONFIDENCE
 } from "../lib/vendorAssuranceCuecMatcher.js";
 import { loadCuecsWithMappings, buildExportBundle } from "../lib/vendorAssuranceExportData.js";
+// VA-1: the SAME SLA engine every other finding uses. Vendor Assurance gets no
+// bespoke deadline logic — a vendor gap is a finding, and the org's policy
+// decides its due date exactly as it does for a pen-test result or a control gap.
+import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 import { buildVendorAssuranceWorkbookBuffer, workbookDownloadFilename } from "../lib/vendorAssuranceExcelExporter.js";
 import { buildVendorAssurancePdf, pdfDownloadFilename } from "../lib/vendorAssurancePdfExporter.js";
 
@@ -1434,7 +1438,26 @@ export async function updateVendorAssuranceCuecMapping(req: Request, res: Respon
   res.status(200).json({ mapping });
 }
 
-/* POST /api/vendor-assurance/cuecs/:cuecId/review-status — set/clear "no applicable control". */
+/* POST /api/vendor-assurance/cuecs/:cuecId/review-status — record the review outcome.
+ *
+ * VA-1. This is where a SOC 2 review becomes actionable, or explicitly does not.
+ * The reviewer decides one of:
+ *
+ *   not_applicable  the CUEC does not apply to this organisation
+ *   satisfied       it applies and this organisation meets it
+ *   gap             it applies and this organisation does NOT meet it
+ *   pending         clear the determination (back to unreviewed)
+ *
+ * A GAP IS A HUMAN DETERMINATION. Extraction proposes the CUEC text; only an
+ * authenticated reviewer can conclude the organisation is deficient. The DB
+ * CHECK enforces that every determined state carries a reviewer and a
+ * timestamp, so no code path can produce an anonymous gap.
+ *
+ * THE BASIS IS SNAPSHOTTED. `gap_basis` records the accepted control mappings
+ * and their implementation_status AT THIS MOMENT. Controls change; a
+ * determination made today must remain explainable to an auditor later, and
+ * recomputing it then would silently rewrite what the reviewer actually saw.
+ */
 export async function updateVendorAssuranceCuecReviewStatus(req: Request, res: Response): Promise<void> {
   const organizationId = getOrgId(req);
   if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
@@ -1445,40 +1468,89 @@ export async function updateVendorAssuranceCuecReviewStatus(req: Request, res: R
   if ("error" in validated) { res.status(400).json(validated); return; }
   const { review_status, reason } = validated.input;
 
-  const cur = await pg.query<{ document_id: string }>(
-    `SELECT document_id FROM vendor_assurance_cuecs WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+  const cur = await pg.query<{ document_id: string; promoted_finding_id: string | null }>(
+    `SELECT document_id, promoted_finding_id
+       FROM vendor_assurance_cuecs WHERE id = $1 AND organization_id = $2 LIMIT 1`,
     [cuecId, organizationId]
   );
   if ((cur.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
   const documentId = cur.rows[0]!.document_id;
 
+  // A determination that already produced a Finding is not silently re-decided.
+  // The Finding may already carry an owner, a due date and remediation work;
+  // flipping the CUEC underneath it would orphan that work with no trace.
+  // Nullish, not strict-null: a projection that omits the column yields
+  // `undefined`, and treating that as "already promoted" would refuse a
+  // perfectly ordinary review.
+  if (cur.rows[0]!.promoted_finding_id != null && review_status !== "gap") {
+    res.status(409).json({
+      error: "cuec_already_promoted",
+      detail:
+        "This gap has already been promoted to a finding. Resolve or withdraw " +
+        "that finding first — changing the determination underneath it would " +
+        "leave remediation work with nothing explaining why it exists."
+    });
+    return;
+  }
+
+  const isPending = review_status === "pending";
+
+  // Snapshot the evidence behind the determination: which controls this CUEC is
+  // mapped to (accepted mappings only — suggestions are not evidence) and what
+  // state those controls were in when the reviewer decided.
+  let gapBasis: string | null = null;
+  if (!isPending) {
+    const mapped = await pg.query<{
+      control_id: string; control_name: string; implementation_status: string | null;
+      maturity_level: string | null; last_tested_at: string | null;
+    }>(
+      `SELECT c.id AS control_id, c.name AS control_name, c.implementation_status,
+              c.maturity_level, c.last_tested_at::text AS last_tested_at
+         FROM vendor_assurance_cuec_control_mappings m
+         JOIN controls c ON c.id = m.control_id AND c.organization_id = m.organization_id
+        WHERE m.organization_id = $1 AND m.cuec_id = $2 AND m.mapping_status = 'accepted'
+        ORDER BY c.name`,
+      [organizationId, cuecId]
+    );
+    gapBasis = JSON.stringify({
+      determined_at: new Date().toISOString(),
+      determined_status: review_status,
+      mapped_controls: mapped.rows,
+      mapped_control_count: mapped.rowCount ?? 0,
+      // Recorded explicitly so a later reader knows the reviewer decided with no
+      // mapped control, rather than that the mapping was lost.
+      basis: (mapped.rowCount ?? 0) === 0
+        ? "reviewer_judgement_no_mapped_control"
+        : "reviewer_judgement_with_mapped_controls"
+    });
+  }
+
   const upd = await pg.query<{
     id: string; ordinal: number; cuec_text: string; review_status: string;
     review_status_reason: string | null; review_status_updated_by_user_id: string | null;
-    review_status_updated_at: string | null; created_at: string; updated_at: string;
+    review_status_updated_at: string | null; gap_basis: unknown;
+    promoted_finding_id: string | null; created_at: string; updated_at: string;
   }>(
-    review_status === "reviewed_no_match"
+    isPending
       ? `UPDATE vendor_assurance_cuecs
-            SET review_status = 'reviewed_no_match',
-                review_status_reason = $3,
-                review_status_updated_by_user_id = $4,
-                review_status_updated_at = NOW(),
-                updated_at = NOW()
+            SET review_status = 'pending', review_status_reason = NULL,
+                review_status_updated_by_user_id = NULL, review_status_updated_at = NULL,
+                gap_basis = NULL, promoted_finding_id = NULL, updated_at = NOW()
           WHERE id = $1 AND organization_id = $2
           RETURNING id, ordinal, cuec_text, review_status, review_status_reason,
-                    review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at`
+                    review_status_updated_by_user_id, review_status_updated_at,
+                    gap_basis, promoted_finding_id, created_at, updated_at`
       : `UPDATE vendor_assurance_cuecs
-            SET review_status = 'pending',
-                review_status_reason = NULL,
-                review_status_updated_by_user_id = NULL,
-                review_status_updated_at = NULL,
-                updated_at = NOW()
+            SET review_status = $3, review_status_reason = $4,
+                review_status_updated_by_user_id = $5, review_status_updated_at = NOW(),
+                gap_basis = $6::jsonb, updated_at = NOW()
           WHERE id = $1 AND organization_id = $2
           RETURNING id, ordinal, cuec_text, review_status, review_status_reason,
-                    review_status_updated_by_user_id, review_status_updated_at, created_at, updated_at`,
-    review_status === "reviewed_no_match"
-      ? [cuecId, organizationId, reason, req.userId ?? null]
-      : [cuecId, organizationId]
+                    review_status_updated_by_user_id, review_status_updated_at,
+                    gap_basis, promoted_finding_id, created_at, updated_at`,
+    isPending
+      ? [cuecId, organizationId]
+      : [cuecId, organizationId, review_status, reason, req.userId ?? null, gapBasis]
   );
   if ((upd.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
 
@@ -1489,11 +1561,194 @@ export async function updateVendorAssuranceCuecReviewStatus(req: Request, res: R
     eventType: "vendor_assurance.cuec.review_status_updated",
     resourceType: "vendor_assurance_cuec",
     resourceId: cuecId,
-    payload: { document_id: documentId, review_status, ...(review_status === "reviewed_no_match" && reason ? { reason } : {}) },
+    payload: {
+      document_id: documentId,
+      review_status,
+      ...(reason ? { reason } : {}),
+      ...(gapBasis ? { basis: JSON.parse(gapBasis) } : {})
+    },
     ipAddress: req.ip ?? null
   });
 
   res.status(200).json({ cuec: upd.rows[0] });
+}
+
+/* POST /api/vendor-assurance/cuecs/:cuecId/promote-to-finding
+ *
+ * VA-1 — THE CONNECTION THAT WAS MISSING. 54 documents had been ingested and
+ * ZERO findings had ever come out of the document path, because a reviewed CUEC
+ * had nowhere to go. This is where a vendor's stated requirement that the
+ * organisation does not meet becomes ordinary remediation work.
+ *
+ * IT IS AN ORDINARY FINDING. Same table, same two-axis lifecycle, same SLA
+ * engine, same Risk Register relationship, same evidence, same closure gates.
+ * No Vendor Findings v2, no parallel remediation table, no vendor-specific
+ * deadline logic.
+ *
+ * PROMOTION IS EXPLICIT, NOT AUTOMATIC. A gap determination and the decision to
+ * open remediation work are two different acts by design: an organisation may
+ * legitimately record that it does not meet a CUEC and decide, deliberately, not
+ * to act on it yet. Auto-promoting would remove that judgement and would mean a
+ * reviewer's click silently created work with an owner and a deadline.
+ *
+ * IDEMPOTENT. promoted_finding_id is set on the CUEC and checked first, so a
+ * double-click or a retried request returns the existing finding rather than
+ * creating a second one for the same requirement.
+ */
+export async function promoteVendorAssuranceCuecToFinding(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const cuecId = String(req.params["cuecId"] ?? "").trim();
+  if (!isUuid(cuecId)) { res.status(400).json({ error: "cuec_id_must_be_uuid" }); return; }
+
+  // Everything needed for provenance, in one org-scoped read.
+  const cur = await pg.query<{
+    document_id: string; vendor_id: string | null; vendor_name: string | null;
+    original_filename: string | null; ordinal: number; cuec_text: string;
+    review_status: string; review_status_reason: string | null;
+    review_status_updated_by_user_id: string | null; review_status_updated_at: string | null;
+    gap_basis: unknown; promoted_finding_id: string | null;
+  }>(
+    `SELECT c.document_id, d.vendor_id, v.name AS vendor_name, d.original_filename,
+            c.ordinal, c.cuec_text, c.review_status, c.review_status_reason,
+            c.review_status_updated_by_user_id, c.review_status_updated_at::text AS review_status_updated_at,
+            c.gap_basis, c.promoted_finding_id
+       FROM vendor_assurance_cuecs c
+       JOIN vendor_assurance_documents d
+         ON d.id = c.document_id AND d.organization_id = c.organization_id
+       LEFT JOIN vendors v ON v.id = d.vendor_id AND v.organization_id = c.organization_id
+      WHERE c.id = $1 AND c.organization_id = $2
+      LIMIT 1`,
+    [cuecId, organizationId]
+  );
+  if ((cur.rowCount ?? 0) === 0) { res.status(404).json({ error: "vendor_assurance_cuec_not_found" }); return; }
+  const cuec = cur.rows[0]!;
+
+  // Already promoted — return what exists. Idempotent by design.
+  if (cuec.promoted_finding_id != null) {
+    const existing = await pg.query(
+      `SELECT id, title, severity, due_date, status, operational_status, decision_state
+         FROM findings WHERE id = $1 AND organization_id = $2`,
+      [cuec.promoted_finding_id, organizationId]
+    );
+    res.status(200).json({ finding: existing.rows[0] ?? null, created: false });
+    return;
+  }
+
+  // ONLY A GAP JUSTIFIES A FINDING. A satisfied or not-applicable CUEC has
+  // nothing to remediate, and a pending one has had no determination at all.
+  if (cuec.review_status !== "gap") {
+    res.status(409).json({
+      error: "cuec_not_a_gap",
+      detail:
+        "Only a CUEC reviewed as a gap — applicable to this organisation and not " +
+        "met by it — can become a finding. Record that determination first."
+    });
+    return;
+  }
+
+  const severity = validateVendorCuecSeverity(req.body);
+  if ("error" in severity) { res.status(400).json(severity); return; }
+
+  // The org's own policy sets the deadline. Same call site every other finding
+  // uses; no vendor-specific SLA.
+  const dueDate = await resolveSlaDueDate(organizationId, severity.value);
+
+  const vendorLabel = cuec.vendor_name ?? "this vendor";
+  const title = `CUEC not met: ${cuec.cuec_text.trim().slice(0, 160)}`;
+  const description =
+    `${vendorLabel} requires this of ${"your organisation"} as a Complementary User Entity Control, ` +
+    `and a review on ${cuec.review_status_updated_at ?? "an earlier date"} determined that it is not met.\n\n` +
+    `Vendor requirement (CUEC #${cuec.ordinal}), verbatim from the vendor's report:\n` +
+    `"${cuec.cuec_text.trim()}"\n\n` +
+    `Reviewer's determination: ${cuec.review_status_reason ?? "(no reason recorded)"}\n\n` +
+    `Source document: ${cuec.original_filename ?? "(filename unavailable)"}`;
+
+  const inserted = await pg.query<{ id: string }>(
+    `INSERT INTO findings
+       (organization_id, source_type, source_id, title, severity, description,
+        recommendation, status, decision_state, operational_status, due_date,
+        evidence_refs, owner_user_id)
+     VALUES ($1, 'vendor_review', $2, $3, $4, $5, $6, 'open', 'needs_review', 'open', $7, '{}', $8)
+     RETURNING id`,
+    [
+      organizationId,
+      // source_id points at the VENDOR: the finding is about the organisation's
+      // obligation arising from that relationship, and the vendor is the durable
+      // object a reader navigates to. Document and CUEC provenance live in the
+      // description and the audit event, which survive document deletion.
+      cuec.vendor_id,
+      title,
+      severity.value,
+      description,
+      `Implement or evidence the control this vendor requires, or record a risk acceptance if the exposure is being carried deliberately.`,
+      dueDate,
+      req.userId ?? null
+    ]
+  );
+  const findingId = inserted.rows[0]!.id;
+
+  await pg.query(
+    `UPDATE vendor_assurance_cuecs SET promoted_finding_id = $3, updated_at = NOW()
+      WHERE id = $1 AND organization_id = $2`,
+    [cuecId, organizationId, findingId]
+  );
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: req.userId ?? null,
+    eventType: "vendor_assurance.cuec.promoted_to_finding",
+    resourceType: "vendor_assurance_cuec",
+    resourceId: cuecId,
+    // The full provenance chain, in one immutable record: which vendor, which
+    // document, which requirement, who determined it and when, and what it
+    // produced. This is what an auditor reads.
+    payload: {
+      finding_id: findingId,
+      vendor_id: cuec.vendor_id,
+      vendor_name: cuec.vendor_name,
+      document_id: cuec.document_id,
+      source_document: cuec.original_filename,
+      cuec_ordinal: cuec.ordinal,
+      cuec_text: cuec.cuec_text,
+      determination_reason: cuec.review_status_reason,
+      determined_by_user_id: cuec.review_status_updated_by_user_id,
+      determined_at: cuec.review_status_updated_at,
+      gap_basis: cuec.gap_basis,
+      severity: severity.value,
+      due_date: dueDate
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  logger.info(
+    { event: "vendor_assurance_cuec_promoted", organizationId, cuecId, findingId,
+      vendorId: cuec.vendor_id, severity: severity.value },
+    "Vendor CUEC gap promoted to finding"
+  );
+
+  const created = await pg.query(
+    `SELECT id, title, severity, due_date, status, operational_status, decision_state, source_type, source_id
+       FROM findings WHERE id = $1 AND organization_id = $2`,
+    [findingId, organizationId]
+  );
+  res.status(201).json({ finding: created.rows[0], created: true });
+}
+
+/** Severity for a promoted CUEC gap — the reviewer's call, from the canonical four. */
+function validateVendorCuecSeverity(body: unknown): { value: string } | { error: string; detail?: string } {
+  const raw = (body as Record<string, unknown> | null)?.["severity"];
+  const allowed = ["Critical", "High", "Moderate", "Low"];
+  if (typeof raw !== "string" || !allowed.includes(raw)) {
+    return {
+      error: "invalid_severity",
+      // Deliberately no default. A severity the platform picked would carry no
+      // author, and severity drives the SLA — the deadline has to belong to a person.
+      detail: `severity is required and must be one of: ${allowed.join(", ")}`
+    };
+  }
+  return { value: raw };
 }
 
 /* =========================================================
@@ -1814,6 +2069,20 @@ router.post(
   requireEntitlement("premium"),
   denyContributor(),
   asTenant(updateVendorAssuranceCuecReviewStatus)
+);
+
+// VA-1. Same guard stack as every other Vendor Assurance write: the feature
+// flag, an authenticated key, org context, premium entitlement, contributor
+// seats denied, and asTenant() so the whole handler runs with the RLS GUC set.
+// Promoting a gap is governance work, not queue work.
+router.post(
+  "/vendor-assurance/cuecs/:cuecId/promote-to-finding",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(promoteVendorAssuranceCuecToFinding)
 );
 
 router.patch(
