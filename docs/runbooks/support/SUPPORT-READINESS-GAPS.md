@@ -19,16 +19,36 @@ escalation.
 state until, active/inactive, and last successful login. No PII beyond what
 support already legitimately holds. Read-only, audited.
 
-### SUP-OBS-2 — No support-facing surface at all
+### SUP-OBS-2 — No support-facing surface at all — **RULED, post-launch package**
 
 Every `/admin/*` route requires a staff key and returns **404** without one — by
 design, and correctly so. The consequence is that L1 has no operational surface
 whatsoever: not health beyond `/health`, not delivery status, not billing state.
 
-**Needed:** a decision on whether L1 gets a scoped read-only console, or whether
-L1 remains a pure intake tier that always escalates diagnosis to L2. **Either is
-defensible; the current situation is neither, because runbooks are being written
-against tools that do not exist for the level expected to use them.**
+> **RULING 2026-08-21.** For Sept 15, **L1 is an intake and triage tier**, not an
+> operational administration tier. `/admin/*` and staff keys are **not** exposed to
+> L1, and **no support console is built before launch**.
+>
+> This closes the gap by deciding the boundary rather than by adding a tool.
+> Runbooks are now written honestly to that boundary: L1 diagnoses from what the
+> customer can see and escalates, and nothing is documented as an L1 step that
+> requires a surface L1 does not have.
+
+**Post-launch package — Support Operations Console.** Scoped, read-only, and
+subject to three non-negotiable requirements, because this is a privileged read
+surface over every tenant's data:
+
+1. **Least privilege** — the specific fields a runbook needs, not "read access".
+   Start from SR-001's four questions (verified / locked-until / active /
+   last-login), not from a table.
+2. **Explicit tenant scoping** — a support view that can span tenants is the same
+   risk class as SR-009. Access is per-organization and never global-by-default.
+3. **Full audit logging** — every read attributable to a named person, with the
+   customer able to be told what was accessed. A support tool that reads customer
+   data without a trail cannot be defended in an audit.
+
+Deliberately **not** rushed before launch: a privileged cross-tenant read surface
+shipped under launch pressure is precisely the wrong thing to hurry.
 
 ### SUP-OBS-3 — Email delivery is not answerable per customer
 
@@ -71,16 +91,28 @@ framework inside support documentation would be worse than admitting the gap.
 notification obligations reviewed by someone qualified to rule on them. This is
 the most significant non-technical launch gap identified.
 
-### SUP-PROC-1 — No validated recovery procedures
+### SUP-PROC-1 — No validated recovery procedures — **ACCEPTED LAUNCH LIMITATION**
 
 Every recovery path currently written is either self-service or escalation.
 **No support-executable recovery procedure has been proven safe**, so none is
 documented as validated. That is honest but thin: it means today, in practice,
 recovery *is* engineering.
 
-**Needed:** identify the two or three highest-frequency recoveries (likely: resend
-verification, re-drive a failed webhook, restart a worker), prove them safe in
-staging, and promote them from UNVALIDATED.
+> **RULING 2026-08-21.** This stands as an **explicit launch limitation**.
+> Recovery procedures remain **Engineering-only until individually validated
+> safe**.
+>
+> **Recovery steps must NOT be manufactured to close this documentation gap.** A
+> plausible-looking procedure that nobody has proven is worse than an honest
+> escalation: it will be followed, under pressure, by someone who has no way to
+> know it was never tested. An empty "Approved support actions" section is a true
+> statement about the platform, and true beats complete.
+
+**Promotion path (post-launch).** A procedure leaves UNVALIDATED only when
+Engineering has proven it safe — in staging, against a realistic tenant, with the
+failure modes enumerated. Likely first candidates, in rough order of support
+value: resend verification email, re-drive a failed Stripe webhook, restart a
+stuck worker. None is approved today.
 
 ### SUP-PROC-2 — Stale operator documentation
 

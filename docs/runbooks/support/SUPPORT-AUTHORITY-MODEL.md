@@ -19,6 +19,21 @@ recorded reason and an approver. "An engineer ran a query" is not a procedure.
 
 ### L1 — Customer Support
 
+> **RULED 2026-08-21: for Sept 15, L1 is an INTAKE AND TRIAGE tier, not an
+> operational administration tier.** `/admin/*` routes and staff keys are NOT
+> exposed to L1, and no support console is being built before launch. A rushed
+> console would be a privileged read surface over every tenant's data shipped
+> under launch pressure — the wrong thing to hurry.
+>
+> The consequence is deliberate and should be planned for: **L1 diagnoses from
+> what the customer can see, and escalates.** Runbooks are written to that
+> boundary. Where a diagnostic needs more, it is an escalation step, not an L1
+> step.
+>
+> A scoped, read-only **Support Operations Console** is tracked as a POST-LAUNCH
+> package, and must be built to least privilege, explicit tenant scoping and full
+> audit logging — see `SUPPORT-READINESS-GAPS.md` (SUP-OBS-2).
+
 **May:**
 - read customer-facing surfaces and reproduce what the customer sees
 - collect evidence: request IDs, timestamps, error codes, organization slug

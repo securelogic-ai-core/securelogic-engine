@@ -67,9 +67,21 @@ These cover functionality that **is** live in production today.
 
 ### Deferred — functionality not yet in production
 
-Written when the promoting release lands. Tracked, not forgotten.
+> **RULED 2026-08-21: a deferred runbook is a RELEASE-READINESS REQUIREMENT of the
+> release that promotes its capability to production.**
+>
+> Deferral is not a backlog entry that a release can outrun. When a capability
+> below reaches production, its runbook ships **with** that promotion — a
+> promotion that makes a customer-visible failure mode reachable while its runbook
+> is still unwritten is **not release-ready**, however green its CI is.
+>
+> This is the same discipline as the Definition of Done, applied at the release
+> boundary instead of the PR boundary: the PR that builds dark behaviour owes
+> nothing, and the release that lights it up owes the runbook.
 
-| Prospective ID | Topic | Gated on |
+Tracked against named gates, not forgotten.
+
+| Prospective ID | Topic | Required by this promotion |
 |---|---|---|
 | SR-020 | Vulnerability import failure | SL-VULN-1 reaching `main` |
 | SR-021 | CVE/CWE/CVSS normalization issue | SL-VULN-1 |

@@ -54,6 +54,16 @@ looks like coverage.
 | Typing a test fixture to `Record<string,string>` | **No** | Nobody outside CI can observe it |
 | Adding `cross-org-isolation` assertions | **No** | Test-only |
 
+## At the release boundary
+
+The PR that builds behaviour behind an off-in-production flag owes nothing. **The
+release that turns the flag on owes the runbook**, and owes it as a
+release-readiness requirement rather than a follow-up.
+
+A promotion that makes a customer-visible failure mode reachable while its runbook
+is unwritten is not release-ready, however green its CI is. The deferred list in
+`README.md` names which runbooks each pending promotion carries.
+
 ## Where this is enforced
 
 In review, by a human, as part of reading the diff — not by tooling. The cost of
