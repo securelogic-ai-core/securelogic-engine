@@ -13,6 +13,93 @@
 
 | 2 | PLAT-ASSET-1 | Asset inventory is effectively unpopulated | **P0 as a *decision* / P2 as a *build*** (re-rated 2026-08-21) | **No** — but gates the customer-visible truth of per-asset vulnerability tracking, and therefore a Sept 15 advertising claim | XS to decide, L to build | Ownership ruling: import vs connector vs manual onboarding |
 
+## Enterprise Capability Baseline candidates (added 2026-08-21)
+
+| ID | Title | Priority | Promotion-gate | Effort | Dependencies |
+|---|---|---|---|---|---|
+| **OPS-1** | **SecureLogic Operations & Tenant Health** — enterprise-foundational capability | **P1 — record and inventory, do NOT build** | **No** | XS to inventory, L to build | Existing observability primitives; must not become a parallel framework |
+
+### OPS-1 — SecureLogic Operations & Tenant Health
+
+**Named as an enterprise-foundational capability for the Enterprise Capability
+Baseline.** Do not build it now.
+
+**Intended architecture:**
+
+```
+subsystem telemetry → standardized operational events / health signals
+  → tenant + platform health model → SecureLogic Operations Dashboard
+  → alerting → support / incident response / recovery
+```
+
+**The two questions OPS-1 must eventually answer:**
+
+1. *Are all customer tenants healthy right now?*
+2. When not: *which customer is affected, what capability is degraded, when did
+   it begin, what evidence supports the diagnosis, and what is the approved next
+   action?*
+
+#### First step is an inventory, not a build
+
+The standing constraint is **no parallel observability framework.** Reuse what
+exists. Verified present today:
+
+| Primitive | What it already gives | Gap against OPS-1 |
+|---|---|---|
+| `GET /admin/ops/health` | queued/dead-lettered deliveries, suppressions, failed + stale worker runs, latest issue, latest provider event | **No tenant dimension.** Newsletter/email/worker-centric |
+| `GET /admin/ops/overview` | delivery totals by status, suppression counts, provider events, worker runs | **No tenant dimension** |
+| `GET /admin/billing/dunning-metrics` | cross-org dunning aggregate | Billing only |
+| `worker_runs` table | per-worker status, started_at, failures | No capability mapping |
+| Structured error codes | e.g. `processing_error_code` on documents | Not aggregated |
+| `security_audit_log` / `lib/auditLog.ts` | durable audit rows where used | Sparse — see ADMIN-AUDIT-1 |
+| `email_provider_events`, `email_suppressions` | delivery telemetry | Email only |
+
+**Honest baseline: two operations surfaces already exist and neither can answer
+question 1**, because nothing in them carries a tenant dimension.
+
+#### Telemetry the baseline should evaluate
+
+Tenant health · APIs/application · database · Redis/cache · workers/background
+jobs · queues · document processing/extraction · AI/provider processing ·
+Vendor Assurance · vulnerability ingestion · asset synchronization · pen-test
+processing · AI Governance workflows · reporting · authentication ·
+billing/dunning · email/notifications · integrations/connectors ·
+security/anomalies · rate limiting/lockouts · **administrative-network
+evaluations** (`admin_network_evaluated`, per ADR-0011) · scheduled jobs ·
+deployment/version · migration level · configuration drift · active incidents ·
+capacity/usage where appropriate.
+
+#### Non-negotiable design principles
+
+**1. Tenant health must be DERIVED, never manually assigned.** No hand-set
+green/yellow/red. The model must support at least:
+
+| State | Meaning |
+|---|---|
+| `HEALTHY` | Observable evidence within defined thresholds |
+| `DEGRADED` | Observable evidence outside thresholds, capability still functioning |
+| `CRITICAL` | Capability not functioning for that tenant |
+| `UNKNOWN` | **No evidence.** Must NOT silently collapse into HEALTHY |
+
+`UNKNOWN` is the important one. A tenant we cannot see is not a tenant that is
+fine, and a health model that renders absence as green is worse than no model —
+it manufactures false assurance. The scoring algorithm is deliberately **not**
+designed yet.
+
+**2. Read-only by default.**
+
+> **Cross-tenant operational visibility does not imply cross-tenant mutation
+> authority.**
+
+OPS-1 begins as a read-only operational surface. Any future capability to change
+customer state requires separate authorization/elevation, explicit tenant
+context, a reason where appropriate, and complete audit logging.
+
+**The Operations Dashboard must not become a generic database administration
+console.** That is the failure mode this principle exists to prevent, and it is
+also why ADMIN-AUDIT-1 matters: a cross-tenant surface without a durable audit
+trail is exactly the thing an enterprise customer's vendor review will ask about.
+
 ## Item detail
 
 ### PLAT-ASSET-1 — Asset inventory is effectively unpopulated
