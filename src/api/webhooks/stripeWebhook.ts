@@ -46,6 +46,30 @@ const PAYMENT_FAILED_EVENTS = new Set([
   "invoice.payment_failed"
 ]);
 
+/**
+ * Events that signal a payment SUCCEEDED on a subscription invoice — the
+ * recovery half of the dunning lifecycle.
+ *
+ * Before these were handled, entitlement was restored only by a
+ * customer.subscription.updated(active) whose tier resolveTier could resolve.
+ * When it could not, classifySubscriptionEvent returned null, the handler
+ * responded {ignored: true}, and NO write happened anywhere — leaving an org
+ * at 'starter' with payment_failed_at set while holding a live, fully paid
+ * Stripe subscription, with no second chance and no self-service recovery.
+ *
+ * Both events are registered because they are not the same event: Stripe
+ * sends invoice.payment_succeeded when a charge succeeds and invoice.paid
+ * when the invoice reaches the paid state (including out-of-band payment).
+ * Handling both is deliberate and safe — the restore is a converging write,
+ * and the second event simply observes the state the first one reached.
+ *
+ * Register in Stripe Dashboard: invoice.paid, invoice.payment_succeeded
+ */
+const RECOVERY_EVENTS = new Set([
+  "invoice.paid",
+  "invoice.payment_succeeded"
+]);
+
 /* =========================================================
    HELPERS
    ========================================================= */
@@ -257,8 +281,78 @@ function extractApiKeyId(event: Stripe.Event): string | null {
   return (
     obj?.metadata?.api_key_id ??
     obj?.subscription_details?.metadata?.api_key_id ??
+    // Invoice payloads rendered under the Basil API version move the
+    // subscription block to invoice.parent.subscription_details. Which shape
+    // arrives is decided by the API VERSION CONFIGURED ON THE WEBHOOK ENDPOINT
+    // in the Stripe Dashboard, not by the apiVersion pinned in stripeClient.ts
+    // — so both are read rather than assuming either. This is a resolution
+    // fallback only; organizations.stripe_customer_id remains the primary.
+    obj?.parent?.subscription_details?.metadata?.api_key_id ??
     null
   );
+}
+
+/**
+ * The subscription a paid/failed INVOICE belongs to, read version-agnostically.
+ *
+ * Pre-Basil payloads carry invoice.subscription; Basil payloads carry
+ * invoice.parent.subscription_details.subscription. Both are read because the
+ * rendering version is a Dashboard setting on the webhook endpoint, which is
+ * not represented anywhere in this repo and has not been verified.
+ *
+ * Returns null for a one-off invoice — which is the point: a paid invoice with
+ * no subscription behind it must never move entitlement.
+ */
+function extractInvoiceSubscriptionId(obj: any): string | null {
+  const candidates = [
+    obj?.subscription,
+    obj?.parent?.subscription_details?.subscription,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+    if (c && typeof c === "object" && typeof c.id === "string" && c.id.length > 0) {
+      return c.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * The price ID on an invoice's first line, read version-agnostically.
+ *
+ * Pre-Basil: line.price.id. Basil: line.pricing.price_details.price.
+ * SecureLogic plans are single-item, so the first line is authoritative for
+ * what was just paid. Returns null when no line carries a resolvable price.
+ */
+function extractInvoicePriceId(obj: any): string | null {
+  const lines: any[] = Array.isArray(obj?.lines?.data) ? obj.lines.data : [];
+  for (const line of lines) {
+    const id =
+      (typeof line?.price?.id === "string" ? line.price.id : null) ??
+      (typeof line?.pricing?.price_details?.price === "string"
+        ? line.pricing.price_details.price
+        : null) ??
+      (typeof line?.plan?.id === "string" ? line.plan.id : null);
+    if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * Maps a RAW tier label (the catalog vocabulary stored in
+ * organizations.stripe_subscription_tier and keyed by PRICE_ID_TO_TIER) to the
+ * entitlement tier the rest of the billing system speaks.
+ *
+ * Deliberately strict, and deliberately NOT defaulting: an unrecognised label
+ * returns null so the caller declines to act, exactly as resolveTier does. The
+ * least trustworthy input must never produce the most privileged output.
+ */
+function rawTierToEntitlementTier(raw: string | null): "professional" | "paid" | null {
+  if (raw === "professional" || raw === "teams") return "professional";
+  if (raw === "platform" || raw === "platform_annual" || raw === "team" || raw === "paid") {
+    return "paid";
+  }
+  return null;
 }
 
 /**
@@ -745,6 +839,202 @@ async function handlePaymentFailed(event: Stripe.Event): Promise<void> {
   }
 }
 
+/**
+ * Handles invoice.paid / invoice.payment_succeeded: the recovery path.
+ *
+ * WHY THIS EXISTS (SL-BILL-1 D4). Entitlement used to be restored ONLY by a
+ * customer.subscription.updated(active) whose tier resolveTier could resolve.
+ * If it could not — a subscription created outside our Checkout (Dashboard,
+ * comped, migrated) carries no tier metadata, and an unmapped price ID resolves
+ * to null — the handler responded {ignored: true} and nothing was written. The
+ * org stayed at 'starter' with payment_failed_at set while holding a live,
+ * fully paid subscription. There was no second chance: these invoice events
+ * were not handled at all, and payment_failed_at only ever cleared as a side
+ * effect of a successful grant. A paying customer could be locked out
+ * permanently with no self-service route back.
+ *
+ * The tier is resolved from the invoice's own price first (authoritative for
+ * what was just paid), then from organizations.stripe_subscription_tier (the
+ * last tier a successful grant stored — always present for an org that has
+ * ever been provisioned, which every dunning-recovery org has). A live
+ * subscriptions.retrieve() was considered as a third source and deliberately
+ * declined: it adds a network failure mode inside the webhook path for
+ * coverage the first two sources already provide.
+ *
+ * STALENESS GUARDS. A paid invoice must not resurrect entitlement for a
+ * subscription that is no longer the org's:
+ *   - the invoice must reference a subscription at all (one-off invoices and
+ *     $0 non-subscription invoices never move entitlement);
+ *   - if the org has a stored subscription id, the invoice's must match it —
+ *     the same superseded-subscription reasoning as the stale-revoke guard on
+ *     customer.subscription.deleted, inverted;
+ *   - an org whose stored status is terminal (canceled / incomplete_expired)
+ *     is not restored by a late invoice from the dead subscription.
+ * Full ordering safety (an event.created watermark) is PR-D and is not
+ * attempted here.
+ *
+ * IDEMPOTENCY. The restore is a converging write: it sets entitlement to what
+ * the paid invoice says it should be and clears payment_failed_at. Running it
+ * twice — which happens by design, since invoice.paid and
+ * invoice.payment_succeeded are distinct events for the same payment — reaches
+ * the same state. `wasDelinquent` is read BEFORE the write so the recovery is
+ * counted once: the second event observes an already-healthy org and logs
+ * wasDelinquent=false.
+ */
+async function handlePaymentRecovered(
+  event: Stripe.Event
+): Promise<{ restored: boolean; reason?: string }> {
+  const obj = event.data.object as any;
+  const customerId = typeof obj?.customer === "string" ? obj.customer : null;
+  const invoiceId = typeof obj?.id === "string" ? obj.id : null;
+  const invoiceSubId = extractInvoiceSubscriptionId(obj);
+
+  if (!invoiceSubId) {
+    logger.info(
+      { event: "stripe_payment_recovered_skipped", reason: "not_subscription_invoice", invoiceId },
+      "invoice paid: no subscription on the invoice — entitlement untouched"
+    );
+    return { restored: false, reason: "not_subscription_invoice" };
+  }
+
+  const rawApiKeyId = extractApiKeyId(event);
+  const apiKeyId = isValidApiKeyId(rawApiKeyId) ? rawApiKeyId : null;
+
+  const { orgId, resolvedBy } = await resolveOrgIdForEvent(customerId, apiKeyId);
+
+  if (!orgId) {
+    logger.warn(
+      { event: "stripe_payment_recovered_org_not_resolved", customerId, invoiceId },
+      "invoice paid: could not resolve organization_id — entitlement untouched"
+    );
+    return { restored: false, reason: "org_not_resolved" };
+  }
+
+  const { rows } = await pg.query<{
+    entitlement_level: string | null;
+    payment_failed_at: string | null;
+    stripe_subscription_id: string | null;
+    stripe_subscription_status: string | null;
+    stripe_subscription_tier: string | null;
+  }>(
+    `SELECT entitlement_level, payment_failed_at, stripe_subscription_id,
+            stripe_subscription_status, stripe_subscription_tier
+       FROM organizations WHERE id = $1 LIMIT 1`,
+    [orgId]
+  );
+
+  const org = rows[0];
+
+  if (!org) {
+    logger.warn(
+      { event: "stripe_payment_recovered_org_missing", orgId, invoiceId },
+      "invoice paid: organizations row not found — entitlement untouched"
+    );
+    return { restored: false, reason: "org_missing" };
+  }
+
+  if (org.stripe_subscription_id && org.stripe_subscription_id !== invoiceSubId) {
+    logger.info(
+      {
+        event: "stripe_payment_recovered_skipped",
+        reason: "superseded_subscription",
+        orgId,
+        currentSubId: org.stripe_subscription_id,
+        invoiceSubId,
+        invoiceId
+      },
+      "invoice paid: invoice belongs to a superseded subscription — entitlement untouched"
+    );
+    return { restored: false, reason: "superseded" };
+  }
+
+  if (
+    org.stripe_subscription_status === "canceled" ||
+    org.stripe_subscription_status === "incomplete_expired"
+  ) {
+    logger.info(
+      {
+        event: "stripe_payment_recovered_skipped",
+        reason: "terminal_subscription_status",
+        orgId,
+        status: org.stripe_subscription_status,
+        invoiceId
+      },
+      "invoice paid: subscription already terminal — entitlement untouched"
+    );
+    return { restored: false, reason: "terminal_status" };
+  }
+
+  const invoicePriceId = extractInvoicePriceId(obj);
+  const priceRawTier = invoicePriceId ? PRICE_ID_TO_TIER[invoicePriceId] ?? null : null;
+  const rawTier = priceRawTier ?? org.stripe_subscription_tier ?? null;
+  const tier = rawTierToEntitlementTier(rawTier);
+
+  if (!tier) {
+    // Fail VISIBLE, not silent, and do NOT clear payment_failed_at. Clearing it
+    // would remove the banner — the customer's only in-product signal — while
+    // leaving them downgraded and unable to explain why. Leaving the stamp keeps
+    // them pointed at the billing portal while this alert is investigated.
+    logger.error(
+      {
+        event: "stripe_recovery_tier_unresolved",
+        orgId,
+        invoiceId,
+        invoiceSubId,
+        invoicePriceId,
+        storedTier: org.stripe_subscription_tier,
+        entitlementLevel: org.entitlement_level
+      },
+      "invoice paid: tier unresolvable from invoice price or stored tier — entitlement NOT restored, manual action required"
+    );
+    return { restored: false, reason: "tier_unresolved" };
+  }
+
+  // Read BEFORE the write so a recovery is counted exactly once across the
+  // invoice.paid / invoice.payment_succeeded pair.
+  const wasDelinquent =
+    Boolean(org.payment_failed_at) || org.entitlement_level === "starter";
+
+  const entitlement: EntitlementRecord = { tier, activeSubscription: true };
+
+  if (apiKeyId) {
+    await setEntitlementInRedis(apiKeyId, entitlement);
+  }
+
+  // subscriptionStatus is passed as null on purpose: a paid invoice does not
+  // carry subscription status, and syncOrgEntitlement COALESCEs, so the stored
+  // status is left for the accompanying customer.subscription.updated to set.
+  await syncOrgEntitlement(
+    orgId,
+    entitlement,
+    customerId,
+    invoiceSubId,
+    priceRawTier,
+    null,
+    apiKeyId
+  );
+
+  logger.info(
+    {
+      event: "stripe_payment_recovered",
+      orgId,
+      apiKeyId,
+      customerId,
+      invoiceId,
+      invoiceSubId,
+      resolvedBy,
+      tier,
+      rawTier,
+      tierSource: priceRawTier ? "invoice_price" : "stored_subscription_tier",
+      wasDelinquent,
+      stripeEventType: event.type
+    },
+    "invoice paid: entitlement restored and payment_failed_at cleared"
+  );
+
+  return { restored: true };
+}
+
 /* =========================================================
    MAIN HANDLER
    ========================================================= */
@@ -848,6 +1138,16 @@ export async function stripeWebhook(
     if (PAYMENT_FAILED_EVENTS.has(eventType)) {
       await handlePaymentFailed(event);
       respond({ received: true, updated: true });
+      return;
+    }
+
+    // Handle payment recovery next, for the same reason: it is a distinct
+    // action from the grant/revoke classification below, and it must run even
+    // when classifySubscriptionEvent would decline. This is the branch that
+    // guarantees a customer who has paid gets their product back (D4).
+    if (RECOVERY_EVENTS.has(eventType)) {
+      const result = await handlePaymentRecovered(event);
+      respond({ received: true, ...result });
       return;
     }
 
