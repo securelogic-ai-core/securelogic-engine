@@ -2599,6 +2599,14 @@ export type RiskAcceptance = {
   organization_id: string;
   finding_id: string;
   state: RiskAcceptanceState;
+  /**
+   * 'acceptance' = the organisation accepts the risk; remediation is finished
+   * and the finding CLOSES. 'exception' = the organisation authorises a
+   * temporary deviation; remediation remains OUTSTANDING and the finding stays
+   * OPEN. Optional for backward compatibility with reads that predate it;
+   * absent is read as 'acceptance', which is what every historical row is.
+   */
+  kind?: "acceptance" | "exception";
   owner_user_id: string | null;
   rationale: string | null;
   requested_by_user_id: string | null;
@@ -2612,6 +2620,10 @@ export type RiskAcceptance = {
   withdrawal_reason: string | null;
   governance_review_required: boolean;
   promoted_risk_id: string | null;
+  /** What reduces the exposure while an exception stands. */
+  compensating_control?: string | null;
+  /** The finding's remediation due date when the request was made. Frozen. */
+  sla_due_date_at_request?: string | null;
   created_at: string;
   updated_at: string;
   // JOINed finding columns the register/per-finding read returns (optional).

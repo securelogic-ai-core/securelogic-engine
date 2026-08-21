@@ -112,6 +112,31 @@ router.post(
       const rationale = body["rationale"];
       const expiresAt = body["expires_at"];
 
+      // WHICH DECISION IS THIS? The two share this workflow and mean opposite
+      // things to a customer: an acceptance ends the remediation obligation and
+      // closes the finding; an exception authorises a temporary deviation and
+      // leaves it open. Defaulting to 'acceptance' preserves every existing
+      // caller's behaviour exactly — an exception only happens when asked for.
+      const kindRaw = body["kind"];
+      const kind = kindRaw === undefined || kindRaw === null ? "acceptance" : kindRaw;
+      if (kind !== "acceptance" && kind !== "exception") {
+        res.status(400).json({
+          error: "invalid_kind",
+          detail: "kind must be 'acceptance' (closes the finding) or 'exception' (leaves it open).",
+        });
+        return;
+      }
+
+      // Nullable on purpose: an exception with no compensating control is a
+      // legitimate decision, and forcing a value would produce boilerplate
+      // rather than information. But an unanswered field and an unasked one are
+      // different things, and reporting can now tell them apart.
+      const compensatingControlRaw = body["compensating_control"];
+      const compensatingControl =
+        typeof compensatingControlRaw === "string" && compensatingControlRaw.trim()
+          ? compensatingControlRaw.trim().slice(0, MAX_RATIONALE)
+          : null;
+
       if (!isUuid(ownerUserId)) {
         res.status(400).json({ error: "owner_user_id_required" });
         return;
@@ -127,14 +152,22 @@ router.post(
         return;
       }
 
-      const finding = await pg.query<{ id: string }>(
-        `SELECT id FROM findings WHERE id = $1 AND organization_id = $2`,
+      // due_date comes back with the existence check so the ORIGINAL obligation
+      // can be frozen onto the request. This is the heart of the package: an
+      // approved exception must never rewrite the date the remediation was due.
+      // An auditor has to be able to see BOTH that the SLA was missed AND that
+      // the continued exposure was authorised, and overwriting findings.due_date
+      // would destroy the first fact in order to record the second.
+      const finding = await pg.query<{ id: string; due_date: string | null }>(
+        `SELECT id, due_date::text AS due_date FROM findings
+          WHERE id = $1 AND organization_id = $2`,
         [findingId, organizationId]
       );
       if ((finding.rowCount ?? 0) === 0) {
         res.status(404).json({ error: "finding_not_found" });
         return;
       }
+      const slaDueDateAtRequest = finding.rows[0]?.due_date ?? null;
 
       // The owner must belong to THIS org. Without this check an acceptance could name a
       // user from another tenant as the accountable owner.
@@ -151,16 +184,27 @@ router.post(
       try {
         created = await pg.query<RiskAcceptance>(
           `INSERT INTO finding_risk_acceptances
-             (organization_id, finding_id, state, owner_user_id, rationale,
-              requested_by_user_id, expires_at)
-           VALUES ($1, $2, 'proposed', $3, $4, $5, $6::date)
+             (organization_id, finding_id, state, kind, owner_user_id, rationale,
+              requested_by_user_id, expires_at, compensating_control,
+              sla_due_date_at_request)
+           VALUES ($1, $2, 'proposed', $3, $4, $5, $6, $7::date, $8, $9::date)
            RETURNING ${ACCEPTANCE_SELECT}`,
-          [organizationId, findingId, ownerUserId, rationale.trim(), requestedBy, expiresAt.trim()]
+          [
+            organizationId, findingId, kind, ownerUserId, rationale.trim(),
+            requestedBy, expiresAt.trim(), compensatingControl, slaDueDateAtRequest,
+          ]
         );
       } catch (err: unknown) {
         // The partial unique index: at most one live acceptance per finding.
         if ((err as { code?: string })?.code === "23505") {
-          res.status(409).json({ error: "acceptance_already_live_for_finding" });
+          // One live record per KIND — a finding may not hold two open
+          // exceptions, but an exception and an acceptance are different
+          // decisions and neither blocks the other.
+          res.status(409).json({
+            error: kind === "exception"
+              ? "exception_already_live_for_finding"
+              : "acceptance_already_live_for_finding",
+          });
           return;
         }
         throw err;
@@ -172,7 +216,9 @@ router.post(
         organizationId,
         actorUserId: requestedBy,
         actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
-        eventType: "finding.risk_acceptance.proposed",
+        eventType: kind === "exception"
+          ? "finding.risk_exception.requested"
+          : "finding.risk_acceptance.proposed",
         resourceType: "finding_risk_acceptance",
         resourceId: acceptance.id,
         payload: { finding_id: findingId, owner_user_id: ownerUserId, expires_at: acceptance.expires_at },
@@ -290,13 +336,23 @@ router.post(
       // Ruling step 4: decision_state and operational_status are set TOGETHER, now that
       // the approval exists. decision_state is written here; operational_status is NEVER
       // hand-set — the recompute derives it, and the now-binding acceptance closes it.
+      //
+      // AN EXCEPTION WRITES NEITHER. `accepted_risk` says the organisation has
+      // decided to live with the risk; an exception says the opposite — the
+      // remediation is still required and has merely been authorised to run
+      // late. Stamping it here would be the second false statement this package
+      // exists to remove (the first being the closure), and it would also feed
+      // the derivation, which treats accepted_risk as a governance outcome. The
+      // finding keeps whatever decision state it already had.
+      const isException = acceptance.kind === "exception";
+
       const findingBefore = await pg.query<{ decision_state: string | null }>(
         `SELECT decision_state FROM findings WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
         [acceptance.finding_id, organizationId]
       );
       const fromDecision = findingBefore.rows[0]?.decision_state ?? "needs_review";
 
-      if (fromDecision !== "accepted_risk") {
+      if (!isException && fromDecision !== "accepted_risk") {
         await pg.query(
           `UPDATE findings SET decision_state = 'accepted_risk', updated_at = NOW()
             WHERE id = $1 AND organization_id = $2`,
@@ -323,13 +379,26 @@ router.post(
         organizationId,
         actorUserId: approver,
         actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
-        eventType: "finding.risk_acceptance.approved",
+        eventType: isException
+          ? "finding.risk_exception.approved"
+          : "finding.risk_acceptance.approved",
         resourceType: "finding_risk_acceptance",
         resourceId: acceptance.id,
         payload: {
+          kind: acceptance.kind,
           finding_id: acceptance.finding_id,
           expires_at: acceptance.expires_at,
+          // Recorded on BOTH kinds, and it is the assertion an auditor checks:
+          // for an exception this must be false, and a regression that closed
+          // the finding would be visible in the audit stream itself rather than
+          // only in the derived state.
           finding_closed: recompute.toState === "closed",
+          ...(isException
+            ? {
+                sla_due_date_at_request: acceptance.sla_due_date_at_request,
+                remediation_outstanding: true,
+              }
+            : {}),
         },
         ipAddress: req.ip ?? null,
       });
@@ -348,14 +417,22 @@ router.post(
       // Register (create-or-link, dark behind its own flag). Non-fatal —
       // the governance record above is primary and already durable; a
       // failed promotion is found by the memo §7 reconciliation query.
+      // Promotion is an ACCEPTANCE act. Promoting on an exception would create a
+      // register entry asserting the organisation has accepted a risk it has
+      // explicitly said it still intends to fix — and the Finding to Risk
+      // relationship (#837) is human-approved by design, so an exception must
+      // not manufacture one as a side effect. An exception on a finding that is
+      // ALREADY linked to a risk leaves that link untouched.
       try {
-        const promotion = await promoteApprovedAcceptance({
-          organizationId,
-          acceptanceId: acceptance.id,
-          findingId: acceptance.finding_id,
-          actorUserId: approver,
-          actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
-        });
+        const promotion = isException
+          ? { promoted: false as const, riskId: null }
+          : await promoteApprovedAcceptance({
+              organizationId,
+              acceptanceId: acceptance.id,
+              findingId: acceptance.finding_id,
+              actorUserId: approver,
+              actorApiKeyId: (req as { apiKey?: { id?: string } }).apiKey?.id ?? null,
+            });
         // Wave-1 (DS-15): risk.promoted is emitted here at the route (the
         // service stays delivery-free). Only when a promotion actually ran —
         // dark promotion flag means no event, matching the register's truth.

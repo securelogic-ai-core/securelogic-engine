@@ -29,16 +29,21 @@ import { writeAuditEvent } from "./auditLog.js";
 import { writeFindingLifecycleEvent, recomputeFindingOperationalStatus } from "./findingLifecycle.js";
 import type { LifecycleActor } from "./findingLifecycle.js";
 import { riskAcceptanceEnabled } from "./riskAcceptanceFeatureFlag.js";
-import { SQL_ACCEPTANCE_BINDING, type AcceptanceState } from "./riskAcceptanceContract.js";
+import { SQL_ACCEPTANCE_BINDING, type AcceptanceState, type DecisionKind } from "./riskAcceptanceContract.js";
 
-export { ACCEPTANCE_LIVE_STATES, SQL_ACCEPTANCE_BINDING } from "./riskAcceptanceContract.js";
-export type { AcceptanceState } from "./riskAcceptanceContract.js";
+export { ACCEPTANCE_LIVE_STATES, SQL_ACCEPTANCE_BINDING, SQL_EXCEPTION_IN_FORCE, DECISION_KINDS } from "./riskAcceptanceContract.js";
+export type { AcceptanceState, DecisionKind } from "./riskAcceptanceContract.js";
 
 export type RiskAcceptance = {
   id: string;
   organization_id: string;
   finding_id: string;
   state: AcceptanceState;
+  /**
+   * 'acceptance' ends the remediation obligation and CLOSES the finding.
+   * 'exception' authorises a temporary deviation and leaves it OPEN.
+   */
+  kind: DecisionKind;
   owner_user_id: string | null;
   rationale: string | null;
   requested_by_user_id: string | null;
@@ -50,6 +55,10 @@ export type RiskAcceptance = {
   withdrawal_reason: string | null;
   governance_review_required: boolean;
   promoted_risk_id: string | null;
+  /** What reduces the exposure while an exception stands. Null = none recorded. */
+  compensating_control: string | null;
+  /** The finding's due date when the request was made, frozen. Never rewritten. */
+  sla_due_date_at_request: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -63,12 +72,13 @@ export type RiskAcceptance = {
 export function acceptanceSelect(alias = ""): string {
   const p = alias ? `${alias}.` : "";
   return `
-  ${p}id, ${p}organization_id, ${p}finding_id, ${p}state,
+  ${p}id, ${p}organization_id, ${p}finding_id, ${p}state, ${p}kind,
   ${p}owner_user_id, ${p}rationale, ${p}requested_by_user_id,
   ${p}approver_user_id, ${p}approved_at::text AS approved_at, ${p}decision_rationale,
   ${p}expires_at::text AS expires_at,
   ${p}withdrawn_at::text AS withdrawn_at, ${p}withdrawal_reason,
   ${p}governance_review_required, ${p}promoted_risk_id,
+  ${p}compensating_control, ${p}sla_due_date_at_request::text AS sla_due_date_at_request,
   ${p}created_at::text AS created_at, ${p}updated_at::text AS updated_at
 `;
 }
@@ -199,8 +209,10 @@ export async function sweepExpiredAcceptances(
   organizationId: string,
   actor: LifecycleActor
 ): Promise<ExpirySweepResult> {
-  const due = await pg.query<{ id: string; finding_id: string }>(
-    `SELECT id, finding_id
+  // kind travels with the row: expiry means something different for each, and
+  // the sweep must not treat them alike.
+  const due = await pg.query<{ id: string; finding_id: string; kind: string }>(
+    `SELECT id, finding_id, kind
        FROM finding_risk_acceptances
       WHERE organization_id = $1
         AND state = 'approved'
@@ -212,6 +224,8 @@ export async function sweepExpiredAcceptances(
 
   let reopened = 0;
   for (const row of due.rows) {
+    const isException = row.kind === "exception";
+
     await pg.query(
       `UPDATE finding_risk_acceptances SET state = 'expired' WHERE id = $1 AND organization_id = $2`,
       [row.id, organizationId]
@@ -221,12 +235,22 @@ export async function sweepExpiredAcceptances(
       organizationId,
       actorUserId: actor.actorUserId ?? null,
       actorApiKeyId: actor.actorApiKeyId ?? null,
-      eventType: "finding.risk_acceptance.expired",
+      eventType: isException
+        ? "finding.risk_exception.expired"
+        : "finding.risk_acceptance.expired",
       resourceType: "finding_risk_acceptance",
       resourceId: row.id,
-      payload: { finding_id: row.finding_id },
+      payload: { finding_id: row.finding_id, kind: row.kind },
       ipAddress: null,
     });
+
+    // An EXCEPTION never closed its finding, so there is nothing to reopen —
+    // the remediation has been outstanding the whole time. Calling the reopen
+    // path here would be harmless today (it no-ops on an open finding) but it
+    // would encode the wrong idea: that an expiring exception RESTORES work
+    // rather than withdrawing the authorisation to be late. The state that
+    // changes is the exception's, not the finding's.
+    if (isException) continue;
 
     const r = await reopenFindingAfterAcceptanceEnded(
       organizationId,
