@@ -103,6 +103,7 @@ than from imagining a screen.
 | **SUP-OBS-19** | Data-rights request state | SR-011 | **The workflow with the hardest external deadline** |
 | **SUP-OBS-20** | Whether a provider billing event was received | SR-041 | Central question of a SEV2 runbook |
 | **SUP-OBS-21** | Environment plan/price configuration | SR-042 | A past defect (transposed price IDs) was invisible from support |
+| **SUP-OBS-22** | Whether a posture snapshot succeeded, and when the next is due | SR-015 | The most common question behind "the number looks wrong" |
 
 **Concentration worth noting:** SUP-OBS-1, 3, 13 and 19 between them account for
 most escalations across the whole set. A console addressing those four — auth
