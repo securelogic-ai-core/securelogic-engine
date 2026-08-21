@@ -47,6 +47,7 @@ import assessRouter from "./assess.js";
 import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
 import findingRiskLinksRouter from "./findingRiskLinks.js";
+import penTestEngagementsRouter from "./penTestEngagements.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
@@ -483,6 +484,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // and /risks/:id, and a parameterised route registered first would capture
   // /findings/:id/risk-links as an id of "risk-links".
   router.use("/api", findingRiskLinksRouter);
+  router.use("/api", penTestEngagementsRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);

@@ -252,8 +252,11 @@ function FindingDetailsCard({ finding }: { finding: Finding }) {
         )}
         <div className="flex items-center justify-between">
           <span className="text-xs" style={{ color: "#94a3b8" }}>Severity</span>
-          <span className="text-xs font-semibold" style={(SEVERITY_STYLES[finding.severity] ?? {}) as React.CSSProperties}>
-            {finding.severity}
+          <span
+            className="text-xs font-semibold"
+            style={(finding.severity ? SEVERITY_STYLES[finding.severity] ?? {} : {}) as React.CSSProperties}
+          >
+            {finding.severity ?? "No severity"}
           </span>
         </div>
         {finding.likelihood && (
@@ -556,7 +559,7 @@ export default async function FindingDetailPage({
           {/* Finding header card */}
           <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
             <div className="flex items-center gap-2 flex-wrap mb-3">
-              <SeverityBadge severity={finding.severity} />
+              <SeverityBadge severity={finding.severity ?? "No severity"} />
               <span
                 className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
                 style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}

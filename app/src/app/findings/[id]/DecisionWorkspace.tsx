@@ -868,7 +868,19 @@ export function DecisionWorkspace({
         {/* (1) Identity — the first thing the eye should land on. */}
         <h1 style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: "0 0 8px" }}>{finding.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <Chip text={finding.severity} color={LEVEL_COLOR[String(finding.severity).toLowerCase()] ?? "#fca5a5"} />
+          {/* A finding with NO canonical severity is a real state, not a
+              missing value: the source said Informational, or its value could
+              not be mapped. Showing "No severity" with the source's own word
+              beside it is the honest rendering — a blank chip would read as a
+              bug, and defaulting to a level would invent one. */}
+          {finding.severity ? (
+            <Chip text={finding.severity} color={LEVEL_COLOR[finding.severity.toLowerCase()] ?? "#fca5a5"} />
+          ) : (
+            <Chip
+              text={finding.source_severity ? `No severity · source: ${finding.source_severity}` : "No severity"}
+              color="#94a3b8"
+            />
+          )}
           <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
           <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}

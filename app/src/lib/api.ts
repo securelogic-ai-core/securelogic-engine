@@ -577,10 +577,22 @@ export type Finding = {
   source_type: string;
   source_id: string | null;
   title: string;
-  severity: string;
+  /**
+   * Canonical, SLA-BEARING severity. NULL means the finding has NO canonical
+   * severity — the source said Informational/None, or its value could not be
+   * mapped. NULL is never a hidden fifth level and never acquires a due date.
+   * When it is null, `source_severity` says what the source actually stated.
+   */
+  severity: string | null;
   description: string;
   recommendation: string | null;
   framework_control_id: string | null;
+  /** What the SOURCE called the severity, verbatim. Never normalised. */
+  source_severity?: string | null;
+  /** The finding's id in the source report, e.g. "PT-2026-014". */
+  source_reference_id?: string | null;
+  cvss_score?: number | string | null;
+  cvss_vector?: string | null;
   domain: string | null;
   priority: string | null;
   likelihood: string | null;

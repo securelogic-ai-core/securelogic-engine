@@ -48,7 +48,9 @@ export const FINDING_SOURCE_TYPES = new Set([
   "risk",
   "applicability_assessment",
   "asset_assessment",
-  "intelligence_event"
+  "intelligence_event",
+  "vendor_engagement",
+  "pen_test"
 ]);
 
 /**
@@ -68,7 +70,12 @@ export const USER_CREATABLE_SOURCE_TYPES = new Set([
   "dependency_review",
   "signal",
   "manual",
-  "risk"
+  "risk",
+  // A penetration test is something a CUSTOMER commissions and reports, not
+  // something a pipeline produces — so unlike cyber_signal it is user-creatable
+  // by design. source_id points at a pen_test_engagements row the caller's org
+  // owns; that ownership is verified in the route, not here.
+  "pen_test"
 ]);
 
 /**
@@ -153,7 +160,13 @@ function isIsoDate(v: unknown): v is string {
 
 export type FindingCreateInput = {
   title: string;
-  severity: string;
+  /**
+   * NULL means the finding has NO canonical severity — the source stated none
+   * (Informational / CVSS 0.0) or its value could not be mapped. It is not a
+   * hidden fifth level and it never acquires an SLA. Only legal alongside
+   * source_severity.
+   */
+  severity: string | null;
   source_type: string;
   description: string;
   source_id: string | null;
@@ -165,6 +178,12 @@ export type FindingCreateInput = {
   scoring_rationale: string | null;
   owner_user_id: string | null;
   due_date: string | null;
+  /** What the source called it, verbatim. Never normalised. */
+  source_severity: string | null;
+  /** The finding's id in the source report, so a customer can match the PDF. */
+  source_reference_id: string | null;
+  cvss_score: number | null;
+  cvss_vector: string | null;
 };
 
 export type FindingCreateResult =
@@ -184,17 +203,39 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
   }
   const title = sanitizeString((b["title"] as string).trim(), MAX_TITLE);
 
-  // severity — required enum
-  if (!isNonEmptyString(b["severity"])) {
-    return { error: "severity_required" };
-  }
-  if (!VALID_SEVERITIES.has(b["severity"] as string)) {
+  // ── source provenance (SL-PENTEST-IN) ──────────────────────────────────
+  // Read before severity, because whether a canonical severity may be omitted
+  // depends on whether the source's own value was preserved.
+  const source_severity = isNonEmptyString(b["source_severity"])
+    ? sanitizeString((b["source_severity"] as string).trim(), 120)
+    : null;
+
+  // severity — enum, and OPTIONAL only when the source's value is preserved.
+  //
+  // NULL means "this finding has no canonical severity". That is a legitimate,
+  // faithful outcome for an Informational finding or an unreadable value, and
+  // it carries no SLA because slaDaysFor() recognises no such severity.
+  //
+  // The pairing is the invariant: omitting severity WITHOUT source_severity is
+  // not an honest "no severity", it is missing data, and it would produce a
+  // finding nobody can triage or explain. So it is refused.
+  const severityProvided = isNonEmptyString(b["severity"]);
+  if (!severityProvided) {
+    if (source_severity === null) {
+      return {
+        error: "severity_required",
+        detail:
+          "Provide a canonical severity, or supply source_severity to record " +
+          "that the source stated none (e.g. Informational)."
+      };
+    }
+  } else if (!VALID_SEVERITIES.has(b["severity"] as string)) {
     return {
       error: "invalid_severity",
       detail: "Must be one of: Critical, High, Moderate, Low"
     };
   }
-  const severity = b["severity"] as string;
+  const severity = severityProvided ? (b["severity"] as string) : null;
 
   // source_type — required enum
   if (!isNonEmptyString(b["source_type"])) {
@@ -339,6 +380,29 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
     }
   }
 
+  // ── remaining source provenance ────────────────────────────────────────
+  const source_reference_id = isNonEmptyString(b["source_reference_id"])
+    ? sanitizeString((b["source_reference_id"] as string).trim(), 120)
+    : null;
+
+  const cvss_vector = isNonEmptyString(b["cvss_vector"])
+    ? sanitizeString((b["cvss_vector"] as string).trim(), 200)
+    : null;
+
+  // Range-checked here as well as by the column CHECK, so a bad score is a 400
+  // the importer can explain rather than a 500 from the driver.
+  let cvss_score: number | null = null;
+  if (b["cvss_score"] !== undefined && b["cvss_score"] !== null && b["cvss_score"] !== "") {
+    const n = typeof b["cvss_score"] === "number" ? b["cvss_score"] : Number(b["cvss_score"]);
+    if (!Number.isFinite(n) || n < 0 || n > 10) {
+      return {
+        error: "invalid_cvss_score",
+        detail: "cvss_score must be a number between 0.0 and 10.0."
+      };
+    }
+    cvss_score = Math.round(n * 10) / 10;
+  }
+
   return {
     input: {
       title,
@@ -353,7 +417,11 @@ export function validateFindingCreate(body: unknown): FindingCreateResult {
       time_sensitivity,
       scoring_rationale,
       owner_user_id,
-      due_date
+      due_date,
+      source_severity,
+      source_reference_id,
+      cvss_score,
+      cvss_vector
     }
   };
 }
