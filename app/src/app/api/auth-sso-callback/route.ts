@@ -104,7 +104,6 @@ export async function GET(request: Request) {
     session.organizationName    = me.organizationName ?? "";
     session.entitlementLevel    = me.entitlementLevel ?? "starter";
     session.userRole            = me.role ?? "analyst";
-    session.billingActive       = me.billingActive ?? false;
     session.onboardingCompleted = true; // SSO users skip onboarding
 
     await session.save();
