@@ -7905,6 +7905,75 @@ export interface RiskSupportingFinding {
  * changed by automation — so callers must render "not linked" as a state, not
  * as an absence of data.
  */
+/**
+ * Which assets a vulnerability affects, and the rollup shown beside it.
+ *
+ * PAGINATED BY CONTRACT. A finding can affect thousands of hosts, so there is no
+ * "fetch them all" variant — the caller always asks for a page, and the rollup
+ * comes from a grouped aggregate rather than from counting the page it happened
+ * to receive. Returning zero occurrences is a legitimate state ("no asset
+ * recorded"), never an error, so failures degrade to an empty page with a zero
+ * rollup rather than throwing into a finding page that is otherwise fine.
+ */
+export interface FindingOccurrence {
+  id: string;
+  finding_id: string;
+  asset_id: string;
+  presence_status: "present" | "absent" | "remediated";
+  first_seen_at: string;
+  last_seen_at: string;
+  absent_since: string | null;
+  remediated_at: string | null;
+  reappeared_count: number;
+  last_reappeared_at: string | null;
+  source: string | null;
+  source_occurrence_id: string | null;
+  asset_type: string | null;
+  asset_lifecycle_status: string | null;
+}
+
+export interface OccurrenceRollup {
+  affected: number;
+  active: number;
+  absent: number;
+  remediated: number;
+  recurring: number;
+}
+
+export async function getFindingOccurrences(
+  token: string,
+  findingId: string,
+  opts: { limit?: number; offset?: number; presenceStatus?: string } = {}
+): Promise<{ occurrences: FindingOccurrence[]; rollup: OccurrenceRollup; limit: number; offset: number }> {
+  const empty = {
+    occurrences: [] as FindingOccurrence[],
+    rollup: { affected: 0, active: 0, absent: 0, remediated: 0, recurring: 0 },
+    limit: opts.limit ?? 25,
+    offset: opts.offset ?? 0,
+  };
+  try {
+    const qs = new URLSearchParams();
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    if (opts.offset !== undefined) qs.set("offset", String(opts.offset));
+    if (opts.presenceStatus) qs.set("presence_status", opts.presenceStatus);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/occurrences${suffix}`,
+      token
+    );
+    if (!res.ok) return empty;
+    const body = (await res.json()) as Partial<typeof empty>;
+    return {
+      occurrences: body.occurrences ?? [],
+      rollup: body.rollup ?? empty.rollup,
+      limit: body.limit ?? empty.limit,
+      offset: body.offset ?? empty.offset,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export async function getFindingRiskLinks(
   token: string,
   findingId: string

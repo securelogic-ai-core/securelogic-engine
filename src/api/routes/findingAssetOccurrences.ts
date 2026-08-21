@@ -47,6 +47,12 @@ import { denyContributor } from "../middleware/requireSeat.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
+  resolveAsset,
+  resolvableClaims,
+  type IdentifierClaim,
+  type IdentifierMatch,
+} from "../lib/assetIdentity.js";
+import {
   markAbsent,
   markRemediated,
   observe,
@@ -514,6 +520,85 @@ router.get(
     );
 
     res.json({ occurrences: rows.rows, limit, offset });
+  }),
+);
+
+/* =========================================================
+   POST /api/assets/resolve-identifiers
+   Which asset do these source identifiers mean?
+   ========================================================= */
+
+router.post(
+  "/assets/resolve-identifiers",
+  ...GUARDS,
+  asTenant(async (req, res) => {
+    const organizationId = orgOf(req);
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const raw = (req.body as Record<string, unknown> | null)?.["identifiers"];
+    if (!Array.isArray(raw) || raw.length === 0) {
+      res.status(400).json({ error: "identifiers_required" });
+      return;
+    }
+    // Bounded: this is a lookup helper for an importer, not a bulk search API.
+    const claims: IdentifierClaim[] = raw.slice(0, 20).map((c) => {
+      const o = (c ?? {}) as Record<string, unknown>;
+      return {
+        scheme: String(o["scheme"] ?? "").trim(),
+        value: String(o["value"] ?? "").trim(),
+        source: typeof o["source"] === "string" ? o["source"] : null,
+      };
+    });
+
+    // Only the schemes that can actually resolve reach the database — an IP is
+    // stored as evidence but is never a lookup key, so querying on one would be
+    // work done to produce an answer the resolver must discard anyway.
+    const usable = resolvableClaims(claims);
+    if (usable.length === 0) {
+      res.json({
+        outcome: "not_found",
+        reason:
+          "No resolvable identifier supplied — an IP or MAC address alone cannot identify an asset",
+      });
+      return;
+    }
+
+    const found = await pg.query<{ asset_id: string; scheme: string; value: string; source: string }>(
+      // Deliberately over-fetches CANDIDATES and lets the pure resolver decide.
+      // Case sensitivity differs per scheme — an ARN and a CMDB id are opaque and
+      // must match exactly, a hostname must not — so folding case into the SQL
+      // would be wrong for half the schemes AND would defeat the
+      // (organization_id, scheme, value) index. Matching both the raw and the
+      // lowercased form keeps the index usable and leaves the per-scheme rule in
+      // assetIdentity.ts, where it is tested.
+      `SELECT asset_id, scheme, value, source
+         FROM asset_identifiers
+        WHERE organization_id = $1
+          AND scheme = ANY($2::text[])
+          AND (value = ANY($3::text[]) OR lower(value) = ANY($4::text[]))`,
+      [
+        organizationId,
+        usable.map((c) => c.scheme),
+        usable.map((c) => c.value.trim()),
+        usable.map((c) => c.value.trim().toLowerCase()),
+      ],
+    );
+
+    const matches: IdentifierMatch[] = found.rows.map((r) => ({
+      assetId: r.asset_id,
+      scheme: r.scheme,
+      value: r.value,
+      source: r.source,
+    }));
+
+    // NOTHING HERE CREATES AN ASSET. An unresolved identifier returns not_found
+    // and the caller records the vulnerability without an occurrence — a
+    // vulnerability with no asset is a valid record, and inventing a placeholder
+    // host to satisfy the occurrence model would put fiction in the inventory.
+    res.json(resolveAsset(claims, matches));
   }),
 );
 
