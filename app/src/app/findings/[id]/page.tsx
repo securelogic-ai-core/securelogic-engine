@@ -10,6 +10,7 @@ import {
   type Finding,
   type Action,
   getFindingRiskLinks,
+  getFindingOccurrences,
   getRisks,
   getAuthMe,
 } from "@/lib/api";
@@ -18,6 +19,7 @@ import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSec
 import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
 import { RiskRegisterPanel } from "./RiskRegisterPanel";
+import { AffectedAssetsPanel } from "./AffectedAssetsPanel";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -439,16 +441,29 @@ function RemediationTab({
 
 export default async function FindingDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  // Affected-assets paging lives in the URL so a page of hosts is linkable and
+  // survives a refresh. Bounded here as well as in the engine: a hostile value
+  // must not reach the query, and the engine caps it again regardless.
+  const sp = (await searchParams) ?? {};
+  const rawOccOffset = Array.isArray(sp["occ_offset"]) ? sp["occ_offset"][0] : sp["occ_offset"];
+  const parsedOffset = Number(rawOccOffset);
+  const occOffset =
+    Number.isFinite(parsedOffset) && parsedOffset > 0
+      ? Math.min(Math.floor(parsedOffset), 100_000)
+      : 0;
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe] = await Promise.all([
+  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData] =
+    await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
     // Org members, so remediation work can be ASSIGNED from the finding you are
@@ -463,6 +478,10 @@ export default async function FindingDetailPage({
     // a risk someone already accepted into the register, not for browsing it.
     getRisks(token, { limit: 100, active: true }),
     session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
+    // Which assets this vulnerability affects. PAGINATED — a finding can affect
+    // thousands of hosts, so there is no "fetch all" variant; the rollup counts
+    // come from a server-side aggregate, never from the returned page.
+    getFindingOccurrences(token, id, { limit: 25, offset: occOffset }),
   ]);
 
   if (!findingData) redirect("/findings");
@@ -504,6 +523,15 @@ export default async function FindingDetailPage({
             /* Carried into the workspace so activating it does not remove
                Finding ↔ Risk visibility. Same component, same data, same
                permissions as the legacy layout — one implementation, not two. */
+            affectedAssets={
+              <AffectedAssetsPanel
+                findingId={finding.id}
+                occurrences={occurrenceData.occurrences}
+                rollup={occurrenceData.rollup}
+                limit={occurrenceData.limit}
+                offset={occurrenceData.offset}
+              />
+            }
             riskRegister={
               <RiskRegisterPanel
                 findingId={finding.id}
@@ -599,6 +627,20 @@ export default async function FindingDetailPage({
               </div>
             </div>
           )}
+
+          {/* Affected assets — ABOVE the Risk Register, because "where is this"
+              precedes "are we carrying it". Rendered in BOTH layouts: the
+              Decision Workspace is a different tree, so a panel added to only
+              one of them disappears the moment the flag flips. */}
+          <div className="mb-5">
+            <AffectedAssetsPanel
+              findingId={finding.id}
+              occurrences={occurrenceData.occurrences}
+              rollup={occurrenceData.rollup}
+              limit={occurrenceData.limit}
+              offset={occurrenceData.offset}
+            />
+          </div>
 
           {/* Risk Register — deliberately ABOVE remediation. The first question
               about a finding is whether the organization is carrying it as a

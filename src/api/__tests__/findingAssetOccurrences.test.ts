@@ -22,6 +22,7 @@ const OWNED_ASSETS = new Set([ASSET]);
 
 /** The occurrence the store currently holds, or null when none exists. */
 const store: { row: Record<string, unknown> | null } = { row: null };
+const identifierRows: { rows: Array<Record<string, unknown>> } = { rows: [] };
 const inserted: Array<Record<string, unknown>> = [];
 const updates: Array<Record<string, unknown>> = [];
 
@@ -63,6 +64,7 @@ const query = vi.fn(async (sql: string, params: unknown[] = []) => {
   }
   if (/reappeared_count > 0/i.test(sql)) return { rows: [{ n: "4" }], rowCount: 1 };
   if (/FROM finding_asset_occurrences o/i.test(sql)) return { rows: [], rowCount: 0 };
+  if (/FROM asset_identifiers/i.test(sql)) return { rows: identifierRows.rows, rowCount: identifierRows.rows.length };
   return { rows: [], rowCount: 0 };
 });
 
@@ -112,6 +114,7 @@ beforeEach(() => {
   inserted.length = 0;
   updates.length = 0;
   store.row = null;
+  identifierRows.rows = [];
 });
 
 describe("recording an exposure", () => {
@@ -244,6 +247,58 @@ describe("reading exposure", () => {
     const res = await request(app())
       .get(`/api/findings/eeeeeeee-5555-4555-8555-eeeeeeeeeeee/occurrences`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe("resolving a source's asset identifiers", () => {
+  it("resolves a hostname to the asset that owns it", async () => {
+    identifierRows.rows = [
+      { asset_id: ASSET, scheme: "hostname", value: "web01", source: "manual" },
+    ];
+    const res = await request(app()).post("/api/assets/resolve-identifiers")
+      .send({ identifiers: [{ scheme: "hostname", value: "WEB01" }] });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ outcome: "resolved", assetId: ASSET, via: "hostname" });
+  });
+
+  it("REFUSES an IP-only lookup without touching the database", async () => {
+    // An IP is a lease, not a name. Querying on one would be work done to produce
+    // an answer the resolver must discard anyway.
+    const before = query.mock.calls.length;
+    const res = await request(app()).post("/api/assets/resolve-identifiers")
+      .send({ identifiers: [{ scheme: "ip", value: "10.0.4.12" }] });
+    expect(res.body.outcome).toBe("not_found");
+    expect(res.body.reason).toMatch(/IP or MAC/i);
+    const identifierQueries = query.mock.calls
+      .slice(before)
+      .filter((c) => /FROM asset_identifiers/i.test(String(c[0])));
+    expect(identifierQueries).toHaveLength(0);
+  });
+
+  it("returns ambiguous rather than guessing between two assets", async () => {
+    identifierRows.rows = [
+      { asset_id: ASSET, scheme: "hostname", value: "web01", source: "manual" },
+      { asset_id: FOREIGN_ASSET, scheme: "hostname", value: "web01", source: "manual" },
+    ];
+    const res = await request(app()).post("/api/assets/resolve-identifiers")
+      .send({ identifiers: [{ scheme: "hostname", value: "web01" }] });
+    expect(res.body.outcome).toBe("ambiguous");
+    expect(res.body.assetIds).toHaveLength(2);
+  });
+
+  it("reports not_found instead of creating an asset", async () => {
+    identifierRows.rows = [];
+    const res = await request(app()).post("/api/assets/resolve-identifiers")
+      .send({ identifiers: [{ scheme: "hostname", value: "unknown" }] });
+    expect(res.body.outcome).toBe("not_found");
+    // Nothing was inserted anywhere.
+    expect(inserted).toHaveLength(0);
+  });
+
+  it("requires at least one identifier", async () => {
+    const res = await request(app()).post("/api/assets/resolve-identifiers").send({ identifiers: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("identifiers_required");
   });
 });
 

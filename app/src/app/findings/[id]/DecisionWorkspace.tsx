@@ -550,6 +550,7 @@ export function DecisionWorkspace({
   homeLabel = "Findings",
   children,
   riskRegister,
+  affectedAssets,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -591,6 +592,14 @@ export function DecisionWorkspace({
    * unconditionally.
    */
   riskRegister?: React.ReactNode;
+  /**
+   * Affected-asset exposure, composed server-side by the page that owns the
+   * fetch. Rendered as its own zone ABOVE the tab strip for the same reason the
+   * Risk Register is: inside a tab is the same as removed for anyone who never
+   * opens that tab, and "where is this vulnerability" is a question people ask
+   * before they ask anything else about it.
+   */
+  affectedAssets?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1156,6 +1165,7 @@ export function DecisionWorkspace({
           about the finding, and putting it inside a tab would mean activating
           this workspace REMOVED a capability the legacy layout shows
           unconditionally. */}
+      {affectedAssets && <div style={{ marginBottom: 20 }}>{affectedAssets}</div>}
       {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
 
       {/* Tab strip — executive zones A–C stay above; the detail body splits into
