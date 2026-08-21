@@ -45,6 +45,56 @@ actually execute.
 **Related:** `docs/runbooks/support/SUPPORT-READINESS-GAPS.md`,
 `docs/security/INCIDENT-RESPONSE.md` (this package), `docs/DR_PLAN.md` §7–§8.
 
+### VENDOR-PORTAL-1 — Vendor collaboration & external portal security readiness
+
+**Status: OPEN — NOT authorized for activation. Ruled out of Sept 15 scope 2026-08-21.**
+
+Sept 15 Vendor Assurance is **customer-operated and document-driven**: the customer
+obtains the vendor's documentation through their normal business process and uploads
+it. The external vendor portal — emailed invite → token exchange → vendor session —
+is **not activated**, and `SECURELOGIC_VENDOR_PORTAL_ENABLED` is `false` in
+production **and** staging.
+
+**Observed facts, verified against `src/api/routes/vendorPortal.ts` on
+`develop@4941f56e`:**
+
+| Observation | Count |
+|---|---|
+| `withTenant` call sites | **15** |
+| `pgElevated` call sites | **5** |
+| `asTenant` call sites | **0** |
+
+**These are observations, not findings.** The elevated sites are in the invite
+lookup and token-exchange path (lines 109, 153, 171, 238), where the tenant is by
+definition not yet known — an unauthenticated caller presents a token and the
+system must resolve which organisation it belongs to before any tenant context can
+exist. That is a defensible design, and it has **not** been shown to be unsafe.
+It has also not been shown to be safe. **Do not describe it as a vulnerability
+without proving the authorization behaviour is wrong.**
+
+**Prerequisite security review before any activation** — this is an
+internet-reachable surface authenticated by a bearer token rather than a session,
+so it deserves its own pass rather than inheriting the app's:
+
+- external token lifecycle: generation, entropy, storage (hashed?), transport
+- token exchange: replay, fixation, binding to the invited vendor
+- authentication and authorization model for a non-user principal
+- tenant resolution: how org is derived, and what happens when it cannot be
+- every `withTenant` usage — is the GUC set from the token's org, and can it be influenced?
+- every `pgElevated` usage — is each strictly limited to the pre-session lookup?
+- absence of `asTenant` — deliberate, or an unwrapped request path?
+- object-level authorization: can a vendor session read or write another engagement?
+- cross-tenant isolation under a valid token
+- expiration, revocation, and what a withdrawn invite can still do
+- rate limiting on the exchange endpoint
+- audit logging of vendor-principal actions
+- document upload boundaries: type, size, storage scoping, malware posture
+- the vendor↔customer relationship authorization model
+
+**Do not activate, and do not modify portal authorization to satisfy a Vendor
+Assurance DONE definition.** Whether there is time to complete this review safely
+before feature cutoff is a separate decision.
+
 ## Notes
 
 - **Priority ≠ severity for #431:** it is the most severe finding by impact (credential leakage) but the lowest launch-urgency because SSO is **out of initial launch scope** — its exposure is contingent on SSO going live. It is classified **must-fix-before-SSO-GA**, and re-escalates to promotion-relevant only if SSO GA is pulled into the launch (see the reclassification recorded on the issue).
