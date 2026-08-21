@@ -23,12 +23,13 @@
  * extraction. Malformed spans (non-object, unknown field_name, bad offsets,
  * bad page_number) are still hard-rejected.
  *
- * Leniency on null values: a field marked requiresSourceSpan is exempt from the
- * material_field_missing_span check when its extracted value is null. The
+ * Leniency on absent values: a field marked requiresSourceSpan is exempt from
+ * the material_field_missing_span check when it has nothing to span — an
+ * extracted value of null OR an empty array (see hasNothingToSpan). The
  * invariant is "spanned ⇒ there is a value to span" — a field legitimately
- * absent from the source document (value null, confidence 0) cannot carry a
- * quote, so demanding one is incoherent. Fields with a non-null value still
- * require ≥ 1 span as before.
+ * absent from the source document cannot carry a quote, so demanding one is
+ * incoherent, and an empty `exceptions` list (a clean audit opinion) is exactly
+ * such a field. Fields with a non-empty value still require ≥ 1 span as before.
  */
 
 import {
@@ -40,6 +41,34 @@ import {
 } from "./socExtractionPrompt.js";
 
 const MAX_QUOTE_CHARS = 1024;
+
+/**
+ * "Spanned ⇒ there is a value to span."
+ *
+ * A field can be absent from the source document in two different ways, and
+ * NEITHER can carry a quote:
+ *
+ *   null — the report does not address this at all.
+ *   []   — the report addresses it and reports nothing. For `exceptions`, that
+ *          is a CLEAN OPINION: a SOC 2 Type II with no testing exceptions, the
+ *          normal and desirable result for a good vendor.
+ *
+ * Only `null` used to be waived. Because an empty array is not null, a clean
+ * report was rejected outright (`material_field_missing_span: exceptions`)
+ * whenever the model rendered "there were none" as `[]` rather than `null` —
+ * so nondeterministic model formatting decided whether a customer's document
+ * ingested. Found by the VA-3 staging exercise; see
+ * docs/validation/VA-3-STAGING-EXERCISE.md §4.3.
+ *
+ * This waives the SPAN requirement only. Both values are still stored verbatim
+ * and are NOT collapsed into each other: "reported none" and "did not address
+ * it" are different claims about a vendor, and a reader must be able to tell
+ * them apart. A non-empty value still requires a span, which is the case the
+ * rule exists for — a material conclusion asserted with nothing to back it.
+ */
+function hasNothingToSpan(value: unknown): boolean {
+  return value === null || (Array.isArray(value) && value.length === 0);
+}
 
 export type ValidatedField = {
   value: unknown;
@@ -189,7 +218,7 @@ export function validateSocExtraction(raw: unknown): ValidationResult {
   // requirement is waived (see header docstring: "spanned ⇒ value to span").
   const spannedFields = new Set(spans.map((s) => s.field_name));
   for (const required of FIELD_NAMES_REQUIRING_SPANS) {
-    if (fields[required]?.value === null) continue;
+    if (hasNothingToSpan(fields[required]?.value)) continue;
     if (!spannedFields.has(required)) {
       return { ok: false, error: "material_field_missing_span", detail: required };
     }
