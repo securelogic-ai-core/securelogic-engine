@@ -138,18 +138,47 @@ describe("PATCH/DELETE /api/assets/:id", () => {
       rows: [{ id: REG_ID, backing_kind: "apis", backing_id: BACKING_ID }],
       rowCount: 1
     });
+    // SL-OCC-1: the exposure guard runs before the delete. Zero occurrences here.
+    q.mockResolvedValueOnce({ rows: [{ n: "0" }], rowCount: 1 });
     q.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // DELETE FROM apis
     q.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // deregister (DELETE FROM assets)
     const res = mockRes();
     await deleteAsset(reqFor(ORG_A, REG_ID), res);
     expect(res._status).toBe(200);
     expect(res._json).toEqual({ deleted: true });
-    expect(q.mock.calls[1]![0]).toContain("DELETE FROM apis");
-    expect(q.mock.calls[2]![0]).toContain("DELETE FROM assets");
+    // Asserted by CONTENT rather than call index: a new pre-flight query should
+    // not break a test about which deletes ran, and the previous index-based
+    // form broke for exactly that reason.
+    const sql = q.mock.calls.map((c) => String(c[0]));
+    expect(sql.some((t) => t.includes("DELETE FROM apis"))).toBe(true);
+    expect(sql.some((t) => t.includes("DELETE FROM assets"))).toBe(true);
+    expect(sql.findIndex((t) => t.includes("DELETE FROM apis")))
+      .toBeLessThan(sql.findIndex((t) => t.includes("DELETE FROM assets")));
 
     q.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // resolve: no registry row
     const missing = mockRes();
     await deleteAsset(reqFor(ORG_A, REG_ID), missing);
     expect(missing._status).toBe(404);
+  });
+
+  it("DELETE: 409 rather than erasing recorded vulnerability exposure", async () => {
+    // finding_asset_occurrences.asset_id is ON DELETE RESTRICT, so without this
+    // guard the delete would surface as an unhandled 500. The count is returned
+    // so the caller can see what is in the way.
+    q.mockResolvedValueOnce({
+      rows: [{ id: REG_ID, backing_kind: "apis", backing_id: BACKING_ID }],
+      rowCount: 1
+    });
+    q.mockResolvedValueOnce({ rows: [{ n: "17" }], rowCount: 1 });
+    const res = mockRes();
+    await deleteAsset(reqFor(ORG_A, REG_ID), res);
+    expect(res._status).toBe(409);
+    expect(res._json).toMatchObject({
+      error: "asset_has_vulnerability_occurrences",
+      occurrence_count: 17
+    });
+    // Nothing was deleted.
+    const sql = q.mock.calls.map((c) => String(c[0]));
+    expect(sql.some((t) => t.includes("DELETE FROM"))).toBe(false);
   });
 });

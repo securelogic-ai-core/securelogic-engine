@@ -28,6 +28,11 @@ const FIELDS: Array<{ key: keyof FindingImportRow; label: string; required?: boo
   { key: "cwe_id",         label: "CWE ID" },
   { key: "first_seen_at",  label: "First Seen" },
   { key: "last_seen_at",   label: "Last Seen" },
+  { key: "asset_hostname", label: "Asset Hostname" },
+  { key: "asset_fqdn",     label: "Asset FQDN" },
+  { key: "asset_ip",       label: "Asset IP" },
+  { key: "asset_cloud_resource_id", label: "Cloud Resource ID" },
+  { key: "asset_internal_id",       label: "Internal Asset ID" },
 ];
 
 const VALID_SEVERITIES   = new Set(["Critical", "High", "Moderate", "Low"]);
@@ -81,6 +86,14 @@ const AUTO_MAP_RULES: Record<keyof FindingImportRow, string[]> = {
   cvss_version:        ["cvss version", "cvss v", "version"],
   first_seen_at:       ["first seen", "first detected", "first observed", "discovered"],
   last_seen_at:        ["last seen", "last detected", "last observed", "latest scan"],
+  // SL-OCC-1b — where the vulnerability was found. Resolved against assets the
+  // org ALREADY has; an unresolved identifier imports the vulnerability with no
+  // occurrence rather than inventing a host.
+  asset_hostname:      ["host", "hostname", "asset", "asset name", "device", "machine", "computer"],
+  asset_fqdn:          ["fqdn", "dns name", "full hostname"],
+  asset_ip:            ["ip", "ip address", "ipv4", "address"],
+  asset_cloud_resource_id: ["arn", "resource id", "cloud id", "cloud resource id"],
+  asset_internal_id:   ["asset id", "cmdb id", "internal id", "ci id"],
   source_id:           [],
 };
 
@@ -166,6 +179,11 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
     cwe_id:         get("cwe_id"),
     first_seen_at:  get("first_seen_at"),
     last_seen_at:   get("last_seen_at"),
+    asset_hostname: get("asset_hostname"),
+    asset_fqdn:     get("asset_fqdn"),
+    asset_ip:       get("asset_ip"),
+    asset_cloud_resource_id: get("asset_cloud_resource_id"),
+    asset_internal_id:       get("asset_internal_id"),
   };
 }
 
@@ -229,6 +247,18 @@ function validateRow(row: FindingImportRow): { status: RowValidation; warnings: 
       return { status: "invalid", warnings: [`${label} "${value}" is not a readable date`] };
     }
   }
+  // SL-OCC-1b: an IP is a lease, not a name, so it never resolves on its own.
+  // Warned rather than rejected — the row imports fine, it just will not be
+  // attached to a host, and saying so up front beats a silent non-association.
+  const hasResolvableAsset =
+    !!(row.asset_hostname || row.asset_fqdn || row.asset_cloud_resource_id || row.asset_internal_id);
+  if (row.asset_ip && !hasResolvableAsset) {
+    warnings.push(
+      `IP ${row.asset_ip} cannot identify an asset on its own — the vulnerability ` +
+      `will import without an affected asset. Map a hostname, FQDN, cloud resource ` +
+      `id or internal asset id to attach it.`
+    );
+  }
   if (row.first_seen_at && row.last_seen_at &&
       new Date(row.last_seen_at).getTime() < new Date(row.first_seen_at).getTime()) {
     return { status: "invalid", warnings: ["Last Seen is earlier than First Seen"] };
@@ -249,6 +279,11 @@ function cleanRow(row: FindingImportRow): FindingImportRow {
     cwe_id:         row.cwe_id || undefined,
     first_seen_at:  row.first_seen_at || undefined,
     last_seen_at:   row.last_seen_at || undefined,
+    asset_hostname: row.asset_hostname || undefined,
+    asset_fqdn:     row.asset_fqdn || undefined,
+    asset_ip:       row.asset_ip || undefined,
+    asset_cloud_resource_id: row.asset_cloud_resource_id || undefined,
+    asset_internal_id:       row.asset_internal_id || undefined,
     source_type:    VALID_SOURCE_TYPES.has(row.source_type) ? row.source_type : "manual",
     description:    row.description || undefined,
     domain:         row.domain || undefined,
