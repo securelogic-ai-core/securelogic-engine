@@ -245,6 +245,22 @@ router.post(
         }
       }
 
+      // A vulnerability names NO source table, so source_id must be null.
+      // source_type is a pointer type and there is nothing here to point at:
+      // storing an unverifiable pointer is the cross-tenant hazard the pen_test
+      // ownership check above exists to prevent, and a pointer to nothing is
+      // worse than no pointer. Refused loudly rather than silently nulled, so
+      // an importer wiring the wrong column finds out on the first row.
+      if (source_type === "vulnerability" && source_id !== null) {
+        res.status(400).json({
+          error: "source_id_not_allowed",
+          detail:
+            "A vulnerability finding does not reference a source record. " +
+            "Use source_reference_id for the scanner or advisory's own id.",
+        });
+        return;
+      }
+
       // When source_type='risk', verify the risk belongs to this org
       if (source_type === "risk" && source_id !== null) {
         const riskCheck = await pg.query(
@@ -278,16 +294,22 @@ router.post(
           source_reference_id,
           cvss_score,
           cvss_vector,
+          cve_id,
+          cwe_id,
+          cvss_version,
+          first_seen_at,
+          last_seen_at,
           status
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-          $15, $16, $17, $18, 'open'
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, 'open'
         )
         RETURNING
           id, organization_id, source_type, source_id, title, severity,
           description, domain, priority, likelihood, confidence,
           time_sensitivity, scoring_rationale, owner_user_id, due_date,
           source_severity, source_reference_id, cvss_score, cvss_vector,
+          cve_id, cwe_id, cvss_version, first_seen_at, last_seen_at,
           status, created_at, updated_at
         `,
         [
@@ -310,7 +332,16 @@ router.post(
           validation.input.source_severity,
           validation.input.source_reference_id,
           validation.input.cvss_score,
-          validation.input.cvss_vector
+          validation.input.cvss_vector,
+          // SL-VULN-1. cve_id/cwe_id name the weakness; first/last seen are the
+          // SOURCE's own observation window, stored as stated and never
+          // advanced by us — re-import creates a new finding, it does not
+          // update this one.
+          validation.input.cve_id,
+          validation.input.cwe_id,
+          validation.input.cvss_version,
+          validation.input.first_seen_at,
+          validation.input.last_seen_at
         ]
       );
 
@@ -1163,6 +1194,20 @@ router.get(
           f.due_date,
           f.created_at,
           f.updated_at,
+          -- Provenance and vulnerability identity (SL-PENTEST-IN #840,
+          -- SL-VULN-1). These were WRITEABLE but not readable: the create path
+          -- persisted them and no projection returned them, so a customer could
+          -- record a CVSS score and never see it again. The detail view is
+          -- where a vulnerability's identity belongs.
+          f.source_severity,
+          f.source_reference_id,
+          f.cvss_score,
+          f.cvss_vector,
+          f.cve_id,
+          f.cwe_id,
+          f.cvss_version,
+          f.first_seen_at,
+          f.last_seen_at,
           (SELECT COUNT(*)::integer
            FROM actions a
            WHERE a.source_type = 'finding'
