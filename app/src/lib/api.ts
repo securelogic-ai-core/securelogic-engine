@@ -4893,6 +4893,17 @@ export type RiskSettings = {
   is_default:           boolean;
   organization_id:      string;
   cadence_by_rating:    Record<string, number>;
+  /**
+   * Remediation SLA: severity → CALENDAR days. The engine computes a due date
+   * as CURRENT_DATE + days (findingSlaPolicyRules.ts) — there is no
+   * business-day or holiday arithmetic anywhere in the platform, so nothing
+   * built on this may imply one.
+   *
+   * `null` means NO due-date automation: findings are created with whatever
+   * due date the caller supplied, and none if they supplied nothing. That is a
+   * real, distinct state from "configured", not a missing value.
+   */
+  finding_sla_by_severity: Record<string, number> | null;
   created_at:           string | null;
   updated_at:           string | null;
   updated_by_user_id:   string | null;
@@ -4926,14 +4937,31 @@ export async function getRiskSettingsServer(
   }
 }
 
+/**
+ * The engine treats an ABSENT finding_sla_by_severity as "leave the stored
+ * policy unchanged" and an explicit null as "clear it". That distinction is
+ * load-bearing, so this signature preserves it: omit the option to leave the
+ * SLA alone (what the cadence form does), pass a map to set it, pass null to
+ * turn due-date automation off.
+ *
+ * cadence_by_rating is always required by the endpoint, so every caller sends
+ * the cadence it is currently showing — saving one section must never blank
+ * the other.
+ */
 export async function putRiskSettings(
-  cadence_by_rating: Record<string, number>
+  cadence_by_rating: Record<string, number>,
+  options?: { finding_sla_by_severity?: Record<string, number> | null }
 ): Promise<{ ok: true; settings: RiskSettings } | { ok: false; error: string }> {
   try {
     const res = await fetch("/api/orgs/me/risk-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cadence_by_rating }),
+      body: JSON.stringify({
+        cadence_by_rating,
+        ...(options && "finding_sla_by_severity" in options
+          ? { finding_sla_by_severity: options.finding_sla_by_severity }
+          : {}),
+      }),
       cache: "no-store",
     });
     if (!res.ok) {
