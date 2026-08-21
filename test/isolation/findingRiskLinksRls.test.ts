@@ -52,6 +52,27 @@ async function seedRisk(orgId: string, title: string): Promise<string> {
   return r.rows[0]!.id;
 }
 
+/**
+ * Run inside a transaction on ONE pinned connection, then roll back.
+ *
+ * pool.query("BEGIN") is a trap: the Pool hands each query an arbitrary
+ * connection, so BEGIN, the work and ROLLBACK can land on three different
+ * ones. The transaction is never really open, the ROLLBACK rolls back nothing,
+ * and the connection that did open a transaction sits idle holding locks — a
+ * later DELETE on organizations then blocks on it until the CI job times out.
+ * Every transaction here therefore takes a client and keeps it.
+ */
+async function inRolledBackTx<T>(fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    return await fn(client);
+  } finally {
+    await client.query("ROLLBACK").catch(() => {});
+    client.release();
+  }
+}
+
 async function asOrg<T>(orgId: string, fn: (c: import("pg").PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
@@ -171,34 +192,28 @@ describe("writes cannot forge a cross-tenant relationship", () => {
 
 describe("the relationship is a relationship, not an owner", () => {
   it("deleting the link leaves BOTH objects intact", async () => {
-    await pool.query("BEGIN");
-    try {
-      await pool.query(`DELETE FROM finding_risks WHERE id = $1`, [linkA]);
+    await inRolledBackTx(async (c) => {
+      await c.query(`DELETE FROM finding_risks WHERE id = $1`, [linkA]);
 
-      const f = await pool.query(`SELECT 1 FROM findings WHERE id = $1`, [findingA]);
-      const r = await pool.query(`SELECT 1 FROM risks WHERE id = $1`, [riskA]);
+      const f = await c.query(`SELECT 1 FROM findings WHERE id = $1`, [findingA]);
+      const r = await c.query(`SELECT 1 FROM risks WHERE id = $1`, [riskA]);
       expect(f.rowCount).toBe(1);
       expect(r.rowCount).toBe(1);
-    } finally {
-      await pool.query("ROLLBACK");
-    }
+    });
   });
 
   it("one risk can carry many findings", async () => {
-    await pool.query("BEGIN");
-    try {
-      await pool.query(
+    await inRolledBackTx(async (c) => {
+      await c.query(
         `INSERT INTO finding_risks (organization_id, finding_id, risk_id, link_type)
          VALUES ($1, $2, $3, 'linked')`,
         [seed.orgA.id, findingA2, riskA],
       );
 
-      const rows = await pool.query(
+      const rows = await c.query(
         `SELECT finding_id FROM finding_risks WHERE risk_id = $1`, [riskA]);
       expect(rows.rowCount).toBe(2);
-    } finally {
-      await pool.query("ROLLBACK");
-    }
+    });
   });
 
   it("the same pair cannot be linked twice", async () => {
@@ -223,14 +238,11 @@ describe("the relationship is a relationship, not an owner", () => {
   });
 
   it("deleting the organization removes its links", async () => {
-    await pool.query("BEGIN");
-    try {
-      await pool.query(`DELETE FROM organizations WHERE id = $1`, [seed.orgB.id]);
-      const rows = await pool.query(
+    await inRolledBackTx(async (c) => {
+      await c.query(`DELETE FROM organizations WHERE id = $1`, [seed.orgB.id]);
+      const rows = await c.query(
         `SELECT 1 FROM finding_risks WHERE organization_id = $1`, [seed.orgB.id]);
       expect(rows.rowCount).toBe(0);
-    } finally {
-      await pool.query("ROLLBACK");
-    }
+    });
   });
 });
