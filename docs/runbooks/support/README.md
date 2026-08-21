@@ -78,6 +78,7 @@ deferred to the **flag flip**, not the promotion.
 | SR-013 | Credential or API key exposure | Security | **SEV1** | Live today |
 | SR-014 | Inbound vulnerability report | Security | **SEV1** | Live today |
 | SR-015 | Dashboard, report or export fails or looks wrong | Reporting | SEV3→2 | Exports live; Executive nav gated |
+| SR-016 | Vendor Assurance: document/extraction/review/promotion | Vendor Assurance | SEV3→2 | Promotion |
 | SR-020 | Vulnerability import failure | Vulnerability | SEV3 | Promotion |
 | SR-022 | No canonical severity / no SLA | Vulnerability | SEV4 | Promotion |
 | SR-023 | Asset cannot be resolved | Vulnerability/Asset | SEV3 | Promotion |
