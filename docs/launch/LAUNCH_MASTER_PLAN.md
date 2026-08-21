@@ -1,5 +1,19 @@
 # SecureLogic AI — Launch Master Plan
 
+> **SUPERSEDED FOR SEPT 15 — 2026-08-21.** This document describes the
+> **2026-07-21 production launch**, which happened and is accurately recorded
+> here. It is **history**, not the plan for the Sept 15 design-partner launch.
+> Its Go criteria (§2), its 65-migration pre-flight and its sprint sequence all
+> refer to that earlier release and must not be read as current gates.
+>
+> **For the Sept 15 program — current state, per-domain completeness, gaps,
+> sequence, feature cutoff and the `develop`→`main` promotion point — read
+> `docs/launch/SEPT15-LAUNCH-RECONCILIATION.md`.**
+>
+> Still current in this file: the commercial model table in §1 (display tiers and
+> frozen internal keys).
+
+
 > **Status:** **LIVE — launched 2026-07-21.** The composite promotion merged via PR #688 (true merge `dd79330c`, ruling D-C); both production services verified serving it (`/version` engine 19:00:59Z, app 19:02:00Z UTC), engine `/health` green post-migration-batch, CI 8/8 on `main`. All six Go criteria held (evidence: `OPERATOR_RUNBOOK.md` §0.4). The production Briefing flag flip remains a separate post-sprint decision (ruling D-E).
 > **Owner:** SecureLogic AI platform/operator.
 > **Last reconciled:** 2026-07-21 post-launch (`main` = `develop` = `dd79330c`; prior production baseline `512cfa5a` superseded). Pre-flight evidence: `PART_B_PREFLIGHT.md`.
