@@ -25,6 +25,7 @@ import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlayboo
 import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
 import { startExportFilePurgeWorker } from "./workers/exportFilePurgeWorker.js";
 import { startUnprocessedSignalSweeper } from "./workers/unprocessedSignalSweeper.js";
+import { startBillingDunningWorker } from "./workers/billingDunningWorker.js";
 import { startOrphanBriefReaper } from "./workers/orphanBriefReaper.js";
 import { createApp } from "./app.js";
 
@@ -180,6 +181,11 @@ startOrchestrationPlaybookWorker();
 // fire (they were write-only before this worker). Registered always;
 // SECURELOGIC_WEBHOOK_RETRY_DISABLED=true is the ops brake.
 startWebhookRetryWorker();
+
+// SL-BILL-1 PR-F: reconciles open dunning cycles — Day 7/14 notices, the
+// materialised downgrade, and the backstop alert. Self-gates on
+// SECURELOGIC_BILLING_GRACE_ENABLED and does not start with the flag off.
+startBillingDunningWorker();
 // O-11 export-bundle TTL sweep — deletes expired R2 export bundles and marks
 // rows purged (the declared-but-never-implemented 'export_file_purge' half
 // of the data-export lifecycle). Registered always;

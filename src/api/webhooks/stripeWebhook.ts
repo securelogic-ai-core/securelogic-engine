@@ -11,7 +11,8 @@ import {
 import { claimWebhookEvent } from "./webhookIdempotency.js";
 import { applyBriefToPlatformCredit } from "../lib/briefPlatformCredit.js";
 import { sendEmail } from "../infra/email.js";
-import { graceState, graceEndsAt } from "../lib/graceWindow.js";
+import { graceEnabled } from "../lib/graceWindow.js";
+import { sendDunningEmails, sendPaymentRecoveredEmails } from "../lib/billingDunningEmail.js";
 import {
   openDunningCycle,
   claimDunningStage,
@@ -361,12 +362,31 @@ function classifySubscriptionEvent(
       if (metadataTier === null) return null;
       return { tier: metadataTier, activeSubscription: true };
     }
+    // TERMINAL states always revoke. Revocation deliberately does not consult
+    // the tier, so access can always be withdrawn even when the tier is
+    // unresolvable.
     if (
       status === "canceled" ||
-      status === "past_due" ||
       status === "unpaid" ||
       status === "incomplete_expired"
     ) {
+      return { tier: "free", activeSubscription: false };
+    }
+
+    // past_due is NOT terminal — it is the state the grace period exists for.
+    //
+    // With grace ENABLED, this event no longer revokes. Stripe is still trying
+    // to collect (up to 8 retries over ~2 weeks) and the customer keeps full
+    // access until either a terminal event arrives or the derived window
+    // elapses. Withdrawing the product on the first failed charge, while the
+    // payment processor is still working on it, is the involuntary-churn
+    // machine this package exists to switch off.
+    //
+    // With grace DISABLED — the default — past_due revokes immediately, which
+    // is exactly today's behaviour. This single branch is the riskiest line in
+    // SL-BILL-1, and the flag is what makes it reversible without a rollback.
+    if (status === "past_due") {
+      if (graceEnabled()) return null;
       return { tier: "free", activeSubscription: false };
     }
     // incomplete / paused — ignore
@@ -931,172 +951,6 @@ async function cancelPriorBriefSubscriptions(
     logger.error(
       { event: "stripe_brief_sub_cancel_failed", customerId, err },
       "stripeWebhook: failed to list prior subscriptions for platform upgrade (non-fatal)"
-    );
-  }
-}
-
-/**
- * The org's verified admins — the people who lose the product when billing
- * lapses. Mirrors sendTrialWillEndEmails' recipient rule deliberately: Stripe's
- * own emails go to the BILLING contact, who is often finance and often not the
- * person who will hit a 403 tomorrow. The two audiences are complementary, not
- * duplicative.
- */
-async function orgAdminRecipients(
-  orgId: string
-): Promise<{ orgName: string; admins: Array<{ email: string; name: string | null }> } | null> {
-  const orgResult = await pg.query<{ name: string }>(
-    `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
-    [orgId]
-  );
-  const orgName = orgResult.rows[0]?.name;
-  if (!orgName) return null;
-
-  const admins = await pg.query<{ email: string; name: string | null }>(
-    `SELECT email, name FROM users
-      WHERE organization_id = $1 AND role = 'admin' AND email_verified = TRUE
-      ORDER BY created_at ASC`,
-    [orgId]
-  );
-  if (admins.rows.length === 0) return null;
-
-  return { orgName, admins: admins.rows };
-}
-
-function emailShell(heading: string, body: string, cta: string, footnote: string): string {
-  const appBase = (process.env.APP_BASE_URL ?? "https://app.securelogicai.com").replace(/\/$/, "");
-  return `
-    <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; color: #0f172a;">
-      <h2 style="margin-bottom: 8px;">${heading}</h2>
-      ${body}
-      <p>
-        <a href="${appBase}/account"
-           style="display: inline-block; background: #0d9488; color: #ffffff; text-decoration: none; font-weight: 600; padding: 10px 24px; border-radius: 8px;">
-          ${cta}
-        </a>
-      </p>
-      <p style="color: #64748b; font-size: 13px;">${footnote}</p>
-    </div>`;
-}
-
-/**
- * The dunning notice.
- *
- * THE COPY IS DERIVED, NOT WRITTEN. Whether this email may say "your access
- * continues until DATE" is decided by graceState() — the same function that
- * enforces grace at request time — rather than by the template author. That is
- * structural, not stylistic: if the grace mechanism (PR-F) is not deployed or
- * its flag is off, graceState returns `lapsed` and the wording switches to
- * "access has been suspended" automatically. **The promise cannot outrun the
- * mechanism**, and no future edit to this file can make it.
- */
-async function sendDunningEmails(args: {
-  orgId: string;
-  cycleStartedAt: Date | string;
-  subscriptionStatus: string | null;
-  stage: 0 | 7 | 14;
-}): Promise<void> {
-  const recipients = await orgAdminRecipients(args.orgId);
-  if (!recipients) {
-    logger.warn(
-      { event: "stripe_dunning_email_no_recipients", orgId: args.orgId, stage: args.stage },
-      "dunning email: org missing or has no verified admins — skipping"
-    );
-    return;
-  }
-
-  const inputs = {
-    paymentFailedAt: args.cycleStartedAt,
-    subscriptionStatus: args.subscriptionStatus,
-  };
-  const state = graceState(inputs);
-  const endsAt = state === "in_grace" ? graceEndsAt(inputs) : null;
-  const endsLabel = endsAt
-    ? endsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-    : null;
-
-  const { orgName, admins } = recipients;
-
-  // Two vocabularies, one per grace state. Nothing here interpolates a date
-  // unless graceState says the access it describes is real.
-  const subject =
-    state === "in_grace"
-      ? args.stage === 0
-        ? `Payment failed for ${orgName} — action needed`
-        : args.stage === 7
-          ? `Still unpaid: ${orgName} access ends ${endsLabel ?? "soon"}`
-          : `Final notice: ${orgName} access ends ${endsLabel ?? "tomorrow"}`
-      : `Payment failed for ${orgName} — access suspended`;
-
-  const heading =
-    state === "in_grace" ? "We couldn't process your payment" : "Your SecureLogic access is suspended";
-
-  const accessLine =
-    state === "in_grace" && endsLabel
-      ? `<p style="color: #334155; line-height: 1.6;">Your access to SecureLogic continues until <strong>${endsLabel}</strong>. Update your payment method before then and nothing will be interrupted.</p>`
-      : `<p style="color: #334155; line-height: 1.6;">Access for <strong>${orgName}</strong> has been suspended until payment is resolved. Your data is intact and returns as soon as the payment goes through.</p>`;
-
-  const urgency =
-    args.stage === 14
-      ? `<p style="color: #b91c1c; line-height: 1.6; font-weight: 600;">This is the last reminder before access ends.</p>`
-      : "";
-
-  const html = emailShell(
-    heading,
-    `<p style="color: #334155; line-height: 1.6;">The most recent payment for <strong>${orgName}</strong> could not be processed. This is usually an expired or replaced card.</p>${accessLine}${urgency}`,
-    "Update Payment Method",
-    "Your data is never deleted for a failed payment. If you have already updated your card, you can ignore this."
-  );
-
-  for (const admin of admins) {
-    const result = await sendEmail({ to: admin.email, subject, html });
-    logger.info(
-      {
-        event: "billing_dunning_notified",
-        orgId: args.orgId,
-        stage: args.stage,
-        graceState: state,
-        to: admin.email,
-        ok: result.ok,
-        reason: result.ok ? null : result.reason,
-      },
-      "dunning email attempted"
-    );
-  }
-}
-
-/**
- * The recovery confirmation. Without it, a customer who fixed their card has no
- * signal that access is back — they are left guessing whether the last email
- * they received still applies.
- */
-async function sendPaymentRecoveredEmails(orgId: string): Promise<void> {
-  const recipients = await orgAdminRecipients(orgId);
-  if (!recipients) return;
-
-  const { orgName, admins } = recipients;
-  const html = emailShell(
-    "You're all set",
-    `<p style="color: #334155; line-height: 1.6;">We received the payment for <strong>${orgName}</strong> and full access has been restored. No further action is needed.</p>`,
-    "Open SecureLogic",
-    "This confirms the earlier payment-failure notice is resolved."
-  );
-
-  for (const admin of admins) {
-    const result = await sendEmail({
-      to: admin.email,
-      subject: `Payment received — ${orgName} access restored`,
-      html,
-    });
-    logger.info(
-      {
-        event: "stripe_payment_recovered_email",
-        orgId,
-        to: admin.email,
-        ok: result.ok,
-        reason: result.ok ? null : result.reason,
-      },
-      "payment recovered email attempted"
     );
   }
 }

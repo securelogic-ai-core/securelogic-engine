@@ -118,3 +118,35 @@ export function graceState(
   const endsAt = new Date(start.getTime() + graceDays(env) * 86_400_000);
   return now.getTime() < endsAt.getTime() ? "in_grace" : "lapsed";
 }
+
+
+/**
+ * The entitlement level the request path should ENFORCE, which is not always
+ * the level stored on the row.
+ *
+ * This is the function that lets the grace period be safe without a reliable
+ * scheduler. When a grace window elapses, the stored `entitlement_level` is
+ * still whatever the last Stripe event wrote — the reconciling sweep will
+ * materialise the downgrade, but it runs hourly and may be late, may have
+ * crashed, or may not have run at all. Deriving the answer here means a lapsed
+ * organization is denied on the very next request regardless, and a customer
+ * can never be wrongly entitled because a job did not fire.
+ *
+ * FLAG-OFF IS EXACTLY TODAY'S BEHAVIOUR, deliberately, and the guard is here
+ * rather than at the call site so it cannot be forgotten by a second caller.
+ * Without it the flag-off path would still change: an organization is stamped
+ * by invoice.payment_failed moments BEFORE customer.subscription.updated
+ * (past_due) revokes, and in that gap graceState already reports `lapsed`, so
+ * deriving unconditionally would pull the lockout earlier than it happens now.
+ * A flag that is off must change nothing.
+ */
+export function effectiveEntitlementLevel(
+  storedLevel: string | null,
+  input: GraceInputs,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  if (!graceEnabled(env)) return storedLevel;
+  if (!input.paymentFailedAt) return storedLevel;
+  return graceState(input, now, env) === "lapsed" ? "starter" : storedLevel;
+}
