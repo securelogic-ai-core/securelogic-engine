@@ -575,6 +575,30 @@ export async function deleteAsset(req: Request, res: Response): Promise<void> {
     res.status(resolved.status).json({ error: resolved.error, ...(resolved.detail ? { detail: resolved.detail } : {}) });
     return;
   }
+  // SL-OCC-1: recorded vulnerability exposure is history, and deleting the asset
+  // would take it with him. finding_asset_occurrences.asset_id is ON DELETE
+  // RESTRICT, so without this the delete would surface as an unhandled 500;
+  // with it the caller gets a 409 that says exactly what is in the way and how
+  // many. Retiring an asset (lifecycle_status) preserves the record and is the
+  // normal path — deletion is for rows that should never have existed.
+  const exposure = await pg.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM finding_asset_occurrences
+      WHERE organization_id = $1 AND asset_id = $2`,
+    [orgId, resolved.assetId]
+  );
+  const occurrenceCount = Number(exposure.rows[0]?.n ?? 0);
+  if (occurrenceCount > 0) {
+    res.status(409).json({
+      error: "asset_has_vulnerability_occurrences",
+      detail:
+        `This asset has ${occurrenceCount} recorded vulnerability ` +
+        `occurrence${occurrenceCount === 1 ? "" : "s"}. Deleting it would erase that ` +
+        `history. Remove the occurrences first, or retire the asset instead.`,
+      occurrence_count: occurrenceCount
+    });
+    return;
+  }
+
   const result = await deleteDetailAsset(orgId, resolved.assetType, resolved.backingId);
   if (!result.deleted) {
     res.status(404).json({ error: "not_found" });
