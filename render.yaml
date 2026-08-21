@@ -1673,6 +1673,14 @@ services:
       # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
       # The securelogic-app-staging service is defined below in this file — set it
       # true there for staging validation. Prod flip is GATE B (operator ledger L-2).
+      # REPORT-1: Executive Risk nav entry — see the staging block for why this
+      # exists. Held FALSE in production deliberately: making an executive
+      # dashboard discoverable is a launch decision, not an IaC side effect, and
+      # this release has not been promoted or validated as a unit. Flip to "true"
+      # as part of the develop -> main promotion once the executive view has been
+      # confirmed against production data.
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED
+        value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
@@ -1844,6 +1852,21 @@ services:
       #                         flag on too), /findings saved-views bar, /actions
       #                         My Actions depth, Brief -> Decision/Event
       # Prod enablement stays GATE B (operator ledger).
+      # REPORT-1: Executive Risk nav entry. The /executive PAGE is gated by
+      # ENTITLEMENT only (premium/team/platform) and its data sources
+      # (/api/trends, /api/posture/*, /api/connectors) read NO flag — so the
+      # dashboard and the executive PDF have been fully working and merely
+      # UNDISCOVERABLE, because this flag was declared nowhere and the nav entry
+      # therefore never rendered. Declaring it explicitly is itself the fix for
+      # half the problem: an undeclared flag is invisible in IaC as well as in
+      # the product.
+      #
+      # STAGING true: verified 2026-08-21 — /api/trends 200, /api/posture/latest
+      # 200, /api/reports/executive.pdf 200 (valid 7-page PDF). The predictive
+      # panel 404s and degrades to an honest "not enabled" notice rather than an
+      # error, which is truthful and acceptable to expose.
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED
+        value: "true"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         # ENABLED on STAGING (2026-07-26): EAR is live here and entity-backed assets
         # deep-link into ECL — the two surfaces must flip together. Prod stays dark.
