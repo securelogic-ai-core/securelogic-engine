@@ -18,6 +18,7 @@ import { startApplicabilityReassessmentWorker } from "./workers/applicabilityRea
 import { startConnectorSyncWorker } from "./workers/connectorSyncWorker.js";
 import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorker.js";
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
+import { startVendorRiskHistoryWorker } from "./workers/vendorRiskHistoryWorker.js";
 import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
 import { startVendorAssuranceMonitoringWorker } from "./workers/vendorAssuranceMonitoringWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
@@ -165,6 +166,10 @@ startConnectorWritebackWorker();
 // ERIP F2: daily risk-history snapshot. Registered always; each tick self-gates
 // on SECURELOGIC_RISK_INTELLIGENCE_ENABLED AND SECURELOGIC_ASSET_REGISTRY_ENABLED.
 startRiskHistoryWorker();
+// VA-7: daily per-vendor risk snapshot (the vendor trend substrate). Ungated —
+// it reads only core tables and history cannot be backfilled, so it must
+// accumulate from the day it deploys (see vendorRiskHistoryWorker.ts header).
+startVendorRiskHistoryWorker();
 // Accepted risk is time-boxed: expired acceptances reopen their findings. Self-gates
 // on SECURELOGIC_RISK_ACCEPTANCE_ENABLED.
 startRiskAcceptanceExpiryWorker();
