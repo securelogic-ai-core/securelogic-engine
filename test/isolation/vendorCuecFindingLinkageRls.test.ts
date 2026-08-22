@@ -1,6 +1,6 @@
 /**
  * vendorCuecFindingLinkageRls.test.ts — the vendor <- finding relationship,
- * over all three linkages, against real Postgres with RLS live.
+ * over all four linkages, against real Postgres with RLS live.
  *
  * WHAT THIS FILE IS FOR
  * ---------------------
@@ -25,6 +25,14 @@
  * collides with the source_id of org A's finding, does either org see the other?
  * Both must be no, and the thing preventing it is the org predicate on the
  * JOINED table — not the finding's own scoping.
+ *
+ * THE FOURTH ARM RIDES THE SAME HARNESS. Engagement finding promotion writes
+ * `source_type='vendor_engagement'`, `source_id=<vendor_engagements.id>` — the
+ * defect class this file exists for, recurring one producer later: before the
+ * fourth arm, an engagement-promoted finding was invisible on every surface
+ * asserted below. Because the SQL is imported, seeding the engagement chain
+ * puts the new arm under every existing assertion automatically; the per-arm
+ * expectations and the colliding-engagement-id probe are the additions.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -53,6 +61,8 @@ type OrgChain = {
   assessmentId: string;
   cycleFindingId: string;
   reviewId: string;
+  engagementFindingId: string;
+  engagementId: string;
 };
 
 let A: OrgChain;
@@ -170,6 +180,31 @@ async function seedChain(orgId: string, label: string): Promise<OrgChain> {
     [orgId, reviewId, `${label} cycle finding`],
   );
 
+  // --- arm 4: engagement spine ----------------------------------------------
+  // submitted_at deliberately carries a TIME OF DAY: the linkage arm reads
+  // COALESCE(submitted_at, created_at)::date, and the DATE-serialisation test
+  // below needs a value that would betray a dropped ::date cast.
+  const engagement = await pool.query<{ id: string }>(
+    `INSERT INTO vendor_engagements
+       (organization_id, vendor_id, engagement_type, status, inherent_rating,
+        submitted_at, methodology_version, scope_rule_version)
+     VALUES ($1, $2, 'initial', 'in_review', 'High',
+             TIMESTAMPTZ '2026-05-01 09:30:00+00', 'test-m1', 'test-s1')
+     RETURNING id`,
+    [orgId, vendorId],
+  );
+  const engagementId = engagement.rows[0]!.id;
+  // Written exactly as promoteEngagementFindings writes it: the source_id is
+  // the ENGAGEMENT id under the dedicated source_type='vendor_engagement'.
+  const engagementFinding = await pool.query<{ id: string }>(
+    `INSERT INTO findings
+       (organization_id, source_type, source_id, title, severity, description,
+        status, operational_status)
+     VALUES ($1, 'vendor_engagement', $2, $3, 'High', 'engagement finding', 'open', 'open')
+     RETURNING id`,
+    [orgId, engagementId, `${label} engagement finding`],
+  );
+
   return {
     vendorId,
     cuecFindingId,
@@ -179,6 +214,8 @@ async function seedChain(orgId: string, label: string): Promise<OrgChain> {
     assessmentId,
     cycleFindingId: cycleFinding.rows[0]!.id,
     reviewId,
+    engagementFindingId: engagementFinding.rows[0]!.id,
+    engagementId,
   };
 }
 
@@ -220,7 +257,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("resolution — a finding reaches its vendor by all three linkages", () => {
+describe("resolution — a finding reaches its vendor by all four linkages", () => {
   it("resolves the vendor for a CUEC-PROMOTED finding (the defect)", async () => {
     const rows = await asOrg(seed.orgA.id, async (c) =>
       (await c.query(RESOLVE_SQL, [A.cuecFindingId, seed.orgA.id])).rows,
@@ -245,6 +282,14 @@ describe("resolution — a finding reaches its vendor by all three linkages", ()
     expect(rows[0].vendor_id).toBe(A.vendorId);
   });
 
+  it("resolves the vendor for an ENGAGEMENT-PROMOTED finding (the VA-4 defect)", async () => {
+    const rows = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(RESOLVE_SQL, [A.engagementFindingId, seed.orgA.id])).rows,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].vendor_id).toBe(A.vendorId);
+  });
+
   it("resolves nothing for a finding that is not vendor-linked at all", async () => {
     const other = await pool.query<{ id: string }>(
       `INSERT INTO findings (organization_id, source_type, title, severity, description,
@@ -260,7 +305,7 @@ describe("resolution — a finding reaches its vendor by all three linkages", ()
 });
 
 describe("scoring — the CUEC-promoted finding is IN the score population", () => {
-  it("includes the CUEC finding alongside the assessment and cycle findings", async () => {
+  it("includes the CUEC and engagement findings alongside the assessment and cycle findings", async () => {
     const rows = await asOrg(seed.orgA.id, async (c) =>
       (await c.query(SCORE_POPULATION_SQL, [A.vendorId, seed.orgA.id])).rows,
     );
@@ -269,6 +314,7 @@ describe("scoring — the CUEC-promoted finding is IN the score population", () 
     expect(ids).toContain(A.cuecFindingId);
     expect(ids).toContain(A.assessmentFindingId);
     expect(ids).toContain(A.cycleFindingId);
+    expect(ids).toContain(A.engagementFindingId);
   });
 
   it("counts each finding exactly once", async () => {
@@ -285,6 +331,7 @@ describe("scoring — the CUEC-promoted finding is IN the score population", () 
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain(B.cuecFindingId);
     expect(ids).not.toContain(B.assessmentFindingId);
+    expect(ids).not.toContain(B.engagementFindingId);
   });
 });
 
@@ -300,14 +347,26 @@ describe("API — the vendor page shows the promoted gap", () => {
     expect(cuecRow!.linkage).toBe("vendor_assurance_cuec");
     expect(cuecRow!.assessment_id).toBe(A.cuecId);
     expect(cuecRow!.assessment_type).toBe("vendor_assurance_cuec");
-    // All three linkages on one vendor, each once.
+    // Same contract for the engagement arm: honest discriminator, and the
+    // engagement id in the compatibility field.
+    const engagementRow = returned.find((f) => f.id === A.engagementFindingId);
+    expect(engagementRow).toBeDefined();
+    expect(engagementRow!.linkage).toBe("vendor_engagement");
+    expect(engagementRow!.assessment_id).toBe(A.engagementId);
+    expect(engagementRow!.assessment_type).toBe("vendor_engagement");
+    // All four linkages on one vendor, each once.
     expect(returned.map((f) => f.id)).toEqual(
-      expect.arrayContaining([A.cuecFindingId, A.assessmentFindingId, A.cycleFindingId]),
+      expect.arrayContaining([
+        A.cuecFindingId,
+        A.assessmentFindingId,
+        A.cycleFindingId,
+        A.engagementFindingId,
+      ]),
     );
     expect(new Set(returned.map((f) => f.id)).size).toBe(returned.length);
   });
 
-  it("keeps performed_at a DATE across all three arms (no silent serialisation change)", async () => {
+  it("keeps performed_at a DATE across all four arms (no silent serialisation change)", async () => {
     // `performed_at` has always been backed by a DATE column, and node-postgres
     // renders a DATE as a JS Date — so the value on the wire is a midnight ISO
     // string, NOT `YYYY-MM-DD`. That is the pre-existing serialisation and is
@@ -335,18 +394,22 @@ describe("API — the vendor page shows the promoted gap", () => {
 
     // Byte-for-byte what a DATE column has always produced on this endpoint.
     expect(byId.get(A.assessmentFindingId)!.performed_at).toBe(controlWire);
-    // And neither other arm carries a time of day.
+    // And no other arm carries a time of day. The engagement row was seeded
+    // with submitted_at = 09:30:00 precisely so a dropped ::date cast on the
+    // fourth arm — whose COALESCE(submitted_at, created_at) is TIMESTAMPTZ —
+    // would fail here rather than pass on a lucky midnight.
     expect(byId.get(A.cycleFindingId)!.performed_at.slice(10)).toBe(timeOfDay);
     expect(byId.get(A.cuecFindingId)!.performed_at.slice(10)).toBe(timeOfDay);
+    expect(byId.get(A.engagementFindingId)!.performed_at.slice(10)).toBe(timeOfDay);
   });
 
   it("GET /api/vendors/:id/risk-score counts the CUEC-promoted finding", async () => {
     const res = await asOrgA.get(`/api/vendors/${A.vendorId}/risk-score`);
     expect(res.status).toBe(200);
-    // Three ACTIVE findings on this vendor, one per linkage. Before the fix this
-    // was 1 — the assessment arm only — and the score did not move when the gap
-    // was recorded.
-    expect(res.body.finding_count).toBe(3);
+    // Four ACTIVE findings on this vendor, one per linkage. Before the CUEC fix
+    // this was 1 — the assessment arm only — and before the engagement arm it
+    // was 3; the score did not move when the gap was recorded either time.
+    expect(res.body.finding_count).toBe(4);
     expect(res.body.score).toBeLessThan(100);
   });
 
@@ -362,18 +425,18 @@ describe("the OTHER vendor readers count the promoted gap too", () => {
   // surfaces kept their own local joins and are where the hole would have
   // reopened: the list badge is what a customer looks at immediately after
   // promoting a gap, and the summary backs the vendor risk board.
-  it("GET /api/vendors counts all three linkages on the vendor card", async () => {
+  it("GET /api/vendors counts all four linkages on the vendor card", async () => {
     const res = await asOrgA.get("/api/vendors?limit=100");
     expect(res.status).toBe(200);
     const vendor = (res.body.vendors as Array<Record<string, unknown>>).find(
       (v) => v.id === A.vendorId,
     );
     expect(vendor).toBeDefined();
-    // Three ACTIVE findings, one per linkage. This badge counted only the
+    // Four ACTIVE findings, one per linkage. This badge counted only the
     // assessment arm, so it printed 1 — and printed nothing at all for a vendor
-    // whose only findings were a promoted CUEC.
-    expect(vendor!.active_findings_count).toBe(3);
-    expect(vendor!.open_findings_count).toBe(3);
+    // whose only findings were a promoted CUEC or an engagement promotion.
+    expect(vendor!.active_findings_count).toBe(4);
+    expect(vendor!.open_findings_count).toBe(4);
   });
 
   it("GET /api/vendors/summary answers at all, and counts the promoted gap", async () => {
@@ -386,7 +449,7 @@ describe("the OTHER vendor readers count the promoted gap too", () => {
     const top = res.body.summary.top_vendors_by_risk as Array<Record<string, unknown>>;
     const vendor = top.find((v) => v.id === A.vendorId);
     expect(vendor).toBeDefined();
-    expect(Number(vendor!.open_findings)).toBe(3);
+    expect(Number(vendor!.open_findings)).toBe(4);
     expect(res.body.summary.vendors_with_findings).toBeGreaterThanOrEqual(1);
   });
 
@@ -395,9 +458,9 @@ describe("the OTHER vendor readers count the promoted gap too", () => {
     const vendorA = (list.body.vendors as Array<Record<string, unknown>>).find(
       (v) => v.id === A.vendorId,
     );
-    // Both orgs seed an identical three-arm chain. Six would mean a join lost
-    // its org predicate; three is each org seeing only its own.
-    expect(vendorA!.active_findings_count).toBe(3);
+    // Both orgs seed an identical four-arm chain. Eight would mean a join lost
+    // its org predicate; four is each org seeing only its own.
+    expect(vendorA!.active_findings_count).toBe(4);
 
     const summary = await asOrgB.get("/api/vendors/summary");
     const ids = (summary.body.summary.top_vendors_by_risk as Array<Record<string, unknown>>)
@@ -479,6 +542,50 @@ describe("tenancy — cross-wired ids cannot cross the boundary", () => {
     } finally {
       await pool.query(`DELETE FROM findings WHERE id = $1`, [probeId]);
     }
+  });
+
+  it("a COLLIDING engagement id in org B does not attach org A's finding to org B's vendor", async () => {
+    // The engagement arm joins on the same UNCONSTRAINED source_id convention
+    // as the assessment arm, so it earns the same probe: give org B a finding
+    // whose source_id IS the id of org A's engagement.
+    const collidingFinding = await pool.query<{ id: string }>(
+      `INSERT INTO findings (organization_id, source_type, source_id, title, severity,
+                             description, status, operational_status)
+       VALUES ($1, 'vendor_engagement', $2, 'engagement collision probe', 'High', 'probe',
+               'open', 'open')
+       RETURNING id`,
+      [seed.orgB.id, A.engagementId],
+    );
+    const probeId = collidingFinding.rows[0]!.id;
+    try {
+      // Org B's finding names org A's engagement id. It must resolve to NOTHING —
+      // not to org A's vendor — because `e.organization_id = f.organization_id`
+      // sits on the joined table, not only on the finding.
+      const rows = await asOrg(seed.orgB.id, async (c) =>
+        (await c.query(RESOLVE_SQL, [probeId, seed.orgB.id])).rows,
+      );
+      expect(rows).toHaveLength(0);
+
+      // And org A's vendor must not acquire org B's finding.
+      const res = await asOrgA.get(`/api/vendors/${A.vendorId}/findings`);
+      expect((res.body.findings as Array<{ id: string }>).map((f) => f.id)).not.toContain(probeId);
+    } finally {
+      await pool.query(`DELETE FROM findings WHERE id = $1`, [probeId]);
+    }
+  });
+
+  it("org B's engagement finding never resolves through org A's scope, and vice versa", async () => {
+    // The plain cross-tenant read on the fourth arm: each org's engagement
+    // finding is invisible to the other, in both directions.
+    const forA = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(RESOLVE_SQL, [B.engagementFindingId, seed.orgA.id])).rows,
+    );
+    expect(forA).toHaveLength(0);
+
+    const forB = await asOrg(seed.orgB.id, async (c) =>
+      (await c.query(RESOLVE_SQL, [A.engagementFindingId, seed.orgB.id])).rows,
+    );
+    expect(forB).toHaveLength(0);
   });
 
   it("MUTATION CHECK: the org predicate is what prevents it, not RLS alone", async () => {
