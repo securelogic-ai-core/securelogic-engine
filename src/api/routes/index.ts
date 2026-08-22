@@ -112,6 +112,7 @@ import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
+import vulnerabilityScanImportsRouter from "./vulnerabilityScanImports.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
@@ -572,6 +573,8 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
+  // SL-OCC-3: scanner-ingestion producer (dark behind SECURELOGIC_VULN_SCAN_INGESTION_ENABLED).
+  router.use("/api", vulnerabilityScanImportsRouter);
   router.use("/api", riskScoringWeightsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);
