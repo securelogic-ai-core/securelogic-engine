@@ -15,7 +15,10 @@ import {
   getAuthMe,
   getPenTestEngagement,
   type PenTestEngagement,
+  getFindingRetests,
+  type PenTestRetest,
 } from "@/lib/api";
+import { RetestHistorySection } from "@/components/findings/RetestHistorySection";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { HistorySection } from "@/components/HistorySection";
@@ -510,15 +513,28 @@ export default async function FindingDetailPage({
 
   const finding = findingData.finding;
 
-  // PEN-1 provenance: a pen_test finding's source_id points at a
-  // pen_test_engagements row, so the source can render as the ENGAGEMENT
-  // (name, linked to /pen-tests/[id]) instead of a bare "Pen Test" label.
-  // Fetched after the finding because it depends on it; best-effort — a
-  // failed fetch falls back to the label, never blocks the page.
+  // PEN-1 provenance + T2-I verification history: a pen_test finding's
+  // source_id points at a pen_test_engagements row, so the source can render
+  // as the ENGAGEMENT (name, linked to /pen-tests/[id]) instead of a bare
+  // "Pen Test" label — and its retest history renders beside it. Fetched
+  // after the finding because they depend on it, in ONE parallel round so the
+  // second fact costs no extra waterfall; best-effort — a failed engagement
+  // fetch falls back to the label, a failed retest fetch renders as an outage
+  // notice (never as "never retested"), neither blocks the page.
+  const isPenTestFinding = finding.source_type === "pen_test";
+  const [penTestEngagementData, findingRetests]: [
+    { engagement: PenTestEngagement } | null,
+    { count: number; retests: PenTestRetest[] } | null,
+  ] = isPenTestFinding
+    ? await Promise.all([
+        finding.source_id
+          ? getPenTestEngagement(token, finding.source_id)
+          : Promise.resolve(null),
+        getFindingRetests(token, id),
+      ])
+    : [null, null];
   const penTestEngagement: PenTestEngagement | null =
-    finding.source_type === "pen_test" && finding.source_id
-      ? ((await getPenTestEngagement(token, finding.source_id))?.engagement ?? null)
-      : null;
+    penTestEngagementData?.engagement ?? null;
 
   const actions = actionsData?.actions ?? [];
   const owners = (teamData?.members ?? [])
@@ -579,6 +595,16 @@ export default async function FindingDetailPage({
                server-composed so the workspace fetches nothing. Undefined for
                every other source (and when the engagement fetch failed), which
                renders exactly the pre-PEN-1 identity row. */
+            /* T2-I: the verification history, in the SAME server-composed way
+               PEN-1's provenance travels — the workspace fetches nothing.
+               Undefined for every other source: "no retests" is not a fact
+               about a control-test finding, so the section is absent, not
+               empty. */
+            retestHistory={
+              isPenTestFinding ? (
+                <RetestHistorySection retests={findingRetests} />
+              ) : undefined
+            }
             sourceProvenance={
               penTestEngagement ? (
                 <Link
@@ -724,6 +750,12 @@ export default async function FindingDetailPage({
 
           {/* Remediation Actions */}
           <RemediationActionsSection finding={finding} actions={actions} />
+
+          {/* T2-I: the verification history of a pen-test finding — after the
+              remediation work, because a retest VERIFIES that work. In both
+              layouts (like the PEN-1 provenance beside it), and absent — not
+              empty — for every other source type. */}
+          {isPenTestFinding && <RetestHistorySection retests={findingRetests} />}
 
           {/* Activity history — finding events plus its risk acceptances
               and the actions it spawned (shared per-object audit trail). */}

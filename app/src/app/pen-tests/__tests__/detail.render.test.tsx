@@ -10,7 +10,7 @@
  * import findings referencing this engagement, id included.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, sp, hrefOf } from "@/test/harness";
 import { aFinding, aFindingsResponse, aPenTestEngagement } from "@/test/fixtures";
 
@@ -95,6 +95,79 @@ describe("/pen-tests/[id] — the findings it produced", () => {
     await renderPage(PenTestDetailPage, props);
 
     expect(screen.getByText(/No severity · source: Informational/)).toBeInTheDocument();
+  });
+});
+
+describe("/pen-tests/[id] — T2-I lifecycle display", () => {
+  it("renders status, test type, methodology, scope, and the recurrence clock", async () => {
+    api.getPenTestEngagement.mockResolvedValue({
+      engagement: aPenTestEngagement({ next_test_due: "2027-07-01" }),
+    });
+    await renderPage(PenTestDetailPage, props);
+
+    expect(screen.getByText("Remediation")).toBeInTheDocument();
+    expect(screen.getByText("Network")).toBeInTheDocument();
+    expect(screen.getByText("PTES")).toBeInTheDocument();
+    expect(
+      screen.getByText(/External perimeter and the customer portal; payments API out of scope\./)
+    ).toBeInTheDocument();
+    expect(screen.getByText("Jul 1, 2027")).toBeInTheDocument();
+    expect(screen.queryByText("Test overdue")).not.toBeInTheDocument();
+  });
+
+  it("warns when the engine's computed test_overdue says the clock has lapsed — never recomputed client-side", async () => {
+    api.getPenTestEngagement.mockResolvedValue({
+      engagement: aPenTestEngagement({ next_test_due: "2026-01-01", test_overdue: true }),
+    });
+    await renderPage(PenTestDetailPage, props);
+
+    expect(screen.getByText("Test overdue")).toBeInTheDocument();
+    expect(screen.getByText(/Jan 1, 2026 — overdue/)).toBeInTheDocument();
+  });
+
+  it("a closed engagement shows when it closed (closed <=> stamped is a DB CHECK)", async () => {
+    api.getPenTestEngagement.mockResolvedValue({
+      engagement: aPenTestEngagement({
+        status: "closed",
+        closed_at: "2026-08-10T12:00:00.000Z",
+      }),
+    });
+    await renderPage(PenTestDetailPage, props);
+
+    expect(screen.getByText("Closed")).toBeInTheDocument();
+    expect(screen.getByText(/Closed Aug 10, 2026/)).toBeInTheDocument();
+  });
+
+  it("the edit affordance opens a form offering all five statuses — transitions are free, not a machine", async () => {
+    await renderPage(PenTestDetailPage, props);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    const statusSelect = screen.getByLabelText("Status") as HTMLSelectElement;
+    const offered = Array.from(statusSelect.options).map((o) => o.value);
+    expect(offered).toEqual([
+      "planned",
+      "testing",
+      "report_received",
+      "remediation",
+      "closed",
+    ]);
+    // The descriptive fields are editable in the same form.
+    expect(screen.getByLabelText("Test Type")).toBeInTheDocument();
+    expect(screen.getByLabelText("Methodology")).toBeInTheDocument();
+    expect(screen.getByLabelText("Scope")).toBeInTheDocument();
+    expect(screen.getByLabelText("Next Test Due")).toBeInTheDocument();
+  });
+});
+
+describe("/pen-tests/[id] — T2-I per-finding retest affordance", () => {
+  it("offers a Record retest control on each finding row (history lives on the finding page)", async () => {
+    api.getFindings.mockResolvedValue(
+      aFindingsResponse([penTestFinding(), penTestFinding({ id: "f-2", title: "Second issue" })])
+    );
+    await renderPage(PenTestDetailPage, props);
+
+    expect(screen.getAllByRole("button", { name: "Record retest" })).toHaveLength(2);
   });
 });
 
