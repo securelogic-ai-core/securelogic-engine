@@ -5608,8 +5608,50 @@ export type RequirementWithResponse = {
   reference_id: string;
   title: string;
   description: string | null;
+  /** VA-6 content-layer fields. Optional: absent on older engine payloads. */
+  scope_tags?: string[];
+  scope_tags_source?: "heuristic" | "curated" | null;
   response: RequirementResponse | null;
 };
+
+/** VA-6 — scope-tag curation coverage ("curated_pct is the number that
+ *  matters before launch"). */
+export type ScopeTagCoverage = {
+  total: number;
+  curated: number;
+  heuristic: number;
+  untagged: number;
+  core_tagged: number;
+  curated_pct: number;
+};
+
+export type ScopeTagCoverageReport = {
+  overall: ScopeTagCoverage;
+  frameworks: Array<{
+    framework_id: string;
+    name: string;
+    version: string;
+    coverage: ScopeTagCoverage;
+  }>;
+  /** The closed vocabulary, served by the engine so the curation UI never
+   *  duplicates it. */
+  vocabulary: string[];
+};
+
+export async function getScopeTagCoverage(
+  apiKey: string
+): Promise<ScopeTagCoverageReport | null> {
+  try {
+    const res = await engineFetch(
+      `/api/requirements/scope-tag-coverage`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopeTagCoverageReport>;
+  } catch {
+    return null;
+  }
+}
 
 export type FrameworkRequirements = {
   framework: {
@@ -5636,13 +5678,12 @@ export async function getFrameworkRequirements(
   apiKey: string,
   frameworkId: string,
   assessmentType: "self" | "vendor",
-  subjectId: string
+  subjectId?: string
 ): Promise<FrameworkRequirements | null> {
   try {
-    const params = new URLSearchParams({
-      assessment_type: assessmentType,
-      subject_id: subjectId,
-    });
+    const params = new URLSearchParams({ assessment_type: assessmentType });
+    // For "self" the engine defaults subject_id to the org; vendor requires it.
+    if (subjectId) params.set("subject_id", subjectId);
     const res = await engineFetch(
       `/api/frameworks/${encodeURIComponent(frameworkId)}/requirements?${params.toString()}`,
       apiKey
@@ -7584,7 +7625,9 @@ export async function resolveVendorEngagementScope(
     excluded: number;
     tier: string;
     scope_rule_version: string;
-    notes: unknown;
+    /** Tier-cap truncation, surfaced never silent (VA-6 repaired the field
+     *  name — the engine previously emitted a `notes` that was always null). */
+    truncated: { cap: number; dropped_requirement_ids: string[] } | null;
   }>
 > {
   try {
@@ -7599,7 +7642,7 @@ export async function resolveVendorEngagementScope(
       excluded: number;
       tier: string;
       scope_rule_version: string;
-      notes: unknown;
+      truncated: { cap: number; dropped_requirement_ids: string[] } | null;
     };
   } catch {
     return { failure: { error: "scope_resolve_failed" } };
