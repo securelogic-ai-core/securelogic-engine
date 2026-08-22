@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/session";
-import { getAiSystem } from "@/lib/api";
+import { getAiSystem, getTeamMembers } from "@/lib/api";
 import { EditAiSystemForm } from "./EditAiSystemForm";
 
 export default async function EditAiSystemPage({
@@ -14,8 +14,18 @@ export default async function EditAiSystemPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const aiSystem = await getAiSystem(token, id);
+  // Org members feed the business-owner picker — best-effort, like the finding
+  // detail page's assignee list: if the team endpoint is unavailable the picker
+  // degrades to "unassigned" plus whatever id is already set.
+  const [aiSystem, teamData] = await Promise.all([
+    getAiSystem(token, id),
+    getTeamMembers(token),
+  ]);
   if (!aiSystem) redirect("/ai-systems");
+
+  const members = (teamData?.members ?? [])
+    .filter((m) => m.status === "active")
+    .map((m) => ({ id: m.id, label: m.name?.trim() || m.email }));
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -34,7 +44,7 @@ export default async function EditAiSystemPage({
         Update details for {aiSystem.name}.
       </p>
 
-      <EditAiSystemForm aiSystem={aiSystem} />
+      <EditAiSystemForm aiSystem={aiSystem} members={members} />
     </div>
   );
 }
