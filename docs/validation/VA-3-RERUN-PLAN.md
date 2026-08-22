@@ -399,7 +399,7 @@ called finished.
 |---|---|---|
 | **STAGING** | Observed in the staging product, by a user, in a browser | The only tier that counts toward a VA-3 PASS |
 | **HARNESS** | Proven by automated tests, including real-Postgres isolation suites | **Never** substitutes for a gate. PR #855's 246 targeted tests and 1,476 isolation tests are HARNESS |
-| **PRODUCTION** | Observed in production | **Out of scope.** Production is not touched. Vendor Assurance is flag-on in production with **no R2 configured on the engine**, so this workflow is not exercisable there at all |
+| **PRODUCTION** | Observed in production | **Out of scope.** Production is not touched. Vendor Assurance is flag-on in production and storage **is** configured (corrected 2026-08-22 — the earlier "no R2" claim came from `render.yaml` declared state and was wrong). The workflow is nonetheless not exercisable there, because the extraction defect and the missing Finding provenance apply to production identically |
 
 **Do not** record a gate as passing on HARNESS evidence. If the UI could not
 demonstrate it, the gate did not pass.

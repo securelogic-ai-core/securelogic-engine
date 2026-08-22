@@ -354,7 +354,7 @@ open.
 |---|---|
 | "Zero findings have ever come out of the document path" | **Still true, and now partly explained.** Upload and worker dispatch are proven on staging; **extraction fails on a clean report** (§4.3) |
 | "Vendor Assurance is NOT DONE" | **Confirmed, with a named blocking defect** (§4.3), not merely unproven |
-| Production Vendor Assurance is reachable but has **no object storage on the engine** | **Confirmed and pre-existing** — `render.yaml` declares `SECURELOGIC_VENDOR_ASSURANCE_ENABLED=true` and no R2 for the production engine, **identically on `main` and `develop`**. PR #827 fixes the error-truthfulness half and is held behind #826. **Wiring production R2 is a separate operator action and a hard prerequisite for advertising Vendor Assurance.** |
+| ~~Production Vendor Assurance has no object storage~~ | **WITHDRAWN 2026-08-22.** All five R2 variables are **SET** on the live production engine (dashboard-set; `render.yaml` does not declare them, which is where the wrong inference came from). What stands: the flag is `true` in production, the route answers 401, and the app renders legacy navigation with no vendor-assurance entry — reachable by URL, not by navigation. Storage *reachability* remains unproven pending #827's `HeadBucket` probe |
 
 ## 8. Cleanup
 

@@ -100,11 +100,14 @@ PR #827 fixes a **pre-existing production defect**, verified here by comparing
 `render.yaml` at `origin/main` and `origin/develop`:
 
 > The production engine declares `SECURELOGIC_VENDOR_ASSURANCE_ENABLED=true`
-> and **no R2 credentials at all** — identically on both branches. On that
+> and — *as `render.yaml` declares it* — no R2 credentials. **See the correction
+> immediately below: that inference was wrong.** On an engine genuinely lacking R2,
 > engine, `getBlobStorageClient()` throws `BlobStorageNotConfiguredError`, and
 > three call sites converted the storage fault into
 > `processing_error_code = 'pdf_unparseable'`. A customer uploading a SOC 2
 > report got HTTP 500 and a document row asserting **their file was corrupt**.
+
+**CORRECTED 2026-08-22.** Production R2 **is** configured — all five variables verified SET on the live engine (dashboard-set, not declared in `render.yaml`). The claim below was inferred from declared state and was wrong. Storage being *configured* is still not storage being *reachable*, which only #827's `HeadBucket` probe can establish.
 
 Three consequences, stated plainly:
 
