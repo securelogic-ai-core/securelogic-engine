@@ -1,9 +1,34 @@
 # ADR-0010 — Vendor Assurance and Vendor Engagements are two independent evidence spines
 
-- **Status:** **OPEN — decision required.** Raised 2026-08-21 by the VA-3 staging
-  operational exercise. No option is chosen here; this ADR states the question,
-  the evidence, and the options, so the answer is deliberate rather than
-  emergent.
+- **Status:** **RATIFIED — Option 4** (operator ruling, 2026-08-22, ahead of
+  the 08-28 deadline). Raised 2026-08-21 by the VA-3 staging operational
+  exercise.
+
+  **The ruling, as given:** convergence happens AT THE FINDING, not through
+  forced document<->engagement coupling. Vendor Assurance may have multiple
+  legitimate evidence/assessment spines — Vendor -> Document -> CUEC -> Finding,
+  and Vendor -> Engagement/Questionnaire -> Finding — converging through the
+  shared Finding and the downstream governance lifecycle (remediation, risk,
+  exceptions, closure). Findings must preserve sufficient provenance for a user
+  to navigate back to the originating vendor / document / CUEC / assessment /
+  engagement, as applicable. **`engagement_id` is NOT added to
+  `vendor_assurance_documents` merely to manufacture convergence** — a future
+  Option 1/2 revisit remains possible per the "Option 4 now, Option 1 or 2
+  later" recommendation below, but it would be a new decision, not a drift.
+
+  **What this unblocks, exactly:**
+  - **VA-10** (the implementation of this ruling): engagement-arm Finding
+    provenance — the document/CUEC arm shipped as T1-B (held PR #861 +
+    extensions in #862/#863); the `vendor_engagement` arm's back-navigation is
+    the remaining build.
+  - **VA-6** (questionnaire content layer — guidance, metadata, customer
+    questions, templates, scope-tag curation): was held pending this ruling
+    because template/content design could have coupled to a document<->
+    engagement join; under Option 4 it proceeds against the engagement spine
+    alone.
+  - The **VA-7 reporting family** may treat the two spines' findings as one
+    population at the Finding level (already how `vendorFindingLinkage.ts`
+    models it) without waiting for any schema coupling.
 - **Date raised:** 2026-08-21
 - **Decision owner:** **the product owner**, per the ADR-0009 convention
   ("Ruled by the product owner"). Not delegable to implementation: every option
