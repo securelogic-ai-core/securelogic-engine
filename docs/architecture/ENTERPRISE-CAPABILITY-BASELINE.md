@@ -88,7 +88,7 @@ concentrates in the advertised verticals, which is the dangerous shape.
 | **Findings & Remediation** | 88 | 50 | Full lifecycle, severity, policy-driven SLA, closure gate with SoD, `finding_lifecycle_events` history, exceptions distinct from acceptances (SL-EXC-1). Dark/unreached in prod |
 | **Risk Register** | 80 | 45 | Inherent/residual, lifecycle states, treatments, approvals, `finding_risks` M2M. Risk **appetite/tolerance** not explicitly modelled |
 | **Exceptions / Acceptance** | 85 | 40 | WORM record, frozen `sla_due_date_at_request`, SoD by distinct `user_id`, one-live-per-kind. Flag-dark in prod (default-deny verified) |
-| **Vendor Assurance / TPRM** | 70 | **20** | Two independent evidence spines (**ADR-0010**); no engagement↔document link; Finding shows **no** provenance back to CUEC; extraction fails on clean SOC 2; **zero findings ever produced**; prod engine declares the flag ON with **no R2** |
+| **Vendor Assurance / TPRM** | 70 | **20** | Two independent evidence spines (**ADR-0010**); no engagement↔document link; Finding shows **no** provenance back to CUEC; extraction fails on clean SOC 2; **zero findings ever produced**; prod has the flag ON and the surface live (401) but nav-orphaned. *(R2 correction — see §Corrections)* |
 | **Vulnerability Management** | 80 | **28** | Genuinely strong model — occurrence identity `(org, finding, asset)`, declared scan **scope** as the authority for absence, per-source observation ledger, recurrence≠reopen. Undermined by **PLAT-ASSET-1**: the asset estate is effectively empty, and **no scanner ingestion connector exists** |
 | **Pen-Test Management** | 45 | 20 | `pen_test_engagements` + `source_severity`/`cvss_*` on findings. **No scope, methodology, retest or evidence model**; API-only, no UI (PEN-1) |
 | **AI Governance** | **40** | 25 | See §F.1. `ai_systems` is 8 mostly-free-text columns; **no AI-system→control, →framework, →requirement, →policy or →obligation relationship exists**; `ai_governance_assessments.reviewer_id` is `TEXT`, not a user FK |
@@ -257,7 +257,7 @@ ruling, ADR-0011)**.
 |---|---|---|---|
 | **P0-1** | Production is running without every security fix since #799 | 8 commits absent from `main`; 65 Dependabot advisories on default branch | S (the promotion) |
 | **P0-2** | Production has **no support runbooks** and no IR program | All 30 files exist only on `develop` | S (the promotion) |
-| **P0-3** | Vendor Assurance is **flag-ON in production with no R2 on the engine** | `render.yaml`, identical on `main` and `develop` | XS (operator) |
+| **P0-3** | ~~Vendor Assurance flag-ON in production with no R2~~ → **WITHDRAWN.** Production R2 **is** configured; see §Corrections. Residual item is a launch-posture decision, not a defect | Live service read, 2026-08-22 | XS (operator decision) |
 | **P0-4** | #826 Tier 2 gate open | Window 2026-08-25T07:00Z | S (observation) |
 | **P0-5** | Prod DSN repoint / `DATABASE_SSL_SERVERNAME` (R-3) | #799 makes verification mandatory | XS (operator) |
 
@@ -476,6 +476,33 @@ Pen-Test, AI Governance and Operations should be described as roadmap, and
 Vulnerability Management should not be advertised as covering a customer's
 estate until a customer's estate can get into it. That is a positioning
 decision, and it is decision **P-6**, owed now.
+
+---
+
+## Corrections
+
+### 2026-08-22 — the production R2 claim was wrong
+
+The first revision of this baseline stated that the production engine runs
+Vendor Assurance flag-ON **with no R2**, and listed that as **P0-3**. It was
+inferred from `render.yaml`, which does not declare R2 for the production
+engine.
+
+**Verified read-only against the live service** (presence checked, values never
+exposed): **all five R2 variables are SET in production** — dashboard-set, not
+Blueprint-declared. **P0-3 is withdrawn.**
+
+This is the `render.yaml`-declared ≠ synced trap. The baseline's own appendix
+already warned that "all production statements derive from `render.yaml`
+declared state and ancestry checks" — and then a declared-state inference was
+written into the gap register as a P0 anyway. **Treat every remaining
+production claim in this document as declared-state until proven against the
+live service**, which is exactly what OP-1 exists for.
+
+**Unchanged by this correction:** the extraction defect, the absent Finding
+provenance, the two-spine architecture (ADR-0010), and the fact that Vendor
+Assurance has never produced a finding. Vendor Assurance's ER score of 20 does
+not move — nothing about configured storage makes an unproven workflow proven.
 
 ---
 
