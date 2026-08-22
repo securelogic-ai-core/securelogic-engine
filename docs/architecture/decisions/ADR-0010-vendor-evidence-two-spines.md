@@ -284,3 +284,54 @@ Until this ADR is resolved:
 - **Do not** add a second evidence-upload surface to either spine.
 - Any PR that links the two spines must reference this ADR and state which
   option it implements.
+
+---
+
+## Post-ratification validation (2026-08-22)
+
+The Option 4 ruling was validated against repository reality by three
+independent deep reads (document spine; engagement spine + evidence model;
+finding lifecycle + downstream governance) before being treated as final.
+**Verdict: SUPPORTED — no contradiction found.** The full evidence record and
+the T2-A architecture it feeds are in ADR-0012.
+
+What the validation established, in brief:
+
+1. **The spines are structurally independent as claimed.** No engagement
+   reference exists anywhere on `vendor_assurance_documents` (migrations
+   `20260610`–`13`, `20261036`, and every `vendorAssurance*` route — zero
+   hits). Spine B's only governance edge is
+   `vendor_assurance_cuecs.promoted_finding_id` (FK + `promotion_requires_gap`
+   CHECK, idempotent, one-way).
+2. **Finding-level convergence is already platform doctrine**, stated verbatim
+   in migration headers `20261030` ("A pen-test finding is a Finding: same
+   table, same two-axis state machine, same SLA, same Risk Register
+   relationship, same evidence, same closure gates"), `20261032`, and
+   `20261034`. Option 4 ratifies existing practice; every other option would
+   have created a second convergence point.
+3. **The implementation substrate already exists on held branches**: the
+   4-arm `vendorFindingLinkage.ts` union (#862/#863), Finding→CUEC
+   back-navigation (#861/T1-B), and the VA-7 rollups (#867) all model the two
+   spines' findings as one population at the Finding — none requires schema
+   coupling.
+4. **The supersede-on-pass ruling composes cleanly with Option 4**: a later
+   PASS is a source observation, named at read (`superseded_by_source`),
+   never an auto-closure — the fourth machines-observe-humans-decide
+   appearance. Finding closure remains governed solely by the unified Finding
+   lifecycle (held branch `feat/va-supersede-on-pass`).
+5. **One catalogued defect sits inside Option 4 without contradicting it**:
+   `source_type='vendor_review'` has two writers with incompatible
+   `source_id` semantics (CUEC promotion writes `vendors.id`;
+   `vendorAssessments.ts` writes `vendor_assessments.id` — see
+   `docs/validation/VENDOR-SOURCE-ID-AMBIGUITY-INVESTIGATION.md`). The held
+   linkage layer routes around it via the FK arm. **Enforcement addendum:** a
+   new findings producer must never reuse an existing `source_type` value
+   with different `source_id` pointer semantics; it takes a new value and a
+   new CHECK entry (the `20260928` pointer-type rule, now stated as an ADR
+   obligation).
+
+**Numbering note:** ADR-0011 is consumed by the admin-network deferral
+(PR #856). The evidence-lifecycle architecture that this ruling unblocks is
+therefore **ADR-0012**, and the mis-filed
+`ADR-0001-finding-affected-vendor-resolution.md` on its held branch should be
+renumbered before merge.
