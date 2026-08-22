@@ -2,10 +2,21 @@
  * vendors.ts — Vendor risk primitives API
  *
  * Vendors are a first-class platform primitive: they represent third parties
- * the organization depends on. Every vendor record is org-scoped. Findings
- * originating from vendor reviews reference the vendor via source_type =
- * 'vendor_review' and source_id = vendors.id (convention, not FK — the
- * source_id column on findings is polymorphic).
+ * the organization depends on. Every vendor record is org-scoped.
+ *
+ * HOW A FINDING REACHES ITS VENDOR — do not answer this from source_id.
+ * This header used to say "source_id = vendors.id", which contradicted both the
+ * route list two lines below it and every query in this file, and is the
+ * probable origin of the divergence that kept CUEC-promoted gaps off the vendor
+ * page. `findings.source_id` is a POLYMORPHIC column with NO foreign key, and
+ * its meaning is NOT uniform across the writers of `source_type='vendor_review'`
+ * — `vendorAssessments.ts` writes a `vendor_assessments.id` there and the Vendor
+ * Assurance CUEC promotion writes a `vendors.id`.
+ *
+ * The vendor <- finding relationship is therefore defined in exactly ONE place,
+ * `src/api/lib/vendorFindingLinkage.ts`, over three arms (assessment, review
+ * cycle, CUEC promotion). Read that file before adding a reader; do not
+ * reintroduce a local join on source_id.
  *
  * Routes:
  *   POST   /api/vendors                  — create vendor
@@ -13,7 +24,7 @@
  *   GET    /api/vendors/:id              — get single vendor
  *   PATCH  /api/vendors/:id              — update vendor fields (supports archiving)
  *   GET    /api/vendors/:id/risk-score   — compute + persist vendor risk score
- *   GET    /api/vendors/:id/findings     — findings linked to vendor via assessments
+ *   GET    /api/vendors/:id/findings     — findings linked to vendor (all three linkages)
  *
  * No hard-delete route. Vendors are archived via PATCH status=archived.
  * Hard delete is deferred: assessments hold vendor_id FKs (ON DELETE SET NULL)
@@ -26,6 +37,11 @@ import { Router } from "express";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { csvRow } from "../lib/csvExport.js";
+import {
+  VENDOR_FINDING_LINKAGE_SQL,
+  VENDOR_FINDING_EDGES_SQL,
+  vendorFindingLinkagePriority,
+} from "../lib/vendorFindingLinkage.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { assetRegistryEnabled } from "../lib/assetRegistryFeatureFlag.js";
 import { registerAsset } from "../lib/assetRegistrar.js";
@@ -440,22 +456,29 @@ router.get(
       // at all for a vendor that had open findings. A truncation is not a zero, and
       // a count derived from a bounded page is a cap wearing a count's clothes.
       //
-      // Findings link to the ASSESSMENT (source_id = vendor_assessments.id), never
-      // to the vendor directly — the vendor is reached through the join, the same
-      // linkage GET /api/vendors/:id/findings uses.
+      // A finding reaches its vendor by ALL THREE linkages — assessment, review
+      // cycle, and Vendor Assurance CUEC promotion — from the one shared
+      // definition in vendorFindingLinkage.ts. This badge is the first place a
+      // customer looks after promoting a gap, and it counted only the assessment
+      // arm: a vendor whose findings came from a review cycle, or from a promoted
+      // CUEC, printed no badge at all. A count that silently omits two of three
+      // relationships is a zero wearing a count's clothes, exactly like the capped
+      // page it replaced.
+      //
+      // EDGES, not the full linkage: one row per (finding, vendor), so a finding
+      // matching more than one arm is still counted once.
       //
       // Both populations are returned: active_findings_count is the canonical
       // enterprise metric (operational_status <> 'closed'); open_findings_count is
       // the strictly-open population these surfaces display today.
       const findingCounts = (predicate: string) => `
         (SELECT COUNT(*)
-           FROM findings f
-           JOIN vendor_assessments va
-             ON va.id::text = f.source_id::text
-            AND f.source_type = 'vendor_review'
-          WHERE va.vendor_id = vendors.id
-            AND va.organization_id = vendors.organization_id
-            AND f.organization_id = vendors.organization_id
+           FROM vendor_finding_edges l
+           JOIN findings f
+             ON f.id = l.finding_id
+            AND f.organization_id = l.organization_id
+          WHERE l.vendor_id = vendors.id
+            AND l.organization_id = vendors.organization_id
             AND ${predicate})::int
       `;
 
@@ -479,6 +502,14 @@ router.get(
       // filter and the never_assessed_count aggregate are also built from.
       const result = await pg.query(
         `
+        -- Computed ONCE for the whole page, not once per vendor per count.
+        -- MATERIALIZED is explicit rather than relied upon: the CTE is referenced
+        -- from two correlated scalar subqueries, and an inlined three-arm UNION
+        -- re-evaluated per vendor row is the difference between one scan and
+        -- 2N of them.
+        WITH vendor_finding_edges AS MATERIALIZED (
+          ${VENDOR_FINDING_EDGES_SQL}
+        )
         SELECT ${VENDOR_SELECT},
                ${findingCounts("f.status = 'open'")}                  AS open_findings_count,
                ${findingCounts(sqlFindingActive("f.operational_status"))} AS active_findings_count,
@@ -643,20 +674,24 @@ router.get(
                 AND f.severity = 'High'
             )                                                                AS high_findings
           FROM vendors v
+          -- ALL THREE linkages, from the one shared definition, so this summary
+          -- and the vendor page cannot disagree about which findings belong to a
+          -- vendor. The hand-rolled UNION this replaces had two arms and omitted
+          -- every CUEC-promoted gap.
+          --
+          -- It ALSO selected only (vendor_id, id, status, severity) while the
+          -- aggregates above filter on f.operational_status — a column the
+          -- derived table did not expose. Postgres rejected the whole statement
+          -- with "column f.operational_status does not exist", so this endpoint
+          -- returned 500 on every call, for every organisation. operational_status
+          -- is now selected, which is what makes the aggregates resolvable.
           LEFT JOIN (
-            SELECT va.vendor_id, f.id, f.status, f.severity
-            FROM findings f
-            JOIN vendor_assessments va
-              ON va.id = f.source_id
-             AND f.source_type = 'vendor_review'
-             AND va.organization_id = $1
-            UNION ALL
-            SELECT vr.vendor_id, f.id, f.status, f.severity
-            FROM findings f
-            JOIN vendor_reviews vr
-              ON vr.id = f.source_id
-             AND f.source_type = 'vendor_cycle_review'
-             AND vr.organization_id = $1
+            SELECT l.vendor_id, f.id, f.status, f.severity, f.operational_status
+            FROM (${VENDOR_FINDING_EDGES_SQL}) l
+            JOIN findings f
+              ON f.id = l.finding_id
+             AND f.organization_id = l.organization_id
+            WHERE l.organization_id = $1
           ) f ON f.vendor_id = v.id
           WHERE v.organization_id = $1
             AND v.status = 'active'
@@ -1221,6 +1256,17 @@ router.get(
       params.push(limit);
       const limitParam = params.length;
 
+      // ALL THREE vendor->finding linkages, from the one shared definition.
+      // The two source_id joins that used to live here excluded every
+      // CUEC-promoted Vendor Assurance gap, so a customer who reviewed a SOC 2,
+      // recorded a gap, promoted it, then opened the vendor saw nothing — the
+      // most damaging symptom of the defect, because it reads as a silent
+      // failure of the promotion rather than a missing join.
+      //
+      // `assessment_id` / `assessment_type` / `performed_at` keep their names for
+      // wire compatibility; `linkage` is the honest discriminator, and for a CUEC
+      // row `assessment_id` is the CUEC id, not an assessment that never existed.
+      // DISTINCT ON keeps one row per finding, preferring the FK-enforced arm.
       const result = await pg.query<{
         id: string;
         title: string;
@@ -1230,53 +1276,35 @@ router.get(
         description: string | null;
         created_at: string;
         updated_at: string;
+        linkage: string;
         assessment_id: string;
         assessment_type: string;
         performed_at: string | null;
       }>(
         `
-        SELECT
-          f.id,
-          f.title,
-          f.severity,
-          f.status,
-          f.domain,
-          f.description,
-          f.created_at,
-          f.updated_at,
-          va.id              AS assessment_id,
-          va.assessment_type AS assessment_type,
-          va.performed_at    AS performed_at
-        FROM findings f
-        JOIN vendor_assessments va
-          ON va.id::text = f.source_id::text
-          AND f.source_type = 'vendor_review'
-        WHERE va.vendor_id = $1
-          AND f.organization_id = $2
-          ${statusClause}
-
-        UNION ALL
-
-        SELECT
-          f.id,
-          f.title,
-          f.severity,
-          f.status,
-          f.domain,
-          f.description,
-          f.created_at,
-          f.updated_at,
-          vr.id                 AS assessment_id,
-          'vendor_cycle_review' AS assessment_type,
-          vr.performed_at       AS performed_at
-        FROM findings f
-        JOIN vendor_reviews vr
-          ON vr.id::text = f.source_id::text
-          AND f.source_type = 'vendor_cycle_review'
-        WHERE vr.vendor_id = $1
-          AND f.organization_id = $2
-          ${statusClause}
-
+        SELECT * FROM (
+          SELECT DISTINCT ON (f.id)
+            f.id,
+            f.title,
+            f.severity,
+            f.status,
+            f.domain,
+            f.description,
+            f.created_at,
+            f.updated_at,
+            l.linkage          AS linkage,
+            l.source_record_id AS assessment_id,
+            l.source_label     AS assessment_type,
+            l.source_at        AS performed_at
+          FROM findings f
+          JOIN (${VENDOR_FINDING_LINKAGE_SQL}) l
+            ON l.finding_id      = f.id
+           AND l.organization_id = f.organization_id
+          WHERE l.vendor_id       = $1
+            AND f.organization_id = $2
+            ${statusClause}
+          ORDER BY f.id, ${vendorFindingLinkagePriority("l.linkage")}
+        ) q
         ORDER BY created_at DESC
         LIMIT $${limitParam}
         `,
