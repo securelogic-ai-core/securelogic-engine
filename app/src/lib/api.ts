@@ -7784,6 +7784,15 @@ export type VendorEngagementPromotionResult = {
     title: string;
     severity_rationale: string;
   }>;
+  /** Supersede-on-pass ruling (2026-08-22): open findings whose controls now
+   *  report pass/not_applicable. Named, never auto-closed. */
+  superseded_by_source: Array<{
+    finding_id: string;
+    reference: string;
+    requirement_id: string;
+    current_response: "pass" | "not_applicable";
+    as_of: string;
+  }>;
 };
 
 export async function promoteVendorEngagementFindings(

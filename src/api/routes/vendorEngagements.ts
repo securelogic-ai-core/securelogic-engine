@@ -78,8 +78,65 @@ import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findi
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
+
+/* =========================================================
+   Supersede-on-pass observation (ruled 2026-08-22).
+
+   A PASS SUPERSEDES NOTHING AUTOMATICALLY — the fourth appearance of the
+   machines-observe-humans-decide principle (scanner reappearance never
+   reopens; monitoring recommendation never transitions; a pen-test retest
+   never closes; this: an engagement control transitioning to pass never
+   closes the finding it once promoted). Closure stays with the human gate
+   (SoD, evidence, decision_state); the machine's obligation is to NAME the
+   divergence, everywhere a human is looking, and to DERIVE it fresh at read
+   rather than caching a marker that would itself go stale the moment the
+   vendor revises again. finding_lifecycle_events is deliberately NOT used:
+   it is a closed-vocabulary TRANSITION ledger, and a pass is an observation.
+
+   `pass` and `not_applicable` are both "the source no longer asserts a gap",
+   but they are DIFFERENT assertions ("we do it" vs "does not apply") and a
+   human closing on the second is often adjudicating a scope dispute — so the
+   row says which. `as_of` is requirement_responses.assessed_at: when the
+   vendor last asserted this answer (the portal upsert is its only writer).
+   ========================================================= */
+type SupersededBySource = {
+  finding_id: string;
+  reference: string;
+  requirement_id: string;
+  current_response: "pass" | "not_applicable";
+  as_of: string;
+};
+
+/** Open vendor_engagement findings of this engagement whose control's CURRENT
+ *  response no longer asserts a gap. Tenant-first on both legs — the join
+ *  must never be able to plan a cross-org read. */
+async function listFindingsSupersededBySource(
+  organizationId: string,
+  engagementId: string
+): Promise<SupersededBySource[]> {
+  const rows = await pg.query<SupersededBySource>(
+    `SELECT f.id AS finding_id, r.reference_id AS reference, f.requirement_id,
+            rr.status AS current_response, rr.assessed_at AS as_of
+       FROM findings f
+       JOIN requirement_responses rr
+         ON rr.organization_id = f.organization_id
+        AND rr.engagement_id = $2
+        AND rr.requirement_id = f.requirement_id
+       JOIN requirements r ON r.id = f.requirement_id
+      WHERE f.organization_id = $1
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id = $2
+        AND f.requirement_id IS NOT NULL
+        AND rr.status IN ('pass', 'not_applicable')
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY r.reference_id, f.id`,
+    [organizationId, engagementId]
+  );
+  return rows.rows;
+}
 
 function orgOf(req: Request): string | null {
   return (
@@ -382,12 +439,32 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       [id, organizationId]
     );
 
+    // The engagement view previously said nothing about findings at all — so
+    // it could assert "this control passes" while the finding it once
+    // promoted stayed open, with the divergence visible nowhere. Derived
+    // fresh on every read (the supersede-on-pass ruling, 2026-08-22): counts
+    // plus the named list of open findings whose controls no longer assert a
+    // gap. Nothing here transitions anything.
+    const findingsSummary = await pg.query<{ total: string; open: string }>(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE ${sqlFindingActive("operational_status")})::text AS open
+         FROM findings
+        WHERE organization_id = $2 AND source_type = 'vendor_engagement' AND source_id = $1`,
+      [id, organizationId]
+    );
+    const superseded = await listFindingsSupersededBySource(organizationId, id);
+
     res.status(200).json({
       engagement: result.rows[0],
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
         mandatory: Number(scope.rows[0]?.mandatory ?? "0"),
+      },
+      findings: {
+        total: Number(findingsSummary.rows[0]?.total ?? "0"),
+        open: Number(findingsSummary.rows[0]?.open ?? "0"),
+        superseded_by_source: superseded,
       },
     });
   } catch (err) {
@@ -1294,6 +1371,24 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
       scheduleVendorScoreRecompute(organizationId, eng.rows[0]!.vendor_id);
     }
 
+    // Supersede-on-pass observation (ruled 2026-08-22): controls that now
+    // report pass/not_applicable are ABSENT from the promoted set, so their
+    // previously promoted findings would otherwise vanish from this summary
+    // while staying open — and a resolution the summary hides is a resolution
+    // nobody reviews. Name them; close nothing.
+    const superseded = await listFindingsSupersededBySource(organizationId, id);
+    if (superseded.length > 0) {
+      logger.info(
+        {
+          event: "vendor_engagement_findings_not_closed_on_pass",
+          organizationId,
+          engagementId: id,
+          count: superseded.length,
+        },
+        `${superseded.length} open finding(s) NOT closed automatically — the source now reports pass/not_applicable for their controls; closure remains a human decision through the ordinary gate`
+      );
+    }
+
     writeAuditEvent({
       organizationId,
       actorUserId: userOf(req),
@@ -1307,6 +1402,14 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
           acc[f.severity] = (acc[f.severity] ?? 0) + 1;
           return acc;
         }, {}),
+        // Capped so the payload stays operationally small; the full list is
+        // in the response and derivable at any time.
+        not_closed_superseded_by_source: {
+          count: superseded.length,
+          findings: superseded
+            .slice(0, 20)
+            .map((s) => ({ id: s.finding_id, current_response: s.current_response })),
+        },
         methodology_version: METHODOLOGY_VERSION,
       },
       ipAddress: req.ip ?? null,
@@ -1322,6 +1425,7 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
         title: f.title,
         severity_rationale: f.severity_rationale,
       })),
+      superseded_by_source: superseded,
     });
   } catch (err) {
     logger.error({ event: "finding_promotion_failed", organizationId, err }, "Finding promotion failed");

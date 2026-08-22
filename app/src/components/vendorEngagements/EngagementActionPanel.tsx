@@ -429,13 +429,26 @@ export default function EngagementActionPanel({
             run(
               () => promoteFindings(engagementId),
               (r: {
-                result: { promoted: number; created: number; updated: number };
-              }) =>
-                setNotice(
+                result: {
+                  promoted: number;
+                  created: number;
+                  updated: number;
+                  superseded_by_source?: Array<{ finding_id: string }>;
+                };
+              }) => {
+                const base =
                   r.result.promoted === 0
                     ? "No promotable gaps — no failed, partial or unanswered controls."
-                    : `Promoted ${r.result.promoted} control gap${r.result.promoted === 1 ? "" : "s"} to Findings (${r.result.created} new, ${r.result.updated} updated).`
-                )
+                    : `Promoted ${r.result.promoted} control gap${r.result.promoted === 1 ? "" : "s"} to Findings (${r.result.created} new, ${r.result.updated} updated).`;
+                // Supersede-on-pass ruling: a pass closes nothing — the human
+                // is told, here, that open findings now have passing controls.
+                const superseded = r.result.superseded_by_source?.length ?? 0;
+                setNotice(
+                  superseded === 0
+                    ? base
+                    : `${base} ${superseded} open finding${superseded === 1 ? "" : "s"} NOT auto-closed — the source now reports pass or N/A for ${superseded === 1 ? "its control" : "their controls"}; review and close through the normal gate.`
+                );
+              }
             )
           }
         />
