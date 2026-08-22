@@ -9,11 +9,12 @@
  * schedule a recompute whenever a vendor-linked finding's lifecycle changes.
  *
  * The finding population is the CANONICAL set of ACTIVE findings linked to the
- * vendor by ANY of the three vendor->finding relationships — point-in-time
- * assessments, review cycles, and Vendor Assurance CUEC promotions — as defined
- * once in `vendorFindingLinkage.ts`. The assessment-create path once counted
- * only the first of those, and the CUEC arm was missing entirely; sharing one
- * definition is what stops the set from drifting per reader again.
+ * vendor by ANY of the four vendor->finding relationships — point-in-time
+ * assessments, review cycles, Vendor Assurance CUEC promotions, and engagement
+ * finding promotions — as defined once in `vendorFindingLinkage.ts`. The
+ * assessment-create path once counted only the first of those, and the CUEC and
+ * engagement arms were missing entirely; sharing one definition is what stops
+ * the set from drifting per reader again.
  *
  * Tenancy: `recomputeAndPersistVendorRiskScore` / `resolveVendorIdForFinding`
  * use the ambient `pg` proxy and MUST run inside a tenant scope (a route's
