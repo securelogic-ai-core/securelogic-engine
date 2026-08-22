@@ -53,15 +53,33 @@ backwards:**
 
 > **Every flag the three unconditional workflows depend on is OFF in production.
 > The one workflow that is blocked, unproven and conditional is the only one
-> that is ON — and the production engine declares no R2 at all.**
+> that is ON.**
 
-The practical consequence today: a production customer who finds the Vendor
-Assurance upload gets **HTTP 500 and a document row asserting their file is
-corrupt** (the defect PR #827 fixes). Meanwhile the three workflows we intend to
-advertise are invisible.
+### CORRECTION 2026-08-22 — the R2 half of this finding was wrong
 
-**This is the single most important operational item in this ruling**, and it is
-not a code change — it is flag state.
+An earlier revision of this ruling stated that the production engine has **no
+R2**, and therefore that a customer uploading a SOC 2 would get HTTP 500 with a
+row asserting their file was corrupt. **That was incorrect.** It was inferred
+from `render.yaml`, which does not declare R2 for the production engine.
+
+**Verified against the live service** (`srv-d5vmr37fte5s73cspe1g`, read-only,
+presence checked without exposing values): **all five R2 variables are SET in
+production** — `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+`R2_BUCKET`, `R2_ENDPOINT`. They are dashboard-set, not Blueprint-declared.
+
+This is the **declared ≠ synced** trap, and reasoning from declared state
+produced a false production defect. The same inference appears in PR #827's
+description; that premise needs the same correction.
+
+**What remains true:** the flag is genuinely `true` in production,
+`/api/vendor-assurance/documents` answers **401** (live behind auth), and the
+production app on `011e1f1d` renders the legacy navigation with no
+vendor-assurance entry — so the surface is reachable by URL, not by navigation.
+
+**What is no longer claimed:** that Vendor Assurance is actively broken in
+production for want of storage. Storage is configured. Whether the bucket is
+*reachable* is a separate question that only PR #827's `HeadBucket` readiness
+probe can answer, and that PR is unmerged.
 
 ## 2. Activation list
 
@@ -71,14 +89,20 @@ promotion. **Not now — the freeze holds and these are production changes.**
 **Turn ON (7):** the seven flags above marked false/undeclared.
 
 **Decide, before Sept 15 (1):** `SECURELOGIC_VENDOR_ASSURANCE_ENABLED` in
-production. Two acceptable outcomes, no third:
+production. **Restated after the correction above** — this is now a launch-posture
+judgement, not a fix for a broken thing:
 
-- **Wire R2 on the production engine**, merge #827 and #855, and let VA-3 prove
-  the path; or
-- **Turn the flag OFF** until those are true.
+- **Leave it ON** and let the promotion, #855 and VA-3 settle whether the
+  workflow is advertisable. Defensible: storage is configured, the surface is
+  nav-orphaned in production, and no customer is currently being told their file
+  is corrupt; or
+- **Turn it OFF** until VA-3 passes. Also defensible: an unproven workflow
+  reachable in production ahead of its own acceptance gate is real exposure, and
+  turning it off costs almost nothing because it is not in the navigation.
 
-Leaving it ON without R2 is the one option that must not survive this ruling.
-**Operator decision — recorded, not taken here.**
+**Operator decision — recorded, not taken here.** The earlier framing of "one
+option that must not survive" rested on the incorrect R2 premise and is
+withdrawn.
 
 **Leave OFF:** every flag belonging to an out-of-scope capability.
 
@@ -137,7 +161,7 @@ already runs in production. Strongest of the four.
 | 1 | Clean-SOC 2 extraction fixed and deployed | PR #855, 8/8 green, **unmerged** |
 | 2 | **VA-3 passes** on staging, in the product UI | **Blocked** on (1) |
 | 3 | Finding provenance back to vendor/document/CUEC/reviewer (ADR-0010 Option 4) | **Not built** |
-| 4 | Production R2 wired, or the flag off (§2) | **Not done** |
+| 4 | Production storage **reachable** (not merely configured) — proven by #827's `HeadBucket` readiness probe | **Unproven.** R2 is configured (§1 correction); reachability is untested |
 
 **Decision point: 2026-09-05, the feature cutoff.** If all four are not true by
 then, **Vendor Assurance drops to roadmap** and Sept 15 advertises three
