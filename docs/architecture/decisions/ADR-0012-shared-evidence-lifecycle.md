@@ -1,9 +1,33 @@
 # ADR-0012 — The shared evidence lifecycle: origin + links, confirm-per-context, validity-in-predicate
 
-- **Status: PROPOSED** (2026-08-22). Drafted from the ADR-0010 post-ratification
-  validation; awaiting operator ratification of this model and the five
-  decisions in §6. Ratification of this ADR is the gate for T2-A
-  implementation.
+- **Status: RATIFIED — as recommended** (operator ruling, 2026-08-22, same
+  day as proposal). The ruling, as given:
+
+  > ADR-0012 is ratified as recommended, including the clarification that
+  > consequential governance decisions snapshot their relied-upon
+  > evidence-link set — IDs plus sha256 — in the decision-time audit payload.
+  > Migrations 20261051–55 are **authorized** for T2-A, subject to the
+  > established schema-slot and release-boundary rules. Preserved as a
+  > standing rule: **evidence history is immutable — correction occurs
+  > through supersession/new records, never destructive mutation of
+  > historical evidence relied upon by prior decisions.** T2-A implementation
+  > remains gated behind the promotion and the held-train/schema-slot
+  > sequence.
+
+  The five §6 decisions are therefore ruled per their recommendations:
+  (1) strict gate = separate opt-in, default byte-identical to today;
+  (2) `valid_until` required at confirmation, route-enforced, legacy badged;
+  (3) the Spine B directional pointer is ratified (20261055 authorized with
+  the package); (4) reuse open across all target types, per-context
+  confirmation as the control; (5) `attested` remains out of T2-A scope.
+
+  **Ratified clarification (decision-basis snapshot):** every consequential
+  governance decision (finding closure, engagement decision, acceptance/
+  exception approval, AI use approval) snapshots the set of evidence links it
+  relied upon — link ids plus artifact `sha256` — in its decision-time audit
+  payload, the `gap_basis` pattern applied to decision-time evidence. Zero
+  schema cost; reconstruction of "what we relied on at that moment" becomes a
+  read, not a replay.
 - **Decision owner:** the product owner (ADR-0009 convention). §6 items are
   product-model positions, not technical preferences.
 - **Applies to:** `evidence`, `evidence_analysis`, the finding closure gate
