@@ -115,6 +115,12 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // credential for a party outside the organisation.
   "vendorEngagements.ts",
   "vendorSignalContext.ts",
+  // SL-OCC-3 (classified here by the stacked PLAT-ASSET-1 branch — the file
+  // shipped on the held SL-OCC-3 branch without a classification entry, which
+  // fails seatRouteCoverage there). Deny-all: importing a scan report creates
+  // findings and occurrences at scale, a governance act; denyContributor()
+  // is on the route.
+  "vulnerabilityScanImports.ts",
   "webhooks.ts"
 ];
 
