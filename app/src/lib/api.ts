@@ -8039,6 +8039,58 @@ export async function getFindingOccurrences(
   }
 }
 
+/**
+ * T1-B — where a promoted Vendor Assurance finding came from.
+ *
+ * `source` is a three-state answer, not a nullable payload:
+ *   "vendor_assurance_cuec" — promoted from a reviewed CUEC; `provenance` is set
+ *   "vendor_assessment"     — a vendor_review finding with no CUEC. Legitimate
+ *   "not_applicable"        — some other source_type entirely
+ *
+ * Absence is an answer rather than an error, so the panel can say which of those
+ * three it is instead of rendering an empty box. Fails soft like every other
+ * finding-detail panel: a provenance lookup must never take down the page.
+ */
+export interface FindingVendorProvenance {
+  finding_id: string;
+  source_type: string;
+  source: "vendor_assurance_cuec" | "vendor_assessment" | "not_applicable";
+  provenance: {
+    vendor: { id: string; name: string };
+    document: {
+      id: string;
+      original_filename: string;
+      sha256: string;
+      document_type_hint: string | null;
+      processing_status: string;
+    };
+    cuec: { id: string; ordinal: number; text: string; review_status: string };
+    determination: {
+      review_status: string;
+      reason: string | null;
+      decided_at: string | null;
+      decided_by: { user_id: string; email: string | null; name: string | null } | null;
+      basis: unknown;
+    };
+  } | null;
+}
+
+export async function getFindingVendorProvenance(
+  token: string,
+  findingId: string
+): Promise<FindingVendorProvenance | null> {
+  try {
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/vendor-provenance`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as FindingVendorProvenance;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFindingRiskLinks(
   token: string,
   findingId: string
