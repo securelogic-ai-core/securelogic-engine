@@ -39,7 +39,13 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requirePremiumOrCorePlatform } from "../lib/corePlatformCapability.js";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
-import { validateAiSystemCreate } from "../lib/aiSystemValidation.js";
+import {
+  validateAiSystemCreate,
+  EU_AI_ACT_TIERS,
+  HUMAN_OVERSIGHT_LEVELS,
+  SENSITIVE_DATA_CATEGORIES,
+  MATERIAL_GOVERNANCE_FIELDS
+} from "../lib/aiSystemValidation.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 import { enforceEntityLimit } from "../lib/entityLimit.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -66,11 +72,21 @@ const AI_SYSTEM_SELECT = `
   name,
   use_case,
   owner_user_id,
+  business_owner_user_id,
   model_type,
   data_classification,
   deployment_status,
   criticality,
   risk_classification,
+  eu_ai_act_tier,
+  human_oversight_level,
+  sensitive_data_categories,
+  review_cadence_days,
+  next_review_due,
+  material_state_version,
+  reassessment_recommended_at,
+  reassessment_reason,
+  (next_review_due IS NOT NULL AND next_review_due < CURRENT_DATE) AS review_overdue,
   created_at,
   updated_at
 `;
@@ -722,9 +738,145 @@ router.patch(
         addField("risk_classification", v ?? null);
       }
 
+      // ── Governance enrichment fields (T2-C) ───────────────────────────────
+      // Settable via PATCH only: the create flow is create-then-edit, and
+      // keeping the closed-vocabulary validation in exactly one place is worth
+      // more than saving the second request. Vocabularies are imported from
+      // aiSystemValidation.ts — the single declaration the migration CHECKs
+      // mirror — never re-declared here.
+
+      if ("business_owner_user_id" in body) {
+        const v = body["business_owner_user_id"];
+        if (v !== null && !isUuid(v)) {
+          res.status(400).json({ error: "business_owner_user_id_must_be_uuid_or_null" });
+          return;
+        }
+        if (v !== null) {
+          // Same-org pre-flight (TENANT_ISOLATION_STANDARD: cross-row refs are
+          // verified, not trusted). The legacy owner_user_id predates this rule
+          // and is a recorded follow-up, not a pattern to copy.
+          const owner = await pg.query(
+            `SELECT 1 FROM users WHERE id = $1 AND organization_id = $2`,
+            [v, organizationId]
+          );
+          if ((owner.rowCount ?? 0) === 0) {
+            res.status(400).json({ error: "business_owner_user_not_in_organization" });
+            return;
+          }
+        }
+        addField("business_owner_user_id", v ?? null);
+      }
+
+      if ("eu_ai_act_tier" in body) {
+        const v = body["eu_ai_act_tier"];
+        if (v !== null && (typeof v !== "string" || !EU_AI_ACT_TIERS.has(v))) {
+          res.status(400).json({ error: "invalid_eu_ai_act_tier", allowed: [...EU_AI_ACT_TIERS] });
+          return;
+        }
+        addField("eu_ai_act_tier", v ?? null);
+      }
+
+      if ("human_oversight_level" in body) {
+        const v = body["human_oversight_level"];
+        if (v !== null && (typeof v !== "string" || !HUMAN_OVERSIGHT_LEVELS.has(v))) {
+          res.status(400).json({ error: "invalid_human_oversight_level", allowed: [...HUMAN_OVERSIGHT_LEVELS] });
+          return;
+        }
+        addField("human_oversight_level", v ?? null);
+      }
+
+      if ("sensitive_data_categories" in body) {
+        const v = body["sensitive_data_categories"];
+        // null = "never declared"; [] = "declared: none". Different facts, both legal.
+        if (v !== null) {
+          if (!Array.isArray(v) || v.some((c) => typeof c !== "string" || !SENSITIVE_DATA_CATEGORIES.has(c))) {
+            res.status(400).json({
+              error: "invalid_sensitive_data_categories",
+              allowed: [...SENSITIVE_DATA_CATEGORIES]
+            });
+            return;
+          }
+        }
+        addField("sensitive_data_categories", v === null ? null : [...new Set(v as string[])]);
+      }
+
+      // ── Reassessment clock (T2-D) ─────────────────────────────────────────
+      // Deliberately NOT material fields: setting the clock must not wind the
+      // clock (see MATERIAL_GOVERNANCE_FIELDS).
+
+      if ("review_cadence_days" in body) {
+        const v = body["review_cadence_days"];
+        if (v !== null && (typeof v !== "number" || !Number.isInteger(v) || v <= 0)) {
+          res.status(400).json({ error: "review_cadence_days_must_be_positive_integer_or_null" });
+          return;
+        }
+        addField("review_cadence_days", v ?? null);
+        // A cadence with no explicit due date starts the clock from today —
+        // the same derivation a reviewer would do by hand, done once, here.
+        if (v !== null && !("next_review_due" in body)) {
+          params.push(v);
+          setClauses.push(`next_review_due = CURRENT_DATE + $${params.length}::int`);
+        }
+      }
+
+      if ("next_review_due" in body) {
+        const v = body["next_review_due"];
+        if (v !== null && (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v))) {
+          res.status(400).json({ error: "next_review_due_must_be_iso_date_or_null" });
+          return;
+        }
+        addField("next_review_due", v ?? null);
+      }
+
       if (setClauses.length === 0) {
         res.status(400).json({ error: "no_valid_fields_provided" });
         return;
+      }
+
+      // ── Material change (T2-D) ────────────────────────────────────────────
+      // If any LOAD-BEARING governance field is being written, read the current
+      // row and diff BY VALUE. Re-submitting an unchanged value is not a
+      // material change — a version that bumps on every idempotent save would
+      // make "changed since approval" mean "someone pressed Save", and the
+      // use-approval staleness signal (ai_use_approvals.material_state_version)
+      // would be noise. Only a real difference increments the version and
+      // records the deterministic, plain-language recommendation — mirroring
+      // vendor_engagements.reassessment_reason, and for the same reason: a
+      // recommendation a reviewer cannot interrogate is one they will ignore.
+      const materialFieldsInBody = [...MATERIAL_GOVERNANCE_FIELDS].filter((f) => f in body);
+      let materialChanges: string[] = [];
+      if (materialFieldsInBody.length > 0) {
+        const current = await pg.query<Record<string, unknown>>(
+          `SELECT use_case, deployment_status, criticality, eu_ai_act_tier,
+                  human_oversight_level, sensitive_data_categories
+             FROM ai_systems
+            WHERE id = $1 AND organization_id = $2`,
+          [aiSystemId, organizationId]
+        );
+        if ((current.rowCount ?? 0) === 0) {
+          res.status(404).json({ error: "ai_system_not_found" });
+          return;
+        }
+        const row = current.rows[0]!;
+        const normalize = (f: string, v: unknown): string => {
+          if (f === "sensitive_data_categories") {
+            return v == null ? "null" : JSON.stringify([...(v as string[])].sort());
+          }
+          return v == null ? "null" : String(v);
+        };
+        const changed = materialFieldsInBody.filter(
+          (f) => normalize(f, body[f]) !== normalize(f, row[f])
+        );
+        if (changed.length > 0) {
+          materialChanges = changed;
+          setClauses.push(`material_state_version = material_state_version + 1`);
+          setClauses.push(`reassessment_recommended_at = NOW()`);
+          params.push(
+            `Material change: ${changed.join(", ")} changed on ${new Date().toISOString().slice(0, 10)}. ` +
+              `Assessments and use approvals recorded against the previous state describe a different system.`
+          );
+          setClauses.push(`reassessment_reason = $${params.length}`);
+        }
       }
 
       setClauses.push("updated_at = NOW()");
@@ -749,7 +901,13 @@ router.patch(
         eventType: "ai_system.updated",
         resourceType: "ai_system",
         resourceId: aiSystemId,
-        payload: { fields: setClauses.slice(0, -1).map((s) => s.split(" = ")[0] ?? s) },
+        // material_change names the load-bearing fields that ACTUALLY changed
+        // by value (empty when the PATCH was cosmetic or idempotent) — the
+        // audit trail's half of the material_state_version bump.
+        payload: {
+          fields: setClauses.slice(0, -1).map((s) => s.split(" = ")[0] ?? s),
+          material_change: materialChanges
+        },
         ipAddress: req.ip ?? null
       });
 
