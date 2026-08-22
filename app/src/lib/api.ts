@@ -8075,7 +8075,40 @@ export async function getFindingOccurrences(
 export interface FindingVendorProvenance {
   finding_id: string;
   source_type: string;
-  source: "vendor_assurance_cuec" | "vendor_assessment" | "not_applicable";
+  source:
+    | "vendor_assurance_cuec"
+    | "vendor_assessment"
+    | "vendor_engagement"
+    | "not_applicable";
+  /** VA-10: set only for source === "vendor_engagement"; null there means a
+   *  dangling source_id (convention arm) — reported honestly, not 404'd. */
+  engagement_provenance?: {
+    vendor: { id: string; name: string };
+    engagement: {
+      id: string;
+      title: string | null;
+      engagement_type: string;
+      status: string;
+      decision: string | null;
+      decided_at: string | null;
+      submitted_at: string | null;
+      methodology_version: string;
+    };
+    requirement: {
+      id: string;
+      reference: string | null;
+      title: string | null;
+    } | null;
+    /** Promotion-time snapshot, stamped with the methodology version. */
+    severity_rationale: string | null;
+    /** Today's source assertion — labeled CURRENT in the UI. Per the
+     *  supersede-on-pass ruling a pass here never closes the finding. */
+    current_response: {
+      status: string;
+      as_of: string | null;
+      responder_type: string | null;
+    } | null;
+  } | null;
   provenance: {
     vendor: { id: string; name: string };
     document: {
