@@ -7775,6 +7775,47 @@ export type EngagementParticipantsResponse = {
   has_coordinator: boolean;
 };
 
+/** VA-D1 — what the CUSTOMER sees of vendor-side delegation: shape, not the map. */
+export type EngagementProgress = {
+  total: number;
+  complete: number;
+  outstanding: number;
+  mandatory_total: number;
+  mandatory_complete: number;
+  contributors: Array<{
+    full_name: string;
+    participant_role: string;
+    status: string;
+    assigned: number;
+    complete: number;
+  }>;
+  by_framework: Array<{
+    framework_id: string;
+    framework_name: string;
+    total: number;
+    complete: number;
+    assigned: number;
+    unassigned: number;
+  }> | null;
+  framework_grouping_available: boolean;
+};
+
+export async function getEngagementProgress(
+  token: string,
+  engagementId: string
+): Promise<EngagementProgress | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/progress`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as EngagementProgress;
+  } catch {
+    return null;
+  }
+}
+
 export async function listEngagementParticipants(
   token: string,
   engagementId: string

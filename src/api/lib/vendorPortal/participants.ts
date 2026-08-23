@@ -28,6 +28,7 @@
 
 import { pg } from "../../infra/postgres.js";
 import { mintInviteToken } from "./portalTokens.js";
+import { vacateAssignmentsOfParticipant } from "./assignments.js";
 
 export const PARTICIPANT_ROLES = ["coordinator", "contributor"] as const;
 export type ParticipantRole = (typeof PARTICIPANT_ROLES)[number];
@@ -368,7 +369,7 @@ export async function revokeParticipant(args: {
   participantId: string;
   reason: string;
   revokedBy: { userId: string | null } | { participantId: string };
-}): Promise<{ invites: number; sessions: number }> {
+}): Promise<{ invites: number; sessions: number; assignmentsVacated: number }> {
   const { organizationId, participantId, reason } = args;
 
   const killed = await revokeParticipantCredentials(
@@ -376,6 +377,12 @@ export async function revokeParticipant(args: {
     participantId,
     reason,
     "userId" in args.revokedBy ? args.revokedBy.userId : null
+  );
+
+  const engagement = await pg.query<{ engagement_id: string }>(
+    `SELECT engagement_id FROM vendor_engagement_participants
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [participantId, organizationId]
   );
 
   await pg.query(
@@ -392,5 +399,24 @@ export async function revokeParticipant(args: {
     ]
   );
 
-  return killed;
+  // VA-D1, owner ruling: their outstanding work becomes VISIBLY UNASSIGNED and
+  // waits for a human decision. It is never handed to somebody else — the
+  // system does not know who should inherit it, and guessing would put work in
+  // a colleague's queue that nobody chose to give them. Their name stays on
+  // everything they actually answered; only the forward responsibility is
+  // released, which is the same access-ends-history-stays rule one level up.
+  const engagementId = engagement.rows[0]?.engagement_id ?? null;
+  const vacated = engagementId
+    ? await vacateAssignmentsOfParticipant({
+        organizationId,
+        engagementId,
+        participantId,
+        actor:
+          "participantId" in args.revokedBy
+            ? { participantId: args.revokedBy.participantId }
+            : { userId: args.revokedBy.userId },
+      })
+    : { vacated: 0 };
+
+  return { ...killed, assignmentsVacated: vacated.vacated };
 }

@@ -18,7 +18,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { EngagementParticipant, VendorContact } from "@/lib/api";
+import type { EngagementParticipant, EngagementProgress, VendorContact } from "@/lib/api";
 import { addParticipant, revokeParticipant } from "@/app/actions/engagementParticipants";
 
 const card: React.CSSProperties = {
@@ -45,12 +45,15 @@ export default function ParticipantsSection({
   contacts,
   hasCoordinator,
   loadFailed,
+  progress = null,
 }: {
   engagementId: string;
   participants: EngagementParticipant[];
   contacts: VendorContact[];
   hasCoordinator: boolean;
   loadFailed: boolean;
+  /** VA-D1. Null means the read failed or the engine predates it. */
+  progress?: EngagementProgress | null;
 }): JSX.Element {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -134,6 +137,21 @@ export default function ParticipantsSection({
         >
           No main contact. Contributors can still answer, but <strong>nobody can submit</strong> this
           questionnaire until you name one.
+        </p>
+      )}
+
+      {/* VA-D1 — the reviewer's question is "is the vendor still working on
+          this?", not "how has the supplier divided the labour". Shape only. */}
+      {progress && progress.total > 0 && (
+        <p style={{ margin: "10px 0 0", fontSize: 12, color: "#9ca3af" }}>
+          Vendor progress: <strong style={{ color: "#e5e7eb" }}>
+            {progress.complete} of {progress.total}
+          </strong>{" "}
+          answered
+          {progress.outstanding > 0 ? ` · ${progress.outstanding} still outstanding` : " · complete"}
+          {progress.contributors.length > 1 && (
+            <> · {progress.contributors.length} people contributed</>
+          )}
         </p>
       )}
 

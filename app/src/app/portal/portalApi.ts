@@ -196,6 +196,67 @@ export type PortalResult<T> = {
   body: (T & PortalErrorBody) | null;
 };
 
+
+/* VA-D1 — delegation. */
+
+export type PortalAssignmentItem = {
+  requirement_id: string;
+  reference: string;
+  title: string;
+  mandatory: boolean;
+  framework_id: string;
+  framework_name: string;
+  /** Derived from the real response state — there is no stored completion flag. */
+  complete: boolean;
+  /** Answered, but the reviewer has come back on it since. A separate fact. */
+  clarification_open: boolean;
+  assigned_to_participant_id: string | null;
+  assignee_name: string | null;
+  assigned_at: string | null;
+  assigned_to_you: boolean;
+};
+
+export type PortalAssignments = {
+  items: PortalAssignmentItem[];
+  mine: PortalAssignmentItem[];
+  mine_outstanding: number;
+  unassigned: number;
+  you: { participant_id: string | null; can_manage_work: boolean };
+  /** Null when the assessment covers ONE framework — a single group is not a section. */
+  assignable_frameworks:
+    | Array<{ framework_id: string; framework_name: string; question_count: number }>
+    | null;
+  framework_grouping_available: boolean;
+};
+
+export type PortalProgress = {
+  total: number;
+  complete: number;
+  outstanding: number;
+  assigned: number;
+  unassigned: number;
+  mandatory_total: number;
+  mandatory_complete: number;
+  by_participant: Array<{
+    participant_id: string;
+    full_name: string;
+    participant_role: string;
+    status: string;
+    assigned: number;
+    complete: number;
+    outstanding: number;
+  }>;
+  by_framework: Array<{
+    framework_id: string;
+    framework_name: string;
+    total: number;
+    complete: number;
+    assigned: number;
+    unassigned: number;
+  }> | null;
+  framework_grouping_available: boolean;
+};
+
 /**
  * Same-origin fetch to the portal proxy. Never throws on HTTP errors — every
  * screen decides from `status` (401 → session required; 409/422/… → the

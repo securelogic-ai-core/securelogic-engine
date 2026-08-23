@@ -56,6 +56,13 @@ import {
   resolveParticipant,
   revokeParticipant,
 } from "../lib/vendorPortal/participants.js";
+import {
+  assignFramework,
+  assignableFrameworks,
+  engagementProgress,
+  listAssignmentHistory,
+  setAssignment,
+} from "../lib/vendorPortal/assignments.js";
 import { sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
 
 /**
@@ -1665,7 +1672,8 @@ export async function revokePortalParticipant(req: PortalRequest, res: Response)
       // — including another engagement at the same vendor — is simply absent.
       const target = await resolveParticipant(ctx.organizationId, ctx.engagementId, participantId);
       if (!target) return { code: 404 as const };
-      if (target.status === "revoked") return { code: 200 as const, killed: { invites: 0, sessions: 0 } };
+      if (target.status === "revoked")
+        return { code: 200 as const, killed: { invites: 0, sessions: 0, assignmentsVacated: 0 } };
 
       const killed = await revokeParticipant({
         organizationId: ctx.organizationId,
@@ -1691,6 +1699,7 @@ export async function revokePortalParticipant(req: PortalRequest, res: Response)
         revoked_by_participant_id: ctx.participantId,
         invites_revoked: outcome.killed.invites,
         sessions_revoked: outcome.killed.sessions,
+        assignments_vacated: outcome.killed.assignmentsVacated,
         reason,
       },
       ipAddress: req.ip ?? null,
@@ -1703,6 +1712,407 @@ export async function revokePortalParticipant(req: PortalRequest, res: Response)
       "Portal participant revoke failed"
     );
     res.status(500).json({ error: "portal_participant_revoke_failed" });
+  }
+}
+
+
+/* =========================================================
+   VA-D1 — DELEGATION.
+
+   Access became organisation: the coordinator says who is expected to answer
+   what, and each participant gets a list that is theirs.
+
+   Two facts stay apart everywhere below. ASSIGNED TO is responsibility and
+   lives in vendor_engagement_assignments; ANSWERED BY is authorship and lives,
+   as it always has, on the response's invite. A coordinator answering Susan's
+   question records an answer by the coordinator and leaves the assignment
+   pointing at Susan.
+
+   Completion is never stored. It is derived from requirement_responses using
+   the same condition the submit guard uses, so the board cannot drift from
+   whether the question actually has an answer.
+   ========================================================= */
+
+/**
+ * GET /api/vendor-portal/assignments
+ *
+ * Everyone sees the questionnaire's assignment state — knowing who owns what is
+ * not a privilege on a shared document, it is the point. `mine` is the
+ * Assigned-to-Me view, computed here rather than trusted from a query
+ * parameter: a participant cannot ask for somebody else's list.
+ */
+export async function getPortalAssignments(req: PortalRequest, res: Response): Promise<void> {
+  const ctx = req.portalContext!;
+  try {
+    const payload = await withTenant(ctx.organizationId, async () => {
+      const rows = await pg.query<{
+        requirement_id: string;
+        reference_id: string;
+        title: string;
+        mandatory: boolean;
+        framework_id: string;
+        framework_name: string;
+        answer: string | null;
+        clarification_open: boolean;
+        assigned_to_participant_id: string | null;
+        assignee_name: string | null;
+        assignment_action: string | null;
+        assigned_at: string | null;
+      }>(
+        // Driven from the SCOPE and left-joined to assignments, never the other
+        // way round: a question nobody has touched has no assignment row, and
+        // it is exactly the work a coordinator needs to find.
+        `SELECT si.requirement_id, r.reference_id, r.title, si.mandatory,
+                f.id AS framework_id, f.name AS framework_name,
+                rr.status AS answer,
+                -- VA-D1, requirement 11: work can be outstanding again WITHOUT
+                -- the answer disappearing. There is no per-question reopen flag
+                -- in this schema — clarification is an ENGAGEMENT state plus a
+                -- reviewer comment optionally anchored to one question — so the
+                -- honest per-question signal is: a reviewer comment on this
+                -- question, newer than the vendor's last answer to it.
+                --
+                -- Deliberately a SECOND, separately-named fact rather than
+                -- flipping the complete flag. "Has an answer" and "needs
+                -- rework" are different questions, and collapsing them would
+                -- create exactly the drifting second completion truth the
+                -- ruling forbids.
+                EXISTS (
+                  SELECT 1 FROM vendor_engagement_comments cm
+                   WHERE cm.engagement_id = si.engagement_id
+                     AND cm.organization_id = si.organization_id
+                     AND cm.requirement_id = si.requirement_id
+                     AND cm.author_type = 'internal'
+                     AND cm.visibility = 'vendor'
+                     AND (rr.updated_at IS NULL OR cm.created_at > rr.updated_at)
+                ) AS clarification_open,
+                a.assigned_to_participant_id,
+                c.full_name AS assignee_name,
+                a.assignment_action, a.assigned_at
+           FROM vendor_engagement_scope_items si
+           JOIN requirements r ON r.id = si.requirement_id
+           JOIN frameworks f ON f.id = r.framework_id
+           LEFT JOIN requirement_responses rr
+                  ON rr.requirement_id = si.requirement_id
+                 AND rr.engagement_id = si.engagement_id
+                 AND rr.organization_id = si.organization_id
+           LEFT JOIN vendor_engagement_assignments a
+                  ON a.requirement_id = si.requirement_id
+                 AND a.engagement_id = si.engagement_id
+                 AND a.organization_id = si.organization_id
+                 AND a.superseded_at IS NULL
+           LEFT JOIN vendor_engagement_participants p ON p.id = a.assigned_to_participant_id
+           LEFT JOIN vendor_contacts c ON c.id = p.contact_id
+          WHERE si.engagement_id = $1 AND si.organization_id = $2
+            AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
+          ORDER BY f.name, r.reference_id`,
+        [ctx.engagementId, ctx.organizationId]
+      );
+
+      const frameworks = await assignableFrameworks(ctx.organizationId, ctx.engagementId);
+      return { rows: rows.rows, frameworks };
+    });
+
+    const items = payload.rows.map((row) => ({
+      requirement_id: row.requirement_id,
+      reference: row.reference_id,
+      title: row.title,
+      mandatory: row.mandatory,
+      framework_id: row.framework_id,
+      framework_name: row.framework_name,
+      // Derived, always. There is no stored completion flag to drift.
+      complete: row.answer !== null,
+      // Answered, but the reviewer has come back on it since.
+      clarification_open: row.clarification_open,
+      assigned_to_participant_id: row.assigned_to_participant_id,
+      assignee_name: row.assignee_name,
+      assigned_at: row.assigned_at,
+      assigned_to_you:
+        row.assigned_to_participant_id !== null &&
+        row.assigned_to_participant_id === ctx.participantId,
+    }));
+
+    const mine = items.filter((i) => i.assigned_to_you);
+
+    res.status(200).json({
+      items,
+      mine,
+      // Outstanding means "there is still work here": never answered, OR
+      // answered and reopened by the reviewer since.
+      mine_outstanding: mine.filter((i) => !i.complete || i.clarification_open).length,
+      unassigned: items.filter((i) => i.assigned_to_participant_id === null).length,
+      you: {
+        participant_id: ctx.participantId,
+        can_manage_work: portalCanCoordinate(req),
+      },
+      // Null when the assessment has only one framework: a single group is not
+      // a section, and presenting it as one would invite a coordinator to
+      // "assign a section" and hand over the entire questionnaire.
+      assignable_frameworks: payload.frameworks,
+      framework_grouping_available: payload.frameworks !== null,
+    });
+  } catch (err) {
+    logger.error(
+      { event: "portal_assignments_read_failed", engagementId: ctx.engagementId, err },
+      "Portal assignment read failed"
+    );
+    res.status(500).json({ error: "portal_assignments_read_failed" });
+  }
+}
+
+/**
+ * PUT /api/vendor-portal/assignments/:requirementId
+ *
+ * Assign, reassign or unassign one question. `participant_id: null` unassigns.
+ * Coordinator only — delegating somebody else's work is a management act.
+ */
+export async function putPortalAssignment(req: PortalRequest, res: Response): Promise<void> {
+  const ctx = req.portalContext!;
+  if (!requireCoordinator(req, res)) return;
+  if (!ctx.participantId) {
+    res.status(409).json({
+      error: "legacy_invite_cannot_delegate",
+      message: "This link predates team access. Ask your contact to re-send the assessment.",
+    });
+    return;
+  }
+
+  const requirementId = String(req.params["requirementId"] ?? "").trim();
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const participantId =
+    typeof body.participant_id === "string" && body.participant_id.trim()
+      ? body.participant_id.trim()
+      : null;
+
+  try {
+    const outcome = await withTenant(ctx.organizationId, async () => {
+      const eng = await pg.query<{ status: string }>(
+        `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [ctx.engagementId, ctx.organizationId]
+      );
+      const state = eng.rows[0]?.status as EngagementState | undefined;
+      if (!state) return { code: 401 as const };
+      // Delegating work on a submitted questionnaire would be assigning a task
+      // nobody may perform.
+      if (!isPortalRespondable(state)) return { code: 409 as const };
+
+      const result = await setAssignment({
+        organizationId: ctx.organizationId,
+        engagementId: ctx.engagementId,
+        requirementId,
+        participantId,
+        actor: { participantId: ctx.participantId! },
+        note: typeof body.note === "string" ? body.note.slice(0, 500) : null,
+      });
+      return { code: 200 as const, result };
+    });
+
+    if (outcome.code === 401) {
+      invalidLink(res);
+      return;
+    }
+    if (outcome.code === 409) {
+      res.status(409).json({
+        error: "questionnaire_closed",
+        message: "This questionnaire is no longer open, so work cannot be reassigned.",
+      });
+      return;
+    }
+    if (!outcome.result.ok) {
+      // requirement_not_in_scope and a cross-engagement participant both 404:
+      // neither should tell the caller whether the id exists somewhere else.
+      const status = outcome.result.failure === "participant_revoked" ? 409 : 404;
+      res.status(status).json({ error: outcome.result.failure });
+      return;
+    }
+
+    if (outcome.result.changed) {
+      writeAuditEvent({
+        organizationId: ctx.organizationId,
+        eventType: "vendor_portal.work_assigned",
+        resourceType: "vendor_engagement",
+        resourceId: ctx.engagementId,
+        payload: {
+          requirement_id: requirementId,
+          assigned_to_participant_id: participantId,
+          assignment_action: outcome.result.action,
+          by_participant_id: ctx.participantId,
+        },
+        ipAddress: req.ip ?? null,
+      });
+    }
+
+    res.status(200).json({ ok: true, changed: outcome.result.changed, action: outcome.result.action });
+  } catch (err) {
+    logger.error(
+      { event: "portal_assignment_write_failed", engagementId: ctx.engagementId, err },
+      "Portal assignment write failed"
+    );
+    res.status(500).json({ error: "portal_assignment_write_failed" });
+  }
+}
+
+/**
+ * POST /api/vendor-portal/assignments/framework
+ *
+ * The section action, in the only deterministic form this repository supports.
+ * Expands to one row per currently-scoped requirement of that framework — no
+ * section object is stored, so a richer taxonomy later changes the selection
+ * layer and leaves every historical assignment intact.
+ */
+export async function postPortalFrameworkAssignment(
+  req: PortalRequest,
+  res: Response
+): Promise<void> {
+  const ctx = req.portalContext!;
+  if (!requireCoordinator(req, res)) return;
+  if (!ctx.participantId) {
+    res.status(409).json({
+      error: "legacy_invite_cannot_delegate",
+      message: "This link predates team access. Ask your contact to re-send the assessment.",
+    });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const frameworkId = typeof body.framework_id === "string" ? body.framework_id.trim() : "";
+  const participantId =
+    typeof body.participant_id === "string" && body.participant_id.trim()
+      ? body.participant_id.trim()
+      : null;
+
+  if (!frameworkId) {
+    res.status(400).json({ error: "framework_id_required" });
+    return;
+  }
+
+  try {
+    const outcome = await withTenant(ctx.organizationId, async () => {
+      const eng = await pg.query<{ status: string }>(
+        `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [ctx.engagementId, ctx.organizationId]
+      );
+      const state = eng.rows[0]?.status as EngagementState | undefined;
+      if (!state) return { code: 401 as const };
+      if (!isPortalRespondable(state)) return { code: 409 as const };
+
+      // Refused on a single-framework assessment. Not a technical limit — the
+      // action would silently mean "the entire questionnaire", which is not
+      // what "assign a section" reads as to the person clicking it.
+      const groups = await assignableFrameworks(ctx.organizationId, ctx.engagementId);
+      if (groups === null) return { code: 422 as const };
+      if (!groups.some((g) => g.framework_id === frameworkId)) return { code: 404 as const };
+
+      const result = await assignFramework({
+        organizationId: ctx.organizationId,
+        engagementId: ctx.engagementId,
+        frameworkId,
+        participantId,
+        actor: { participantId: ctx.participantId! },
+      });
+      return { code: 200 as const, result };
+    });
+
+    if (outcome.code === 401) {
+      invalidLink(res);
+      return;
+    }
+    if (outcome.code === 409) {
+      res.status(409).json({ error: "questionnaire_closed" });
+      return;
+    }
+    if (outcome.code === 422) {
+      res.status(422).json({
+        error: "framework_grouping_unavailable",
+        message:
+          "This assessment covers a single framework, so there are no sections to assign. Assign individual questions instead.",
+      });
+      return;
+    }
+    if (outcome.code === 404) {
+      res.status(404).json({ error: "framework_not_in_scope" });
+      return;
+    }
+    if (!outcome.result.ok) {
+      res.status(outcome.result.failure === "participant_revoked" ? 409 : 404).json({
+        error: outcome.result.failure,
+      });
+      return;
+    }
+
+    writeAuditEvent({
+      organizationId: ctx.organizationId,
+      eventType: "vendor_portal.work_assigned_bulk",
+      resourceType: "vendor_engagement",
+      resourceId: ctx.engagementId,
+      payload: {
+        framework_id: frameworkId,
+        assigned_to_participant_id: participantId,
+        questions_changed: outcome.result.affected,
+        questions_already_correct: outcome.result.skipped,
+        by_participant_id: ctx.participantId,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      assigned: outcome.result.affected,
+      unchanged: outcome.result.skipped,
+    });
+  } catch (err) {
+    logger.error(
+      { event: "portal_framework_assignment_failed", engagementId: ctx.engagementId, err },
+      "Portal framework assignment failed"
+    );
+    res.status(500).json({ error: "portal_framework_assignment_failed" });
+  }
+}
+
+/** GET /api/vendor-portal/progress — the coordinator's board. */
+export async function getPortalProgress(req: PortalRequest, res: Response): Promise<void> {
+  const ctx = req.portalContext!;
+  try {
+    const progress = await withTenant(ctx.organizationId, () =>
+      engagementProgress(ctx.organizationId, ctx.engagementId)
+    );
+    res.status(200).json(progress);
+  } catch (err) {
+    logger.error(
+      { event: "portal_progress_read_failed", engagementId: ctx.engagementId, err },
+      "Portal progress read failed"
+    );
+    res.status(500).json({ error: "portal_progress_read_failed" });
+  }
+}
+
+/** GET /api/vendor-portal/assignments/:requirementId/history — who owned this, when. */
+export async function getPortalAssignmentHistory(
+  req: PortalRequest,
+  res: Response
+): Promise<void> {
+  const ctx = req.portalContext!;
+  const requirementId = String(req.params["requirementId"] ?? "").trim();
+  try {
+    const history = await withTenant(ctx.organizationId, () =>
+      listAssignmentHistory(ctx.organizationId, ctx.engagementId, requirementId)
+    );
+    res.status(200).json({
+      history: history.map((h) => ({
+        assignment_action: h.assignment_action,
+        assignment_source: h.assignment_source,
+        assignee_name: h.assignee_name,
+        actor_name: h.actor_name,
+        assigned_at: h.assigned_at,
+        superseded_at: h.superseded_at,
+      })),
+    });
+  } catch (err) {
+    logger.error(
+      { event: "portal_assignment_history_failed", engagementId: ctx.engagementId, err },
+      "Portal assignment history read failed"
+    );
+    res.status(500).json({ error: "portal_assignment_history_failed" });
   }
 }
 
@@ -1810,6 +2220,43 @@ router.post(
   vendorPortalFeatureFlag,
   requirePortalSession,
   revokePortalParticipant
+);
+
+// VA-D1 — delegation. Reads are open to every participant (Assigned to Me is a
+// filter over the same list); writes are coordinator-gated inside the handlers.
+router.get(
+  "/vendor-portal/assignments",
+  vendorPortalFeatureFlag,
+  requirePortalSession,
+  getPortalAssignments
+);
+
+router.get(
+  "/vendor-portal/assignments/:requirementId/history",
+  vendorPortalFeatureFlag,
+  requirePortalSession,
+  getPortalAssignmentHistory
+);
+
+router.put(
+  "/vendor-portal/assignments/:requirementId",
+  vendorPortalFeatureFlag,
+  requirePortalSession,
+  putPortalAssignment
+);
+
+router.post(
+  "/vendor-portal/assignments/framework",
+  vendorPortalFeatureFlag,
+  requirePortalSession,
+  postPortalFrameworkAssignment
+);
+
+router.get(
+  "/vendor-portal/progress",
+  vendorPortalFeatureFlag,
+  requirePortalSession,
+  getPortalProgress
 );
 
 // The session check runs BEFORE multer. An anonymous caller must not be able to

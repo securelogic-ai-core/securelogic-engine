@@ -9,6 +9,7 @@ import {
   listVendorEngagementComments,
   listVendorContacts,
   listEngagementParticipants,
+  getEngagementProgress,
   type VendorEngagementDetail,
   type VendorEngagementQuestionnaire,
   type VendorEngagementEvidenceRow,
@@ -101,7 +102,8 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp, responsesResp, participantsResp] = await Promise.all([
+  const [detail, evidenceResp, commentsResp, responsesResp, participantsResp, progressResp] =
+    await Promise.all([
     getVendorEngagement(token, id) as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
@@ -119,6 +121,9 @@ export default async function VendorEngagementPage({
     // VA-P1: who at the supplier is working on this. null means the read
     // FAILED, which the section renders differently from an empty team.
     listEngagementParticipants(token, id),
+    // VA-D1: how far the vendor has got. Shape only — the customer does not see
+    // the supplier's internal per-question delegation map.
+    getEngagementProgress(token, id),
   ]);
 
   if (!detail) {
@@ -367,6 +372,7 @@ export default async function VendorEngagementPage({
           contacts={contactsData?.contacts ?? []}
           hasCoordinator={participantsResp?.has_coordinator ?? false}
           loadFailed={participantsResp === null}
+          progress={progressResp}
         />
 
         <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />

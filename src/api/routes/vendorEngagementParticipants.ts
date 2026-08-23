@@ -40,6 +40,7 @@ import {
   revokeParticipant,
   type ParticipantRole,
 } from "../lib/vendorPortal/participants.js";
+import { engagementProgress } from "../lib/vendorPortal/assignments.js";
 
 const router = Router();
 
@@ -280,6 +281,9 @@ router.post(
           was_coordinator: target.participant_role === "coordinator",
           invites_revoked: killed.invites,
           sessions_revoked: killed.sessions,
+          // VA-D1: work they still owned, now visibly unassigned and awaiting a
+          // coordinator decision — never auto-handed to somebody else.
+          assignments_vacated: killed.assignmentsVacated,
           reason,
         },
         ipAddress: req.ip ?? null,
@@ -289,6 +293,7 @@ router.post(
         ok: true,
         invites_revoked: killed.invites,
         sessions_revoked: killed.sessions,
+        assignments_vacated: killed.assignmentsVacated,
         // Said plainly rather than left for the customer to discover: revoking
         // the coordinator leaves nobody able to submit until another is named.
         coordinator_vacant: target.participant_role === "coordinator",
@@ -299,6 +304,71 @@ router.post(
         "Participant revoke failed"
       );
       res.status(500).json({ error: "engagement_participant_revoke_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/progress
+
+   VA-D1 — what the CUSTOMER needs from delegation, and no more.
+
+   The reviewer's questions are "is the vendor still working on this?" and "who
+   contributed?". They are not "how has this supplier organised its internal
+   division of labour" — that is the supplier's business, and exposing a
+   per-question delegation board to the customer would turn a working aid into a
+   surveillance surface without making any review decision better.
+
+   So this returns the SHAPE of progress (totals, and who has contributed how
+   much) and deliberately not the per-question assignment map. Response
+   authorship remains fully attributable through the existing evidence and
+   response surfaces, which is the part a reviewer can actually act on.
+   ========================================================= */
+
+router.get(
+  "/vendor-engagements/:id/progress",
+  ...GUARDS,
+  asTenant(async (req: Request, res: Response) => {
+    const organizationId = orgOf(req);
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+    const engagementId = String(req.params["id"] ?? "");
+
+    try {
+      if (!(await ownEngagement(organizationId, engagementId))) {
+        res.status(404).json({ error: "engagement_not_found" });
+        return;
+      }
+      const progress = await engagementProgress(organizationId, engagementId);
+      res.status(200).json({
+        total: progress.total,
+        complete: progress.complete,
+        outstanding: progress.outstanding,
+        mandatory_total: progress.mandatory_total,
+        mandatory_complete: progress.mandatory_complete,
+        // Named contributors and their share of the work — enough for the
+        // reviewer to see that several people at the supplier took part, which
+        // is a fact about the assessment's provenance.
+        contributors: progress.by_participant
+          .filter((p) => p.assigned > 0 || p.complete > 0)
+          .map((p) => ({
+            full_name: p.full_name,
+            participant_role: p.participant_role,
+            status: p.status,
+            assigned: p.assigned,
+            complete: p.complete,
+          })),
+        by_framework: progress.by_framework,
+        framework_grouping_available: progress.framework_grouping_available,
+      });
+    } catch (err) {
+      logger.error(
+        { event: "engagement_progress_read_failed", organizationId, err },
+        "Engagement progress read failed"
+      );
+      res.status(500).json({ error: "engagement_progress_read_failed" });
     }
   })
 );

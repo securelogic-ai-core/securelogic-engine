@@ -97,16 +97,18 @@ describe("vendor portal — INVARIANT 1: no authorization identifier comes from 
     // exchange, which is what CREATES a session. If that count ever exceeds one,
     // a route has been left unauthenticated.
     const routes = wiring.match(/router\.(get|post|put|delete)\(/g) ?? [];
-    // Fourteen, which is the full portal surface: session exchange and sign-out,
+    // Nineteen, which is the full portal surface: session exchange and sign-out,
     // engagement read, questionnaire read and save, submit, evidence upload /
-    // list / withdraw, the comment thread read and post, and — VA-P1 — the
-    // vendor's own team: participants read, invite a teammate, revoke one.
+    // list / withdraw, the comment thread read and post, — VA-P1 — the vendor's
+    // own team (participants read, invite a teammate, revoke one), and — VA-D1 —
+    // delegation (assignments read, one question's assignment history, assign or
+    // reassign a question, bulk-assign a framework, the progress board).
     //
     // This number is a TRIPWIRE, not bookkeeping. Every route added to an
     // externally-reachable surface has to come past this assertion, so bump it
     // only together with the two counts below, which are what actually prove
     // the new route is behind the kill switch and the session resolver.
-    expect(routes.length).toBe(14);
+    expect(routes.length).toBe(19);
 
     const flagged = wiring.match(/vendorPortalFeatureFlag,/g) ?? [];
     expect(flagged.length, "every route must carry the kill switch").toBe(routes.length);
