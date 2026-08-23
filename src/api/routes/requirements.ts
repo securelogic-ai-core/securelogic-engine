@@ -88,6 +88,13 @@ const REQUIREMENT_SELECT = `
    POST /api/requirements
    Create a requirement under a framework.
    The framework must belong to the requesting organization.
+
+   Admin-gated (ruled 2026-08-23): a requirement's title/description is
+   governed content rendered verbatim into every future vendor
+   questionnaire — creation must carry the same authorization boundary as
+   curation (the PATCH below). Same primitive, no new role. The R9 caveat
+   (API-key auth bypasses JWT role checks) applies here exactly as it does
+   to the PATCH — documented platform-wide, not widened here.
    ========================================================= */
 
 router.post(
@@ -96,6 +103,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
+  requireAdminRole,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
