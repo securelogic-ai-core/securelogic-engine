@@ -7730,6 +7730,65 @@ export async function recordVendorEngagementDecision(
   }
 }
 
+/** VA-R1 (2026-08-23): the reviewer's per-question view of the questionnaire.
+ *  Pre-issue this is "what will be sent" (every response is null); post-submit
+ *  it is the review surface. The engine computes everything — never derive
+ *  answered/complete locally. */
+export type VendorEngagementResponseItem = {
+  requirement: {
+    id: string;
+    reference: string;
+    title: string;
+    description: string | null;
+  };
+  scope: { depth: string; mandatory: boolean };
+  response: {
+    status: string | null;
+    notes: string | null;
+    responder_type: string | null;
+    answered_via_invite_id: string | null;
+    assessed_by_user_id: string | null;
+    assessed_at: string | null;
+    updated_at: string | null;
+  } | null;
+  evidence: { count: number; confirmed: boolean };
+  revisions: {
+    total: number;
+    truncated: boolean;
+    entries: Array<{
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>;
+  };
+};
+
+export type VendorEngagementResponses = {
+  engagement_id: string;
+  engagement_status: string;
+  counts: { scoped: number; answered: number; mandatory: number };
+  items: VendorEngagementResponseItem[];
+};
+
+export async function getVendorEngagementResponses(
+  token: string,
+  id: string
+): Promise<VendorEngagementResponses | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/responses`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorEngagementResponses>;
+  } catch {
+    return null;
+  }
+}
+
 export async function listVendorEngagementEvidence(
   token: string,
   id: string

@@ -1671,6 +1671,183 @@ export async function beginReview(req: Request, res: Response): Promise<void> {
 }
 
 /* =========================================================
+   GET /api/vendor-engagements/:id/responses — the reviewer's view of the
+   questionnaire itself (VA-R1, authorized 2026-08-23).
+
+   Before this route the customer could see COUNTS ("7/12 answered"), scores,
+   evidence rows and comments — but never the answers. The one hop named
+   "review" contained no reviewable content: findings were promoted against
+   aggregates. This is the read surface that makes the review workflow mean
+   something.
+
+   It is also the pre-issue answer to "what will my vendor be asked?" (owner
+   ruling on derived scoping, 2026-08-23): for a scoped-but-unissued
+   engagement every row simply carries response: null, so the same surface
+   shows exactly what will be sent before any invitation exists. The scope
+   population uses the SAME predicate as recompute and the portal
+   questionnaire (deterministic OR accepted) — the reviewer reads the same
+   questionnaire the vendor answers, never a superset and never a subset.
+
+   Includes the first read surface over requirement_response_revisions —
+   append-only since 20260924, durable but invisible until now. Revisions are
+   capped per response and the cap is REPORTED (`truncated`), so a long edit
+   history is elided loudly, never silently.
+   ========================================================= */
+const REVISIONS_PER_RESPONSE_CAP = 50;
+
+export async function listEngagementResponses(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const rows = await pg.query<{
+      requirement_id: string;
+      reference_id: string;
+      title: string;
+      description: string | null;
+      depth: string;
+      mandatory: boolean;
+      response_id: string | null;
+      status: string | null;
+      notes: string | null;
+      responder_type: string | null;
+      answered_via_invite_id: string | null;
+      assessed_by: string | null;
+      assessed_at: string | null;
+      updated_at: string | null;
+      evidence_count: string;
+      evidence_confirmed: boolean;
+    }>(
+      `SELECT si.requirement_id, r.reference_id, r.title, r.description,
+              si.depth, si.mandatory,
+              rr.id AS response_id, rr.status, rr.notes, rr.responder_type,
+              rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at,
+              COUNT(ev.id)::text AS evidence_count,
+              COALESCE(bool_or(ev.reviewed_at IS NOT NULL), FALSE) AS evidence_confirmed
+         FROM vendor_engagement_scope_items si
+         JOIN requirements r ON r.id = si.requirement_id
+         LEFT JOIN requirement_responses rr
+                ON rr.requirement_id  = si.requirement_id
+               AND rr.engagement_id   = si.engagement_id
+               AND rr.organization_id = si.organization_id
+         LEFT JOIN evidence ev
+                ON ev.engagement_id   = si.engagement_id
+               AND ev.requirement_id  = si.requirement_id
+               AND ev.organization_id = si.organization_id
+               AND ev.detached_at IS NULL
+        WHERE si.engagement_id = $1 AND si.organization_id = $2
+          AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
+        GROUP BY si.requirement_id, r.reference_id, r.title, r.description,
+                 si.depth, si.mandatory,
+                 rr.id, rr.status, rr.notes, rr.responder_type,
+                 rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at
+        ORDER BY si.mandatory DESC, r.reference_id, si.requirement_id`,
+      [id, organizationId]
+    );
+
+    // One pass for every revision of every response on this engagement. The
+    // join re-checks the org on BOTH legs — the revision table is reachable
+    // only through a same-org response row.
+    const revisions = await pg.query<{
+      response_id: string;
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>(
+      `SELECT rev.response_id, rev.status, rev.notes, rev.responder_type,
+              rev.answered_by_user_id, rev.answered_via_invite_id, rev.created_at
+         FROM requirement_response_revisions rev
+         JOIN requirement_responses rr
+           ON rr.id = rev.response_id
+          AND rr.organization_id = rev.organization_id
+        WHERE rev.organization_id = $2 AND rr.engagement_id = $1
+        ORDER BY rev.created_at ASC`,
+      [id, organizationId]
+    );
+    const revisionsByResponse = new Map<string, typeof revisions.rows>();
+    for (const rev of revisions.rows) {
+      const list = revisionsByResponse.get(rev.response_id) ?? [];
+      list.push(rev);
+      revisionsByResponse.set(rev.response_id, list);
+    }
+
+    const items = rows.rows.map((row) => {
+      const revs = row.response_id ? (revisionsByResponse.get(row.response_id) ?? []) : [];
+      return {
+        requirement: {
+          id: row.requirement_id,
+          reference: row.reference_id,
+          title: row.title,
+          description: row.description,
+        },
+        scope: { depth: row.depth, mandatory: row.mandatory },
+        response:
+          row.response_id === null
+            ? null
+            : {
+                status: row.status,
+                notes: row.notes,
+                responder_type: row.responder_type,
+                answered_via_invite_id: row.answered_via_invite_id,
+                assessed_by_user_id: row.assessed_by,
+                assessed_at: row.assessed_at,
+                updated_at: row.updated_at,
+              },
+        evidence: {
+          count: Number(row.evidence_count),
+          confirmed: row.evidence_confirmed,
+        },
+        revisions: {
+          total: revs.length,
+          truncated: revs.length > REVISIONS_PER_RESPONSE_CAP,
+          entries: revs.slice(-REVISIONS_PER_RESPONSE_CAP).map((rev) => ({
+            status: rev.status,
+            notes: rev.notes,
+            responder_type: rev.responder_type,
+            answered_by_user_id: rev.answered_by_user_id,
+            answered_via_invite_id: rev.answered_via_invite_id,
+            created_at: rev.created_at,
+          })),
+        },
+      };
+    });
+
+    res.status(200).json({
+      engagement_id: id,
+      engagement_status: eng.rows[0]!.status,
+      counts: {
+        scoped: items.length,
+        answered: items.filter((i) => i.response !== null).length,
+        mandatory: items.filter((i) => i.scope.mandatory).length,
+      },
+      items,
+    });
+  } catch (err) {
+    logger.error(
+      { event: "engagement_responses_read_failed", organizationId, err },
+      "Engagement responses read failed"
+    );
+    res.status(500).json({ error: "engagement_responses_read_failed" });
+  }
+}
+
+/* =========================================================
    POST /api/vendor-engagements/:id/complete-analysis — in_review → analysis_complete.
 
    Stamps `analysis_coverage` — the ratified record of whether AI-dependent
@@ -1879,6 +2056,7 @@ router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
+router.get("/vendor-engagements/:id/responses", ...chain, asTenant(listEngagementResponses));
 router.post(
   "/vendor-engagements/:id/evidence/:evidenceId/review",
   ...chain,
