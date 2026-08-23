@@ -31,6 +31,7 @@ import {
   VENDOR_ENGAGEMENT_DECISIONS,
   type VendorEngagementDecision,
   type VendorEngagementInviteBlock,
+  type VendorContact,
 } from "@/lib/api";
 import {
   resolveScope,
@@ -52,6 +53,10 @@ type Props = {
   inherentRating: string | null;
   /** VA-L1 — invite status from the engagement read; null pre-issue. */
   invite?: VendorEngagementInviteBlock | null;
+  /** VA-C1 — the supplier's contact directory (active + inactive). */
+  contacts?: VendorContact[];
+  /** A FAILED read, which is not the same as an empty directory. */
+  contactsLoadFailed?: boolean;
 };
 
 type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring" | "reissue" | "revoke";
@@ -68,6 +73,8 @@ export default function EngagementActionPanel({
   state,
   inherentRating,
   invite = null,
+  contacts = [],
+  contactsLoadFailed = false,
 }: Props): JSX.Element {
   const [openForm, setOpenForm] = useState<OpenForm>("none");
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +88,13 @@ export default function EngagementActionPanel({
   const [contactEmail, setContactEmail] = useState("");
   const [contactName, setContactName] = useState("");
   const [revokeReason, setRevokeReason] = useState("");
+  // VA-C1: "" means "someone not in the directory" — the raw-address path stays
+  // available, because a customer chasing an assessment at 6pm should not have
+  // to create a directory entry first.
+  const activeContacts = contacts.filter((c) => c.status === "active");
+  const primaryContact = activeContacts.find((c) => c.is_primary_contact) ?? activeContacts[0] ?? null;
+  const [issueContactId, setIssueContactId] = useState<string>(primaryContact?.id ?? "");
+  const [reissueContactId, setReissueContactId] = useState<string>(primaryContact?.id ?? "");
   const [reissueEmail, setReissueEmail] = useState(invite?.latest?.contact_email ?? "");
   const [reissueName, setReissueName] = useState(invite?.latest?.contact_name ?? "");
   const [overrideRating, setOverrideRating] = useState(inherentRating ?? "");
@@ -203,30 +217,48 @@ export default function EngagementActionPanel({
         />
         {openForm === "issue" && (
           <InlineForm>
-            <label style={lbl()}>
-              Vendor contact email
-              <input
-                type="email"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                disabled={pending}
-                style={input()}
-                placeholder="security@vendor.example"
-              />
-            </label>
-            <label style={lbl()}>
-              Contact name (optional)
-              <input
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                disabled={pending}
-                style={input()}
-              />
-            </label>
+            {/* VA-C1: address the questionnaire to a PERSON in the supplier's
+                directory. The raw-address path stays, and a failed directory
+                read says so rather than pretending the supplier has nobody. */}
+            <ContactPicker
+              contacts={activeContacts}
+              loadFailed={contactsLoadFailed}
+              value={issueContactId}
+              onChange={setIssueContactId}
+              pending={pending}
+            />
+            {issueContactId === "" && (
+              <>
+                <label style={lbl()}>
+                  Vendor contact email
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                    placeholder="security@vendor.example"
+                  />
+                </label>
+                <label style={lbl()}>
+                  Contact name (optional)
+                  <input
+                    value={contactName}
+                    onChange={(e) => setContactName(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+              </>
+            )}
             <FormButtons
               pending={pending}
               submitLabel="Issue questionnaire"
-              disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())}
+              disabled={
+                issueContactId === ""
+                  ? !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())
+                  : false
+              }
               onCancel={() => setOpenForm("none")}
               onSubmit={() =>
                 run(
@@ -234,7 +266,8 @@ export default function EngagementActionPanel({
                     issueEngagement(
                       engagementId,
                       contactEmail.trim(),
-                      contactName.trim() || undefined
+                      contactName.trim() || undefined,
+                      issueContactId || undefined
                     ),
                   (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
                     setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
@@ -338,29 +371,46 @@ export default function EngagementActionPanel({
                   Resending mints a NEW link — the previous link and any open vendor sessions
                   stop working immediately. Answers and evidence already provided are kept.
                 </div>
-                <label style={lbl()}>
-                  Vendor contact email
-                  <input
-                    type="email"
-                    value={reissueEmail}
-                    onChange={(e) => setReissueEmail(e.target.value)}
-                    disabled={pending}
-                    style={input()}
-                  />
-                </label>
-                <label style={lbl()}>
-                  Contact name (optional)
-                  <input
-                    value={reissueName}
-                    onChange={(e) => setReissueName(e.target.value)}
-                    disabled={pending}
-                    style={input()}
-                  />
-                </label>
+                {/* Re-issuing to a DIFFERENT person is the common case — the
+                    original contact left — so the picker leads here too. */}
+                <ContactPicker
+                  contacts={activeContacts}
+                  loadFailed={contactsLoadFailed}
+                  value={reissueContactId}
+                  onChange={setReissueContactId}
+                  pending={pending}
+                />
+                {reissueContactId === "" && (
+                  <>
+                    <label style={lbl()}>
+                      Vendor contact email
+                      <input
+                        type="email"
+                        value={reissueEmail}
+                        onChange={(e) => setReissueEmail(e.target.value)}
+                        disabled={pending}
+                        style={input()}
+                      />
+                    </label>
+                    <label style={lbl()}>
+                      Contact name (optional)
+                      <input
+                        value={reissueName}
+                        onChange={(e) => setReissueName(e.target.value)}
+                        disabled={pending}
+                        style={input()}
+                      />
+                    </label>
+                  </>
+                )}
                 <FormButtons
                   pending={pending}
                   submitLabel="Mint replacement link"
-                  disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reissueEmail.trim())}
+                  disabled={
+                    reissueContactId === ""
+                      ? !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reissueEmail.trim())
+                      : false
+                  }
                   onCancel={() => setOpenForm("none")}
                   onSubmit={() =>
                     run(
@@ -368,7 +418,8 @@ export default function EngagementActionPanel({
                         reissueInvite(
                           engagementId,
                           reissueEmail.trim(),
-                          reissueName.trim() || undefined
+                          reissueName.trim() || undefined,
+                          reissueContactId || undefined
                         ),
                       (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
                         setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
@@ -851,4 +902,62 @@ function input(): React.CSSProperties {
     color: "#e5e7eb",
     fontSize: 13,
   };
+}
+
+/**
+ * ContactPicker — choose a person from the supplier's directory (VA-C1).
+ *
+ * Three states, never collapsed: people to choose from, an empty directory,
+ * and a directory that could not be READ. The last one matters — silently
+ * showing "no contacts" after a failed request would tell the customer their
+ * supplier has nobody on file, which may be false.
+ */
+function ContactPicker({
+  contacts,
+  loadFailed,
+  value,
+  onChange,
+  pending,
+}: {
+  contacts: VendorContact[];
+  loadFailed: boolean;
+  value: string;
+  onChange: (next: string) => void;
+  pending: boolean;
+}): JSX.Element {
+  if (loadFailed) {
+    return (
+      <p style={{ fontSize: 12, color: "#fca5a5", margin: 0 }}>
+        The supplier&apos;s contact directory could not be loaded, so enter an address below.
+        This is a load failure, not an empty directory.
+      </p>
+    );
+  }
+  if (contacts.length === 0) {
+    return (
+      <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>
+        No contacts on file for this supplier yet — enter an address below, or add
+        contacts on the vendor page so future questionnaires can be addressed to a person.
+      </p>
+    );
+  }
+  return (
+    <label style={lbl()}>
+      Send to
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={pending}
+        style={input()}
+      >
+        {contacts.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.full_name} — {c.email}
+            {c.is_primary_contact ? " (primary)" : ""}
+          </option>
+        ))}
+        <option value="">Someone else — enter an address</option>
+      </select>
+    </label>
+  );
 }

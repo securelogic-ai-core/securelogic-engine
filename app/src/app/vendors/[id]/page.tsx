@@ -11,6 +11,7 @@ import {
   getVendorSignals,
   getVendorAiDependencies,
   listVendorAssuranceDocuments,
+  listVendorContacts,
   getVendorAssuranceExtraction,
   getFrameworks,
   getFrameworkRequirements,
@@ -25,6 +26,7 @@ import {
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
+import { VendorContactsCard } from "./VendorContactsCard";
 import { HistorySection } from "@/components/HistorySection";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
@@ -893,7 +895,7 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps, contactsData] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
@@ -907,6 +909,9 @@ export default async function VendorDetailPage({
     getVendorSignals(token, id, 10),
     // Concentration signal: which AI systems depend on this vendor.
     getVendorAiDependencies(token, id),
+    // VA-C1: the supplier's contact directory. null means the read FAILED —
+    // the card renders that differently from an empty directory.
+    listVendorContacts(token, id),
   ]);
 
   if (!vendor) redirect("/vendors");
@@ -1065,6 +1070,14 @@ export default async function VendorDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <VendorDetailsCard vendor={vendor} />
+          {/* VA-C1 — the people at this supplier. Sits directly under the
+              vendor's own details because "who is this vendor" and "who do we
+              talk to there" are the same question asked twice. */}
+          <VendorContactsCard
+            vendorId={vendor.id}
+            contacts={contactsData?.contacts ?? []}
+            loadFailed={contactsData === null}
+          />
           <DependentAiSystemsCard dependencies={aiDeps} />
           {/* The enterprise graph could always answer "what depends on this
               vendor" but was reachable only via the Assets row — never from

@@ -79,6 +79,7 @@ import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
 import { sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
+import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
@@ -474,7 +475,13 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
 
   try {
     const result = await pg.query(
-      `SELECT e.*, v.name AS vendor_name
+      // VA-C1 / owner ruling 2026-08-23: the ENDURING vendor-level criticality
+      // travels with the engagement read so a reviewer can see it beside this
+      // engagement's assessment_tier. They are different concepts — the
+      // organisation's standing view of the relationship versus the depth of
+      // one assessment — and until now only the second reached this surface,
+      // which is how two ideas quietly become one.
+      `SELECT e.*, v.name AS vendor_name, v.criticality AS vendor_criticality
          FROM vendor_engagements e
          JOIN vendors v ON v.id = e.vendor_id
         WHERE e.id = $1 AND e.organization_id = $2
@@ -802,6 +809,74 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
    again — only its SHA-256 is persisted, so a database read cannot reconstruct
    a working vendor credential.
    ========================================================= */
+
+/* =========================================================
+   VA-C1 — who the invitation is actually for.
+
+   A credential may be addressed either to a KNOWN PERSON at the supplier
+   (contact_id, the intended path now that vendors have a contact directory) or
+   to a raw address (contact_email, still supported: a customer chasing an
+   assessment at 6pm should not have to create a directory entry first).
+
+   Either way the invite keeps its own contact_email/contact_name SNAPSHOT.
+   That snapshot is the historical record of who we mailed at the address we
+   used, and editing the contact row two years later must not rewrite it.
+   ========================================================= */
+
+type InviteAddressee = {
+  email: string;
+  name: string | null;
+  contactId: string | null;
+};
+
+async function resolveInviteAddressee(
+  organizationId: string,
+  engagementId: string,
+  body: Record<string, unknown>
+): Promise<
+  | { ok: true; addressee: InviteAddressee }
+  | { ok: false; status: number; error: string; message?: string }
+> {
+  const contactId = typeof body.contact_id === "string" ? body.contact_id.trim() : "";
+  if (contactId) {
+    const vendor = await pg.query<{ vendor_id: string }>(
+      `SELECT vendor_id FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [engagementId, organizationId]
+    );
+    const vendorId = vendor.rows[0]?.vendor_id;
+    if (!vendorId) return { ok: false, status: 404, error: "engagement_not_found" };
+
+    // Scoped to THIS engagement's vendor: a contact id belonging to another
+    // supplier of the same customer must not be addressable here, and must not
+    // be distinguishable from one that does not exist.
+    const contact: VendorContactRow | null = await resolveVendorContact(
+      organizationId,
+      vendorId,
+      contactId
+    );
+    if (!contact) return { ok: false, status: 404, error: "contact_not_found" };
+    if (contact.status !== "active") {
+      return {
+        ok: false,
+        status: 409,
+        error: "contact_inactive",
+        message: "That contact is marked inactive. Reactivate them or choose someone else.",
+      };
+    }
+    return {
+      ok: true,
+      addressee: { email: contact.email, name: contact.full_name, contactId: contact.id },
+    };
+  }
+
+  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
+  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return { ok: false, status: 400, error: "valid_contact_email_required" };
+  }
+  return { ok: true, addressee: { email, name: name || null, contactId: null } };
+}
+
 export async function issueEngagement(req: Request, res: Response): Promise<void> {
   const organizationId = orgOf(req);
   if (!organizationId) {
@@ -810,15 +885,21 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
   }
   const id = String(req.params["id"] ?? "");
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
-  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
-
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    res.status(400).json({ error: "valid_contact_email_required" });
-    return;
-  }
 
   try {
+    // VA-C1: a contact id names a person in the supplier's directory; a raw
+    // address still works. Either way the invite snapshots what we mailed.
+    const addressee = await resolveInviteAddressee(organizationId, id, body);
+    if (!addressee.ok) {
+      res.status(addressee.status).json(
+        addressee.message
+          ? { error: addressee.error, message: addressee.message }
+          : { error: addressee.error }
+      );
+      return;
+    }
+    const { email, name, contactId } = addressee.addressee;
+
     const eng = await pg.query<{ status: string }>(
       `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -870,9 +951,9 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
     await pgElevated.query(
       `INSERT INTO vendor_engagement_invites
          (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
+          expires_at, created_by_user_id, contact_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req), contactId]
     );
 
     await pg.query(
@@ -890,7 +971,11 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       resourceId: id,
       // The token is NEVER in the audit payload. An audit log readable by more
       // people than the vendor's mailbox must not contain a working credential.
-      payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
+      payload: {
+        contact_email: email,
+        contact_id: contactId,
+        expires_at: invite.expiresAt.toISOString(),
+      },
       ipAddress: req.ip ?? null,
     });
 
@@ -946,6 +1031,8 @@ type InviteStatusRow = {
   id: string;
   contact_email: string;
   contact_name: string | null;
+  /** VA-C1: the directory person this went to, or null for a raw address. */
+  contact_id: string | null;
   created_at: string;
   expires_at: string;
   revoked_at: string | null;
@@ -956,7 +1043,7 @@ type InviteStatusRow = {
 
 /** The customer-visible invite record. NEVER includes token material. */
 const INVITE_STATUS_SELECT = `
-  id, contact_email, contact_name, created_at, expires_at, revoked_at,
+  id, contact_email, contact_name, contact_id, created_at, expires_at, revoked_at,
   first_exchanged_at, last_exchanged_at, exchange_count`;
 
 export async function revokeEngagementInvite(req: Request, res: Response): Promise<void> {
@@ -1041,14 +1128,23 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
   }
   const id = String(req.params["id"] ?? "");
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
-  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    res.status(400).json({ error: "invalid_contact_email" });
-    return;
-  }
 
   try {
+    // VA-C1: same addressee rules as issue — a directory contact, or a raw
+    // address. Re-issuing to a DIFFERENT person is legitimate and common (the
+    // original contact left), which is why this is not pinned to the prior
+    // invite's addressee.
+    const addressee = await resolveInviteAddressee(organizationId, id, body);
+    if (!addressee.ok) {
+      res.status(addressee.status === 400 ? 400 : addressee.status).json(
+        addressee.message
+          ? { error: addressee.error === "valid_contact_email_required" ? "invalid_contact_email" : addressee.error, message: addressee.message }
+          : { error: addressee.error === "valid_contact_email_required" ? "invalid_contact_email" : addressee.error }
+      );
+      return;
+    }
+    const { email, name, contactId } = addressee.addressee;
+
     const eng = await pg.query<{ status: string }>(
       `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -1098,9 +1194,9 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
     await pgElevated.query(
       `INSERT INTO vendor_engagement_invites
          (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
+          expires_at, created_by_user_id, contact_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req), contactId]
     );
 
     writeAuditEvent({
@@ -1112,6 +1208,7 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
       // Token NEVER in the payload — same rule as issue.
       payload: {
         contact_email: email,
+        contact_id: contactId,
         expires_at: invite.expiresAt.toISOString(),
         prior_invites_revoked: priorInvites.rowCount,
       },
