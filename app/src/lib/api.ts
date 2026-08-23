@@ -7522,13 +7522,19 @@ export async function listVendorEngagements(
 export async function getVendorEngagement(
   token: string,
   id: string
-): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null> {
+): Promise<{
+  engagement: VendorEngagementDetail;
+  questionnaire: VendorEngagementQuestionnaire;
+  /** VA-L1 — optional during rolling deploy: older engines omit it. */
+  invite?: VendorEngagementInviteBlock;
+} | null> {
   try {
     const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
     if (!res.ok) return null;
     return res.json() as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      invite?: VendorEngagementInviteBlock;
     }>;
   } catch {
     return null;
@@ -7617,7 +7623,14 @@ export async function issueVendorEngagement(
   contactEmail: string,
   contactName?: string
 ): Promise<
-  VendorEngagementResult<{ ok: true; status: "issued"; invite_token: string; expires_at: string }>
+  VendorEngagementResult<{
+    ok: true;
+    status: "issued";
+    invite_token: string;
+    expires_at: string;
+    /** VA-L1 — optional during rolling deploy: older engines omit it. */
+    email_delivery?: InviteEmailDelivery;
+  }>
 > {
   try {
     const res = await engineFetch(
@@ -7637,9 +7650,95 @@ export async function issueVendorEngagement(
       status: "issued";
       invite_token: string;
       expires_at: string;
+      email_delivery?: InviteEmailDelivery;
     };
   } catch {
     return { failure: { error: "issue_failed" } };
+  }
+}
+
+/** VA-L1 (2026-08-23): invite lifecycle. */
+export type InviteEmailDelivery = "sent" | "failed" | "disabled";
+
+/** Customer-visible invite record — the engine never includes token material. */
+export type VendorEngagementInviteStatus = {
+  id: string;
+  contact_email: string;
+  contact_name: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+export type VendorEngagementInviteBlock = {
+  active: VendorEngagementInviteStatus | null;
+  latest: VendorEngagementInviteStatus | null;
+  history_count: number;
+};
+
+export async function revokeVendorEngagementInvite(
+  token: string,
+  id: string,
+  reason?: string
+): Promise<
+  VendorEngagementResult<{ ok: true; invites_revoked: number; sessions_revoked: number }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/invite/revoke`,
+      token,
+      { method: "POST", body: JSON.stringify(reason ? { reason } : {}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "invite_revoke_failed");
+    return (await res.json()) as {
+      ok: true;
+      invites_revoked: number;
+      sessions_revoked: number;
+    };
+  } catch {
+    return { failure: { error: "invite_revoke_failed" } };
+  }
+}
+
+export async function reissueVendorEngagementInvite(
+  token: string,
+  id: string,
+  contactEmail: string,
+  contactName?: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    invite_token: string;
+    expires_at: string;
+    prior_invites_revoked: number;
+    email_delivery: InviteEmailDelivery;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/invite/reissue`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contact_email: contactEmail,
+          ...(contactName ? { contact_name: contactName } : {}),
+        }),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "invite_reissue_failed");
+    return (await res.json()) as {
+      ok: true;
+      invite_token: string;
+      expires_at: string;
+      prior_invites_revoked: number;
+      email_delivery: InviteEmailDelivery;
+    };
+  } catch {
+    return { failure: { error: "invite_reissue_failed" } };
   }
 }
 

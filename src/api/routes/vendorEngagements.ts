@@ -78,6 +78,7 @@ import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findi
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
+import { sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
@@ -513,8 +514,27 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
     );
     const observation = await listFindingsSupersededBySource(organizationId, id);
 
+    // VA-L1: the customer can finally see whether the vendor ever opened the
+    // link. Metadata only — token material never leaves the invites table.
+    const inviteRows = await pg.query<InviteStatusRow>(
+      `SELECT ${INVITE_STATUS_SELECT}
+         FROM vendor_engagement_invites
+        WHERE engagement_id = $1 AND organization_id = $2
+        ORDER BY created_at DESC`,
+      [id, organizationId]
+    );
+    const activeInvite =
+      inviteRows.rows.find(
+        (r) => r.revoked_at === null && new Date(r.expires_at).getTime() > Date.now()
+      ) ?? null;
+
     res.status(200).json({
       engagement: result.rows[0],
+      invite: {
+        active: activeInvite,
+        latest: inviteRows.rows[0] ?? null,
+        history_count: inviteRows.rowCount,
+      },
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
@@ -874,16 +894,253 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       ipAddress: req.ip ?? null,
     });
 
+    // VA-L1: actually deliver the link. Before this the route's own comments
+    // claimed email delivery while no send site existed — the customer mailed
+    // the credential themselves. The copy-link box REMAINS the fallback path:
+    // a failed or disabled send never strands the issue.
+    const orgName = await pg.query<{ name: string }>(
+      `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+    const emailDelivery = await sendVendorInviteEmail({
+      contactEmail: email,
+      contactName: name,
+      organizationName: orgName.rows[0]?.name ?? "Your customer",
+      rawToken: invite.token,
+      expiresAt: invite.expiresAt,
+    });
+
     res.status(200).json({
       ok: true,
       status: "issued",
       // Returned ONCE. Only the hash is stored.
       invite_token: invite.token,
       expires_at: invite.expiresAt,
+      // "sent" | "failed" | "disabled" — the customer is told the truth about
+      // whether anything left the building, so the copy box is never a guess.
+      email_delivery: emailDelivery,
     });
   } catch (err) {
     logger.error({ event: "vendor_engagement_issue_failed", organizationId, err }, "Engagement issue failed");
     res.status(500).json({ error: "issue_failed" });
+  }
+}
+
+/* =========================================================
+   Invite lifecycle (VA-L1, authorized 2026-08-23).
+
+   Until now the invite had a birth and nothing else: no route ever set the
+   revocation columns 20260923 shipped, nothing read the invites table back
+   to the customer, and a 30-day expiry stranded the engagement because
+   `scoped → issued` is one-shot. Three operational dead ends, closed here.
+
+   Owner ruling (revocation): ACCESS IS REVOKED, HISTORY IS PRESERVED.
+   Revoking kills the invite AND its live sessions (the session store and
+   middleware already support it — revoked_at is checked on every request),
+   and touches nothing else: responses, revisions, evidence, comments and
+   audit rows all stay exactly as they were, still attributed to the invite
+   id they were made under.
+   ========================================================= */
+
+type InviteStatusRow = {
+  id: string;
+  contact_email: string;
+  contact_name: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+/** The customer-visible invite record. NEVER includes token material. */
+const INVITE_STATUS_SELECT = `
+  id, contact_email, contact_name, created_at, expires_at, revoked_at,
+  first_exchanged_at, last_exchanged_at, exchange_count`;
+
+export async function revokeEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // The schema's CHECK requires a non-empty reason whenever revoked_at is set
+  // (20260923), and the UI marks the reason optional — so an omitted reason
+  // gets the honest default rather than a 23514 the customer cannot act on.
+  const reason =
+    typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 500)
+      : "revoked by customer";
+
+  try {
+    const eng = await pg.query<{ id: string }>(
+      `SELECT id FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const revoked = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_invites
+          SET revoked_at = NOW(), revoked_by_user_id = $3, revocation_reason = $4
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req), reason]
+    );
+    if (revoked.rowCount === 0) {
+      res.status(404).json({ error: "no_active_invite" });
+      return;
+    }
+
+    // Ruling: revocation terminates FUTURE access — including sessions already
+    // minted from the invite. The portal middleware checks session revocation
+    // on every request, so this is immediate, not eventual.
+    const sessions = await pg.query<{ id: string }>(
+      `UPDATE vendor_portal_sessions
+          SET revoked_at = NOW()
+        WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [revoked.rows.map((r) => r.id), organizationId]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.invite_revoked",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        invites_revoked: revoked.rowCount,
+        sessions_revoked: sessions.rowCount,
+        reason,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      invites_revoked: revoked.rowCount,
+      sessions_revoked: sessions.rowCount,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_revoke_failed", organizationId, err }, "Invite revoke failed");
+    res.status(500).json({ error: "invite_revoke_failed" });
+  }
+}
+
+export async function reissueEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
+  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    res.status(400).json({ error: "invalid_contact_email" });
+    return;
+  }
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+    // Re-issue replaces the credential for an ALREADY-ISSUED engagement — the
+    // recovery valve for an expired or revoked link (and the "resend" path,
+    // since only a hash survives issuance: resending means re-minting). A
+    // never-issued engagement still uses /issue; a submitted one has nothing
+    // for a vendor to do with a link.
+    if (!["issued", "in_progress", "clarification_requested"].includes(from)) {
+      res.status(409).json({
+        error: "cannot_reissue",
+        from,
+        message:
+          from === "draft" || from === "scoping" || from === "scoped"
+            ? "This engagement has not been issued yet — use issue."
+            : "The questionnaire is no longer open for vendor work — a new link would have nothing to do.",
+      });
+      return;
+    }
+
+    // Single-active-invite rule: the old credential (and its live sessions)
+    // die when the replacement is born. History stays.
+    const priorInvites = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_invites
+          SET revoked_at = NOW(), revoked_by_user_id = $3,
+              revocation_reason = 'superseded by re-issue'
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req)]
+    );
+    if ((priorInvites.rowCount ?? 0) > 0) {
+      await pg.query(
+        `UPDATE vendor_portal_sessions
+            SET revoked_at = NOW()
+          WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL`,
+        [priorInvites.rows.map((r) => r.id), organizationId]
+      );
+    }
+
+    const invite = mintInviteToken();
+    await pgElevated.query(
+      `INSERT INTO vendor_engagement_invites
+         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+          expires_at, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.invite_reissued",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      // Token NEVER in the payload — same rule as issue.
+      payload: {
+        contact_email: email,
+        expires_at: invite.expiresAt.toISOString(),
+        prior_invites_revoked: priorInvites.rowCount,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    const orgName = await pg.query<{ name: string }>(
+      `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+    const emailDelivery = await sendVendorInviteEmail({
+      contactEmail: email,
+      contactName: name,
+      organizationName: orgName.rows[0]?.name ?? "Your customer",
+      rawToken: invite.token,
+      expiresAt: invite.expiresAt,
+    });
+
+    res.status(200).json({
+      ok: true,
+      // Returned ONCE, same contract as issue.
+      invite_token: invite.token,
+      expires_at: invite.expiresAt,
+      prior_invites_revoked: priorInvites.rowCount,
+      email_delivery: emailDelivery,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_reissue_failed", organizationId, err }, "Invite re-issue failed");
+    res.status(500).json({ error: "invite_reissue_failed" });
   }
 }
 
@@ -2057,6 +2314,8 @@ router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRis
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
 router.get("/vendor-engagements/:id/responses", ...chain, asTenant(listEngagementResponses));
+router.post("/vendor-engagements/:id/invite/revoke", ...chain, asTenant(revokeEngagementInvite));
+router.post("/vendor-engagements/:id/invite/reissue", ...chain, asTenant(reissueEngagementInvite));
 router.post(
   "/vendor-engagements/:id/evidence/:evidenceId/review",
   ...chain,

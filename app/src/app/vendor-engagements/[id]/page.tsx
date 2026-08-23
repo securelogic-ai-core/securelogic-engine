@@ -11,6 +11,7 @@ import {
   type VendorEngagementQuestionnaire,
   type VendorEngagementEvidenceRow,
   type VendorEngagementComment,
+  type VendorEngagementInviteBlock,
 } from "@/lib/api";
 import {
   ENGAGEMENT_STATE_LABELS,
@@ -101,6 +102,7 @@ export default async function VendorEngagementPage({
     getVendorEngagement(token, id) as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      invite?: VendorEngagementInviteBlock | null;
     } | null>,
     listVendorEngagementEvidence(token, id) as Promise<{
       evidence: VendorEngagementEvidenceRow[];
@@ -320,6 +322,7 @@ export default async function VendorEngagementPage({
           engagementId={e.id}
           state={state}
           inherentRating={e.inherent_rating}
+          invite={detail.invite ?? null}
         />
 
         <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />

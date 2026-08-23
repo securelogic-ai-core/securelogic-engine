@@ -27,11 +27,17 @@ import {
   RISK_BANDS,
   portalInviteUrl,
 } from "@/lib/vendorEngagements";
-import { VENDOR_ENGAGEMENT_DECISIONS, type VendorEngagementDecision } from "@/lib/api";
+import {
+  VENDOR_ENGAGEMENT_DECISIONS,
+  type VendorEngagementDecision,
+  type VendorEngagementInviteBlock,
+} from "@/lib/api";
 import {
   resolveScope,
   overrideInherent,
   issueEngagement,
+  revokeInvite,
+  reissueInvite,
   beginReview,
   completeAnalysis,
   recomputeRisk,
@@ -44,9 +50,11 @@ type Props = {
   engagementId: string;
   state: EngagementState;
   inherentRating: string | null;
+  /** VA-L1 — invite status from the engagement read; null pre-issue. */
+  invite?: VendorEngagementInviteBlock | null;
 };
 
-type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring";
+type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring" | "reissue" | "revoke";
 
 const DECISION_LABELS: Record<VendorEngagementDecision, string> = {
   approved: "Approved",
@@ -59,6 +67,7 @@ export default function EngagementActionPanel({
   engagementId,
   state,
   inherentRating,
+  invite = null,
 }: Props): JSX.Element {
   const [openForm, setOpenForm] = useState<OpenForm>("none");
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +80,9 @@ export default function EngagementActionPanel({
   // Form fields
   const [contactEmail, setContactEmail] = useState("");
   const [contactName, setContactName] = useState("");
+  const [revokeReason, setRevokeReason] = useState("");
+  const [reissueEmail, setReissueEmail] = useState(invite?.latest?.contact_email ?? "");
+  const [reissueName, setReissueName] = useState(invite?.latest?.contact_name ?? "");
   const [overrideRating, setOverrideRating] = useState(inherentRating ?? "");
   const [overrideRationale, setOverrideRationale] = useState("");
   const [decision, setDecision] = useState<VendorEngagementDecision>("approved");
@@ -224,15 +236,196 @@ export default function EngagementActionPanel({
                       contactEmail.trim(),
                       contactName.trim() || undefined
                     ),
-                  (r: { inviteToken: string; expiresAt: string }) => {
+                  (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
                     setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
                     setInviteExpires(r.expiresAt);
                     setCopied(false);
+                    setNotice(
+                      r.emailDelivery === "sent"
+                        ? "Invitation emailed to the vendor contact. The link below is your copy."
+                        : "Email delivery is not active — copy the link below and send it to the vendor yourself."
+                    );
                   }
                 )
               }
             />
           </InlineForm>
+        )}
+
+        {/* VA-L1 — invite lifecycle: status the customer could never see, the
+            revoke that never existed, and the resend that un-strands an
+            expired link. Access is revoked; history is preserved. */}
+        {invite?.latest && (
+          <div
+            style={{
+              marginTop: 6,
+              padding: "10px 12px",
+              border: "1px solid #374151",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#9ca3af",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+              <span style={{ color: "#e5e7eb", fontWeight: 600, fontSize: 13 }}>
+                Vendor invitation
+              </span>
+              <span>
+                sent to {invite.latest.contact_email}
+                {invite.latest.contact_name ? ` (${invite.latest.contact_name})` : ""}
+              </span>
+              {invite.latest.revoked_at ? (
+                <span style={{ color: "#fca5a5" }}>revoked</span>
+              ) : new Date(invite.latest.expires_at).getTime() <= Date.now() ? (
+                <span style={{ color: "#fcd34d" }}>expired — resend to restore access</span>
+              ) : (
+                <span style={{ color: "#86efac" }}>
+                  active · expires {new Date(invite.latest.expires_at).toLocaleDateString()}
+                </span>
+              )}
+              <span>
+                {invite.latest.first_exchanged_at
+                  ? `opened ${invite.latest.exchange_count}× · last ${new Date(
+                      invite.latest.last_exchanged_at ?? invite.latest.first_exchanged_at
+                    ).toLocaleDateString()}`
+                  : "never opened"}
+              </span>
+              {invite.history_count > 1 && <span>{invite.history_count} links issued</span>}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => toggleForm("reissue")}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #374151",
+                  background: openForm === "reissue" ? "rgba(30,58,138,0.25)" : "transparent",
+                  color: "#93c5fd",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                Resend (new link)
+              </button>
+              {invite.active && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => toggleForm("revoke")}
+                  style={{
+                    padding: "4px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #7f1d1d",
+                    background: openForm === "revoke" ? "rgba(127,29,29,0.2)" : "transparent",
+                    color: "#fca5a5",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  Revoke access
+                </button>
+              )}
+            </div>
+
+            {openForm === "reissue" && (
+              <InlineForm>
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                  Resending mints a NEW link — the previous link and any open vendor sessions
+                  stop working immediately. Answers and evidence already provided are kept.
+                </div>
+                <label style={lbl()}>
+                  Vendor contact email
+                  <input
+                    type="email"
+                    value={reissueEmail}
+                    onChange={(e) => setReissueEmail(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+                <label style={lbl()}>
+                  Contact name (optional)
+                  <input
+                    value={reissueName}
+                    onChange={(e) => setReissueName(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+                <FormButtons
+                  pending={pending}
+                  submitLabel="Mint replacement link"
+                  disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reissueEmail.trim())}
+                  onCancel={() => setOpenForm("none")}
+                  onSubmit={() =>
+                    run(
+                      () =>
+                        reissueInvite(
+                          engagementId,
+                          reissueEmail.trim(),
+                          reissueName.trim() || undefined
+                        ),
+                      (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
+                        setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
+                        setInviteExpires(r.expiresAt);
+                        setCopied(false);
+                        setNotice(
+                          r.emailDelivery === "sent"
+                            ? "Replacement link emailed. The previous link is dead."
+                            : "Replacement link minted — email delivery is not active, so copy it below and send it yourself. The previous link is dead."
+                        );
+                      }
+                    )
+                  }
+                />
+              </InlineForm>
+            )}
+
+            {openForm === "revoke" && (
+              <InlineForm>
+                <div style={{ fontSize: 12, color: "#fca5a5" }}>
+                  Revoking stops ALL vendor access on this engagement immediately — the link
+                  and any open sessions die. Answers, evidence and history are preserved.
+                </div>
+                <label style={lbl()}>
+                  Reason (optional, recorded in the audit trail)
+                  <input
+                    value={revokeReason}
+                    onChange={(e) => setRevokeReason(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+                <FormButtons
+                  pending={pending}
+                  submitLabel="Revoke vendor access"
+                  // Nothing to validate — the reason is optional and the engine
+                  // supplies the audit default when it is left blank.
+                  disabled={false}
+                  onCancel={() => setOpenForm("none")}
+                  onSubmit={() =>
+                    run(
+                      () => revokeInvite(engagementId, revokeReason.trim() || undefined),
+                      (r: { sessionsRevoked: number }) => {
+                        setNotice(
+                          `Access revoked${
+                            r.sessionsRevoked > 0
+                              ? ` — ${r.sessionsRevoked} open vendor session(s) terminated`
+                              : ""
+                          }. History preserved.`
+                        );
+                      }
+                    )
+                  }
+                />
+              </InlineForm>
+            )}
+          </div>
         )}
 
         <ActionRow
