@@ -7784,15 +7784,27 @@ export type VendorEngagementPromotionResult = {
     title: string;
     severity_rationale: string;
   }>;
-  /** Supersede-on-pass ruling (2026-08-22): open findings whose controls now
-   *  report pass/not_applicable. Named, never auto-closed. */
+  /** Supersede-on-pass ruling (2026-08-22, cross-engagement 2026-08-23):
+   *  open findings — from ANY engagement of this vendor — whose controls now
+   *  report pass/not_applicable in THIS engagement. Named, never auto-closed.
+   *  `source_engagement_id` may name an EARLIER engagement than the one
+   *  promoted against; the engine computes this — never recompute here. */
   superseded_by_source: Array<{
     finding_id: string;
     reference: string;
     requirement_id: string;
+    /** Optional during rolling deploy — older engine payloads omit it. */
+    source_engagement_id?: string;
     current_response: "pass" | "not_applicable";
     as_of: string;
   }>;
+  /** Findings whose equivalence to a current response CANNOT be established
+   *  deterministically (requirement_id is NULL). Surfaced, never guessed.
+   *  Optional during rolling deploy. */
+  supersede_equivalence_undetermined?: {
+    count: number;
+    finding_ids: string[];
+  };
 };
 
 export async function promoteVendorEngagementFindings(

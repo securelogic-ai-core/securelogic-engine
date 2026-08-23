@@ -33,9 +33,10 @@ let reqNa: string; // SUP-2: fails first, then not_applicable
 async function seedEngagement(
   orgId: string,
   label: string,
-  requirements: Array<{ id: string }>
+  requirements: Array<{ id: string }>,
+  sharedVendorId?: string
 ): Promise<string> {
-  const vendor = await seedVendor(pool, orgId, { name: `${label} vendor` });
+  const vendor = sharedVendorId ?? (await seedVendor(pool, orgId, { name: `${label} vendor` }));
   const eng = await pool.query<{ id: string }>(
     `INSERT INTO vendor_engagements
        (organization_id, vendor_id, engagement_type, status,
@@ -224,5 +225,120 @@ describe("supersede-on-pass: machines observe, humans decide", () => {
     // engagement derives nothing — and org A's finding ids cannot leak in.
     expect(res.body.findings.total).toBe(0);
     expect(res.body.findings.superseded_by_source).toEqual([]);
+  });
+});
+
+describe("supersede-on-pass across engagements of the same vendor (ruled 2026-08-23)", () => {
+  let sharedVendor: string;
+  let engFirst: string; // the earlier engagement — promotes the finding
+  let engLater: string; // the later engagement of the SAME vendor — passes
+  let engOtherVendor: string; // same requirement, DIFFERENT vendor — must derive nothing
+  let reqCross: string; // SUP-3
+  let crossFinding: string;
+  let undeterminedFinding: string;
+
+  beforeAll(async () => {
+    const framework = await pool.query<{ id: string }>(
+      `SELECT id FROM frameworks WHERE organization_id = $1 AND name = 'Supersede Harness Framework'`,
+      [seed.orgA.id]
+    );
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO requirements (framework_id, reference_id, title)
+       VALUES ($1, 'SUP-3', 'SUP-3 control') RETURNING id`,
+      [framework.rows[0]!.id]
+    );
+    reqCross = r.rows[0]!.id;
+
+    sharedVendor = await seedVendor(pool, seed.orgA.id, { name: "Cross-engagement vendor" });
+    engFirst = await seedEngagement(seed.orgA.id, "Cross first", [{ id: reqCross }], sharedVendor);
+    engLater = await seedEngagement(seed.orgA.id, "Cross later", [{ id: reqCross }], sharedVendor);
+    engOtherVendor = await seedEngagement(seed.orgA.id, "Other vendor", [{ id: reqCross }]);
+  });
+
+  it("the earlier engagement promotes its failing control into a finding", async () => {
+    const res = await promote(seed.orgA.apiKey, engFirst);
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(1);
+    const f = await pool.query<{ id: string }>(
+      `SELECT id FROM findings
+        WHERE organization_id = $1 AND source_type = 'vendor_engagement'
+          AND source_id = $2 AND requirement_id = $3`,
+      [seed.orgA.id, engFirst, reqCross]
+    );
+    expect(f.rowCount).toBe(1);
+    crossFinding = f.rows[0]!.id;
+  });
+
+  it("a later engagement of the SAME vendor passing the control NAMES the earlier engagement's finding — with provenance, without closing it", async () => {
+    await setResponse(seed.orgA.id, engLater, reqCross, "pass");
+
+    const res = await getEng(seed.orgA.apiKey, engLater);
+    expect(res.status).toBe(200);
+    expect(res.body.findings.superseded_by_source).toHaveLength(1);
+    expect(res.body.findings.superseded_by_source[0]).toMatchObject({
+      finding_id: crossFinding,
+      reference: "SUP-3",
+      requirement_id: reqCross,
+      // Provenance survives the engagement boundary: the row names the
+      // engagement the finding CAME from, not the one asserting the pass.
+      source_engagement_id: engFirst,
+      current_response: "pass",
+    });
+
+    // Naming is not closing — the lifecycle ruling holds across engagements.
+    const f = await pool.query<{ operational_status: string }>(
+      `SELECT operational_status FROM findings WHERE id = $1`,
+      [crossFinding]
+    );
+    expect(f.rows[0]!.operational_status).not.toBe("closed");
+  });
+
+  it("the earlier engagement's own view does NOT name the finding — its own current response still asserts the gap", async () => {
+    const res = await getEng(seed.orgA.apiKey, engFirst);
+    expect(res.status).toBe(200);
+    // Anchoring is per reading engagement: engFirst's response is still
+    // 'fail', so no supersede observation exists from ITS vantage point.
+    expect(res.body.findings.superseded_by_source).toEqual([]);
+  });
+
+  it("the SAME requirement passing under a DIFFERENT vendor derives nothing — equivalence is vendor-scoped, not text-scoped", async () => {
+    await setResponse(seed.orgA.id, engOtherVendor, reqCross, "pass");
+    const res = await getEng(seed.orgA.apiKey, engOtherVendor);
+    expect(res.status).toBe(200);
+    expect(res.body.findings.superseded_by_source).toEqual([]);
+  });
+
+  it("a finding whose requirement_id is NULL is surfaced as undetermined — never guessed into the superseded list, never dropped", async () => {
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO findings
+         (organization_id, source_type, source_id, title, severity, description,
+          status, operational_status)
+       VALUES ($1, 'vendor_engagement', $2, 'Unmapped engagement finding', 'High',
+               'promoted before requirement mapping existed', 'open', 'open')
+       RETURNING id`,
+      [seed.orgA.id, engFirst]
+    );
+    undeterminedFinding = inserted.rows[0]!.id;
+
+    const res = await getEng(seed.orgA.apiKey, engLater);
+    expect(res.status).toBe(200);
+    expect(res.body.findings.supersede_equivalence_undetermined).toEqual({
+      count: 1,
+      finding_ids: [undeterminedFinding],
+    });
+    const supersededIds = (
+      res.body.findings.superseded_by_source as Array<{ finding_id: string }>
+    ).map((s) => s.finding_id);
+    expect(supersededIds).not.toContain(undeterminedFinding);
+  });
+
+  it("cross-tenant: org B's engagement derives neither org A's cross-engagement findings nor its undetermined set", async () => {
+    const res = await getEng(seed.orgB.apiKey, engagementB);
+    expect(res.status).toBe(200);
+    expect(res.body.findings.superseded_by_source).toEqual([]);
+    expect(res.body.findings.supersede_equivalence_undetermined).toEqual({
+      count: 0,
+      finding_ids: [],
+    });
   });
 });

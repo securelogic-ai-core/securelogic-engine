@@ -96,6 +96,15 @@ const router = Router();
    vendor revises again. finding_lifecycle_events is deliberately NOT used:
    it is a closed-vocabulary TRANSITION ledger, and a pass is an observation.
 
+   CROSS-ENGAGEMENT (ruled 2026-08-23): the observation spans every
+   engagement of the SAME VENDOR — an annual re-assessment opened as a new
+   engagement must not make the earlier engagement's finding invisible.
+   Equivalence is deterministic-or-declared: same vendor_id (FK) + same
+   requirement_id (FK), never text matching; a finding whose requirement_id
+   is NULL is surfaced as equivalence_undetermined instead of being guessed
+   about or silently dropped. Each named row carries source_engagement_id so
+   provenance of BOTH engagements survives.
+
    `pass` and `not_applicable` are both "the source no longer asserts a gap",
    but they are DIFFERENT assertions ("we do it" vs "does not apply") and a
    human closing on the second is often adjudicating a scope dispute — so the
@@ -106,36 +115,86 @@ type SupersededBySource = {
   finding_id: string;
   reference: string;
   requirement_id: string;
+  source_engagement_id: string;
   current_response: "pass" | "not_applicable";
   as_of: string;
 };
 
-/** Open vendor_engagement findings of this engagement whose control's CURRENT
- *  response no longer asserts a gap. Tenant-first on both legs — the join
- *  must never be able to plan a cross-org read. */
+type SupersedeObservation = {
+  superseded: SupersededBySource[];
+  /** Open engagement findings of the SAME VENDOR whose requirement_id is
+   *  NULL: equivalence to a current response cannot be established
+   *  deterministically, so the machine SAYS SO instead of guessing
+   *  (cross-engagement ruling, 2026-08-23). */
+  equivalence_undetermined: string[];
+};
+
+/** Open vendor_engagement findings — of ANY engagement of this engagement's
+ *  vendor (cross-engagement ruling, 2026-08-23: a new engagement must not
+ *  make an earlier engagement's finding invisible) — whose requirement's
+ *  CURRENT response in THIS engagement no longer asserts a gap.
+ *
+ *  Equivalence is established deterministically or not at all: the finding's
+ *  source engagement must belong to the same vendor (FK identity) and the
+ *  requirement_id must match exactly (FK identity). No text matching. A
+ *  finding whose requirement_id is NULL is reported as undetermined, never
+ *  silently dropped and never guessed at.
+ *
+ *  Tenant-first on every leg — the joins must never be able to plan a
+ *  cross-org read. `rr.assessment_type = 'vendor'` pins the response lane so
+ *  a future non-vendor assessment row for the same requirement cannot fan
+ *  out the observation. */
 async function listFindingsSupersededBySource(
   organizationId: string,
   engagementId: string
-): Promise<SupersededBySource[]> {
+): Promise<SupersedeObservation> {
   const rows = await pg.query<SupersededBySource>(
     `SELECT f.id AS finding_id, r.reference_id AS reference, f.requirement_id,
+            f.source_id AS source_engagement_id,
             rr.status AS current_response, rr.assessed_at AS as_of
-       FROM findings f
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
        JOIN requirement_responses rr
          ON rr.organization_id = f.organization_id
-        AND rr.engagement_id = $2
+        AND rr.engagement_id = e.id
+        AND rr.assessment_type = 'vendor'
         AND rr.requirement_id = f.requirement_id
        JOIN requirements r ON r.id = f.requirement_id
-      WHERE f.organization_id = $1
-        AND f.source_type = 'vendor_engagement'
-        AND f.source_id = $2
+      WHERE e.organization_id = $1
+        AND e.id = $2
         AND f.requirement_id IS NOT NULL
         AND rr.status IN ('pass', 'not_applicable')
         AND ${sqlFindingActive("f.operational_status")}
       ORDER BY r.reference_id, f.id`,
     [organizationId, engagementId]
   );
-  return rows.rows;
+  const undetermined = await pg.query<{ id: string }>(
+    `SELECT f.id
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
+      WHERE e.organization_id = $1
+        AND e.id = $2
+        AND f.requirement_id IS NULL
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY f.id`,
+    [organizationId, engagementId]
+  );
+  return {
+    superseded: rows.rows,
+    equivalence_undetermined: undetermined.rows.map((r) => r.id),
+  };
 }
 
 function orgOf(req: Request): string | null {
@@ -452,7 +511,7 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
         WHERE organization_id = $2 AND source_type = 'vendor_engagement' AND source_id = $1`,
       [id, organizationId]
     );
-    const superseded = await listFindingsSupersededBySource(organizationId, id);
+    const observation = await listFindingsSupersededBySource(organizationId, id);
 
     res.status(200).json({
       engagement: result.rows[0],
@@ -464,7 +523,11 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       findings: {
         total: Number(findingsSummary.rows[0]?.total ?? "0"),
         open: Number(findingsSummary.rows[0]?.open ?? "0"),
-        superseded_by_source: superseded,
+        superseded_by_source: observation.superseded,
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+          finding_ids: observation.equivalence_undetermined,
+        },
       },
     });
   } catch (err) {
@@ -1376,7 +1439,8 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
     // previously promoted findings would otherwise vanish from this summary
     // while staying open — and a resolution the summary hides is a resolution
     // nobody reviews. Name them; close nothing.
-    const superseded = await listFindingsSupersededBySource(organizationId, id);
+    const observation = await listFindingsSupersededBySource(organizationId, id);
+    const superseded = observation.superseded;
     if (superseded.length > 0) {
       logger.info(
         {
@@ -1410,6 +1474,9 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
             .slice(0, 20)
             .map((s) => ({ id: s.finding_id, current_response: s.current_response })),
         },
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+        },
         methodology_version: METHODOLOGY_VERSION,
       },
       ipAddress: req.ip ?? null,
@@ -1426,6 +1493,10 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
         severity_rationale: f.severity_rationale,
       })),
       superseded_by_source: superseded,
+      supersede_equivalence_undetermined: {
+        count: observation.equivalence_undetermined.length,
+        finding_ids: observation.equivalence_undetermined,
+      },
     });
   } catch (err) {
     logger.error({ event: "finding_promotion_failed", organizationId, err }, "Finding promotion failed");
