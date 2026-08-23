@@ -15,10 +15,40 @@
  * The record is append-only: submitting supersedes the current decision, it
  * never edits it. The copy says so, because a reviewer needs to know their
  * correction becomes a new history row, not a silent amendment.
+ *
+ * THE ASSESSMENT PICKER pins what the decision was made AGAINST: the
+ * ai_governance_assessments row that informed it (ai_use_approvals.
+ * assessment_id — nullable by ruling: "we looked at the proposal and said no"
+ * is a real decision with no assessment). The options are THIS system's
+ * assessments, already fetched by the page — the engine re-verifies same-org
+ * AND same-system on submit, so the picker is a convenience over a validated
+ * contract, not the contract. Offered for every decision kind: a rejection
+ * may cite the assessment that grounded it just as an approval does. With no
+ * assessments recorded, the picker does not render — an empty dropdown would
+ * imply a choice that does not exist.
  */
 
 import { useState, useTransition } from "react";
 import { recordUseDecision } from "./governanceActions";
+
+/** The slice of an assessment the picker needs — label material plus the id. */
+export type UseDecisionAssessmentOption = {
+  id: string;
+  status: string;
+  performed_at: string | null;
+  summary: string | null;
+};
+
+/** "compliant — 2026-06-01 — Annual model review" (summary truncated). */
+export function assessmentOptionLabel(a: UseDecisionAssessmentOption): string {
+  const status = a.status.replace(/_/g, " ");
+  const date = a.performed_at ? a.performed_at.slice(0, 10) : "no date";
+  const summary =
+    a.summary && a.summary.trim().length > 0
+      ? ` — ${a.summary.trim().length > 60 ? `${a.summary.trim().slice(0, 57)}…` : a.summary.trim()}`
+      : "";
+  return `${status} — ${date}${summary}`;
+}
 
 export const USE_DECISION_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "approved", label: "Approved" },
@@ -39,7 +69,13 @@ const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
 };
 
-export function UseDecisionForm({ aiSystemId }: { aiSystemId: string }) {
+export function UseDecisionForm({
+  aiSystemId,
+  assessments = [],
+}: {
+  aiSystemId: string;
+  assessments?: ReadonlyArray<UseDecisionAssessmentOption>;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -47,6 +83,7 @@ export function UseDecisionForm({ aiSystemId }: { aiSystemId: string }) {
   const [rationale, setRationale] = useState("");
   const [conditions, setConditions] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
+  const [assessmentId, setAssessmentId] = useState("");
 
   const needsConditions = decision === "approved_with_conditions";
   const canExpire = APPROVING_DECISIONS.has(decision);
@@ -86,6 +123,7 @@ export function UseDecisionForm({ aiSystemId }: { aiSystemId: string }) {
     // non-conditional decision and expiry on a non-approving one.
     if (needsConditions) formData.set("conditions", conditions.trim());
     if (canExpire && expiresAt) formData.set("expires_at", expiresAt);
+    if (assessmentId) formData.set("assessment_id", assessmentId);
     startTransition(async () => {
       const result = await recordUseDecision(aiSystemId, formData);
       if ("error" in result) setError(result.error);
@@ -95,6 +133,7 @@ export function UseDecisionForm({ aiSystemId }: { aiSystemId: string }) {
         setRationale("");
         setConditions("");
         setExpiresAt("");
+        setAssessmentId("");
       }
     });
   }
@@ -139,6 +178,26 @@ export function UseDecisionForm({ aiSystemId }: { aiSystemId: string }) {
           aria-label="Conditions"
           placeholder="Conditions (required) — what the approval depends on"
         />
+      )}
+      {assessments.length > 0 && (
+        <div>
+          <select
+            value={assessmentId}
+            onChange={(e) => setAssessmentId(e.target.value)}
+            style={INPUT_STYLE}
+            aria-label="Based on assessment"
+          >
+            <option value="">No assessment — decided without one</option>
+            {assessments.map((a) => (
+              <option key={a.id} value={a.id}>
+                {assessmentOptionLabel(a)}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs mt-1" style={{ color: "#475569" }}>
+            optional — pins the assessment this decision was made against
+          </p>
+        </div>
       )}
       {canExpire && (
         <div className="flex items-center gap-2">

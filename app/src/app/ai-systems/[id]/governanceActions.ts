@@ -140,15 +140,19 @@ export async function recordUseDecision(
   const rationale = ((formData.get("rationale") as string | null) ?? "").trim();
   const conditions = ((formData.get("conditions") as string | null) ?? "").trim();
   const expiresAt = ((formData.get("expires_at") as string | null) ?? "").trim();
+  const assessmentId = ((formData.get("assessment_id") as string | null) ?? "").trim();
 
   if (!decision) return { error: "Pick a decision." };
   if (!rationale) return { error: "Every use decision must state its grounds." };
 
   // Mirror the engine's consistency rules so the round-trip is not needed for
   // the common mistakes — but send what the customer typed; the engine decides.
+  // assessment_id rides through untouched: the engine owns the same-org,
+  // same-system pre-flight (assessment_not_found_for_this_system).
   const body: Record<string, string> = { decision, rationale };
   if (conditions) body["conditions"] = conditions;
   if (expiresAt) body["expires_at"] = expiresAt;
+  if (assessmentId) body["assessment_id"] = assessmentId;
 
   let res: Response;
   try {

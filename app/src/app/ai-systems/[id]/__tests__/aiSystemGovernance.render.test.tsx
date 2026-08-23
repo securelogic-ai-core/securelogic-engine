@@ -19,9 +19,11 @@
  *      load" (null) are different facts with different renders.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import { renderPage, signedIn, sp, hrefOf } from "@/test/harness";
 import {
+  anAiGovernanceAssessment,
+  anAiGovernanceAssessmentsResponse,
   anAiSystem,
   anAiSystemGovernanceLink,
   anAiUseApproval,
@@ -347,5 +349,35 @@ describe("/ai-systems/[id] — use decision", () => {
     signedIn({ userRole: "viewer" });
     await renderPage(AiSystemDetailPage, props());
     expect(screen.queryByRole("button", { name: "+ Record decision" })).toBeNull();
+  });
+
+  it("the decision form offers THIS system's assessments as what the decision was made against", async () => {
+    // The wiring proof: the page's already-fetched assessments reach the form.
+    api.getAiGovernanceAssessments.mockResolvedValue(
+      anAiGovernanceAssessmentsResponse([
+        anAiGovernanceAssessment({
+          id: "aga-77",
+          status: "compliant",
+          performed_at: "2026-06-01T00:00:00.000Z",
+          summary: "Annual model review",
+        }),
+      ])
+    );
+
+    await renderPage(AiSystemDetailPage, props());
+    fireEvent.click(screen.getByRole("button", { name: "+ Record decision" }));
+
+    const picker = screen.getByRole("combobox", { name: "Based on assessment" });
+    const labels = Array.from(picker.querySelectorAll("option")).map((o) => o.textContent);
+    expect(labels).toEqual([
+      "No assessment — decided without one",
+      "compliant — 2026-06-01 — Annual model review",
+    ]);
+  });
+
+  it("with no assessments the form offers no picker — an empty dropdown would imply a choice that does not exist", async () => {
+    await renderPage(AiSystemDetailPage, props());
+    fireEvent.click(screen.getByRole("button", { name: "+ Record decision" }));
+    expect(screen.queryByRole("combobox", { name: "Based on assessment" })).toBeNull();
   });
 });

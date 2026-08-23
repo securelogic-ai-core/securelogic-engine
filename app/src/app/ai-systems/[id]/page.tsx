@@ -624,12 +624,14 @@ function GovernanceLinkList({
 function UseDecisionCard({
   approvalsData,
   system,
+  assessments,
   userLabel,
   canManage,
 }: {
   /** null = the resolve FAILED. "Never decided" arrives as count 0, not null. */
   approvalsData: AiUseApprovalsResponse | null;
   system: AiSystem;
+  assessments: AiGovernanceAssessment[];
   userLabel: (id: string | null) => string | null;
   canManage: boolean;
 }) {
@@ -733,7 +735,19 @@ function UseDecisionCard({
         </>
       )}
 
-      {canManage && <UseDecisionForm aiSystemId={system.id} />}
+      {canManage && (
+        <UseDecisionForm
+          aiSystemId={system.id}
+          // The picker's choices: this system's assessments, newest-first as
+          // fetched — the engine re-verifies same-system on submit.
+          assessments={assessments.map((a) => ({
+            id: a.id,
+            status: a.status,
+            performed_at: a.performed_at,
+            summary: a.summary,
+          }))}
+        />
+      )}
     </div>
   );
 }
@@ -743,6 +757,7 @@ function GovernanceSection({
   links,
   linkOptions,
   approvalsData,
+  assessments,
   userLabel,
   canManage,
 }: {
@@ -750,6 +765,7 @@ function GovernanceSection({
   links: Record<AiGovernanceLinkKind, AiSystemGovernanceLink[] | null>;
   linkOptions: Record<AiGovernanceLinkKind, Array<{ id: string; name: string }>>;
   approvalsData: AiUseApprovalsResponse | null;
+  assessments: AiGovernanceAssessment[];
   userLabel: (id: string | null) => string | null;
   canManage: boolean;
 }) {
@@ -777,6 +793,7 @@ function GovernanceSection({
         <UseDecisionCard
           approvalsData={approvalsData}
           system={system}
+          assessments={assessments}
           userLabel={userLabel}
           canManage={canManage}
         />
@@ -1270,6 +1287,7 @@ export default async function AiSystemDetailPage({
             links={governanceLinks}
             linkOptions={governanceLinkOptions}
             approvalsData={useApprovalsData}
+            assessments={assessments}
             userLabel={userLabel}
             canManage={canManageDependencies}
           />

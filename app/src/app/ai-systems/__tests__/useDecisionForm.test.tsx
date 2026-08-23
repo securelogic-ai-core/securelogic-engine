@@ -16,7 +16,12 @@ const actions = vi.hoisted(() => ({
 
 vi.mock("../[id]/governanceActions", () => actions);
 
-import { UseDecisionForm, USE_DECISION_OPTIONS } from "../[id]/UseDecisionForm";
+import {
+  UseDecisionForm,
+  USE_DECISION_OPTIONS,
+  assessmentOptionLabel,
+  type UseDecisionAssessmentOption,
+} from "../[id]/UseDecisionForm";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -156,5 +161,96 @@ describe("UseDecisionForm — conditional fields mirror the engine's rules", () 
     expect(screen.getByRole("textbox", { name: "Rationale" })).toHaveValue(
       "Model drift confirmed in production."
     );
+  });
+});
+
+// ─── The assessment picker: what the decision was made AGAINST ───────────────
+
+const ASSESSMENTS: UseDecisionAssessmentOption[] = [
+  {
+    id: "assess-1",
+    status: "compliant",
+    performed_at: "2026-06-01T00:00:00.000Z",
+    summary: "Annual model review",
+  },
+  {
+    id: "assess-2",
+    status: "partially_compliant",
+    performed_at: null,
+    summary: null,
+  },
+];
+
+function openFormWithAssessments() {
+  render(<UseDecisionForm aiSystemId="ai-1" assessments={ASSESSMENTS} />);
+  fireEvent.click(screen.getByRole("button", { name: "+ Record decision" }));
+}
+
+describe("UseDecisionForm — the assessment picker", () => {
+  it("does not render with no assessments — an empty dropdown would imply a choice that does not exist", () => {
+    openForm();
+    expect(screen.queryByRole("combobox", { name: "Based on assessment" })).toBeNull();
+  });
+
+  it("offers this system's assessments plus an explicit no-assessment default", () => {
+    openFormWithAssessments();
+    const picker = screen.getByRole("combobox", { name: "Based on assessment" });
+    const labels = Array.from(picker.querySelectorAll("option")).map((o) => o.textContent);
+    expect(labels).toEqual([
+      "No assessment — decided without one",
+      "compliant — 2026-06-01 — Annual model review",
+      "partially compliant — no date",
+    ]);
+    // Default is the honest null, not a silently preselected assessment.
+    expect((picker as HTMLSelectElement).value).toBe("");
+  });
+
+  it("submits assessment_id when an assessment is picked", async () => {
+    openFormWithAssessments();
+    pickDecision("approved");
+    fireEvent.change(screen.getByRole("textbox", { name: "Rationale" }), {
+      target: { value: "Clean assessment; approving." },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "Based on assessment" }), {
+      target: { value: "assess-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+
+    await waitFor(() => expect(actions.recordUseDecision).toHaveBeenCalledTimes(1));
+    const [, formData] = actions.recordUseDecision.mock.calls[0]!;
+    expect((formData as FormData).get("assessment_id")).toBe("assess-1");
+  });
+
+  it("omits assessment_id entirely when none is picked — nullable by ruling, never an empty string", async () => {
+    openFormWithAssessments();
+    pickDecision("rejected");
+    fireEvent.change(screen.getByRole("textbox", { name: "Rationale" }), {
+      target: { value: "We looked at the proposal and said no." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
+
+    await waitFor(() => expect(actions.recordUseDecision).toHaveBeenCalledTimes(1));
+    const [, formData] = actions.recordUseDecision.mock.calls[0]!;
+    expect((formData as FormData).get("assessment_id")).toBeNull();
+  });
+
+  it("a rejection may cite an assessment too — the picker is offered for every decision kind", () => {
+    openFormWithAssessments();
+    pickDecision("rejected");
+    expect(screen.getByRole("combobox", { name: "Based on assessment" })).toBeInTheDocument();
+    pickDecision("suspended");
+    expect(screen.getByRole("combobox", { name: "Based on assessment" })).toBeInTheDocument();
+  });
+});
+
+describe("assessmentOptionLabel", () => {
+  it("truncates a long summary rather than flooding the option", () => {
+    const label = assessmentOptionLabel({
+      id: "x",
+      status: "non_compliant",
+      performed_at: "2026-05-05T10:00:00.000Z",
+      summary: "A".repeat(80),
+    });
+    expect(label).toBe(`non compliant — 2026-05-05 — ${"A".repeat(57)}…`);
   });
 });
