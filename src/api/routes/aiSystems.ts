@@ -828,6 +828,14 @@ router.patch(
         addField("next_review_due", v ?? null);
       }
 
+      // Any write to next_review_due — explicit, cadence-derived, or cleared —
+      // re-arms the overdue-notification sweep (20261040): a fresh review date
+      // means the previous overdue notification is answered, and the next
+      // lapse must notify again. Mirrors the vendor-engagement re-arm.
+      if (setClauses.some((c) => c.startsWith("next_review_due"))) {
+        setClauses.push(`review_overdue_notified_at = NULL`);
+      }
+
       if (setClauses.length === 0) {
         res.status(400).json({ error: "no_valid_fields_provided" });
         return;
