@@ -52,8 +52,14 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // ownership predicate, matching every other assessment family.
   "penTestEngagements.ts",
   "aiSystemGovernanceContext.ts",
+  // AI T2-B/T2-D2 (20261038/20261039). Deny-all: linking an AI system into the
+  // governance model and recording its formal use decision are governance acts
+  // with no per-Contributor ownership predicate — denyContributor() rides the
+  // shared chain on every route in both files.
+  "aiSystemGovernanceLinks.ts",
   "aiSystemVendorDependencies.ts",
   "aiSystemsExport.ts",
+  "aiUseApprovals.ts",
   "ask.ts",
   // ASK-B confirm/decline (LC-5): denyContributor() on both routes, and the
   // executed mutation re-runs the target route's own chain, so a Contributor
