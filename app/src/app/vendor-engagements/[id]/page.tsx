@@ -8,6 +8,7 @@ import {
   listVendorEngagementEvidence,
   listVendorEngagementComments,
   listVendorContacts,
+  listEngagementParticipants,
   type VendorEngagementDetail,
   type VendorEngagementQuestionnaire,
   type VendorEngagementEvidenceRow,
@@ -26,6 +27,7 @@ import EngagementActionPanel from "@/components/vendorEngagements/EngagementActi
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
+import ParticipantsSection from "@/components/vendorEngagements/ParticipantsSection";
 
 /**
  * /vendor-engagements/[id] — the reviewer's workspace for one engagement.
@@ -99,7 +101,7 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp, responsesResp] = await Promise.all([
+  const [detail, evidenceResp, commentsResp, responsesResp, participantsResp] = await Promise.all([
     getVendorEngagement(token, id) as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
@@ -114,6 +116,9 @@ export default async function VendorEngagementPage({
       count: number;
     } | null>,
     getVendorEngagementResponses(token, id),
+    // VA-P1: who at the supplier is working on this. null means the read
+    // FAILED, which the section renders differently from an empty team.
+    listEngagementParticipants(token, id),
   ]);
 
   if (!detail) {
@@ -354,6 +359,14 @@ export default async function VendorEngagementPage({
           invite={detail.invite ?? null}
           contacts={contactsData?.contacts ?? []}
           contactsLoadFailed={contactsData === null}
+        />
+
+        <ParticipantsSection
+          engagementId={e.id}
+          participants={participantsResp?.participants ?? []}
+          contacts={contactsData?.contacts ?? []}
+          hasCoordinator={participantsResp?.has_coordinator ?? false}
+          loadFailed={participantsResp === null}
         />
 
         <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />

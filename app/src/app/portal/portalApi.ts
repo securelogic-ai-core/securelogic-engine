@@ -20,6 +20,13 @@ export type PortalEngagement = {
   due_date: string | null;
   /** True while answers may still be edited (issued / in_progress). */
   accepting_responses: boolean;
+  /**
+   * VA-P1. Whether THIS participant may submit. Only the main contact can —
+   * submitting freezes the questionnaire for everybody. Undefined on an engine
+   * that predates VA-P1, which the review screen treats as permitted.
+   */
+  can_submit?: boolean;
+  participant_role?: "coordinator" | "contributor" | null;
 };
 
 export type ScopeReason = {
@@ -39,6 +46,38 @@ export type PortalQuestion = {
   why_we_are_asking: ScopeReason[] | null;
   answer: string | null;
   notes: string | null;
+  /**
+   * VA-P1 collaboration. `answered_at` doubles as the optimistic-concurrency
+   * token: send it back as `prev_answered_at` and a save whose stored value has
+   * moved on since is refused with 412 instead of quietly replacing a
+   * colleague's work.
+   */
+  answered_at: string | null;
+  answered_by_name: string | null;
+  answered_by_you: boolean;
+};
+
+/** VA-P1 — a teammate at the same supplier, on the same engagement. */
+export type PortalParticipant = {
+  id: string;
+  full_name: string;
+  email: string;
+  title: string | null;
+  participant_role: "coordinator" | "contributor";
+  status: "invited" | "active" | "revoked";
+  first_accepted_at: string | null;
+  last_accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  is_you: boolean;
+  invited_by_teammate: boolean;
+  has_live_invite: boolean;
+  invite_expires_at: string | null;
+};
+
+export type PortalParticipants = {
+  participants: PortalParticipant[];
+  you: { participant_id: string | null; can_manage_team: boolean };
 };
 
 export type PortalEvidenceFile = {

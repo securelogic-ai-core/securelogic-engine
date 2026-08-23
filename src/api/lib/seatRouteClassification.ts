@@ -119,6 +119,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // governance act, and the family has no per-Contributor ownership predicate
   // worth trusting — same posture as the engagement routes it feeds.
   "vendorContacts.ts",
+  // VA-P1. Same reasoning one step further in: deciding WHO at the supplier
+  // holds a live credential to an assessment, and revoking it, is the same
+  // governance act as issuing the assessment in the first place.
+  "vendorEngagementParticipants.ts",
   // Every route carries denyContributor(): opening an engagement, overriding an
   // inherent rating, issuing a vendor credential and recording a governance
   // decision are all owner/admin actions, and issuing in particular mints a

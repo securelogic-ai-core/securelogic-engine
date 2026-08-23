@@ -80,6 +80,7 @@ import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
 import { sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
 import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js";
+import { addParticipant } from "../lib/vendorPortal/participants.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
@@ -943,18 +944,49 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       return;
     }
 
-    const invite = mintInviteToken();
+    // VA-P1 — the first recipient becomes the engagement's COORDINATOR.
+    //
+    // Addressed to a directory contact this is a real person: addParticipant
+    // creates the participation record and mints their credential, and from
+    // that moment every answer, file and comment they author resolves to them
+    // through the invite. Addressed to a raw typed address there is no person
+    // to record, so the legacy single-recipient invite is minted exactly as
+    // before; such a session is treated as the sole recipient and keeps its
+    // submission authority (see portalCanCoordinate).
+    let invite: { token: string; expiresAt: Date };
+    let coordinatorParticipantId: string | null = null;
 
-    // Elevated: the invite is the credential a not-yet-authenticated external
-    // party will present, and its lookup at exchange time necessarily precedes
-    // org context. Written on the same channel that will read it.
-    await pgElevated.query(
-      `INSERT INTO vendor_engagement_invites
-         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id, contact_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req), contactId]
-    );
+    if (contactId) {
+      const added = await addParticipant({
+        organizationId,
+        engagementId: id,
+        contactId,
+        role: "coordinator",
+        invitedBy: { userId: userOf(req) },
+      });
+      if (!added.ok) {
+        res
+          .status(added.failure === "contact_not_found" ? 404 : 409)
+          .json({ error: added.failure });
+        return;
+      }
+      coordinatorParticipantId = added.participant.id;
+      invite = { token: added.inviteToken, expiresAt: added.expiresAt };
+    } else {
+      const minted = mintInviteToken();
+      invite = { token: minted.token, expiresAt: minted.expiresAt };
+
+      // Elevated: the invite is the credential a not-yet-authenticated external
+      // party will present, and its lookup at exchange time necessarily precedes
+      // org context. Written on the same channel that will read it.
+      await pgElevated.query(
+        `INSERT INTO vendor_engagement_invites
+           (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+            expires_at, created_by_user_id, contact_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [organizationId, id, minted.tokenHash, email, name, minted.expiresAt, userOf(req), contactId]
+      );
+    }
 
     await pg.query(
       `UPDATE vendor_engagements
@@ -974,6 +1006,7 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       payload: {
         contact_email: email,
         contact_id: contactId,
+        participant_id: coordinatorParticipantId,
         expires_at: invite.expiresAt.toISOString(),
       },
       ipAddress: req.ip ?? null,
@@ -1095,6 +1128,22 @@ export async function revokeEngagementInvite(req: Request, res: Response): Promi
       [revoked.rows.map((r) => r.id), organizationId]
     );
 
+    // VA-P1: this endpoint means "cut this supplier off from this assessment",
+    // so with several people on it, it ends ALL of their access — the invites
+    // above already did that. Closing the participant rows too keeps the
+    // participant list from claiming access that no longer exists; history,
+    // attribution and everything they authored are untouched, per the ruling.
+    // To remove ONE person, use
+    // POST /vendor-engagements/:id/participants/:participantId/revoke.
+    const participants = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_participants
+          SET status = 'revoked', revoked_at = NOW(), revoked_by_user_id = $3,
+              revocation_reason = $4, updated_at = NOW()
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req), reason]
+    );
+
     writeAuditEvent({
       organizationId,
       actorUserId: userOf(req),
@@ -1104,6 +1153,7 @@ export async function revokeEngagementInvite(req: Request, res: Response): Promi
       payload: {
         invites_revoked: revoked.rowCount,
         sessions_revoked: sessions.rowCount,
+        participants_revoked: participants.rowCount,
         reason,
       },
       ipAddress: req.ip ?? null,
@@ -1113,6 +1163,7 @@ export async function revokeEngagementInvite(req: Request, res: Response): Promi
       ok: true,
       invites_revoked: revoked.rowCount,
       sessions_revoked: sessions.rowCount,
+      participants_revoked: participants.rowCount,
     });
   } catch (err) {
     logger.error({ event: "invite_revoke_failed", organizationId, err }, "Invite revoke failed");
@@ -1171,33 +1222,85 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
       return;
     }
 
-    // Single-active-invite rule: the old credential (and its live sessions)
-    // die when the replacement is born. History stays.
-    const priorInvites = await pg.query<{ id: string }>(
-      `UPDATE vendor_engagement_invites
-          SET revoked_at = NOW(), revoked_by_user_id = $3,
-              revocation_reason = 'superseded by re-issue'
-        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
-        RETURNING id`,
-      [id, organizationId, userOf(req)]
-    );
-    if ((priorInvites.rowCount ?? 0) > 0) {
-      await pg.query(
-        `UPDATE vendor_portal_sessions
-            SET revoked_at = NOW()
-          WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL`,
-        [priorInvites.rows.map((r) => r.id), organizationId]
+    // VA-P1 — THE SINGLE-ACTIVE-INVITE RULE IS NOW PER PARTICIPANT.
+    //
+    // It was a security property and it keeps exactly the same force: the old
+    // credential and its live sessions die when the replacement is born. What
+    // changes is the blast radius. Engagement-wide supersession made sense when
+    // an engagement had one recipient; with a team on it, re-sending Jane's
+    // link would have silently thrown Robert out mid-answer.
+    //
+    //   directory contact -> addParticipant supersedes THAT PERSON's credential
+    //                        (partial unique index on live participant invites)
+    //                        and reuses their participation row, so re-sending
+    //                        is a resend and never a second identity;
+    //   raw address       -> the legacy path, and it now supersedes only OTHER
+    //                        legacy invites (participant_id IS NULL). Without
+    //                        that predicate a customer re-sending to a typed
+    //                        address would revoke every participant's access.
+    let invite: { token: string; expiresAt: Date };
+    let priorRevoked = 0;
+    let reissuedParticipantId: string | null = null;
+
+    if (contactId) {
+      // A new person re-issued into an engagement that already has a live
+      // coordinator joins as a contributor; if the seat is vacant they take it,
+      // which is what makes re-issue a working recovery path after the
+      // coordinator was revoked. An EXISTING participant keeps their own role —
+      // addParticipant reuses the row and ignores this argument.
+      const liveCoordinator = await pg.query(
+        `SELECT 1 FROM vendor_engagement_participants
+          WHERE organization_id = $1 AND engagement_id = $2
+            AND participant_role = 'coordinator' AND status <> 'revoked'
+          LIMIT 1`,
+        [organizationId, id]
+      );
+      const added = await addParticipant({
+        organizationId,
+        engagementId: id,
+        contactId,
+        role: (liveCoordinator.rowCount ?? 0) > 0 ? "contributor" : "coordinator",
+        invitedBy: { userId: userOf(req) },
+      });
+      if (!added.ok) {
+        res
+          .status(added.failure === "contact_not_found" ? 404 : 409)
+          .json({ error: added.failure });
+        return;
+      }
+      reissuedParticipantId = added.participant.id;
+      priorRevoked = added.reused ? 1 : 0;
+      invite = { token: added.inviteToken, expiresAt: added.expiresAt };
+    } else {
+      const priorInvites = await pg.query<{ id: string }>(
+        `UPDATE vendor_engagement_invites
+            SET revoked_at = NOW(), revoked_by_user_id = $3,
+                revocation_reason = 'superseded by re-issue'
+          WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+            AND participant_id IS NULL
+          RETURNING id`,
+        [id, organizationId, userOf(req)]
+      );
+      priorRevoked = priorInvites.rowCount ?? 0;
+      if (priorRevoked > 0) {
+        await pg.query(
+          `UPDATE vendor_portal_sessions
+              SET revoked_at = NOW()
+            WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL`,
+          [priorInvites.rows.map((r) => r.id), organizationId]
+        );
+      }
+
+      const minted = mintInviteToken();
+      invite = { token: minted.token, expiresAt: minted.expiresAt };
+      await pgElevated.query(
+        `INSERT INTO vendor_engagement_invites
+           (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+            expires_at, created_by_user_id, contact_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [organizationId, id, minted.tokenHash, email, name, minted.expiresAt, userOf(req), contactId]
       );
     }
-
-    const invite = mintInviteToken();
-    await pgElevated.query(
-      `INSERT INTO vendor_engagement_invites
-         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id, contact_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req), contactId]
-    );
 
     writeAuditEvent({
       organizationId,
@@ -1209,8 +1312,9 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
       payload: {
         contact_email: email,
         contact_id: contactId,
+        participant_id: reissuedParticipantId,
         expires_at: invite.expiresAt.toISOString(),
-        prior_invites_revoked: priorInvites.rowCount,
+        prior_invites_revoked: priorRevoked,
       },
       ipAddress: req.ip ?? null,
     });
@@ -1232,7 +1336,8 @@ export async function reissueEngagementInvite(req: Request, res: Response): Prom
       // Returned ONCE, same contract as issue.
       invite_token: invite.token,
       expires_at: invite.expiresAt,
-      prior_invites_revoked: priorInvites.rowCount,
+      prior_invites_revoked: priorRevoked,
+      participant_id: reissuedParticipantId,
       email_delivery: emailDelivery,
     });
   } catch (err) {

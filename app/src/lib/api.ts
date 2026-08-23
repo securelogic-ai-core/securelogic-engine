@@ -7739,6 +7739,104 @@ async function contactFailureFrom(
   }
 }
 
+/* =========================================================================
+   VA-P1 — engagement participants (who at the supplier works on this)
+   ========================================================================= */
+
+export const PARTICIPANT_ROLES = ["coordinator", "contributor"] as const;
+export type ParticipantRole = (typeof PARTICIPANT_ROLES)[number];
+
+export type EngagementParticipant = {
+  id: string;
+  contact_id: string;
+  full_name: string;
+  email: string;
+  title: string | null;
+  contact_status: string;
+  participant_role: ParticipantRole;
+  status: "invited" | "active" | "revoked";
+  invited_by_user_id: string | null;
+  invited_by_participant_id: string | null;
+  first_accepted_at: string | null;
+  last_accepted_at: string | null;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  /** Live credential only — a superseded invite is history and is not listed. */
+  invite_id: string | null;
+  invite_expires_at: string | null;
+  invite_exchange_count: number | null;
+};
+
+export type EngagementParticipantsResponse = {
+  participants: EngagementParticipant[];
+  count: number;
+  active_count: number;
+  /** False after the coordinator is revoked — nobody can submit until one is named. */
+  has_coordinator: boolean;
+};
+
+export async function listEngagementParticipants(
+  token: string,
+  engagementId: string
+): Promise<EngagementParticipantsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as EngagementParticipantsResponse;
+  } catch {
+    return null;
+  }
+}
+
+export type AddParticipantSuccess = {
+  participant_id: string;
+  reused: boolean;
+  /** Shown ONCE — only a hash is persisted and it can never be read back. */
+  invite_token: string;
+  expires_at: string;
+  email_delivery: string;
+};
+
+export async function addEngagementParticipant(
+  token: string,
+  engagementId: string,
+  input: { contact_id: string; participant_role?: ParticipantRole }
+): Promise<VendorContactResult<AddParticipantSuccess>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants`,
+      token,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "participant_add_failed");
+    return (await res.json()) as AddParticipantSuccess;
+  } catch {
+    return { failure: { error: "participant_add_failed" } };
+  }
+}
+
+export async function revokeEngagementParticipant(
+  token: string,
+  engagementId: string,
+  participantId: string,
+  reason?: string
+): Promise<VendorContactResult<{ ok: true; coordinator_vacant: boolean }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants/${encodeURIComponent(participantId)}/revoke`,
+      token,
+      { method: "POST", body: JSON.stringify({ reason }) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "participant_revoke_failed");
+    return (await res.json()) as { ok: true; coordinator_vacant: boolean };
+  } catch {
+    return { failure: { error: "participant_revoke_failed" } };
+  }
+}
+
 export function isVendorContactFailure<T>(
   value: VendorContactResult<T>
 ): value is { failure: { error: string; message?: string } } {
