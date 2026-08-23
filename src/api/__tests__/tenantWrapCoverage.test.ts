@@ -17,7 +17,9 @@ import path from "path";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const WRAPPED_FILES: Record<string, { endpoints: number; unwrapped: string[] }> = {
-  "vendors.ts": { endpoints: 9, unwrapped: ["/vendors/export.csv"] },
+  // 11 since VA-7 added GET /vendors/reporting-rollups + GET /vendors/:id/risk-trend,
+  // both asTenant-wrapped like the rest.
+  "vendors.ts": { endpoints: 11, unwrapped: ["/vendors/export.csv"] },
   // 7 since GET /ai-systems/:id/history — asTenant-wrapped like the rest.
   "aiSystems.ts": { endpoints: 7, unwrapped: [] },
   // 7 since GET /controls/:id/history — asTenant-wrapped like the rest.
