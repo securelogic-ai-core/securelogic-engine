@@ -91,13 +91,13 @@ naked. But it is the only enforcement point.
 | A1 Sentry integration | BUILT | `src/api/lib/sentry.ts`; `src/api/server.ts:55`; live `SENTRY_DSN_ENGINE` set on prod engine | — | P2 | met | keep | — (ALREADY BUILT) |
 | A2 Frontend error tracking | BUILT | `app/sentry.client.config.ts`, `app/src/instrumentation.ts`; live `NEXT_PUBLIC_SENTRY_DSN_APP` set | — | P2 | met | keep | — (ALREADY BUILT) |
 | A3 Backend error tracking | BUILT | `src/api/app.ts:478` `setupExpressErrorHandler` | — | P2 | met | keep | — (ALREADY BUILT) |
-| A4 Session Replay | MISSING | no `replayIntegration` in repo | no replay | P3 | no | do not add before a support burden exists | — (NOT NEEDED NOW) |
-| A5 Replay/error correlation | MISSING | consequence of A4 | — | P3 | no | — | — (NOT NEEDED NOW) |
+| A4 Session Replay | MISSING | no `replayIntegration` in repo | no replay | **P1** | **before first customer** | privacy-masked, error-associated Sentry Replay — **owner ruling 2026-08-24** | PLATFORM-R1 (NEXT horizon) |
+| A5 Replay/error correlation | MISSING | consequence of A4 | no error→trace→replay link | **P1** | **before first customer** | ships with A4; sequences after A8 | PLATFORM-R1 (NEXT horizon) |
 | A6 Distributed tracing | PARTIAL — **broken on the engine** | `src/api/lib/sentry.ts` header: HTTP auto-instrumentation not applied under ESM; `tracesSampleRate: 0.1` set on both tiers | no end-to-end trace | **P1** | yes | preload `--import ./instrument.mjs` | PLATFORM-R1 |
 | A7 Release SHA correlation | PARTIAL | engine `release: RENDER_GIT_COMMIT` (`sentry.ts`); app `release: NEXT_PUBLIC_RENDER_GIT_COMMIT` — **not among the prod app's 16 live env keys** | app events unversioned | P2 | no | set one env var | PLATFORM-R1 (CONFIGURATION ONLY) |
 | A8 Tenant-safe user/session correlation | MISSING | no `Sentry.setUser` anywhere | cannot ask "which tenant is failing" | **P1** | yes | org-id only, never email | PLATFORM-R1 |
-| A9 Rage-click | MISSING | consequence of A4 | — | P3 | no | — | — (NOT NEEDED NOW) |
-| A10 Dead-click | MISSING | consequence of A4 | — | P3 | no | — | — (NOT NEEDED NOW) |
+| A9 Rage-click | MISSING | consequence of A4 | no friction signal | **P1** | **before first customer** | ships with A4 | PLATFORM-R1 (NEXT horizon) |
+| A10 Dead-click | MISSING | consequence of A4 | no friction signal | **P1** | **before first customer** | ships with A4 | PLATFORM-R1 (NEXT horizon) |
 | A11 Web Vitals (LCP/INP/CLS) | MISSING | no `web-vitals` dependency in `app/package.json` | no field perf data | P2 | no | ships with A6 preload for near-zero cost | PLATFORM-R1 |
 | A12 Route latency metrics | PARTIAL | `src/api/infra/httpLogger.ts` (pino-http, default `responseTime` retained); no aggregation | latency is in logs, never summarised | **P1** | yes | aggregate, don't re-instrument | PLATFORM-R1 |
 | A13 p50/p95/p99 | MISSING | only `src/api/routes/adminDunningMetrics.ts` (billing-specific) | no percentiles anywhere | **P1** | yes | derive from A12 | PLATFORM-R1 |
@@ -220,10 +220,16 @@ What is genuinely good here and should not be rebuilt:
   aggregation problem, not an instrumentation problem — that distinction is the difference
   between a one-week package and a three-week one.
 
-Session Replay, rage-click and dead-click are all one feature (`replayIntegration`) and all
-`NOT NEEDED NOW`. They are support-burden tools. We have no customers generating support burden,
-and replay on a GRC console is a data-governance question (it records tenant screens) that we
-should not answer casually to buy a feature we cannot yet use.
+Session Replay, rage-click and dead-click are all one feature (`replayIntegration`).
+
+**SUPERSEDED BY OWNER RULING, 2026-08-24 — this paragraph originally classified them
+`NOT NEEDED NOW`; they are now `P1`, NEXT horizon, required before the first real external
+customer.** The original reasoning — that replay is a support-burden tool and we have no support
+burden — answered the wrong question. With one customer the value is not support volume: it is
+that each bug report is a single, unreproducible shot from a person deciding whether to keep
+paying, whose session cannot be instrumented after the fact.
+
+Target architecture (see §A-R below). **Not enabled.**
 
 ### B. Application performance
 
@@ -905,6 +911,7 @@ evidence-based instead of speculative. It also contains the single P0 defect in 
 | R1-10 | Breaker on SLOW_EXTERNAL only (AI + connectors) | code | P2 | Explicitly **not** on Stripe, Redis or Postgres |
 | R1-11 | Bulkheads: separate worker pool + AI concurrency semaphore | code | P1 | Depends on R1-1 |
 | R1-12 | Fix `autoDeploy` deploy ordering (engine → workers → app) | CONFIGURATION ONLY | P1 | Long-standing; workers can boot ahead of their migrations |
+| R1-13 | **Privacy-masked Sentry Session Replay** (owner ruling 2026-08-24) | code | P1 | **NEXT horizon — before first customer, not before Sept 15.** Sequences AFTER R1-5. See §A-R |
 
 **Sequencing note:** R1-1 → R1-2 → R1-6 → R1-3 → R1-4 must go in that order. Each one makes the
 next measurable. Do not start any optimisation work until R1-1 through R1-3 are live and have
@@ -1000,8 +1007,9 @@ Recorded so these are not quietly re-proposed later.
 
 **NOT NEEDED NOW (revisit on a specific trigger):**
 
-- Session Replay and its rage/dead-click derivatives (A4/A5/A9/A10) — trigger: a real support
-  burden, plus a data-governance ruling on recording tenant screens.
+- ~~Session Replay and its rage/dead-click derivatives (A4/A5/A9/A10)~~ — **RECLASSIFIED by owner
+  ruling 2026-08-24: P1, NEXT horizon, before the first real external customer.** See §A-R.
+  This category is now empty.
 
 **ALREADY BUILT (protect, do not rebuild):**
 
@@ -1036,6 +1044,45 @@ Recorded so these are not quietly re-proposed later.
   key names. Network probes were unauthenticated `GET`/`HEAD` against public endpoints.
 - **Migration `20261059` not consumed.** AI1-2 will need a number; it must be allocated at build
   time from the ledger, after the merge train's 20261037–58 land.
+
+---
+
+## §A-R — Session Replay target architecture (owner ruling, 2026-08-24)
+
+**Horizon: NEXT — before the first real external customer. Not Sept 15. Not enabled.**
+**Sequenced AFTER P1-5 (tenant-safe Sentry org correlation)**, so that every replay is
+attributable to an organization before any replay exists to attribute.
+
+Required properties:
+
+| Property | Requirement |
+|---|---|
+| Product | Sentry Replay (`replayIntegration`), extending the existing `@sentry/nextjs` client config — not a second vendor |
+| Masking posture | **Aggressive by default.** `maskAllText` and `blockAllMedia` on. Replay records a DOM mutation stream, not video, so masking is structural rather than a post-hoc filter |
+| Sensitive input/text | All inputs masked. Nothing opted back in without a named review |
+| Baseline sampling | **Low** — `replaysSessionSampleRate` at or near 0 |
+| Error-associated sampling | **Higher** — `replaysOnErrorSampleRate` up to 1.0 where supported, so cost and storage scale with errors rather than traffic |
+| Correlation | **error → trace → replay**, joined to the org id from P1-5. A replay that cannot be tied to a tenant and a trace is not worth its privacy cost |
+| Friction signals | Rage-click and dead-click visibility (A9/A10) come with the integration |
+| Attribution | Org/tenant only. **Never** user email, name, or any direct identifier |
+
+**Must never be intentionally captured** — each requires an explicit block at the component, not
+reliance on default masking alone:
+
+- questionnaire answers (supplier free text about their own posture)
+- vendor evidence contents, including rendered SOC 2 document previews
+- AI prompts and Ask responses — the **highest-risk surface**, because they synthesise a tenant's
+  findings, controls and vendors into one visible block
+- secrets, credentials, session tokens, API keys
+- any other sensitive tenant content
+
+**Non-engineering prerequisites, and they are real work:** Sentry becomes a processor of
+tenant-derived data. Before enablement, Sentry must appear in the subprocessor list and the DPA,
+and default masking must be **verified against a real questionnaire and a real Ask response** —
+verified, not assumed.
+
+`app/sentry.scrub.ts` is the established scrubbing seam and this extends it rather than opening a
+new one.
 
 ---
 
