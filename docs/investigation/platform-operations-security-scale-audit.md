@@ -70,9 +70,10 @@ the audit cannot and should not touch it.
 
 Both answer to anyone. The `server: cloudflare` response header on these is **Render's own edge
 in front of `*.onrender.com`** — it is not a SecureLogic Cloudflare zone and it enforces no
-SecureLogic policy. Render offers no inbound IP allowlist on these plans, so even once DNS is
-corrected, an intended Cloudflare boundary would be *bypassable by hostname* unless origin
-authentication is added.
+SecureLogic policy. **CORRECTED 2026-08-24 — see the second addendum:** Render *does* expose an
+inbound `ipAllowList` on web services, currently `0.0.0.0/0` on both production web services, so
+origin-side Cloudflare-only ingress may be enforceable directly. Until either that is applied or
+origin authentication is added, an intended Cloudflare boundary is *bypassable by hostname*.
 
 Consequence today: any WAF rule, rate limit, bot rule, geo rule or IP allowlist placed at
 Cloudflare later is advisory, not enforcing. That includes the `/admin` IP allowlist
@@ -395,8 +396,11 @@ Item-by-item:
 - **`onrender.com` origin exposure** — confirmed reachable. `/health` returns 200 unauthenticated.
 - **Cloudflare proxy state** — not applicable; the zone is not at Cloudflare.
 - **Origin IP/hostname leakage** — moot. The origin hostname is the public entry point.
-- **Render inbound IP restrictions** — not available on these service plans.
-- **Cloudflare IP allowlisting feasibility** — not feasible at Render without an allowlist feature.
+- **Render inbound IP restrictions** — **CORRECTED 2026-08-24:** the API exposes
+  `serviceDetails.ipAllowList` on web services; both production web services read `0.0.0.0/0`.
+  See the second addendum for the four verifications this is subject to.
+- **Cloudflare IP allowlisting feasibility** — **CORRECTED 2026-08-24:** potentially feasible via
+  the inbound `ipAllowList` above, pending verification. Not applied.
 - **Authenticated Origin Pull** — the correct fix, blocked on F1. Render terminates TLS itself
   and does not expose client-certificate verification, so the practical equivalent is a **shared
   secret header** injected by a Cloudflare Worker/transform rule and required by engine
@@ -1044,6 +1048,82 @@ Recorded so these are not quietly re-proposed later.
   key names. Network probes were unauthenticated `GET`/`HEAD` against public endpoints.
 - **Migration `20261059` not consumed.** AI1-2 will need a number; it must be allocated at build
   time from the ledger, after the merge train's 20261037–58 land.
+
+---
+
+## Second addendum — 2026-08-24, owner-authorized
+
+Four facts established after the owner decision review. **Nothing implemented; nothing configured.**
+
+### 1. The "production DSN repoint before promotion" concern is RESOLVED — it is not an R-1 blocker
+
+The standing concern was that promoting the P0-1 TLS hardening (`src/api/infra/pgSsl.ts`, which
+defaults to `rejectUnauthorized: true`) would break production database connectivity, because a
+DSN using Render's *internal* hostname cannot satisfy hostname verification — the certificate's
+SANs cover only the public `*.{region}-postgres.render.com` names.
+
+**That premise does not hold: the production DSNs are already EXTERNAL.** Verified for the prod
+engine, all four prod workers and the staging engine (values read in-process; only a shape
+boolean was ever emitted — no DSN, host, user or password was exposed).
+
+Live verification against the production database endpoint:
+
+```
+issuer  C=US, O=Let's Encrypt, CN=YR2
+SANs    *.virginia-postgres.render.com, virginia-postgres.render.com,
+        *.aws-us-east-1-1-postgres.render.com, ...
+openssl s_client -starttls postgres -verify_hostname <external-host>
+        →  Verification: OK        Verify return code: 0 (ok)
+```
+
+**Therefore: no DSN repoint is owed, `DATABASE_SSL_SERVERNAME` is not required, and the promotion
+DE-RISKS rather than complicates.** The promotion is in fact the remediation for the more severe
+half of the database exposure finding — production `main` today runs
+`ssl = { rejectUnauthorized: false }` (`origin/main:src/api/infra/postgres.ts:43`), i.e. encrypted
+but UNAUTHENTICATED TLS over the public internet.
+
+**Stop carrying "prod DSN repoint owed before promotion" as an R-1 blocker.**
+
+### 2. Render web services expose an inbound `ipAllowList`, currently fully open
+
+Render API, `serviceDetails.ipAllowList`, 2026-08-24:
+
+| service | inbound ipAllowList | openPorts |
+|---|---|---|
+| `securelogic-engine` (prod) | `[{ cidrBlock: "0.0.0.0/0", description: "everywhere" }]` | TCP 10000 |
+| `securelogic-app` (prod) | `[{ cidrBlock: "0.0.0.0/0", description: "everywhere" }]` | TCP 10000 |
+
+### 3. CORRECTION to §0.2, §E and §F
+
+This document previously asserted that **"Render offers no inbound IP allowlist on these plans"**
+and that Cloudflare IP allowlisting was **"not feasible at Render without an allowlist feature."**
+
+**Both claims were wrong.** The field exists and is populated. The affected passages are marked
+CORRECTED in place rather than deleted, so the error stays auditable.
+
+### 4. Cloudflare-only ingress may therefore be enforceable at the origin — SUBJECT TO VERIFICATION
+
+If the inbound allowlist is usable, it enforces Cloudflare-only ingress *directly*, which is
+strictly stronger than the shared-secret header proposed in §F step 5 — a header can be replayed
+by anyone who observes it; a network-layer allowlist cannot.
+
+**This is a hypothesis with four open verifications. It is NOT a plan, and nothing is applied:**
+
+1. **Plan availability** — is `ipAllowList` actually settable on our `starter` web services, or
+   is the field merely readable and reserved for higher tiers?
+2. **Scope** — does it govern **public HTTP ingress**, or only SSH / other ports? Both services
+   also report an `sshAddress`, so the field's scope must not be assumed.
+3. **Representability** — Cloudflare publishes ~15 IPv4 and ~7 IPv6 CIDRs and **changes them**.
+   Can they be represented within Render's entry limit, and what keeps them current? A stale
+   allowlist is an outage, not a degradation.
+4. **Operational traffic** — will Render's own health checks (`healthCheckPath: /health` on the
+   engine), deploy/build traffic, and operator access still reach the service? An allowlist that
+   blocks Render's own health prober takes the service down.
+
+**Sequencing:** this remains blocked on P0-1 — there is no Cloudflare zone yet, so there are no
+proxy IPs in front of us to allowlist. When it is attempted, it must go in **log/monitor mode
+first** exactly as the shared-secret header would, and the rollback is restoring `0.0.0.0/0`,
+which is immediate and needs no redeploy.
 
 ---
 
