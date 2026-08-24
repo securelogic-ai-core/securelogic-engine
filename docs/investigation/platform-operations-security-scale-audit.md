@@ -1039,6 +1039,99 @@ Recorded so these are not quietly re-proposed later.
 
 ---
 
+## Addendum — 2026-08-24, owner-authorized
+
+Added after the owner decision review. Both findings emerged while reading the live Render API
+for **service plans** (to answer whether Render spin-down could explain the reported slowness).
+Neither was present in the original audit body. Recorded here; **not implemented**.
+
+Live evidence, Render API, 2026-08-24:
+
+| service | type | plan | region |
+|---|---|---|---|
+| `securelogic-engine` | web | starter | **virginia** |
+| `securelogic-db` (PG 18) | postgres | **basic_256mb** | **virginia** |
+| `REDIS_URL` | redis | starter | **virginia** |
+| `securelogic-intelligence-worker` | worker | starter | **virginia** |
+| `securelogic-vendor-extraction-worker` | worker | starter | **virginia** |
+| **`securelogic-app`** | web | starter | **oregon** |
+| `securelogic-website` | web | starter | oregon |
+| **`securelogic-posture-worker`** | worker | starter | **oregon** |
+| **`securelogic-data-rights-worker`** | worker | starter | **oregon** |
+| `securelogic-app-staging` | web | starter | virginia |
+| `securelogic-engine-staging` | web | starter | virginia |
+
+All production services are `starter`, `numInstances: 1`, autoscaling off.
+
+### P1-18 — production is split across two Render regions
+
+**Classification: PARTIAL / MIS-SEQUENCED. Priority P1. Sept 15 blocker: probably yes.
+CONFIGURATION + OPERATOR. Requires no code.**
+
+`securelogic-app` runs in **oregon**; `securelogic-engine`, `securelogic-db` and Redis run in
+**virginia**. The app is a BFF — 20+ server-side modules call the engine on every render
+(`app/src/lib/api.ts:43` and the `actions.ts` set, all reading `ENGINE_API_URL`). Every one of
+those calls therefore crosses the continent, and cross-region placement also rules out Render
+private networking, which is consistent with the engine origin being publicly reachable (§0.2).
+
+`securelogic-posture-worker` and `securelogic-data-rights-worker` are likewise in oregon while
+the database they query is in virginia.
+
+**Proven:** the region assignments and the BFF call pattern.
+**Not proven:** how much of the observed slowness this accounts for. Quantifying it still
+requires R1-A telemetry — this finding explains a *structural* cost, it does not measure it.
+
+**The operationally important corollary:** `securelogic-app-staging` and
+`securelogic-engine-staging` are **both virginia**. **Staging structurally cannot reproduce
+production's cross-region latency.** Any performance conclusion drawn from staging is therefore
+not transferable to production, which is a likely reason the slowness has been hard to pin down.
+
+**Smallest remediation:** choose one region and consolidate. Render sets region at service
+creation, so a move means recreating the affected services and re-pointing environment
+references — configuration work, not a rewrite. Virginia is the natural target: the database,
+Redis and the engine are already there, so moving the app and two workers is the smaller change.
+
+### P1-19 — production Postgres is on the smallest paid plan
+
+**Classification: PARTIAL. Priority P1. Sept 15 blocker: yes. CONFIGURATION + OPERATOR.
+Requires no code.**
+
+`securelogic-db`: plan `basic_256mb`, PG 18, 15 GB disk, virginia,
+`highAvailabilityEnabled: false`, `readReplicas: []`, **`connectionPool: "none"`** — Render's own
+pooler is not enabled, so every client connection is a direct backend.
+
+Two independent consequences:
+
+1. **Capacity.** 256 MB of RAM behind a schema with 261 migrations means minimal shared buffers
+   and little room for cache. This is a plausible direct cause of slow queries that no
+   application-level optimisation can address.
+2. **It converts P0-3 from theoretical to arithmetic.** With `connectionPool: "none"` and pg's
+   default `max: 10` on each of two unbounded pools, the five production Node processes that
+   load `src/api/infra/postgres.ts` can demand up to 100 backend connections. See the pool
+   capacity calculation in the owner decision review; the demand figure equals PostgreSQL's own
+   default `max_connections`, so the configuration can reach or exceed the ceiling under any
+   plausible assumption about the plan's limit.
+
+**Smallest remediation:** raise the plan, then size `max` on both pools against the new
+instance's actual `max_connections` (one operator query). Do **not** size the pools blind.
+
+### Residual unknowns recorded, not inferred
+
+- The exact `max_connections` for `basic_256mb` — one operator query settles it.
+- Current connection and memory utilisation on `securelogic-db`.
+- Whether `securelogic-demo-engine` / `securelogic-demo-app` (free plan) point at
+  `securelogic-demo-db` or share `securelogic-db`; environment **values** were not read.
+
+### Separate finding requiring its own ruling — NOT recorded as an audit item
+
+The same Render API response shows `securelogic-db` with
+`ipAllowList: [{ cidrBlock: "0.0.0.0/0", description: "everywhere" }]` — the production database
+accepts connections from any source address, subject to credentials and TLS. This is outside the
+scope authorized for this addendum and is raised for a separate owner ruling rather than
+classified here.
+
+---
+
 *Related memory: [[merge-train-dryrun-2026-08-24]], [[release-boundary-freeze-r1]],
 [[render-yaml-declared-not-synced]], [[admin-ip-allowlist-unwired]],
 [[auth-anomaly-tier2-cloudflare-ip-fragmentation]], [[staging-engine-url-base-unset]],
