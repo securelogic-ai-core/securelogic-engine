@@ -237,14 +237,31 @@ export async function listAiUseApprovals(req: Request, res: Response): Promise<v
       .material_state_version;
 
     const result = await pg.query(
-      `SELECT ${APPROVAL_SELECT}
+      // `expired` is computed IN SQL, against the database's CURRENT_DATE.
+      //
+      // It used to be derived in JS from `expires_at`, and it was ALWAYS false:
+      // node-postgres parses a DATE column into a JS Date, so comparing it to
+      // an ISO string ran the abstract relational algorithm over a number and a
+      // NaN, and every comparison with NaN is false. An expired approval
+      // therefore displayed as standing, forever, on a banner the app is ruled
+      // never to recompute.
+      //
+      // Same shape as the review_overdue sibling (aiSystems.ts, vendorEngagements
+      // .ts): the server's today is the only correct clock for this, and the
+      // database is where it lives.
+      `SELECT ${APPROVAL_SELECT},
+              (expires_at IS NOT NULL AND expires_at < CURRENT_DATE) AS expired
          FROM ai_use_approvals
         WHERE ai_system_id = $1 AND organization_id = $2
         ORDER BY decided_at DESC, id DESC`,
       [aiSystemId, organizationId]
     );
 
-    const rows = result.rows as Array<{ material_state_version: number; expires_at: string | null }>;
+    const rows = result.rows as Array<{
+      material_state_version: number;
+      expires_at: string | null;
+      expired: boolean;
+    }>;
     const current = rows[0] ?? null;
 
     res.status(200).json({
@@ -257,9 +274,7 @@ export async function listAiUseApprovals(req: Request, res: Response): Promise<v
             ...current,
             materially_changed_since:
               currentVersion > current.material_state_version,
-            expired:
-              current.expires_at != null &&
-              current.expires_at < new Date().toISOString().slice(0, 10)
+            expired: current.expired
           }
         : null,
       approvals: rows

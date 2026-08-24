@@ -406,6 +406,48 @@ describe("T2-D2 — the use decision", () => {
     const res = await asOrgB.get(`/api/ai-systems/${A.aiSystemId}/use-approvals`);
     expect(res.status).toBe(404);
   });
+
+  it("an approval whose expiry has PASSED reports expired", async () => {
+    // This is the case the suite did not have, and its absence is why the
+    // defect survived review: every existing assertion used a FUTURE expiry,
+    // and the broken implementation returned false for those too. `expired`
+    // was hard-false for all inputs — a test that only ever asked for false
+    // could not tell a working flag from a dead one.
+    //
+    // On its own system so the neighbouring history counts are undisturbed.
+    const sys = await pool.query<{ id: string }>(
+      `INSERT INTO ai_systems (organization_id, name) VALUES ($1, 'orgA lapsed-approval system')
+       RETURNING id`,
+      [seed.orgA.id]
+    );
+    const systemId = sys.rows[0]!.id;
+
+    const lapsed = await asOrgA.post(`/api/ai-systems/${systemId}/use-approvals`).send({
+      decision: "approved",
+      rationale: "Approved for one quarter only.",
+      expires_at: "2020-01-01"
+    });
+    expect(lapsed.status).toBe(201);
+
+    const read = await asOrgA.get(`/api/ai-systems/${systemId}/use-approvals`);
+    expect(read.status).toBe(200);
+    expect(read.body.current_decision.expired).toBe(true);
+
+    // And the flag still discriminates: a later approval that has NOT lapsed
+    // reports false, so this is not simply hard-true in the other direction.
+    const standing = await asOrgA.post(`/api/ai-systems/${systemId}/use-approvals`).send({
+      decision: "approved",
+      rationale: "Renewed.",
+      expires_at: "2099-01-01"
+    });
+    expect(standing.status).toBe(201);
+
+    const after = await asOrgA.get(`/api/ai-systems/${systemId}/use-approvals`);
+    expect(after.body.current_decision.expired).toBe(false);
+    // The superseded row is still expired in the history — the flag is a fact
+    // about each decision, not about the newest one.
+    expect(after.body.approvals[1].expired).toBe(true);
+  });
 });
 
 describe("RLS is what stands behind the routes — tenant channel proof", () => {
