@@ -130,9 +130,24 @@ export async function claimNextJob(workerId: string): Promise<JobRow | null> {
  * Load the signal the job names, inside the org's tenant scope.
  *
  * Read here rather than carried in the payload so the matcher always sees the
- * current row, and so tenant isolation is enforced by the same RLS scope that
- * governs every other read of `cyber_signals` — a payload-carried summary would
- * bypass that check entirely.
+ * current row, rather than a stale summary snapshotted at enqueue time.
+ *
+ * VISIBILITY PREDICATE — same-org OR GLOBAL. `cyber_signals` is one of the
+ * tables TENANT_ISOLATION_STANDARD.md §1 names as intentionally NOT org-scoped:
+ * public-source intelligence (CISA KEV, NVD, advisory feeds) lands with
+ * `organization_id IS NULL` and is cross-org visible by design. It carries no
+ * RLS policy, so THIS predicate — not the database — is the isolation boundary,
+ * and it must be written in the canonical form the four sibling signal-link
+ * routes already use (`signalControlLinks`, `signalObligationLinks`,
+ * `signalAiSystemLinks`, `signalVendorLinks`):
+ *
+ *     WHERE id = $1 AND (organization_id = $2 OR organization_id IS NULL)
+ *
+ * A bare `organization_id = $2` can never match a global row, so every global
+ * signal read as "not found" and dead-lettered its job non-retryably — 403 jobs
+ * across 31 signals on staging between 2026-08-20 and 2026-08-25 (#883). `id` is
+ * the primary key, so the disjunction still admits at most one row: this widens
+ * nothing an org could not already read through those four routes.
  */
 async function loadSignal(
   orgId: string,
@@ -147,7 +162,8 @@ async function loadSignal(
     }>(
       `SELECT id, signal_type, severity, normalized_summary
          FROM cyber_signals
-        WHERE id = $1 AND organization_id = $2`,
+        WHERE id = $1
+          AND (organization_id = $2 OR organization_id IS NULL)`,
       [signalId, orgId]
     );
     const row = rows[0];
@@ -263,6 +279,10 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
 
     // The signal is gone (deleted, or the org was purged). There is nothing to
     // suggest against and no later attempt could change that.
+    //
+    // This arm is reachable ONLY for a genuinely absent row. A global signal is
+    // admitted by loadSignal's predicate above and must never land here — that
+    // conflation was #883.
     if (!signal) {
       await recordFailure(
         job,
