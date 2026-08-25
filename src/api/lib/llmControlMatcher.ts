@@ -48,6 +48,16 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 export const LLM_CONTROL_MATCHER_MODEL_ID = "claude-sonnet-4-6";
+
+/**
+ * The `purpose` every matcher provider call is tagged with.
+ *
+ * Exported so the worker's tick rollup can select THIS purpose out of the
+ * shared run accumulator instead of reporting whatever else happened to run in
+ * the same process. A string literal duplicated across the two files would let
+ * them drift silently, and the rollup would quietly report zero.
+ */
+export const LLM_CONTROL_MATCHER_PURPOSE = "llm_control_matcher";
 export const LLM_CONTROL_MATCHER_PROMPT_VERSION = "control-matcher-v1";
 
 /** Min LLM confidence (0-100) to write a suggestion. */
@@ -449,7 +459,7 @@ export async function runControlMatcherWithOutcome(
     );
 
     const result = await withLlmCallContext(
-      { purpose: "llm_control_matcher", organizationId: orgId },
+      { purpose: LLM_CONTROL_MATCHER_PURPOSE, organizationId: orgId },
       () => llmCall(prompt)
     );
 
