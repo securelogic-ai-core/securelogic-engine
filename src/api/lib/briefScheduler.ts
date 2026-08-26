@@ -108,14 +108,28 @@ import {
 import {
   beginVerdictCacheAccumulation,
   endVerdictCacheAccumulation,
-  emptyVerdictCacheTotals,
   type VerdictCacheTotals
 } from "./llm/verdictCacheMetrics.js";
+import {
+  notMeasuredInThisProcess,
+  type OutOfProcessMetric
+} from "./llm/outOfProcessMetric.js";
 import { mapWithConcurrency } from "./concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+/**
+ * The verdict cache's real numbers live in the matcher worker, not here.
+ * Published in place of zeroed totals so a reader cannot mistake "this process
+ * never saw it" for "it did nothing". See `outOfProcessMetric.ts` and #826.
+ */
+const VERDICT_CACHE_OUT_OF_PROCESS: OutOfProcessMetric = notMeasuredInThisProcess(
+  "securelogic-intelligence-worker",
+  "control_matcher_tick_complete",
+  "Wave 4 moved control matching behind a durable queue drained by the intelligence worker; the verdict cache is reachable only from that worker's process, which this one does not start."
+);
 
 /** Look-back window for NVD and brief generation. */
 const WINDOW_DAYS = 7;
@@ -176,19 +190,31 @@ export type SchedulerRunSummary = {
   orgs_without_recipients: string[];
   errors: string[];
   /**
-   * Token / cost / latency totals for every Anthropic call this run made,
-   * overall and per purpose. `unpriced_calls` counts calls whose model has no
-   * price entry — their spend is NOT in `cost_usd`, so a non-zero value there
-   * means the cost figure is a floor, not a total.
+   * Token / cost / latency totals for every Anthropic call this run made
+   * IN THIS PROCESS, overall and per purpose. `unpriced_calls` counts calls
+   * whose model has no price entry — their spend is NOT in `cost_usd`, so a
+   * non-zero value there means the cost figure is a floor, not a total.
+   *
+   * WHAT THIS IS NOT: it is not the run's total AI spend. Since Wave 4 the
+   * control matcher executes in `securelogic-intelligence-worker`, so
+   * `by_purpose` contains only the Brief-synthesis purposes
+   * (`brief_item_enrichment`, `brief_headline`, `brief_exec_summary`) and NEVER
+   * `llm_control_matcher`. Matcher spend is real and is reported by the worker
+   * on `control_matcher_tick_complete`. An earlier version of this comment
+   * claimed `by_purpose.llm_control_matcher` was "what was PAID"; that has been
+   * false since Wave 4 and misled the #826 gate analysis.
    */
   llm: LlmRunTotals;
   /**
-   * Verdict-cache effectiveness for this run. Read together with `llm`:
-   * `llm.by_purpose.llm_control_matcher` is what was PAID, `verdict_cache` is
-   * what was AVOIDED — savings measured from the tokens the original calls
-   * actually consumed, not modelled.
+   * ALWAYS the out-of-process marker — never numbers.
+   *
+   * The verdict cache is reachable only from `verdictCache.ts` ← `llmControlMatcher.ts`
+   * ← `controlMatcherWorker.ts`, and `server.ts` (this process) does not start
+   * that worker. So the scheduler cannot observe a single lookup, and the zeroed
+   * totals it used to publish were not a measurement — they were the absence of
+   * one, formatted as evidence. See `outOfProcessMetric.ts`.
    */
-  verdict_cache: VerdictCacheTotals;
+  verdict_cache: OutOfProcessMetric;
   /**
    * Orgs whose task hit the outer safety net — an unforeseen throw, contained.
    *
@@ -1397,11 +1423,17 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   // is closed in every exit — a failed run's partial spend is still real money
   // and must be reported, not dropped.
   beginLlmRunAccumulation();
+  // Still opened, though this process has no verdict-cache producer — see
+  // assertNoInProcessVerdictCache(). An accumulation that stays empty is the
+  // evidence for the marker; one that does not is a topology change that must
+  // surface loudly rather than silently start filling a field documented as
+  // never measured here.
   beginVerdictCacheAccumulation();
   try {
     const summary = await runSchedulerPass();
     summary.llm = endLlmRunAccumulation();
-    summary.verdict_cache = endVerdictCacheAccumulation();
+    assertNoInProcessVerdictCache(endVerdictCacheAccumulation());
+    summary.verdict_cache = VERDICT_CACHE_OUT_OF_PROCESS;
     return summary;
   } catch (err) {
     endLlmRunAccumulation();
@@ -1410,10 +1442,28 @@ export async function runScheduler(): Promise<SchedulerRunSummary> {
   }
 }
 
+/**
+ * The marker on `verdict_cache` is a claim about process topology, not a
+ * preference. If a verdict-cache producer is ever added to this process the
+ * claim silently becomes false — so check it instead of trusting it. Warn-only:
+ * telemetry must never be able to fail a Brief run.
+ */
+function assertNoInProcessVerdictCache(observed: VerdictCacheTotals): void {
+  if (observed.lookups === 0 && observed.retry_exhausted === 0) return;
+  logger.warn(
+    {
+      event: "scheduler_unexpected_in_process_verdict_cache",
+      lookups: observed.lookups,
+      retry_exhausted: observed.retry_exhausted
+    },
+    "Verdict-cache activity observed in the scheduler process — SchedulerRunSummary.verdict_cache is documented as out-of-process and is now understating this run"
+  );
+}
+
 async function runSchedulerPass(): Promise<SchedulerRunSummary> {
   const summary: SchedulerRunSummary = {
     llm: emptyLlmRunTotals(),
-    verdict_cache: emptyVerdictCacheTotals(),
+    verdict_cache: VERDICT_CACHE_OUT_OF_PROCESS,
     org_concurrency: { limit: ORG_CONCURRENCY, peak_in_flight: 0 },
     orgs_task_fatal: 0,
     // Dormant: no code path increments these. See the type declaration.
@@ -1799,7 +1849,21 @@ async function runSchedulerPass(): Promise<SchedulerRunSummary> {
       orgs_without_recipients: summary.orgs_without_recipients,
       orgs_task_fatal: summary.orgs_task_fatal,
       orgs_deadline_exceeded: summary.orgs_deadline_exceeded,
-      error_count: summary.errors.length
+      error_count: summary.errors.length,
+      // Measured, and available here — its absence from this line is what sent
+      // the #826 analysis off to reconstruct the bound from scheduler_org_start
+      // / _complete interval pairs when it was already in the log.
+      org_concurrency: summary.org_concurrency,
+      // Named rather than omitted: silence on this line reads as "nothing to
+      // report". The LLM totals are deliberately NOT here — they are not closed
+      // until runScheduler() returns, so this line could only ever print zeros
+      // for them. scheduler_cron_complete carries the real figures.
+      verdict_cache: VERDICT_CACHE_OUT_OF_PROCESS,
+      llm: notMeasuredInThisProcess(
+        "securelogic-engine",
+        "scheduler_cron_complete",
+        "LLM run accumulation closes in runScheduler(), one frame above this emit."
+      )
     },
     "Brief scheduler run completed"
   );
