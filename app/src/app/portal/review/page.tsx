@@ -124,6 +124,11 @@ export default function ReviewPage() {
   const unansweredRequired = questions.filter((q) => q.mandatory && q.answer === null);
   const answered = questions.filter((q) => q.answer !== null);
   const ready = unansweredRequired.length === 0;
+  // VA-P1: only the main contact submits — submitting freezes the questionnaire
+  // for the whole team. `undefined` means an engine that predates VA-P1, where
+  // the sole recipient always could; treat that as permitted rather than
+  // locking out every in-flight engagement.
+  const maySubmit = engagement?.can_submit !== false;
 
   return (
     <div className="space-y-6">
@@ -200,13 +205,30 @@ export default function ReviewPage() {
         </p>
       )}
 
+      {!maySubmit && (
+        <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5">
+          <h3 className="text-sm font-semibold text-amber-300">
+            Your main contact submits this
+          </h3>
+          <p className="mt-1 text-sm leading-6 text-slate-300">
+            You can answer questions and attach files, but only the main contact for this
+            assessment can send it back — submitting closes it for everyone. You can see who
+            that is under{" "}
+            <Link href="/portal/team" className="text-brand-teal hover:underline">
+              Your team
+            </Link>
+            .
+          </p>
+        </section>
+      )}
+
       <div className="flex items-center justify-end gap-3">
         <Link href="/portal/questionnaire" className="text-sm font-medium text-slate-400 hover:text-slate-200">
           Back to questionnaire
         </Link>
         <button
           type="button"
-          disabled={!ready || submitting}
+          disabled={!ready || submitting || !maySubmit}
           onClick={() => void handleSubmit()}
           className="rounded-lg bg-brand-teal px-5 py-2.5 text-sm font-semibold text-brand-bg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >

@@ -590,6 +590,35 @@ describe("STEP 5b — evidence review and finding promotion", () => {
     expect(Number(count.rows[0]!.n)).toBe(2);
   });
 
+  it("the vendor's PERSISTED legacy risk score moves when findings are promoted", async () => {
+    // Promotion now schedules a recompute of vendors.current_risk_score (the
+    // legacy HIGHER = BETTER score, entirely separate from the engagement's
+    // residual score) via scheduleVendorScoreRecompute — the same hook CUEC
+    // promotion uses. Before the hook this column stayed NULL forever here:
+    // promotion scheduled no recompute, so the score only corrected itself the
+    // next time some UNRELATED finding on the same vendor changed state.
+    //
+    // The hook is fire-and-forget (setImmediate + its own tenant scope), so
+    // the write lands shortly AFTER the promote response — poll briefly
+    // instead of sleeping a fixed amount.
+    let score: number | null = null;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const row = await pool.query<{ score: number | null }>(
+        `SELECT current_risk_score::float8 AS score
+           FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, seed.orgA.id]
+      );
+      score = row.rows[0]!.score;
+      if (score !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(score).not.toBeNull();
+    // Two ACTIVE engagement findings (one Critical) plus 'high' vendor
+    // criticality: strictly below the 100 a finding-free vendor scores.
+    expect(score!).toBeLessThan(100);
+  });
+
   it("severity reflects THIS vendor, and says why", async () => {
     const rows = await pool.query<{ severity: string; severity_rationale: string }>(
       `SELECT severity, severity_rationale FROM findings

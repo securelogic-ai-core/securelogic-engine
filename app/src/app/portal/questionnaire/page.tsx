@@ -14,7 +14,7 @@
  * answer back and locks the form with the engine's own message.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortal } from "../PortalShell";
 import {
@@ -41,6 +41,14 @@ type ItemState = {
   saving: boolean;
   saved: boolean;
   error: string | null;
+  /**
+   * VA-P1. The engine's `updated_at` for this answer as of the last time we saw
+   * it, sent back on save so a colleague's newer edit is not silently replaced.
+   * Null when nobody has answered yet — there is nothing to lose.
+   */
+  answeredAt: string | null;
+  answeredByName: string | null;
+  answeredByYou: boolean;
 };
 
 function initialItemState(q: PortalQuestion): ItemState {
@@ -52,6 +60,9 @@ function initialItemState(q: PortalQuestion): ItemState {
     saving: false,
     saved: false,
     error: null,
+    answeredAt: q.answered_at,
+    answeredByName: q.answered_by_name,
+    answeredByYou: q.answered_by_you,
   };
 }
 
@@ -80,6 +91,9 @@ export default function QuestionnairePage() {
   const { engagement, onUnauthorized, reloadEngagement } = usePortal();
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [questions, setQuestions] = useState<PortalQuestion[]>([]);
+  // VA-P1: `save` is memoized and must not re-create on every keystroke, so the
+  // per-answer concurrency token is read through a ref rather than closed over.
+  const itemsRef = useRef<Record<string, ItemState>>({});
   const [items, setItems] = useState<Record<string, ItemState>>({});
   // Set when the engine says the window closed (submitted elsewhere).
   const [closedMessage, setClosedMessage] = useState<string | null>(null);
@@ -107,6 +121,10 @@ export default function QuestionnairePage() {
   }, [onUnauthorized]);
 
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
     void fetchQuestions();
   }, [fetchQuestions]);
 
@@ -121,12 +139,19 @@ export default function QuestionnairePage() {
     async (id: string, answer: string, notes: string) => {
       patchItem(id, { saving: true, saved: false, error: null });
       try {
-        const result = await portalFetch<{ ok: boolean }>(
+        const result = await portalFetch<{ ok: boolean; answered_at: string | null }>(
           `/questions/${encodeURIComponent(id)}`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ answer, notes: notes.length > 0 ? notes : null }),
+            // VA-P1: the lost-update guard. Echoing back what we rendered lets
+            // the engine refuse a save that would overwrite a teammate's newer
+            // answer, instead of last-write-wins across colleagues.
+            body: JSON.stringify({
+              answer,
+              notes: notes.length > 0 ? notes : null,
+              prev_answered_at: itemsRef.current[id]?.answeredAt ?? undefined,
+            }),
           }
         );
         if (result.status === 401) {
@@ -150,6 +175,27 @@ export default function QuestionnairePage() {
           void reloadEngagement();
           return;
         }
+        if (result.status === 412) {
+          // A colleague changed this answer while it was open here. Roll back to
+          // what they wrote and say whose it is — never silently keep the local
+          // edit, which is the whole failure this guard exists to prevent.
+          const message = errorMessage(
+            result,
+            "This answer changed while you were working on it. Reload to see the current version."
+          );
+          setItems((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id]!,
+              answer: prev[id]!.savedAnswer,
+              notes: prev[id]!.savedNotes,
+              saving: false,
+              error: message,
+            },
+          }));
+          void fetchQuestions();
+          return;
+        }
         if (!result.ok) {
           // Rollback to the last engine-confirmed state, surface the message.
           setItems((prev) => ({
@@ -170,6 +216,11 @@ export default function QuestionnairePage() {
           saving: false,
           saved: true,
           error: null,
+          // Advance the token to the value this save produced, so the next edit
+          // is not refused because of the previous one.
+          answeredAt: result.body?.answered_at ?? null,
+          answeredByName: null,
+          answeredByYou: true,
         });
       } catch {
         setItems((prev) => ({
@@ -283,9 +334,18 @@ export default function QuestionnairePage() {
                         {q.title}
                       </h3>
                     </div>
-                    <div className="text-xs text-slate-500">
+                    <div className="text-right text-xs text-slate-500">
                       {s.saving && <span>Saving…</span>}
                       {!s.saving && s.saved && <span className="text-brand-teal">Saved</span>}
+                      {/* VA-P1: whose answer this is. Only shown for a
+                          COLLEAGUE's — labelling your own work by name is
+                          noise, and the point is to know before you change
+                          something somebody else wrote. */}
+                      {!s.saving && !s.saved && s.answeredByName && !s.answeredByYou && (
+                        <span className="block text-slate-400">
+                          Answered by {s.answeredByName}
+                        </span>
+                      )}
                     </div>
                   </div>
 

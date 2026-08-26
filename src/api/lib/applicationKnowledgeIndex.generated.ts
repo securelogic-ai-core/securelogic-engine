@@ -732,6 +732,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "access": "all"
     },
     {
+      "path": "/portal/team",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "all"
+    },
+    {
       "path": "/posture",
       "dynamic": false,
       "navLabel": null,

@@ -58,6 +58,19 @@ export type PortalContext = {
   inviteId: string;
   organizationId: string;
   engagementId: string;
+  /**
+   * VA-P1. The PERSON behind this session, resolved from the invite's
+   * participant record — never from the request, like everything else here.
+   *
+   * NULL for a session minted from a pre-VA-P1 invite (issued to a typed
+   * address with no participation record). Such a session is treated as the
+   * engagement's sole recipient — which is exactly what it was under the
+   * single-recipient model — so old links keep working and keep their
+   * submission authority. See `portalCanCoordinate`.
+   */
+  participantId: string | null;
+  participantRole: "coordinator" | "contributor" | null;
+  contactId: string | null;
 };
 
 export type PortalRequest = Request & { portalContext?: PortalContext };
@@ -70,9 +83,14 @@ type SessionRow = {
   idle_expires_at: string;
   absolute_expires_at: string;
   revoked_at: string | null;
+  invite_revoked_at: string | null;
   request_count: number;
   window_started_at: string;
   created_user_agent_sha256: string | null;
+  participant_id: string | null;
+  participant_role: "coordinator" | "contributor" | null;
+  participant_status: string | null;
+  participant_contact_id: string | null;
 };
 
 /**
@@ -104,12 +122,31 @@ export async function requirePortalSession(
 
     // Elevated channel: this lookup PRECEDES org context — it is what
     // establishes it. The unique hash index resolves at most one row.
+    // The invite is joined (PK lookup) rather than trusted to have been swept
+    // by the revoke route. VA-L1's revoke kills the invite and then its live
+    // sessions, which leaves one window: an exchange that read the invite
+    // BEFORE the revocation committed can insert its session AFTER the sweep
+    // ran, producing a live session for a dead invite. Re-reading the invite
+    // here closes that window for every request, and makes invite revocation
+    // authoritative for any future code path that mints a session.
+    //
+    // Invite EXPIRY is deliberately NOT enforced here: a session is bounded by
+    // its own idle and absolute windows, and evicting a vendor mid-answer
+    // because the weeks-long invite aged out would destroy work without making
+    // anything safer. Revocation is a decision; expiry is a clock.
     const result = await pgElevated.query<SessionRow>(
-      `SELECT id, invite_id, organization_id, engagement_id,
-              idle_expires_at, absolute_expires_at, revoked_at,
-              request_count, window_started_at, created_user_agent_sha256
-         FROM vendor_portal_sessions
-        WHERE session_token_hash = $1
+      `SELECT s.id, s.invite_id, s.organization_id, s.engagement_id,
+              s.idle_expires_at, s.absolute_expires_at, s.revoked_at,
+              i.revoked_at AS invite_revoked_at,
+              s.request_count, s.window_started_at, s.created_user_agent_sha256,
+              p.id   AS participant_id,
+              p.participant_role,
+              p.status AS participant_status,
+              p.contact_id AS participant_contact_id
+         FROM vendor_portal_sessions s
+         JOIN vendor_engagement_invites i ON i.id = s.invite_id
+         LEFT JOIN vendor_engagement_participants p ON p.id = i.participant_id
+        WHERE s.session_token_hash = $1
         LIMIT 1`,
       [tokenHash]
     );
@@ -120,7 +157,16 @@ export async function requirePortalSession(
         ? {
             idleExpiresAt: session.idle_expires_at,
             absoluteExpiresAt: session.absolute_expires_at,
-            revokedAt: session.revoked_at,
+            // Any of the three kills the session. Revoking the invite revokes
+            // everything minted from it — that is the ruling, not a
+            // convenience. The PARTICIPANT arm (VA-P1) is belt-and-braces:
+            // revokeParticipant already kills their invites, but this means a
+            // participant revoked by any future path that forgets the invite
+            // sweep still loses access on their very next request.
+            revokedAt:
+              session.revoked_at ??
+              session.invite_revoked_at ??
+              (session.participant_status === "revoked" ? new Date(0).toISOString() : null),
           }
         : null
     );
@@ -185,6 +231,9 @@ export async function requirePortalSession(
       inviteId: session.invite_id,
       organizationId: session.organization_id,
       engagementId: session.engagement_id,
+      participantId: session.participant_id,
+      participantRole: session.participant_role,
+      contactId: session.participant_contact_id,
     };
 
     // Belt and braces: a portal request must never carry an organizationContext,
@@ -212,4 +261,27 @@ export async function requirePortalSession(
  */
 export function portalOwnsEngagement(req: PortalRequest, engagementId: string): boolean {
   return req.portalContext?.engagementId === engagementId;
+}
+
+/**
+ * May this session act as the engagement's coordinator? (VA-P1)
+ *
+ * Two things are true at once and both must stay true:
+ *
+ *   - once an engagement has participants, only the COORDINATOR may invite a
+ *     teammate, revoke one, or submit the questionnaire. A contributor who
+ *     could submit could end everyone else's work mid-sentence;
+ *   - a session minted from a pre-VA-P1 invite has no participant record. It is
+ *     the sole recipient of a single-recipient engagement and always could
+ *     submit, so it keeps that authority. Denying it would break every
+ *     in-flight engagement the moment this ships.
+ *
+ * The second case is why this is a named predicate rather than an inline
+ * `role === "coordinator"` at four call sites: the null is load-bearing and
+ * easy to get wrong in one place out of four.
+ */
+export function portalCanCoordinate(req: PortalRequest): boolean {
+  const ctx = req.portalContext;
+  if (!ctx) return false;
+  return ctx.participantId === null || ctx.participantRole === "coordinator";
 }

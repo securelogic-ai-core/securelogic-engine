@@ -58,6 +58,7 @@ const liveRow = (over: Record<string, unknown> = {}) => ({
   idle_expires_at: new Date(Date.now() + 3_600_000).toISOString(),
   absolute_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
   revoked_at: null,
+  invite_revoked_at: null,
   request_count: 0,
   window_started_at: new Date().toISOString(),
   created_user_agent_sha256: null,
@@ -85,6 +86,33 @@ beforeEach(() => {
   h.queries = [];
   h.elevatedUsed = false;
   h.tenantUsed = false;
+});
+
+// ─── Revocation (VA-L1) ─────────────────────────────────────────────────────
+
+describe("portal session — invite revocation is authoritative", () => {
+  it("rejects a live session whose INVITE was revoked", async () => {
+    // The revoke route sweeps live sessions, but an exchange that read the
+    // invite just before the revocation committed can land its session row
+    // just after the sweep. Re-reading the invite here closes that window.
+    h.rows = [liveRow({ invite_revoked_at: new Date().toISOString() })];
+    const { res, status, json } = buildRes();
+    const next = vi.fn();
+
+    await requirePortalSession(buildReq(), res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(401);
+    expect(json).toHaveBeenCalledWith({ error: "portal_session_invalid" });
+  });
+
+  it("reads the invite in the SAME lookup — no second round trip on the hot path", async () => {
+    h.rows = [liveRow()];
+    await requirePortalSession(buildReq(), buildRes().res, vi.fn());
+    const select = h.queries.find((q) => /SELECT/.test(q.sql))!;
+    expect(select.sql).toMatch(/JOIN vendor_engagement_invites/);
+    expect(h.queries.filter((q) => /SELECT/.test(q.sql))).toHaveLength(1);
+  });
 });
 
 // ─── Resolution ─────────────────────────────────────────────────────────────
