@@ -944,11 +944,40 @@ export type AiSystem = {
   name: string;
   use_case: string | null;
   owner_user_id: string | null;
+  /** Accountable business owner (T2-C). owner_user_id stays the TECHNICAL owner. */
+  business_owner_user_id: string | null;
   model_type: string | null;
   data_classification: string | null;
   deployment_status: string | null;
   criticality: "critical" | "high" | "medium" | "low" | null;
   risk_classification: string | null;
+  // ── Governance enrichment (T2-C) — closed vocabularies, validated by the
+  // engine against the same declaration the migration CHECKs mirror.
+  eu_ai_act_tier:
+    | "prohibited"
+    | "high_risk"
+    | "limited_risk"
+    | "minimal_risk"
+    | "not_applicable"
+    | null;
+  human_oversight_level:
+    | "none"
+    | "human_in_the_loop"
+    | "human_on_the_loop"
+    | "autonomous_consequential"
+    | null;
+  /** null = never declared; [] = declared "none". Different facts, both legal. */
+  sensitive_data_categories: string[] | null;
+  review_cadence_days: number | null;
+  next_review_due: string | null;
+  /** Computed by the engine at read (next_review_due < today) — never derived here. */
+  review_overdue: boolean;
+  // ── Reassessment clock (T2-D). A material change to the load-bearing
+  // governance fields bumps the version and stamps a recommendation; the
+  // assessments and use approvals recorded before it describe a different system.
+  material_state_version: number;
+  reassessment_recommended_at: string | null;
+  reassessment_reason: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -3815,6 +3844,133 @@ export async function getAiSystem(
     if (!res.ok) return null;
     const body = (await res.json()) as { ai_system: AiSystem };
     return body.ai_system ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI-system governance links (T2-B) — the four typed edges
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One governance edge, normalized across the four families: the engine returns
+ * the FK under its family name (framework_id / control_id / policy_id /
+ * obligation_id); this client flattens it to target_id so the four lists can
+ * share one row component without a polymorphic lookup table leaking into the UI.
+ */
+export type AiSystemGovernanceLink = {
+  id: string;
+  target_id: string;
+  target_name: string;
+  created_by_user_id: string | null;
+  created_at: string;
+};
+
+export type AiGovernanceLinkKind = "framework" | "control" | "policy" | "obligation";
+
+/**
+ * The entire difference surface between the four families, mirroring the
+ * engine's FAMILIES table in aiSystemGovernanceLinks.ts — plural list segment,
+ * FK column, and where a row deep-links to.
+ */
+export const AI_GOVERNANCE_LINK_FAMILIES: Record<
+  AiGovernanceLinkKind,
+  { plural: string; targetCol: string; targetPath: string }
+> = {
+  framework: { plural: "frameworks", targetCol: "framework_id", targetPath: "/frameworks" },
+  control: { plural: "controls", targetCol: "control_id", targetPath: "/controls" },
+  policy: { plural: "policies", targetCol: "policy_id", targetPath: "/policies" },
+  obligation: { plural: "obligations", targetCol: "obligation_id", targetPath: "/obligations" },
+};
+
+/**
+ * GET /api/ai-systems/:id/{frameworks,controls,policies,obligations}.
+ * Returns null on a failed resolve — NOT [] — so the section can say
+ * "unavailable" instead of rendering a confident, false "no links".
+ */
+export async function getAiSystemGovernanceLinks(
+  apiKey: string,
+  systemId: string,
+  kind: AiGovernanceLinkKind
+): Promise<AiSystemGovernanceLink[] | null> {
+  const family = AI_GOVERNANCE_LINK_FAMILIES[kind];
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(systemId)}/${family.plural}`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      links?: Array<Record<string, unknown>>;
+    };
+    return (body.links ?? []).map((row) => ({
+      id: row["id"] as string,
+      target_id: row[family.targetCol] as string,
+      target_name: (row["target_name"] as string) ?? "",
+      created_by_user_id: (row["created_by_user_id"] as string | null) ?? null,
+      created_at: row["created_at"] as string,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI use approvals (T2-D2) — the formal use decision
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AiUseApproval = {
+  id: string;
+  organization_id: string;
+  ai_system_id: string;
+  decision: "approved" | "approved_with_conditions" | "rejected" | "suspended";
+  rationale: string;
+  conditions: string | null;
+  decided_by_user_id: string | null;
+  decided_at: string;
+  expires_at: string | null;
+  assessment_id: string | null;
+  /** The ai_systems.material_state_version this decision was made against. */
+  material_state_version: number;
+  created_at: string;
+};
+
+/**
+ * The current decision carries the two staleness facts the ENGINE computes —
+ * never recompute them here: "materially changed since" needs the system's
+ * live version and "expired" needs the server's today, and a client-side
+ * re-derivation of either is how two surfaces end up disagreeing about
+ * whether an approval still stands.
+ */
+export type AiUseApprovalCurrent = AiUseApproval & {
+  materially_changed_since: boolean;
+  expired: boolean;
+};
+
+export type AiUseApprovalsResponse = {
+  count: number;
+  current_decision: AiUseApprovalCurrent | null;
+  approvals: AiUseApproval[];
+};
+
+/**
+ * GET /api/ai-systems/:id/use-approvals — full decision history, newest first;
+ * the first row IS the current decision. Null on a failed resolve: "never
+ * decided" and "could not load" are different facts (see the engine's own
+ * pre-flight comment), and coalescing would erase the difference.
+ */
+export async function getAiUseApprovals(
+  apiKey: string,
+  systemId: string
+): Promise<AiUseApprovalsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/ai-systems/${encodeURIComponent(systemId)}/use-approvals`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<AiUseApprovalsResponse>;
   } catch {
     return null;
   }

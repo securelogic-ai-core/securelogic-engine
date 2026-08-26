@@ -112,6 +112,8 @@ import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
+import aiSystemGovernanceLinksRouter from "./aiSystemGovernanceLinks.js";
+import aiUseApprovalsRouter from "./aiUseApprovals.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
@@ -572,6 +574,9 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
+  // AI Governance T2 family: the four governance edges + the use decision.
+  router.use("/api", aiSystemGovernanceLinksRouter);
+  router.use("/api", aiUseApprovalsRouter);
   router.use("/api", riskScoringWeightsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);

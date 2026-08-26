@@ -153,8 +153,16 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   vendor_assurance_cuec_control_mappings: { category: "C", userRefColumns: ["created_by_user_id", "updated_by_user_id"], piiRisk: "none", rlsStatus: "enabled" },
   vendor_assurance_review_decisions: { category: "C", userRefColumns: ["decided_by_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   vendor_assurance_field_overrides: { category: "C", userRefColumns: ["overridden_by_user_id"], piiRisk: "high", rlsStatus: "enabled" },
-  ai_systems: { category: "C", userRefColumns: ["owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
+  ai_systems: { category: "C", userRefColumns: ["owner_user_id", "business_owner_user_id"], piiRisk: "high", rlsStatus: "pending" },
   ai_governance_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "pending", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },
+  // AI T2-B typed governance edges (20261038): org-scoped links from an AI
+  // system to the four governance object families. RLS enabled at creation;
+  // created_by SET NULL, erasure via the organizations CASCADE.
+  ai_system_framework_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
+  ai_system_control_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
+  ai_system_policy_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
+  ai_system_obligation_links: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled" },
+  ai_use_approvals: { category: "C", userRefColumns: ["decided_by_user_id"], piiRisk: "high", rlsStatus: "enabled", specialHandling: "APPEND-ONLY formal use decisions (T2-D2, 20261039): no UPDATE/DELETE grants — a wrong decision is superseded by a new row. rationale/conditions are approver-written free text and org-confidential. ai_system_id is ON DELETE RESTRICT (the decision history blocks silent system deletion); erasure via the organizations CASCADE." },
   governance_reviews: { category: "C", userRefColumns: ["reviewer_id"], piiRisk: "high", rlsStatus: "pending" },
   ai_system_vendor_dependencies: { category: "C", userRefColumns: ["created_by_user_id"], piiRisk: "high", rlsStatus: "enabled" },
   dependency_assessments: { category: "C", userRefColumns: ["reviewer_uuid", "reviewer_id"], piiRisk: "high", rlsStatus: "enabled", specialHandling: "Deprecated TEXT reviewer_id may hold a raw email/name." },

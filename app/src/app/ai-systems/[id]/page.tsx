@@ -9,13 +9,25 @@ import {
   getAiSystemFindings,
   getAiSystemSignals,
   getAiSystemVendorDependencies,
+  getAiSystemGovernanceLinks,
+  getAiUseApprovals,
+  getTeamMembers,
   getVendors,
+  getFrameworks,
+  getControls,
+  getPolicies,
+  getObligations,
+  AI_GOVERNANCE_LINK_FAMILIES,
   type AiSystem,
   type GovernanceReview,
   type AiGovernanceAssessment,
   type Finding,
   type AiSystemLinkedSignal,
   type AiVendorDependency,
+  type AiSystemGovernanceLink,
+  type AiGovernanceLinkKind,
+  type AiUseApprovalsResponse,
+  type AiUseApproval,
 } from "@/lib/api";
 import { FindingCard } from "@/components/FindingCard";
 import { HistorySection } from "@/components/HistorySection";
@@ -24,6 +36,11 @@ import {
   AddVendorDependencyForm,
   RemoveVendorDependencyButton,
 } from "./VendorDependencyManager";
+import {
+  AddGovernanceLinkForm,
+  RemoveGovernanceLinkButton,
+} from "./GovernanceLinkManager";
+import { UseDecisionForm } from "./UseDecisionForm";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -321,6 +338,449 @@ function GovernanceAssessmentsSection({
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Section: Governance (T2 — enrichment facts, typed links, use decision)
+// ─────────────────────────────────────────────────────────────
+
+const EU_TIER_LABELS: Record<string, string> = {
+  prohibited: "Prohibited",
+  high_risk: "High risk",
+  limited_risk: "Limited risk",
+  minimal_risk: "Minimal risk",
+  not_applicable: "Not applicable",
+};
+
+const EU_TIER_STYLES: Record<string, React.CSSProperties> = {
+  prohibited:     { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
+  high_risk:      { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
+  limited_risk:   { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
+  minimal_risk:   { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
+  not_applicable: { background: "rgba(148,163,184,0.15)", color: "#94a3b8" },
+};
+
+const OVERSIGHT_LABELS: Record<string, string> = {
+  none: "None",
+  human_in_the_loop: "Human in the loop",
+  human_on_the_loop: "Human on the loop",
+  autonomous_consequential: "Autonomous (consequential)",
+};
+
+const SENSITIVE_DATA_LABELS: Record<string, string> = {
+  pii: "PII",
+  phi: "PHI",
+  payment_card: "Payment card",
+  credentials: "Credentials",
+  biometric: "Biometric",
+  financial: "Financial",
+  proprietary: "Proprietary",
+};
+
+const USE_DECISION_LABELS: Record<string, string> = {
+  approved: "Approved",
+  approved_with_conditions: "Approved with conditions",
+  rejected: "Rejected",
+  suspended: "Suspended",
+};
+
+const USE_DECISION_STYLES: Record<string, React.CSSProperties> = {
+  approved:                 { background: "rgba(34,197,94,0.15)",   color: "#86efac" },
+  approved_with_conditions: { background: "rgba(245,158,11,0.15)",  color: "#fcd34d" },
+  rejected:                 { background: "rgba(239,68,68,0.15)",   color: "#fca5a5" },
+  suspended:                { background: "rgba(249,115,22,0.15)",  color: "#fdba74" },
+};
+
+function UseDecisionBadge({ decision }: { decision: string }) {
+  const style = USE_DECISION_STYLES[decision] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold" style={style}>
+      {USE_DECISION_LABELS[decision] ?? decision}
+    </span>
+  );
+}
+
+/**
+ * The reassessment recommendation the PATCH stamps on a material change.
+ * Rendered prominently: it means every assessment and use approval recorded
+ * before it describes a DIFFERENT system, and burying that in a fact row would
+ * let a stale approval keep reading as assurance.
+ */
+function ReassessmentBanner({ system }: { system: AiSystem }) {
+  if (!system.reassessment_recommended_at) return null;
+  return (
+    <div
+      role="alert"
+      className="rounded-xl px-4 py-3"
+      style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)" }}
+    >
+      <p className="text-sm font-semibold" style={{ color: "#fcd34d" }}>
+        Reassessment recommended — {fmt(system.reassessment_recommended_at)}
+      </p>
+      {system.reassessment_reason && (
+        <p className="text-xs mt-1" style={{ color: "#fde68a" }}>
+          {system.reassessment_reason}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GovernanceFactRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-2" style={{ borderBottom: "1px solid #1e2d45" }}>
+      <span className="text-xs uppercase tracking-wide font-medium flex-shrink-0" style={{ color: "#475569" }}>
+        {label}
+      </span>
+      <span className="text-xs font-medium text-right" style={{ color: "#cbd5e1" }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function GovernanceFactsCard({
+  system,
+  userLabel,
+}: {
+  system: AiSystem;
+  /** Resolves a user id to a display label; falls back to the raw id. */
+  userLabel: (id: string | null) => string | null;
+}) {
+  const businessOwner = userLabel(system.business_owner_user_id);
+  const technicalOwner = userLabel(system.owner_user_id);
+  return (
+    <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+        <GovernanceFactRow label="EU AI Act tier">
+          {system.eu_ai_act_tier ? (
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+              style={EU_TIER_STYLES[system.eu_ai_act_tier] ?? {}}
+            >
+              {EU_TIER_LABELS[system.eu_ai_act_tier] ?? system.eu_ai_act_tier}
+            </span>
+          ) : (
+            "Not classified"
+          )}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Human oversight">
+          {system.human_oversight_level
+            ? OVERSIGHT_LABELS[system.human_oversight_level] ?? system.human_oversight_level
+            : "Not declared"}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Sensitive data">
+          {/* null and [] are DIFFERENT facts: never declared vs declared "none". */}
+          {system.sensitive_data_categories === null ? (
+            "Never declared"
+          ) : system.sensitive_data_categories.length === 0 ? (
+            "None declared"
+          ) : (
+            <span className="inline-flex items-center gap-1 flex-wrap justify-end">
+              {system.sensitive_data_categories.map((c) => (
+                <span
+                  key={c}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium"
+                  style={{ background: "rgba(239,68,68,0.10)", color: "#fda4af" }}
+                >
+                  {SENSITIVE_DATA_LABELS[c] ?? c}
+                </span>
+              ))}
+            </span>
+          )}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Business owner">
+          {businessOwner ?? "Not assigned"}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Technical owner">
+          {technicalOwner ?? "Not assigned"}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Review cadence">
+          {system.review_cadence_days != null ? `Every ${system.review_cadence_days} days` : "Not set"}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Next review due">
+          {system.next_review_due ? (
+            <span className="inline-flex items-center gap-2">
+              {fmt(system.next_review_due)}
+              {/* The engine computed this against ITS today — not re-derived here. */}
+              {system.review_overdue && (
+                <span
+                  className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold"
+                  style={{ background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}
+                >
+                  Overdue
+                </span>
+              )}
+            </span>
+          ) : (
+            "Not scheduled"
+          )}
+        </GovernanceFactRow>
+        <GovernanceFactRow label="Material state">
+          v{system.material_state_version}
+        </GovernanceFactRow>
+      </div>
+    </div>
+  );
+}
+
+/** Per-family list metadata: heading, add-affordance noun, and what a link MEANS. */
+const LINK_LIST_META: Record<
+  AiGovernanceLinkKind,
+  { heading: string; noun: string; emptyMeaning: string }
+> = {
+  framework: {
+    heading: "Frameworks",
+    noun: "framework",
+    emptyMeaning:
+      "No frameworks linked. A framework link declares which governance framework this system is assessed against.",
+  },
+  control: {
+    heading: "Controls",
+    noun: "control",
+    emptyMeaning:
+      "No controls linked. A control link declares which of your controls mitigate this system's risks.",
+  },
+  policy: {
+    heading: "Policies",
+    noun: "policy",
+    emptyMeaning:
+      "No policies linked. A policy link declares which organizational policies govern this system's use.",
+  },
+  obligation: {
+    heading: "Obligations",
+    noun: "obligation",
+    emptyMeaning:
+      "No obligations linked. An obligation link declares which regulatory obligations this system's use falls under.",
+  },
+};
+
+function GovernanceLinkList({
+  kind,
+  links,
+  aiSystemId,
+  options,
+}: {
+  kind: AiGovernanceLinkKind;
+  /** null = the resolve FAILED — not an empty list, and not rendered as one. */
+  links: AiSystemGovernanceLink[] | null;
+  aiSystemId: string;
+  /** Empty = the session may not manage (viewer) or no targets exist — read-only list. */
+  options: Array<{ id: string; name: string }>;
+}) {
+  const meta = LINK_LIST_META[kind];
+  const canManage = options.length > 0;
+  return (
+    <div className="rounded-lg border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+        {meta.heading}{links !== null && ` (${links.length})`}
+      </h3>
+      {links === null ? (
+        <p className="text-xs" style={{ color: "#fbbf24" }}>
+          Could not load {meta.heading.toLowerCase()} for this system. This is not an
+          empty list — retry, or escalate if it persists.
+        </p>
+      ) : links.length === 0 ? (
+        <p className="text-xs" style={{ color: "#475569" }}>{meta.emptyMeaning}</p>
+      ) : (
+        <div className="space-y-1.5">
+          {links.map((l) => (
+            <div key={l.id} className="flex items-center gap-2 text-sm">
+              <Link
+                href={`${AI_GOVERNANCE_LINK_FAMILIES[kind].targetPath}/${l.target_id}`}
+                style={{ color: "#93c5fd" }}
+              >
+                {l.target_name}
+              </Link>
+              <span className="text-xs ml-auto" style={{ color: "#475569" }}>
+                linked {fmt(l.created_at)}
+              </span>
+              {canManage && (
+                <RemoveGovernanceLinkButton
+                  aiSystemId={aiSystemId}
+                  kind={kind}
+                  linkId={l.id}
+                  targetName={l.target_name}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {canManage && (
+        <AddGovernanceLinkForm
+          aiSystemId={aiSystemId}
+          kind={kind}
+          kindLabel={meta.noun}
+          options={options}
+        />
+      )}
+    </div>
+  );
+}
+
+function UseDecisionCard({
+  approvalsData,
+  system,
+  userLabel,
+  canManage,
+}: {
+  /** null = the resolve FAILED. "Never decided" arrives as count 0, not null. */
+  approvalsData: AiUseApprovalsResponse | null;
+  system: AiSystem;
+  userLabel: (id: string | null) => string | null;
+  canManage: boolean;
+}) {
+  const current = approvalsData?.current_decision ?? null;
+  // History beyond the current decision — the superseded rows.
+  const history: AiUseApproval[] = (approvalsData?.approvals ?? []).slice(1);
+  return (
+    <div className="rounded-lg border p-4" style={{ background: "rgba(255,255,255,0.02)", borderColor: "#1e2d45" }}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "#64748b" }}>
+        Use Decision
+      </h3>
+
+      {approvalsData === null ? (
+        <p className="text-xs" style={{ color: "#fbbf24" }}>
+          Could not load the use decision for this system. This does not mean no
+          decision exists — retry, or escalate if it persists.
+        </p>
+      ) : current === null ? (
+        <p className="text-xs" style={{ color: "#475569" }}>
+          No use decision has been recorded. A use decision is the organization&apos;s
+          formal approval, rejection or suspension of this system&apos;s use — the
+          artifact a reviewer asks for, distinct from assessments.
+        </p>
+      ) : (
+        <>
+          {/* Staleness facts the ENGINE computed — surfaced, never recomputed here. */}
+          {current.materially_changed_since && (
+            <div
+              role="alert"
+              className="rounded-md px-3 py-2 mb-3"
+              style={{ background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)" }}
+            >
+              <p className="text-xs font-semibold" style={{ color: "#fcd34d" }}>
+                The system has materially changed since this decision.
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#fde68a" }}>
+                Decided against material state v{current.material_state_version}; the system
+                is now v{system.material_state_version}. This decision describes a different system.
+              </p>
+            </div>
+          )}
+          {current.expired && (
+            <div
+              role="alert"
+              className="rounded-md px-3 py-2 mb-3"
+              style={{ background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.35)" }}
+            >
+              <p className="text-xs font-semibold" style={{ color: "#fca5a5" }}>
+                This approval expired on {fmt(current.expires_at)}.
+              </p>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap mb-2">
+            <UseDecisionBadge decision={current.decision} />
+            <span className="text-xs" style={{ color: "#475569" }}>
+              {fmt(current.decided_at)}
+            </span>
+            {userLabel(current.decided_by_user_id) && (
+              <span className="text-xs" style={{ color: "#94a3b8" }}>
+                by {userLabel(current.decided_by_user_id)}
+              </span>
+            )}
+            {current.expires_at && !current.expired && (
+              <span className="text-xs" style={{ color: "#94a3b8" }}>
+                expires {fmt(current.expires_at)}
+              </span>
+            )}
+          </div>
+          <p className="text-xs mb-1" style={{ color: "#cbd5e1" }}>
+            {current.rationale}
+          </p>
+          {current.conditions && (
+            <p className="text-xs" style={{ color: "#94a3b8" }}>
+              Conditions: {current.conditions}
+            </p>
+          )}
+
+          {history.length > 0 && (
+            <div className="mt-3 pt-3" style={{ borderTop: "1px solid #1e2d45" }}>
+              <p className="text-xs font-medium mb-2" style={{ color: "#475569" }}>
+                Decision history
+              </p>
+              <div className="space-y-1.5">
+                {history.map((a) => (
+                  <div key={a.id} className="flex items-center gap-2 flex-wrap">
+                    <UseDecisionBadge decision={a.decision} />
+                    <span className="text-xs" style={{ color: "#475569" }}>
+                      {fmt(a.decided_at)}
+                    </span>
+                    {userLabel(a.decided_by_user_id) && (
+                      <span className="text-xs" style={{ color: "#64748b" }}>
+                        by {userLabel(a.decided_by_user_id)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {canManage && <UseDecisionForm aiSystemId={system.id} />}
+    </div>
+  );
+}
+
+function GovernanceSection({
+  system,
+  links,
+  linkOptions,
+  approvalsData,
+  userLabel,
+  canManage,
+}: {
+  system: AiSystem;
+  links: Record<AiGovernanceLinkKind, AiSystemGovernanceLink[] | null>;
+  linkOptions: Record<AiGovernanceLinkKind, Array<{ id: string; name: string }>>;
+  approvalsData: AiUseApprovalsResponse | null;
+  userLabel: (id: string | null) => string | null;
+  canManage: boolean;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide" style={{ color: "#94a3b8" }}>
+          Governance
+        </h2>
+      </div>
+      <div className="space-y-4">
+        <ReassessmentBanner system={system} />
+        <GovernanceFactsCard system={system} userLabel={userLabel} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(Object.keys(LINK_LIST_META) as AiGovernanceLinkKind[]).map((kind) => (
+            <GovernanceLinkList
+              key={kind}
+              kind={kind}
+              links={links[kind]}
+              aiSystemId={system.id}
+              options={linkOptions[kind]}
+            />
+          ))}
+        </div>
+        <UseDecisionCard
+          approvalsData={approvalsData}
+          system={system}
+          userLabel={userLabel}
+          canManage={canManage}
+        />
+      </div>
     </section>
   );
 }
@@ -653,7 +1113,21 @@ export default async function AiSystemDetailPage({
   // viewer-mutation block authoritatively — this only decides what to render).
   const canManageDependencies = session.userRole !== "viewer";
 
-  const [system, reviewsData, assessmentsData, findingsData, linkedSignals, vendorDeps, vendorsData] = await Promise.all([
+  const [
+    system,
+    reviewsData,
+    assessmentsData,
+    findingsData,
+    linkedSignals,
+    vendorDeps,
+    vendorsData,
+    frameworkLinks,
+    controlLinks,
+    policyLinks,
+    obligationLinks,
+    useApprovalsData,
+    teamData,
+  ] = await Promise.all([
     getAiSystem(token, id),
     getGovernanceReviewsForSystem(token, id, 20),
     getAiGovernanceAssessments(token, id, 20),
@@ -667,9 +1141,32 @@ export default async function AiSystemDetailPage({
     getAiSystemVendorDependencies(token, id),
     // Vendor choices for the add-dependency form (active vendors, first 100).
     getVendors(token),
+    // The four typed governance edges (T2-B). null = failed resolve, kept distinct
+    // from an empty list all the way to the render.
+    getAiSystemGovernanceLinks(token, id, "framework"),
+    getAiSystemGovernanceLinks(token, id, "control"),
+    getAiSystemGovernanceLinks(token, id, "policy"),
+    getAiSystemGovernanceLinks(token, id, "obligation"),
+    // The formal use decision + full history (T2-D2).
+    getAiUseApprovals(token, id),
+    // Org members, to render owner and approver ids as people. Best-effort: if the
+    // team endpoint is unavailable the facts fall back to the raw ids.
+    getTeamMembers(token),
   ]);
 
   if (!system) redirect("/ai-systems");
+
+  // Picker choices for the four link families — only fetched when the session may
+  // manage links at all (the engine denies contributors authoritatively; this only
+  // decides whether the add affordances render).
+  const [frameworksData, controlsData, policiesData, obligationsData] = canManageDependencies
+    ? await Promise.all([
+        getFrameworks(token),
+        getControls(token),
+        getPolicies(token, { limit: 100 }),
+        getObligations(token, { limit: 100 }),
+      ])
+    : [null, null, null, null];
 
   const reviews = reviewsData?.reviews ?? [];
   const assessments = assessmentsData?.assessments ?? [];
@@ -704,6 +1201,27 @@ export default async function AiSystemDetailPage({
   }
 
   const latestAssessment = assessments[0] ?? null;
+
+  // Resolve user ids (owners, approvers) to people — falling back to the raw id
+  // rather than hiding the fact that SOMEONE holds the accountability.
+  const memberLabels = new Map(
+    (teamData?.members ?? []).map((m) => [m.id, m.name?.trim() || m.email])
+  );
+  const userLabel = (userId: string | null): string | null =>
+    userId === null ? null : memberLabels.get(userId) ?? userId;
+
+  const governanceLinks: Record<AiGovernanceLinkKind, AiSystemGovernanceLink[] | null> = {
+    framework: frameworkLinks,
+    control: controlLinks,
+    policy: policyLinks,
+    obligation: obligationLinks,
+  };
+  const governanceLinkOptions: Record<AiGovernanceLinkKind, Array<{ id: string; name: string }>> = {
+    framework: (frameworksData?.frameworks ?? []).map((f) => ({ id: f.id, name: f.name })),
+    control: (controlsData?.controls ?? []).map((c) => ({ id: c.id, name: c.name })),
+    policy: (policiesData?.policies ?? []).map((p) => ({ id: p.id, name: p.name })),
+    obligation: (obligationsData?.obligations ?? []).map((o) => ({ id: o.id, name: o.title })),
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-12">
@@ -746,6 +1264,14 @@ export default async function AiSystemDetailPage({
             count={activeFindingCount}
             unavailable={findingsUnavailable}
             systemId={system.id}
+          />
+          <GovernanceSection
+            system={system}
+            links={governanceLinks}
+            linkOptions={governanceLinkOptions}
+            approvalsData={useApprovalsData}
+            userLabel={userLabel}
+            canManage={canManageDependencies}
           />
           <ExternalIntelligenceSection signals={linkedSignals} />
           <GovernanceReviewsSection reviews={reviews} reviewIdsWithFindings={reviewIdsWithFindings} />
