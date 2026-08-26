@@ -51,6 +51,15 @@ const api = vi.hoisted(() => ({
   getAiSystemFindings: vi.fn(),
   getAiSystemSignals: vi.fn(),
   getAiSystemVendorDependencies: vi.fn(),
+  // The T2 governance reads — defaulted empty here; their render contract lives
+  // in aiSystemGovernance.render.test.tsx.
+  getAiSystemGovernanceLinks: vi.fn(),
+  getAiUseApprovals: vi.fn(),
+  getTeamMembers: vi.fn(),
+  getFrameworks: vi.fn(),
+  getControls: vi.fn(),
+  getPolicies: vi.fn(),
+  getObligations: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -117,6 +126,13 @@ beforeEach(() => {
   api.getAiSystemFindings.mockResolvedValue(aiFindings([]));
   api.getAiSystemSignals.mockResolvedValue([]);
   api.getAiSystemVendorDependencies.mockResolvedValue([]);
+  api.getAiSystemGovernanceLinks.mockResolvedValue([]);
+  api.getAiUseApprovals.mockResolvedValue({ count: 0, current_decision: null, approvals: [] });
+  api.getTeamMembers.mockResolvedValue(null);
+  api.getFrameworks.mockResolvedValue(null);
+  api.getControls.mockResolvedValue(null);
+  api.getPolicies.mockResolvedValue(null);
+  api.getObligations.mockResolvedValue(null);
 });
 
 // ─────────────────────────────────────────────────────────────────────
