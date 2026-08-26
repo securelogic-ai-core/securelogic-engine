@@ -20,7 +20,7 @@
  */
 
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -41,6 +41,10 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 
+// M-1 PR-2: CSV export — the handler STREAMS (setHeader/write), which the
+// asTenant buffering proxy forbids, so only the org-scoped SELECT runs inside
+// an explicit withTenant scope (RLS backstop post-flip); the commit lands
+// before the first byte is streamed. writeAuditEvent is elevated-channel.
 router.get(
   "/obligations/export.csv",
   requireApiKey,
@@ -89,7 +93,7 @@ router.get(
     const where = conditions.join(" AND ");
 
     try {
-      const result = await pg.query<{
+      const result = await withTenant(organizationId, () => pg.query<{
         id: string;
         title: string;
         source_regulation: string | null;
@@ -116,7 +120,7 @@ router.get(
          ORDER BY o.created_at DESC, o.id DESC
          LIMIT ${CSV_MAX}`,
         params
-      );
+      ));
 
       writeAuditEvent({
         organizationId: organizationId,

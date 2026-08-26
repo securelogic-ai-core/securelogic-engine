@@ -25,8 +25,26 @@ export interface SessionData {
   organizationId?: string;
   organizationName?: string;
   entitlementLevel?: string;
-  billingActive?: boolean;
   onboardingCompleted?: boolean;
+
+  // billingActive is DELIBERATELY ABSENT (SL-BILL-1 PR-G, defect D7).
+  //
+  // It used to be written here by ten routes and read by NOTHING — dead state
+  // that was also inconsistent, since half the writers used the engine's
+  // payment-failure-aware value and half used `entitlementLevel !== "starter"`,
+  // which is a different question.
+  //
+  // Deleting it rather than unifying it, because a payment-state cache in a
+  // cookie is STALE BY CONSTRUCTION: a session minted while billing was healthy
+  // would keep claiming billingActive:true for the life of the cookie, long
+  // after the card failed. The obvious future temptation — "render the dunning
+  // banner from the session and skip the fetch" — would therefore have shown
+  // the reassuring answer to precisely the customer PR-A and PR-B exist to
+  // warn. Removing the field removes the trap.
+  //
+  // Authoritative sources, both DB-backed and payment-failure-aware:
+  //   GET /api/me and GET /api/auth/me     -> billingActive
+  //   GET /api/billing/subscription        -> payment_failed_at (drives the banner)
 
   // Pre-auth: paid tier the user picked on /signup, replayed by
   // /verify-email after the email-verification step to redirect into checkout.
@@ -36,6 +54,14 @@ export interface SessionData {
   // loginAt is stamped once (absolute cap), lastActivityAt slides (idle cap).
   loginAt?: number;
   lastActivityAt?: number;
+
+  /**
+   * When middleware last asked the ENGINE whether this session's JWT is still
+   * valid (SEC-JWT-EPOCH). Owned by middleware; throttles the probe to once per
+   * SESSION_ENGINE_PROBE_SECONDS. Declared here so a route handler's
+   * session.save() round-trips it instead of dropping it.
+   */
+  engineCheckedAt?: number;
 }
 
 /**

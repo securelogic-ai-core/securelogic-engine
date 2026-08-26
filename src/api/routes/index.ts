@@ -38,6 +38,7 @@ import adminOpsOverviewRouter from "./adminOpsOverview.js";
 import adminOpsHealthRouter from "./adminOpsHealth.js";
 import adminApiKeysRouter from "./adminApiKeys.js";
 import adminOrganizationsRouter from "./adminOrganizations.js";
+import adminDunningMetricsRouter from "./adminDunningMetrics.js";
 import adminAuditLogRouter from "./adminAuditLog.js";
 import issuesRouter from "./issues.js";
 import intelligenceRouter from "./intelligence.js";
@@ -45,6 +46,9 @@ import intelligenceRouter from "./intelligence.js";
 import assessRouter from "./assess.js";
 import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
+import findingRiskLinksRouter from "./findingRiskLinks.js";
+import findingAssetOccurrencesRouter from "./findingAssetOccurrences.js";
+import penTestEngagementsRouter from "./penTestEngagements.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
 import vendorAssessmentsRouter from "./vendorAssessments.js";
@@ -347,6 +351,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/admin", adminOpsHealthRouter);
   router.use("/admin", adminApiKeysRouter);
   router.use("/admin", adminOrganizationsRouter);
+  router.use("/admin", adminDunningMetricsRouter);
   router.use("/admin", adminAuditLogRouter);
 
   // =========================================================
@@ -476,6 +481,12 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // /findings/export.csv is otherwise captured by GET /findings/:id, which
   // rejects "export.csv" as a non-UUID id (staging EXP-1).
   router.use("/api", findingsExportRouter);
+  // MUST mount before findingsRouter and risksRouter: both own /findings/:id
+  // and /risks/:id, and a parameterised route registered first would capture
+  // /findings/:id/risk-links as an id of "risk-links".
+  router.use("/api", findingRiskLinksRouter);
+  router.use("/api", findingAssetOccurrencesRouter);
+  router.use("/api", penTestEngagementsRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
   router.use("/api", vendorsRouter);

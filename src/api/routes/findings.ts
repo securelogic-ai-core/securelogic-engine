@@ -60,6 +60,7 @@ import {
   sqlFindingPendingIndependentReview,
 } from "../lib/metricDefinitions.js";
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
+import { normalizeSeverity } from "../lib/severityNormalization.js";
 import { buildSignalFindingTitle, resolveSignalDomain } from "../lib/signalFindingShape.js";
 import { severityToPriority } from "../lib/postureComputation.js";
 import {
@@ -171,7 +172,9 @@ router.post(
 
       const {
         title,
-        severity,
+        // severity is NOT destructured here: it may be DERIVED from
+        // source_severity below, and a const from the destructure would shadow
+        // the derivation and silently store the un-normalised value.
         source_type,
         description,
         source_id,
@@ -189,8 +192,74 @@ router.post(
       // SLA policy (20260903): when the caller sets no due date, default it
       // from the org's severity→days policy — the SLA Breached queue is only
       // as real as its due-date source. No policy → null (unchanged).
+      // NORMALISATION HAPPENS HERE, once, on the server.
+      //
+      // When the caller supplies no canonical severity but did preserve what
+      // the source said, the canonical value is DERIVED from it — so the
+      // mapping table lives in exactly one place and an importer never has to
+      // reimplement it. The outcome is deliberately allowed to be null:
+      // "Informational" and an unreadable value both mean NO canonical
+      // severity, and neither may be coerced into Low.
+      let severity = validation.input.severity;
+      if (severity === null && validation.input.source_severity !== null) {
+        const normalized = normalizeSeverity(validation.input.source_severity);
+        severity = normalized.severity;
+        if (normalized.outcome !== "mapped") {
+          logger.info(
+            {
+              event: "finding_severity_not_canonical",
+              organizationId,
+              outcome: normalized.outcome,
+              sourceSeverity: normalized.sourceSeverity,
+            },
+            "Finding ingested with no canonical severity — no remediation SLA applies"
+          );
+        }
+      }
+
+      // A null severity resolves to no SLA without any change to the SLA
+      // engine: slaDaysFor() already returns null for a severity it does not
+      // recognise, so no due date is computed and none is manufactured.
       const effective_due_date =
-        due_date ?? (await resolveSlaDueDate(organizationId, severity as string | null));
+        due_date ?? (await resolveSlaDueDate(organizationId, severity));
+
+      // A pen_test finding's source_id points at a pen_test_engagements row.
+      // Verify it belongs to THIS org: source_id is caller-supplied, and
+      // without this check one tenant could attach findings to another
+      // tenant's engagement and inherit its provenance.
+      if (source_type === "pen_test") {
+        if (source_id === null) {
+          res.status(400).json({
+            error: "source_id_required",
+            detail: "A pen_test finding must name the engagement it came from.",
+          });
+          return;
+        }
+        const engagement = await pg.query(
+          `SELECT 1 FROM pen_test_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          [source_id, organizationId]
+        );
+        if ((engagement.rowCount ?? 0) === 0) {
+          res.status(404).json({ error: "pen_test_engagement_not_found" });
+          return;
+        }
+      }
+
+      // A vulnerability names NO source table, so source_id must be null.
+      // source_type is a pointer type and there is nothing here to point at:
+      // storing an unverifiable pointer is the cross-tenant hazard the pen_test
+      // ownership check above exists to prevent, and a pointer to nothing is
+      // worse than no pointer. Refused loudly rather than silently nulled, so
+      // an importer wiring the wrong column finds out on the first row.
+      if (source_type === "vulnerability" && source_id !== null) {
+        res.status(400).json({
+          error: "source_id_not_allowed",
+          detail:
+            "A vulnerability finding does not reference a source record. " +
+            "Use source_reference_id for the scanner or advisory's own id.",
+        });
+        return;
+      }
 
       // When source_type='risk', verify the risk belongs to this org
       if (source_type === "risk" && source_id !== null) {
@@ -221,14 +290,26 @@ router.post(
           scoring_rationale,
           owner_user_id,
           due_date,
+          source_severity,
+          source_reference_id,
+          cvss_score,
+          cvss_vector,
+          cve_id,
+          cwe_id,
+          cvss_version,
+          first_seen_at,
+          last_seen_at,
           status
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'open'
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+          $15, $16, $17, $18, $19, $20, $21, $22, $23, 'open'
         )
         RETURNING
           id, organization_id, source_type, source_id, title, severity,
           description, domain, priority, likelihood, confidence,
           time_sensitivity, scoring_rationale, owner_user_id, due_date,
+          source_severity, source_reference_id, cvss_score, cvss_vector,
+          cve_id, cwe_id, cvss_version, first_seen_at, last_seen_at,
           status, created_at, updated_at
         `,
         [
@@ -245,7 +326,22 @@ router.post(
           time_sensitivity,
           scoring_rationale,
           owner_user_id,
-          effective_due_date
+          effective_due_date,
+          // Provenance, kept verbatim beside the canonical value so
+          // normalisation stays auditable rather than destructive.
+          validation.input.source_severity,
+          validation.input.source_reference_id,
+          validation.input.cvss_score,
+          validation.input.cvss_vector,
+          // SL-VULN-1. cve_id/cwe_id name the weakness; first/last seen are the
+          // SOURCE's own observation window, stored as stated and never
+          // advanced by us — re-import creates a new finding, it does not
+          // update this one.
+          validation.input.cve_id,
+          validation.input.cwe_id,
+          validation.input.cvss_version,
+          validation.input.first_seen_at,
+          validation.input.last_seen_at
         ]
       );
 
@@ -261,7 +357,15 @@ router.post(
         eventType: "finding.created",
         resourceType: "finding",
         resourceId: result.rows[0].id as string,
-        payload: { severity, source_type: source_type ?? null },
+        payload: {
+          severity,
+          source_type: source_type ?? null,
+          // A finding with no canonical severity is a notable event, not a
+          // blank field: the audit row records what the source said instead.
+          ...(severity === null
+            ? { source_severity: validation.input.source_severity, sla_applied: false }
+            : {}),
+        },
         ipAddress: req.ip ?? null
       });
 
@@ -1090,6 +1194,20 @@ router.get(
           f.due_date,
           f.created_at,
           f.updated_at,
+          -- Provenance and vulnerability identity (SL-PENTEST-IN #840,
+          -- SL-VULN-1). These were WRITEABLE but not readable: the create path
+          -- persisted them and no projection returned them, so a customer could
+          -- record a CVSS score and never see it again. The detail view is
+          -- where a vulnerability's identity belongs.
+          f.source_severity,
+          f.source_reference_id,
+          f.cvss_score,
+          f.cvss_vector,
+          f.cve_id,
+          f.cwe_id,
+          f.cvss_version,
+          f.first_seen_at,
+          f.last_seen_at,
           (SELECT COUNT(*)::integer
            FROM actions a
            WHERE a.source_type = 'finding'

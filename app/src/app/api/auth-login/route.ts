@@ -43,7 +43,6 @@ export async function POST(request: Request) {
     session.organizationId       = loginResult.user.organizationId;
     session.organizationName     = loginResult.user.organizationName;
     session.entitlementLevel     = loginResult.user.entitlementLevel;
-    session.billingActive        = loginResult.user.entitlementLevel !== "starter";
     session.onboardingCompleted  = loginResult.user.onboardingCompleted ?? false;
 
     await session.save();

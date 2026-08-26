@@ -352,6 +352,26 @@ This inventory covers IaC-declared services only. Two known drift risks must be 
 
 > **TODO — before PR 7 scoping:** run a reconcile pass — diff the live Render dashboard service list against `render.yaml`, and run an import-graph check on `services/delivery-worker`. Classify `delivery-worker` as one of: **deployed-dashboard-only** (→ it's a 6th flip-set holder, add to the table and to the flip), **deployed-IaC-gap** (codify in `render.yaml` first), or **dead code** (remove). This is a PR-7-grade item, not a 4a side task.
 
+> **§4a RECONCILED 2026-08-17 (M-1 PR-3)** against the live Render service list:
+> - **`securelogic-vendor-extraction-worker(-staging)`** joined the flip set after
+>   this table was written (claim poll on `pgElevated`, per-job bodies in
+>   `withTenant` — flip-correct by construction, same class as data-rights).
+>   The full flip set is therefore **five services × prod/staging = ten**
+>   `DATABASE_URL` holders, all now declaring `MIGRATION_DATABASE_URL` in
+>   `render.yaml`.
+> - **`delivery-worker`**: NO such Render service exists — dead-runner
+>   classification stands; not a flip-set holder.
+> - **`securelogic-intelligence-api`**: dashboard-only prod service found
+>   holding a live owner DSN; classified OBSOLETE (suspended, entrypoint gone
+>   from `main`, zero references) — decommission proposed, NOT a flip-set
+>   member. See `docs/M1-app-request-flip-design.md` Addendum §C.
+> - **`securelogic-demo-engine`**: excluded from the primary activation wave
+>   (operator ruling D-3); a follow-on activation lands after demo DB
+>   reconciliation.
+> - Authoritative activation gates now exist: `scripts/validation/m1-preflight.sql`
+>   and `scripts/validation/m1-proof.ts` — this plan's §5 harness tests remain
+>   the CI layer; the scripts are the per-environment layer.
+
 ---
 
 ## §5. Proof-of-enforcement test — extending the cross-org isolation harness

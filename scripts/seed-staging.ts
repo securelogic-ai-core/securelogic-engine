@@ -63,6 +63,7 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 
 import { Pool } from "pg";
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -74,7 +75,7 @@ const RESET = process.argv.includes("--reset");
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: resolvePgSsl()
 });
 
 // ─── Seed data — UNPREFIXED so names match real adapter outputs ──────────────

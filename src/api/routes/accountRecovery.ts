@@ -2,7 +2,12 @@ import { Router } from "express";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { Resend } from "resend";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: pre-auth account-recovery flow — the caller is UNauthenticated by
+// definition (they lost their key), so no organization context exists. The
+// api_keys lookups/rotation here are identity-plane and use the elevated
+// channel (the customerAuth pre-auth pattern). Rate limiters unchanged.
+import { pgElevated } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { ensureRedisConnected } from "../infra/redis.js";
 import { withEnvironmentTag } from "../infra/emailEnvironment.js";
@@ -17,6 +22,7 @@ const router = Router();
 const requestLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "recovery_rate_limit_exceeded" }
@@ -26,6 +32,7 @@ const requestLimiter = rateLimit({
 const claimLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "recovery_rate_limit_exceeded" }
@@ -105,7 +112,7 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
     const email = String(emailRaw).trim().toLowerCase();
 
     // Look up active API key by label (label stores the registration email)
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `SELECT id FROM api_keys WHERE LOWER(label) = $1 AND status = 'active' LIMIT 1`,
       [email]
     );
@@ -237,7 +244,7 @@ router.post("/account/recovery/claim", claimLimiter, async (req, res) => {
     await redis.del(`${REDIS_PREFIX}${token}`);
 
     // Verify key still exists and is active
-    const existing = await pg.query(
+    const existing = await pgElevated.query(
       `SELECT id, status FROM api_keys WHERE id = $1 LIMIT 1`,
       [apiKeyId]
     );
@@ -255,7 +262,7 @@ router.post("/account/recovery/claim", claimLimiter, async (req, res) => {
     const newRawKey = generateApiKey();
     const newKeyHash = crypto.createHash("sha256").update(newRawKey).digest("hex");
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE api_keys SET key_hash = $1 WHERE id = $2`,
       [newKeyHash, apiKeyId]
     );

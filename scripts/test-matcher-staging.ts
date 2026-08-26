@@ -37,6 +37,7 @@ import { createHash, randomBytes } from "crypto";
 import { writeFileSync, existsSync, appendFileSync } from "fs";
 import { resolve } from "path";
 
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
 import {
   processSignal,
   type CyberSignalRecord
@@ -50,7 +51,7 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: resolvePgSsl()
 });
 
 // ─── Test signal definitions ─────────────────────────────────────────────────

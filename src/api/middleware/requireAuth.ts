@@ -40,6 +40,22 @@ export async function requireAuth(
     return;
   }
 
+  // SEC-JWT-EPOCH: a session token MUST carry the epoch it was minted under.
+  // Absence is invalid session state, NOT a compatibility fallback — tokens
+  // signed before this shipped have no `se` claim and must re-authenticate.
+  //
+  // Checked BEFORE the users lookup, deliberately: this branch is a pure
+  // function of the token, so it cannot be turned into an accept by the
+  // fail-open DB handler below. Missing-epoch and DB-error are distinct
+  // failure modes and must not be able to mask one another.
+  if (typeof payload.se !== "number") {
+    res.status(401).json({
+      error: "session_epoch_missing",
+      detail: "This session predates a security update. Please sign in again."
+    });
+    return;
+  }
+
   // Live-session enforcement against the users row. Fail open on DB
   // error — a transient failure must not lock out all users — but a
   // SUCCESSFUL read is authoritative: removed members, deletion-lifecycle
@@ -50,8 +66,9 @@ export async function requireAuth(
       password_changed_at: Date | null;
       status: string;
       role: string;
+      session_epoch: number;
     }>(
-      `SELECT password_changed_at, status, role FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT password_changed_at, status, role, session_epoch FROM users WHERE id = $1 LIMIT 1`,
       [payload.sub]
     );
     const row = result.rows[0] ?? null;
@@ -64,6 +81,19 @@ export async function requireAuth(
       return;
     }
 
+    // Deterministic invalidation: integer equality, no clock. This SUBSUMES the
+    // legacy iat-vs-password_changed_at comparison kept below — any token that
+    // one would reject also has a stale epoch — and additionally closes its
+    // sub-second bypass, where a token minted at T+0.2s survived a password
+    // change at T+0.5s because floor(T.5) === T made `iat < boundary` false.
+    if (payload.se !== row.session_epoch) {
+      res.status(401).json({ error: "session_invalidated", detail: "This session is no longer valid. Please sign in again." });
+      return;
+    }
+
+    // Legacy timestamp check, retained unchanged. Redundant against the epoch
+    // check above and kept only so this package neither weakens nor rewrites
+    // existing semantics; it is the belt to the epoch's braces.
     if (row.password_changed_at !== null && payload.iat < Math.floor(new Date(row.password_changed_at).getTime() / 1000)) {
       res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
       return;

@@ -27,6 +27,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Redis — provision a Render Redis instance or supply an external URL
       - key: REDIS_URL
         sync: false
@@ -200,6 +209,28 @@ services:
       # Trial length in days (Stripe trial_period_days). Default 14.
       - key: TRIAL_PERIOD_DAYS
         value: "14"
+
+      # SL-BILL-1 PR-F: payment-failure grace period. DARK (default off).
+      #
+      # OFF is exactly today's behaviour: Stripe's past_due update revokes
+      # entitlement on the FIRST failed charge, the customer 403s across the
+      # gated route surface, and the dunning emails say "access has been
+      # suspended" because graceState() reports lapsed.
+      #
+      # ON, customer-visible: past_due stops revoking, entitlement is held for
+      # SECURELOGIC_BILLING_GRACE_DAYS from the FIRST failure (Stripe's clock),
+      # the emails switch to "access continues until DATE", the Day 7 / Day 14
+      # notices start being sent, and the reconciling sweep starts.
+      #
+      # GRACE_DAYS MUST AGREE WITH THE STRIPE DASHBOARD RETRY WINDOW
+      # (Billing > Revenue recovery > Retries). A grace period longer than the
+      # retry window promises access after Stripe has already cancelled; one
+      # shorter locks out a customer Stripe is still collecting from. Read the
+      # Dashboard before flipping this.
+      - key: SECURELOGIC_BILLING_GRACE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BILLING_GRACE_DAYS
+        value: "15"
 
       # Dormant-engine enablement — PRODUCTION (operator-authorized 2026-06-24).
       # The "match → surface → what to do next" engine, live. All three are
@@ -390,6 +421,18 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # P0-1 (2026-08-17): Postgres TLS certificates are now VERIFIED by default
+      # (system roots; Render presents a Let's Encrypt chain with
+      # *.virginia-postgres.render.com in the SANs). Knobs, all default-off:
+      #   DATABASE_SSL_SERVERNAME — set to the DB's EXTERNAL hostname if this
+      #     service's DATABASE_URL uses the internal hostname (the cert's SANs
+      #     cover only the public names, so hostname verification needs it).
+      #   DATABASE_TLS_NO_VERIFY="true" — incident rollback hatch ONLY: exact
+      #     legacy unauthenticated-TLS behaviour; the engine logs error-level
+      #     on every boot while it is set. Applies to the workers identically
+      #     (same shared resolution in src/api/infra/pgSsl.ts).
+      - key: DATABASE_TLS_NO_VERIFY
+        value: "false"
 
   # =========================================================
   # SECURELOGIC ENGINE — STAGING (web)
@@ -433,6 +476,15 @@ services:
 
       # Staging Postgres — populate with the securelogic_staging URL in dashboard
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Staging Redis — populate in dashboard
@@ -578,6 +630,28 @@ services:
         value: "false"
       - key: TRIAL_PERIOD_DAYS
         value: "14"
+
+      # SL-BILL-1 PR-F: payment-failure grace period. DARK (default off).
+      #
+      # OFF is exactly today's behaviour: Stripe's past_due update revokes
+      # entitlement on the FIRST failed charge, the customer 403s across the
+      # gated route surface, and the dunning emails say "access has been
+      # suspended" because graceState() reports lapsed.
+      #
+      # ON, customer-visible: past_due stops revoking, entitlement is held for
+      # SECURELOGIC_BILLING_GRACE_DAYS from the FIRST failure (Stripe's clock),
+      # the emails switch to "access continues until DATE", the Day 7 / Day 14
+      # notices start being sent, and the reconciling sweep starts.
+      #
+      # GRACE_DAYS MUST AGREE WITH THE STRIPE DASHBOARD RETRY WINDOW
+      # (Billing > Revenue recovery > Retries). A grace period longer than the
+      # retry window promises access after Stripe has already cancelled; one
+      # shorter locks out a customer Stripe is still collecting from. Read the
+      # Dashboard before flipping this.
+      - key: SECURELOGIC_BILLING_GRACE_ENABLED
+        value: "false"
+      - key: SECURELOGIC_BILLING_GRACE_DAYS
+        value: "15"
 
       # Dormant-engine enablement — STAGING (lockstep with the prod engine block).
       # All three signal-engine capabilities on; disable any by setting "false".
@@ -761,6 +835,18 @@ services:
         value: "false"
       - key: SECURELOGIC_TDG_EFFECTIVE_FROM
         value: ""
+      # P0-1 (2026-08-17): Postgres TLS certificates are now VERIFIED by default
+      # (system roots; Render presents a Let's Encrypt chain with
+      # *.virginia-postgres.render.com in the SANs). Knobs, all default-off:
+      #   DATABASE_SSL_SERVERNAME — set to the DB's EXTERNAL hostname if this
+      #     service's DATABASE_URL uses the internal hostname (the cert's SANs
+      #     cover only the public names, so hostname verification needs it).
+      #   DATABASE_TLS_NO_VERIFY="true" — incident rollback hatch ONLY: exact
+      #     legacy unauthenticated-TLS behaviour; the engine logs error-level
+      #     on every boot while it is set. Applies to the workers identically
+      #     (same shared resolution in src/api/infra/pgSsl.ts).
+      - key: DATABASE_TLS_NO_VERIFY
+        value: "false"
 
       # Sentry error tracking (engine — staging). Kept in lockstep with the
       # production engine block above; set SENTRY_ENV=staging in the dashboard.
@@ -805,6 +891,15 @@ services:
 
       # Shared with API service — same Postgres instance
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Shared with API service — same Redis instance.
@@ -944,6 +1039,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Staging Redis — populate with the staging Redis URL in dashboard.
       # Required for the 15-minute KEV poll's ETag short-circuit
       # (kevPoller.ts → fetchCisaKevSignals → feedEtagStore).
@@ -1079,6 +1183,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Optional: override log verbosity (default: info)
       - key: LOG_LEVEL
         sync: false
@@ -1125,6 +1238,15 @@ services:
       # use. TLS is on by default (src/api/infra/postgres.ts:19-23 — only
       # DATABASE_SSL_DISABLED=true turns it off); no PGSSL needed.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Optional: override log verbosity (default: info)
@@ -1181,6 +1303,15 @@ services:
       # (owner) is added for the cross-org claim poll (pgElevated). See
       # docs/A04-G1-rls-rollout-plan.md §4a (6th flip-set holder).
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — destination for export bundles
@@ -1255,6 +1386,15 @@ services:
       # Staging Postgres — same instance engine-staging, intelligence-worker-
       # staging and posture-worker-staging use. TLS on by default; no PGSSL.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — STAGING. Same bucket the engine-staging block uses for
@@ -1355,6 +1495,15 @@ services:
       - key: DATABASE_URL
         sync: false
 
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+
       # Cloudflare R2 — source of the uploaded SOC PDFs the worker
       # extracts (org/{orgId}/vendor-assurance/...). Populate in the
       # dashboard; prod enablement is a separate Part-2 decision.
@@ -1420,6 +1569,15 @@ services:
       # Staging Postgres — same instance engine-staging and the other
       # staging workers use. TLS on by default; no PGSSL.
       - key: DATABASE_URL
+        sync: false
+
+      # M-1 (A04-G1 phase 3): the owner/migration channel. Unset today (the
+      # elevated pool falls back to DATABASE_URL, which still carries the
+      # owner login). At activation the operator sets this to the CURRENT
+      # owner-login DSN and repoints DATABASE_URL to app_request — see
+      # docs/M1-app-request-flip-design.md §5. Declared here so a Blueprint
+      # sync never drops it and every rotation runbook sees both keys.
+      - key: MIGRATION_DATABASE_URL
         sync: false
 
       # Cloudflare R2 — STAGING. Same bucket engine-staging uses for
@@ -1515,6 +1673,14 @@ services:
       # route. RUNTIME (not NEXT_PUBLIC): a restart applies it, no rebuild.
       # The securelogic-app-staging service is defined below in this file — set it
       # true there for staging validation. Prod flip is GATE B (operator ledger L-2).
+      # REPORT-1: Executive Risk nav entry — see the staging block for why this
+      # exists. Held FALSE in production deliberately: making an executive
+      # dashboard discoverable is a launch decision, not an IaC side effect, and
+      # this release has not been promoted or validated as a unit. Flip to "true"
+      # as part of the develop -> main promotion once the executive view has been
+      # confirmed against production data.
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED
+        value: "false"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
@@ -1686,6 +1852,21 @@ services:
       #                         flag on too), /findings saved-views bar, /actions
       #                         My Actions depth, Brief -> Decision/Event
       # Prod enablement stays GATE B (operator ledger).
+      # REPORT-1: Executive Risk nav entry. The /executive PAGE is gated by
+      # ENTITLEMENT only (premium/team/platform) and its data sources
+      # (/api/trends, /api/posture/*, /api/connectors) read NO flag — so the
+      # dashboard and the executive PDF have been fully working and merely
+      # UNDISCOVERABLE, because this flag was declared nowhere and the nav entry
+      # therefore never rendered. Declaring it explicitly is itself the fix for
+      # half the problem: an undeclared flag is invisible in IaC as well as in
+      # the product.
+      #
+      # STAGING true: verified 2026-08-21 — /api/trends 200, /api/posture/latest
+      # 200, /api/reports/executive.pdf 200 (valid 7-page PDF). The predictive
+      # panel 404s and degrades to an honest "not enabled" notice rather than an
+      # error, which is truthful and acceptable to expose.
+      - key: SECURELOGIC_RISK_INTELLIGENCE_ENABLED
+        value: "true"
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED
         # ENABLED on STAGING (2026-07-26): EAR is live here and entity-backed assets
         # deep-link into ECL — the two surfaces must flip together. Prod stays dark.

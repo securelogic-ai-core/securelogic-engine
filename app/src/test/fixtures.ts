@@ -1141,3 +1141,44 @@ export function aRiskAcceptance(overrides: Partial<RiskAcceptance> = {}): RiskAc
     ...overrides,
   };
 }
+
+// ── Billing fixtures (SL-BILL-1) ────────────────────────────────────────────
+import type { SubscriptionInfo } from "@/lib/api";
+
+/**
+ * GET /api/billing/subscription — the payload /account renders its trial,
+ * renewal and dunning blocks from.
+ *
+ * The default is a healthy active subscription. `payment_failed_at` is the
+ * authoritative dunning stamp (written by `invoice.payment_failed`, cleared
+ * only by a successful grant), so a delinquency test sets THAT rather than
+ * inferring failure from the entitlement level — the level is downgraded to
+ * `starter` by the `past_due` webhook and therefore cannot carry the signal.
+ */
+export function aSubscription(overrides: Partial<SubscriptionInfo> = {}): SubscriptionInfo {
+  // grace_state is DERIVED from payment_failed_at unless a test states it,
+  // because the wire can never carry "a payment failed and the org is healthy".
+  // A fixture that allowed that combination would let a test assert against a
+  // state the engine cannot produce — and the /account banner branches on
+  // exactly this pair. Default is `lapsed`: with the grace flag off (today),
+  // any open failure is lapsed.
+  const derivedGrace: SubscriptionInfo["grace_state"] =
+    overrides.grace_state ??
+    (overrides.payment_failed_at ? "lapsed" : "healthy");
+  return {
+    tier: "premium",
+    entitlement_level: "premium",
+    status: "active",
+    stripe_customer_id: "cus_test_1",
+    current_period_end: "2026-09-15T00:00:00.000Z",
+    payment_failed_at: null,
+    grace_ends_at: null,
+    subscription_tier: "platform",
+    trial_end: null,
+    amount: 80000,
+    currency: "usd",
+    interval: "month",
+    ...overrides,
+    grace_state: derivedGrace,
+  };
+}

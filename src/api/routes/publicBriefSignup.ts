@@ -1,6 +1,10 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: public rate-limited signup — no session or org context exists
+// (the subscriber row is what CREATES the relationship), so the upsert uses
+// the elevated channel.
+import { pgElevated } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { validateBriefSignup } from "../lib/briefSignupValidation.js";
 
@@ -15,6 +19,7 @@ const router = Router();
 const signupLimiter = rateLimit({
   windowMs: 60_000,
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -60,7 +65,7 @@ router.post("/public/brief-signup", signupLimiter, async (req, res) => {
     const organizationId = resolveBriefOrgId();
 
     try {
-      await pg.query(
+      await pgElevated.query(
         `
         INSERT INTO intelligence_brief_subscribers
           (organization_id, email, name, active)

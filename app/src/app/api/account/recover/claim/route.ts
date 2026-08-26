@@ -43,7 +43,6 @@ export async function POST(request: Request) {
     session.organizationId   = me.organizationId;
     session.organizationName = me.organizationName;
     session.entitlementLevel = me.entitlementLevel;
-    session.billingActive    = me.billingActive;
 
     await session.save();
 

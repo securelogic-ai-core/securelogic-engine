@@ -9,9 +9,13 @@
  * canonical Intelligence Brief card and on the legacy newsletter-issue
  * fallback card alike. One rule, one label, everywhere.
  *
- * The server-side sweep (src/api/lib/briefStalenessMonitor.ts,
- * BRIEF_STALE_AFTER_DAYS) enforces the same 8-day rule as an operator alert —
- * keep the two constants in sync.
+ * This is the CUSTOMER-FACING age question — "is the brief I am looking at
+ * old?" — and stays an age rule. It is intentionally NOT coupled to the
+ * server-side sweep (src/api/lib/briefStalenessMonitor.ts), which answers a
+ * different, operational question: "did every eligible org receive the current
+ * weekly edition?" That sweep is completeness-based (the weekly window), so a
+ * missed run alerts operators immediately rather than after an age threshold.
+ * Changing this constant does not change the operator alert, and vice versa.
  */
 export const STALE_AFTER_DAYS = 8;
 

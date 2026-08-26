@@ -11,7 +11,60 @@
 |---|---|---|---|---|---|---|
 | 1 | INF-1 | Three services run outside Blueprint ownership | P2 | **No** — not a promotion blocker | S to decide, M–L to adopt | Operator ownership ruling; demo DB migration-drift reconciliation |
 
+| 2 | PLAT-ASSET-1 | Asset inventory is effectively unpopulated | **P0 as a *decision* / P2 as a *build*** (re-rated 2026-08-21) | **No** — but gates the customer-visible truth of per-asset vulnerability tracking, and therefore a Sept 15 advertising claim | XS to decide, L to build | Ownership ruling: import vs connector vs manual onboarding |
+
 ## Item detail
+
+### PLAT-ASSET-1 — Asset inventory is effectively unpopulated
+
+**Status: OPEN — no owner. Surfaced by the SL-OCC-1/2 packages, 2026-08-21.**
+
+Per-asset vulnerability tracking is built, merged and verified on `develop`
+(SL-OCC-1a/1b, SL-OCC-2). The **substrate is empty**: staging holds **24 assets and
+2 endpoints**, 0 `canonical_product_external_ids` and 0 `asset_product_identities`,
+against 5,340 findings.
+
+**The consequence is precise:** the capability is real, but a customer will see
+**"0 affected assets"** on every vulnerability until their estate exists in
+SecureLogic. Occurrences can only attach to assets the organization already has —
+deliberately, because the importer never creates an asset (a placeholder host would
+be indistinguishable from a real one and would corrupt every exposure count that
+follows).
+
+**This is the gap between *built* and *visibly true*,** and it is a product/GTM
+decision before it is an engineering one:
+
+- who populates the estate — the customer by import, a connector, or onboarding?
+- is per-asset vulnerability tracking part of the Sept 15 story? If yes, this is a
+  launch dependency. If no, SL-VULN-1 alone still tells a truthful vulnerability
+  story at the finding level.
+
+**Explicitly NOT authorized:** asset-inventory connectors, scanner connectors
+(SL-OCC-3), or any integration work. This item is the **decision**, not the build.
+
+> **RE-RATED 2026-08-21 (`docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §5, P0-F).**
+> Split into two items with different priorities, because they have different
+> sizes and different deadlines:
+>
+> - **The ruling is P0 for Sept 15 and XS.** It decides an advertising claim, and
+>   the claim must be settled before GTM copy is written. Recommended answer:
+>   **per-asset exposure is NOT part of the Sept 15 story**; SL-VULN-1 alone tells
+>   a truthful vulnerability story at the finding level.
+> - **The build is P2 and L.** Verified 2026-08-21: `/api/assets*` is **404 in
+>   production** — the route chain puts `SECURELOGIC_ASSET_REGISTRY_ENABLED`
+>   first, and the routes additionally require the per-org `enterprise_context`
+>   capability. So the build branch does not stop at "populate the estate"; it
+>   runs back through the Enterprise Context activation gates (AD-17 grant, edge
+>   cap H1, graph load test H2). That cannot land before Sept 15.
+>
+> If the ruling is "not in the Sept 15 story", the only work owed before launch is
+> **TRUTH-1** (XS): make the Affected Assets panel distinguish *"no assets in
+> inventory"* from *"no affected assets"*, so an empty substrate never renders as
+> a confident zero.
+
+**Related:** `docs/runbooks/support/SR-023-asset-resolution-failure.md`,
+migrations `20261033`–`20261035`, `assetDetailPersistence.ts`
+(`DETAIL_ASSET_CAP = 10_000`).
 
 ### INF-1 — `demo-engine`, `demo-app` and `intelligence-api` are outside Blueprint ownership
 

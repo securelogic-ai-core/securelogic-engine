@@ -313,11 +313,38 @@ export function validateManualReviewBody(
 // ---------------------------------------------------------------------------
 
 const CUEC_MAPPING_TARGET_STATUSES = ["accepted", "dismissed"] as const;
-const CUEC_REVIEW_STATUSES = ["pending", "reviewed_no_match"] as const;
+/**
+ * CUEC review outcomes (VA-1).
+ *
+ * The old vocabulary was ["pending", "reviewed_no_match"], and `reviewed_no_match`
+ * CONFLATED TWO OPPOSITE CONCLUSIONS: "this does not apply to us" and "this
+ * applies and we do not do it". Recording both identically is why 54 ingested
+ * documents produced zero findings — nothing in the data model could justify
+ * promoting one.
+ *
+ * `reviewed_no_match` is retained as SETTABLE-BUT-DEPRECATED so environments
+ * holding legacy rows keep working; new reviews should choose one of the three
+ * explicit outcomes. It is never auto-migrated, because reinterpreting it would
+ * invent a determination nobody made.
+ */
+const CUEC_REVIEW_STATUSES = [
+  "pending",
+  "not_applicable",
+  "satisfied",
+  "gap",
+  "reviewed_no_match",
+] as const;
+
+/** The outcomes that assert something consequential about the organisation. */
+export const CUEC_DETERMINED_STATUSES = ["not_applicable", "satisfied", "gap"] as const;
+
+/** The single outcome that justifies remediation work. */
+export const CUEC_GAP_STATUS = "gap" as const;
 
 export type CreateCuecMappingInput = { control_id: string; reason: string | null };
 export type UpdateCuecMappingInput = { mapping_status: "accepted" | "dismissed"; reason: string | null };
-export type UpdateCuecReviewStatusInput = { review_status: "pending" | "reviewed_no_match"; reason: string | null };
+export type CuecReviewStatus = (typeof CUEC_REVIEW_STATUSES)[number];
+export type UpdateCuecReviewStatusInput = { review_status: CuecReviewStatus; reason: string | null };
 
 function optionalReason(body: Record<string, unknown>): string | null | ValidationErr {
   const raw = body["reason"];
@@ -369,7 +396,24 @@ export function validateUpdateCuecReviewStatusBody(
   }
   let reason = optionalReason(body);
   if (reason !== null && typeof reason === "object") return reason;
-  // reason is only meaningful for 'reviewed_no_match'; clearing back to 'pending' drops it.
+
+  // Clearing back to 'pending' drops the reason — the row must look unreviewed
+  // again, and the DB CHECK refuses a pending row that carries reviewer detail.
   if (rs === "pending") reason = null;
-  return { input: { review_status: rs as "pending" | "reviewed_no_match", reason } };
+
+  // A GAP MUST BE EXPLAINED. It asserts the organisation fails a control
+  // obligation: it creates remediation work, can escalate to the Risk Register,
+  // and may be read by an auditor. "Because the tool said so" is not a defence,
+  // so the reviewer states why in their own words. The other outcomes are
+  // self-explanatory enough that demanding prose would just produce "n/a".
+  if (rs === "gap" && (reason === null || reason.trim().length === 0)) {
+    return {
+      error: "gap_reason_required",
+      detail:
+        "Recording a gap asserts this organisation does not meet a control the " +
+        "vendor requires of it. Say why, so the determination can be defended later."
+    };
+  }
+
+  return { input: { review_status: rs as CuecReviewStatus, reason } };
 }

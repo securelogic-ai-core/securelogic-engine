@@ -549,6 +549,8 @@ export function DecisionWorkspace({
   openActionCount = 0,
   homeLabel = "Findings",
   children,
+  riskRegister,
+  affectedAssets,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -581,6 +583,23 @@ export function DecisionWorkspace({
   // The recommendation + remediation-actions block (Zone F) is composed by the
   // server page (reusing AddActionForm/ActionCard) and passed in as children.
   children: React.ReactNode;
+  /**
+   * The Risk Register relationship panel (SL-RISK-LINK), passed in from the
+   * server page which owns the fetch. Rendered as its own zone ABOVE the tabs,
+   * not inside one: whether the organization is carrying this finding as a risk
+   * is a governance fact about the finding, and hiding it behind a tab would
+   * make activating this workspace REMOVE a capability the legacy layout shows
+   * unconditionally.
+   */
+  riskRegister?: React.ReactNode;
+  /**
+   * Affected-asset exposure, composed server-side by the page that owns the
+   * fetch. Rendered as its own zone ABOVE the tab strip for the same reason the
+   * Risk Register is: inside a tab is the same as removed for anyone who never
+   * opens that tab, and "where is this vulnerability" is a question people ask
+   * before they ask anything else about it.
+   */
+  affectedAssets?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -858,7 +877,19 @@ export function DecisionWorkspace({
         {/* (1) Identity — the first thing the eye should land on. */}
         <h1 style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9", margin: "0 0 8px" }}>{finding.title}</h1>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <Chip text={finding.severity} color={LEVEL_COLOR[String(finding.severity).toLowerCase()] ?? "#fca5a5"} />
+          {/* A finding with NO canonical severity is a real state, not a
+              missing value: the source said Informational, or its value could
+              not be mapped. Showing "No severity" with the source's own word
+              beside it is the honest rendering — a blank chip would read as a
+              bug, and defaulting to a level would invent one. */}
+          {finding.severity ? (
+            <Chip text={finding.severity} color={LEVEL_COLOR[finding.severity.toLowerCase()] ?? "#fca5a5"} />
+          ) : (
+            <Chip
+              text={finding.source_severity ? `No severity · source: ${finding.source_severity}` : "No severity"}
+              color="#94a3b8"
+            />
+          )}
           <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
           <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
@@ -1128,6 +1159,14 @@ export function DecisionWorkspace({
           <ImpactRow label="Third-party" dim={bi.third_party} entities={affected.vendors} />
         </div>
       </div>
+
+      {/* ZONE F — Risk Register (SL-RISK-LINK). Above the tabs, deliberately:
+          "is the organization carrying this as a risk?" is a governance fact
+          about the finding, and putting it inside a tab would mean activating
+          this workspace REMOVED a capability the legacy layout shows
+          unconditionally. */}
+      {affectedAssets && <div style={{ marginBottom: 20 }}>{affectedAssets}</div>}
+      {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
 
       {/* Tab strip — executive zones A–C stay above; the detail body splits into
           Overview (context) and Remediation (recommendation + actions). */}

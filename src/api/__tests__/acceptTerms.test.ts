@@ -35,7 +35,7 @@ vi.mock("../infra/postgres.js", () => ({
   pgElevated: { query: h.elevatedQuery, connect: vi.fn() },
 }));
 vi.mock("../lib/jwt.js", () => ({
-  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", iat: 0, exp: 9_999_999_999 })),
+  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", se: 0, iat: 0, exp: 9_999_999_999 })),
   signJwt: vi.fn(() => "signed.jwt.token"),
 }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
@@ -64,7 +64,7 @@ beforeEach(() => {
   h.consentInserts.length = 0;
   h.state.priorRows = [];
   h.elevatedQuery.mockClear();
-  mockVerify.mockReturnValue({ sub: USER, org: ORG, role: "admin", iat: 0, exp: 9_999_999_999 });
+  mockVerify.mockReturnValue({ sub: USER, org: ORG, role: "admin", se: 0, iat: 0, exp: 9_999_999_999 });
 });
 
 describe("POST /api/auth/accept-terms", () => {

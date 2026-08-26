@@ -17,6 +17,9 @@ import argon2 from "argon2";
 import rateLimit from "express-rate-limit";
 import { Resend } from "resend";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
+import { digestToken, isPresentableToken } from "../lib/tokenDigest.js";
 import { logger } from "../infra/logger.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -166,6 +169,7 @@ async function sendInviteEmail(params: {
 const inviteLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 20,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
@@ -178,7 +182,7 @@ router.post(
   requireTeamCapability(),
   requireRole("admin"),
   inviteLimiter,
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId  = (req as any).organizationContext?.organizationId as string | null;
       const userId = req.userId ?? null;
@@ -255,7 +259,7 @@ router.post(
           `INSERT INTO org_invites (organization_id, invited_by_user_id, email, role, seat_type, token)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id, email, role, seat_type, expires_at, status`,
-          [orgId, userId, email, role, seatType, token]
+          [orgId, userId, email, role, seatType, digestToken(token)]
         );
         invite = result.rows[0] as Record<string, unknown>;
       } catch (err: unknown) {
@@ -290,7 +294,7 @@ router.post(
       res.status(500).json({ error: "invite_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/team/members
@@ -302,7 +306,7 @@ router.get(
   requireApiKey,
   attachOrganizationContext,
   requireTeamCapability(),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId = (req as any).organizationContext?.organizationId as string | null;
 
@@ -367,7 +371,7 @@ router.get(
       res.status(500).json({ error: "fetch_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/team/members/:userId
@@ -380,7 +384,7 @@ router.delete(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId        = (req as any).organizationContext?.organizationId as string | null;
       const actorUserId  = req.userId ?? null;
@@ -446,7 +450,7 @@ router.delete(
       res.status(500).json({ error: "remove_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    PATCH /api/team/members/:userId/role
@@ -459,7 +463,7 @@ router.patch(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId        = (req as any).organizationContext?.organizationId as string | null;
       const actorUserId  = req.userId ?? null;
@@ -534,7 +538,7 @@ router.patch(
       res.status(500).json({ error: "role_change_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    DELETE /api/team/invites/:inviteId
@@ -547,7 +551,7 @@ router.delete(
   attachOrganizationContext,
   requireTeamCapability(),
   requireRole("admin"),
-  async (req, res) => {
+  asTenant(async (req, res) => {
     try {
       const orgId    = (req as any).organizationContext?.organizationId as string | null;
       const inviteId = req.params.inviteId;
@@ -581,14 +585,14 @@ router.delete(
       res.status(500).json({ error: "revoke_failed" });
     }
   }
-);
+));
 
 /* =========================================================
    GET /api/team/invites/:token/preview
    Preview an invite before accepting. Public — no auth.
    ========================================================= */
 
-router.get("/team/invites/:token/preview", async (req, res) => {
+router.get("/team/invites/:token/preview", asTenant(async (req, res) => {
   try {
     const token = req.params.token;
 
@@ -597,6 +601,10 @@ router.get("/team/invites/:token/preview", async (req, res) => {
       return;
     }
 
+    if (!isPresentableToken(token)) {
+      res.status(200).json({ valid: false, reason: "not_found" });
+      return;
+    }
     const result = await pg.query<{
       email: string;
       role: string;
@@ -611,9 +619,9 @@ router.get("/team/invites/:token/preview", async (req, res) => {
        FROM org_invites i
        JOIN organizations o ON o.id = i.organization_id
        LEFT JOIN users u ON u.id = i.invited_by_user_id
-       WHERE i.token = $1
+       WHERE i.token IN ($1, $2)
        LIMIT 1`,
-      [token]
+      [digestToken(String(token)), token]
     );
 
     if (result.rows.length === 0) {
@@ -644,7 +652,7 @@ router.get("/team/invites/:token/preview", async (req, res) => {
     logger.error({ event: "invite_preview_failed", err }, "GET /api/team/invites/:token/preview failed");
     res.status(500).json({ valid: false, reason: "error" });
   }
-});
+}));
 
 /* =========================================================
    POST /api/team/invites/:token/accept
@@ -654,12 +662,13 @@ router.get("/team/invites/:token/preview", async (req, res) => {
 const acceptLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  keyGenerator: rateLimitKeyGenerator,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "rate_limit_exceeded" }
 });
 
-router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
+router.post("/team/invites/:token/accept", acceptLimiter, asTenant(async (req, res) => {
   try {
     const token       = req.params.token;
     const body        = req.body as Record<string, unknown>;
@@ -696,6 +705,10 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     const password = String(passwordRaw);
 
     // Look up invite
+    if (!isPresentableToken(token)) {
+      res.status(404).json({ error: "invite_not_found" });
+      return;
+    }
     const inviteResult = await pg.query<{
       id: string;
       organization_id: string;
@@ -707,9 +720,9 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     }>(
       `SELECT id, organization_id, email, role, seat_type, status, expires_at
        FROM org_invites
-       WHERE token = $1
+       WHERE token IN ($1, $2)
        LIMIT 1`,
-      [token]
+      [digestToken(String(token)), token]
     );
 
     if (inviteResult.rows.length === 0) {
@@ -770,32 +783,41 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
 
     const client = await pg.connect();
     let newUserId: string;
+    // SEC-JWT-EPOCH: set on both branches; see the note at each assignment.
+    let newUserEpoch: number;
 
     try {
       await client.query("BEGIN");
 
       if (existingUser && existingUser.status === "inactive") {
         // Reactivate the removed user with fresh credentials and the invited role.
-        await client.query(
+        // Reactivation installs a NEW credential on a pre-existing user id, so
+        // it is a credential rotation: bump the epoch or any session minted
+        // before the member was removed would resume working on reactivation.
+        const reactivated = await client.query<{ session_epoch: number }>(
           `UPDATE users SET
              status        = 'active',
              name          = $1,
              password_hash = $2,
              role          = $3,
              seat_type     = $4,
-             updated_at    = NOW()
-           WHERE id = $5`,
+             updated_at    = NOW(),
+             session_epoch = session_epoch + 1
+           WHERE id = $5
+           RETURNING session_epoch`,
           [name, passwordHash, invite.role, inviteSeatType, existingUser.id]
         );
-        newUserId = existingUser.id;
+        newUserId    = existingUser.id;
+        newUserEpoch = reactivated.rows[0]!.session_epoch;
       } else {
         const userResult = await client.query(
           `INSERT INTO users (organization_id, email, name, role, seat_type, status, password_hash, email_verified)
            VALUES ($1, $2, $3, $4, $5, 'active', $6, TRUE)
-           RETURNING id`,
+           RETURNING id, session_epoch`,
           [invite.organization_id, invite.email, name, invite.role, inviteSeatType, passwordHash]
         );
-        newUserId = userResult.rows[0].id as string;
+        newUserId    = userResult.rows[0].id as string;
+        newUserEpoch = userResult.rows[0].session_epoch as number;
 
         // Record consent for the newly created user in the same transaction.
         // Reactivated (previously-inactive) users follow the UPDATE branch above
@@ -825,7 +847,7 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
       client.release();
     }
 
-    const jwt = signJwt(newUserId, invite.organization_id, invite.role);
+    const jwt = signJwt(newUserId, invite.organization_id, invite.role, newUserEpoch);
 
     logger.info(
       { event: "invite_accepted", userId: newUserId, orgId: invite.organization_id },
@@ -855,6 +877,6 @@ router.post("/team/invites/:token/accept", acceptLimiter, async (req, res) => {
     logger.error({ event: "invite_accept_failed", err }, "POST /api/team/invites/:token/accept failed");
     res.status(500).json({ error: "accept_failed" });
   }
-});
+}));
 
 export default router;

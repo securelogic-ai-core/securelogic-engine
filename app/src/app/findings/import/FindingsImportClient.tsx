@@ -20,22 +20,45 @@ const FIELDS: Array<{ key: keyof FindingImportRow; label: string; required?: boo
   { key: "likelihood",     label: "Likelihood" },
   { key: "due_date",       label: "Due Date (YYYY-MM-DD)" },
   { key: "recommendation", label: "Recommendation" },
+  { key: "source_reference_id", label: "Report Reference ID" },
+  { key: "cvss_score",     label: "CVSS Score (0-10)" },
+  { key: "cvss_vector",    label: "CVSS Vector" },
+  { key: "cvss_version",   label: "CVSS Version" },
+  { key: "cve_id",         label: "CVE ID" },
+  { key: "cwe_id",         label: "CWE ID" },
+  { key: "first_seen_at",  label: "First Seen" },
+  { key: "last_seen_at",   label: "Last Seen" },
+  { key: "asset_hostname", label: "Asset Hostname" },
+  { key: "asset_fqdn",     label: "Asset FQDN" },
+  { key: "asset_ip",       label: "Asset IP" },
+  { key: "asset_cloud_resource_id", label: "Cloud Resource ID" },
+  { key: "asset_internal_id",       label: "Internal Asset ID" },
 ];
 
 const VALID_SEVERITIES   = new Set(["Critical", "High", "Moderate", "Low"]);
-const VALID_SOURCE_TYPES = new Set(["manual", "assessment", "control_test", "vendor_review", "signal", "risk"]);
+const VALID_SOURCE_TYPES = new Set(["manual", "assessment", "control_test", "vendor_review", "signal", "risk", "pen_test", "vulnerability"]);
 const VALID_PRIORITIES   = new Set(["immediate", "near_term", "planned", "watch"]);
 const VALID_LIKELIHOODS  = new Set(["very_high", "high", "medium", "low", "very_low"]);
 const ISO_DATE_RE        = /^\d{4}-\d{2}-\d{2}$/;
+// SL-VULN-1. Mirrors the engine's validator and the column CHECKs. Duplicated
+// here ONLY to fail a row in the preview instead of on submit — the engine
+// remains the authority and re-checks every one of these.
+const CVE_RE             = /^CVE-\d{4}-\d{4,}$/i;
+const CWE_RE             = /^CWE-\d{1,5}$/i;
+const VALID_CVSS_VERSIONS = new Set(["2.0", "3.0", "3.1", "4.0"]);
 
 const SEVERITY_COLORS: Record<string, string> = {
   Critical: "#fca5a5", High: "#fb923c", Moderate: "#fcd34d", Low: "#86efac",
 };
 
 const TEMPLATE_FILENAME = "findings-import-template.csv";
-const TEMPLATE_HEADERS  = "title,severity,source_type,description,domain,priority,due_date,recommendation";
-const TEMPLATE_ROW1     = '"Unpatched OpenSSL Vulnerability","High","control_test","OpenSSL 1.1.x detected on production hosts","Access Management","near_term","2026-06-30","Upgrade OpenSSL to 3.x immediately"';
-const TEMPLATE_ROW2     = '"MFA Not Enforced for Admin Accounts","Critical","assessment","Admin accounts lack MFA enforcement","Access Management","immediate","2026-05-31","Enable MFA for all privileged accounts"';
+const TEMPLATE_HEADERS  = "title,severity,source_type,description,domain,priority,due_date,recommendation,cve_id,cwe_id,cvss_score,cvss_version,first_seen_at,last_seen_at";
+const TEMPLATE_ROW1     = '"Unpatched OpenSSL Vulnerability","High","control_test","OpenSSL 1.1.x detected on production hosts","Access Management","near_term","2026-06-30","Upgrade OpenSSL to 3.x immediately","","","","","",""';
+const TEMPLATE_ROW2     = '"MFA Not Enforced for Admin Accounts","Critical","assessment","Admin accounts lack MFA enforcement","Access Management","immediate","2026-05-31","Enable MFA for all privileged accounts","","","","","",""'
+// SL-VULN-1 worked example. first/last seen are what the SCANNER reported, not
+// values the platform maintains — re-importing this row creates a second
+// finding rather than advancing last_seen_at on the first.
+const TEMPLATE_ROW3     = '"Apache Struts RCE","Critical","vulnerability","Struts 2.5.x remote code execution on edge nodes","Cyber","immediate","","Upgrade Struts to 6.x","CVE-2026-10001","CWE-502","9.8","3.1","2026-08-03T02:11:00Z","2026-08-19T02:14:00Z"';
 
 // ─────────────────────────────────────────────────────────────
 // Auto-mapping heuristics
@@ -51,6 +74,27 @@ const AUTO_MAP_RULES: Record<keyof FindingImportRow, string[]> = {
   likelihood:     ["likelihood", "probability", "chance"],
   due_date:       ["due date", "due", "deadline", "remediation date", "target date"],
   recommendation: ["recommendation", "remediation", "fix", "action", "suggested fix"],
+  source_severity:     ["source severity", "original severity", "reported severity"],
+  source_reference_id: ["finding id", "reference", "ref", "report id", "issue id", "finding ref"],
+  cvss_score:          ["cvss", "cvss score", "cvss base score", "score"],
+  cvss_vector:         ["cvss vector", "vector", "cvss string"],
+  // SL-VULN-1. "cve" is checked before "cvss" cannot be confused with it
+  // because the alias matcher compares whole normalised header cells, and a
+  // header reading "CVSS" never equals "cve".
+  cve_id:              ["cve", "cve id", "cve identifier"],
+  cwe_id:              ["cwe", "cwe id", "weakness", "weakness id"],
+  cvss_version:        ["cvss version", "cvss v", "version"],
+  first_seen_at:       ["first seen", "first detected", "first observed", "discovered"],
+  last_seen_at:        ["last seen", "last detected", "last observed", "latest scan"],
+  // SL-OCC-1b — where the vulnerability was found. Resolved against assets the
+  // org ALREADY has; an unresolved identifier imports the vulnerability with no
+  // occurrence rather than inventing a host.
+  asset_hostname:      ["host", "hostname", "asset", "asset name", "device", "machine", "computer"],
+  asset_fqdn:          ["fqdn", "dns name", "full hostname"],
+  asset_ip:            ["ip", "ip address", "ipv4", "address"],
+  asset_cloud_resource_id: ["arn", "resource id", "cloud id", "cloud resource id"],
+  asset_internal_id:   ["asset id", "cmdb id", "internal id", "ci id"],
+  source_id:           [],
 };
 
 // Scan the first up to 5 rows of raw sheet data to find the real header row.
@@ -109,9 +153,17 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
   const rawPriority = get("priority");
   const priority = rawPriority?.toLowerCase().trim().replace(/\s+/g, "_");
 
+  // The severity column is captured TWICE on purpose: once mapped to a
+  // canonical value when it maps, and once verbatim as source_severity. The
+  // verbatim value is what lets the engine record an Informational finding
+  // faithfully instead of the importer inventing a level for it.
+  const rawSeverity = get("source_severity") ?? get("severity");
+  const canonical = normalizeSeverity(get("severity"));
+
   return {
     title:          get("title") ?? "",
-    severity:       normalizeSeverity(get("severity")),
+    severity:       canonical && VALID_SEVERITIES.has(canonical) ? canonical : undefined,
+    source_severity: rawSeverity,
     source_type,
     description:    get("description"),
     domain:         get("domain"),
@@ -119,6 +171,19 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
     likelihood,
     due_date:       get("due_date"),
     recommendation: get("recommendation"),
+    source_reference_id: get("source_reference_id"),
+    cvss_score:     get("cvss_score"),
+    cvss_vector:    get("cvss_vector"),
+    cvss_version:   get("cvss_version"),
+    cve_id:         get("cve_id"),
+    cwe_id:         get("cwe_id"),
+    first_seen_at:  get("first_seen_at"),
+    last_seen_at:   get("last_seen_at"),
+    asset_hostname: get("asset_hostname"),
+    asset_fqdn:     get("asset_fqdn"),
+    asset_ip:       get("asset_ip"),
+    asset_cloud_resource_id: get("asset_cloud_resource_id"),
+    asset_internal_id:       get("asset_internal_id"),
   };
 }
 
@@ -131,8 +196,26 @@ type RowValidation = "valid" | "warning" | "invalid";
 function validateRow(row: FindingImportRow): { status: RowValidation; warnings: string[] } {
   const warnings: string[] = [];
   if (!row.title.trim()) return { status: "invalid", warnings: ["Title is required"] };
-  if (!row.severity || !VALID_SEVERITIES.has(row.severity)) {
-    return { status: "invalid", warnings: ["Severity is required and must be: Critical, High, Moderate, Low"] };
+  if (!row.severity) {
+    // A severity that does not map is no longer a rejected row. If the report's
+    // own value was captured, the finding is imported WITHOUT a canonical
+    // severity — which means no remediation SLA — and the warning says so
+    // plainly. Guessing a level here is how an "Informational" observation
+    // silently acquires a deadline.
+    if (!row.source_severity) {
+      return { status: "invalid", warnings: ["Severity is required, or map a Source Severity column"] };
+    }
+    // Deliberately non-committal about the OUTCOME. The mapping table lives on
+    // the server — duplicating it here is how two implementations start
+    // disagreeing about what a customer's report said — so the preview states
+    // what it knows ("this is not one of ours") and what the two possible
+    // results are, rather than guessing which one applies.
+    warnings.push(
+      `Severity "${row.source_severity}" is not one of Critical/High/Moderate/Low. ` +
+      `It will be normalised on import: recognised equivalents (e.g. Medium, P2, a CVSS score) ` +
+      `map to a SecureLogic severity; Informational and unrecognised values are imported with ` +
+      `no canonical severity and no remediation SLA`
+    );
   }
   if (!VALID_SOURCE_TYPES.has(row.source_type)) {
     warnings.push(`Source type "${row.source_type}" is not valid — will default to "manual"`);
@@ -146,6 +229,40 @@ function validateRow(row: FindingImportRow): { status: RowValidation; warnings: 
   if (row.due_date && !ISO_DATE_RE.test(row.due_date)) {
     warnings.push(`Date "${row.due_date}" is not YYYY-MM-DD format — will be cleared`);
   }
+  // ── SL-VULN-1 ─────────────────────────────────────────────────────────
+  // These are REJECTED by the engine rather than cleared, so a malformed row
+  // must show as invalid here — a warning would imply it imports without them.
+  // A wrong CVE looks like data and fails every lookup run against it later.
+  if (row.cve_id && !CVE_RE.test(row.cve_id.trim())) {
+    return { status: "invalid", warnings: [`CVE "${row.cve_id}" is not a valid identifier (expected CVE-2026-10001)`] };
+  }
+  if (row.cwe_id && !CWE_RE.test(row.cwe_id.trim())) {
+    return { status: "invalid", warnings: [`CWE "${row.cwe_id}" is not a valid identifier (expected CWE-79)`] };
+  }
+  if (row.cvss_version && !VALID_CVSS_VERSIONS.has(row.cvss_version.trim())) {
+    return { status: "invalid", warnings: [`CVSS version "${row.cvss_version}" is not one of 2.0 / 3.0 / 3.1 / 4.0`] };
+  }
+  for (const [label, value] of [["First Seen", row.first_seen_at], ["Last Seen", row.last_seen_at]] as const) {
+    if (value && Number.isNaN(new Date(value).getTime())) {
+      return { status: "invalid", warnings: [`${label} "${value}" is not a readable date`] };
+    }
+  }
+  // SL-OCC-1b: an IP is a lease, not a name, so it never resolves on its own.
+  // Warned rather than rejected — the row imports fine, it just will not be
+  // attached to a host, and saying so up front beats a silent non-association.
+  const hasResolvableAsset =
+    !!(row.asset_hostname || row.asset_fqdn || row.asset_cloud_resource_id || row.asset_internal_id);
+  if (row.asset_ip && !hasResolvableAsset) {
+    warnings.push(
+      `IP ${row.asset_ip} cannot identify an asset on its own — the vulnerability ` +
+      `will import without an affected asset. Map a hostname, FQDN, cloud resource ` +
+      `id or internal asset id to attach it.`
+    );
+  }
+  if (row.first_seen_at && row.last_seen_at &&
+      new Date(row.last_seen_at).getTime() < new Date(row.first_seen_at).getTime()) {
+    return { status: "invalid", warnings: ["Last Seen is earlier than First Seen"] };
+  }
   return { status: warnings.length > 0 ? "warning" : "valid", warnings };
 }
 
@@ -153,6 +270,20 @@ function cleanRow(row: FindingImportRow): FindingImportRow {
   return {
     title:          row.title.trim(),
     severity:       row.severity,
+    source_severity: row.source_severity || undefined,
+    source_reference_id: row.source_reference_id || undefined,
+    cvss_score:     row.cvss_score || undefined,
+    cvss_vector:    row.cvss_vector || undefined,
+    cvss_version:   row.cvss_version || undefined,
+    cve_id:         row.cve_id || undefined,
+    cwe_id:         row.cwe_id || undefined,
+    first_seen_at:  row.first_seen_at || undefined,
+    last_seen_at:   row.last_seen_at || undefined,
+    asset_hostname: row.asset_hostname || undefined,
+    asset_fqdn:     row.asset_fqdn || undefined,
+    asset_ip:       row.asset_ip || undefined,
+    asset_cloud_resource_id: row.asset_cloud_resource_id || undefined,
+    asset_internal_id:       row.asset_internal_id || undefined,
     source_type:    VALID_SOURCE_TYPES.has(row.source_type) ? row.source_type : "manual",
     description:    row.description || undefined,
     domain:         row.domain || undefined,
@@ -219,6 +350,13 @@ function ProgressBar({ step }: { step: Step }) {
 // ─────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * Row-level helpers, exported for unit test. The severity rules are the whole
+ * substance of pen-test intake and they must be assertable without mounting a
+ * file-upload flow.
+ */
+export const __testing = { normalizeRow, validateRow, cleanRow };
 
 export function FindingsImportClient({
   homeLabel = "Findings",
@@ -288,7 +426,7 @@ export function FindingsImportClient({
   }, [pasteText, handleParsed]);
 
   const downloadTemplate = useCallback(() => {
-    const content = `${TEMPLATE_HEADERS}\n${TEMPLATE_ROW1}\n${TEMPLATE_ROW2}`;
+    const content = `${TEMPLATE_HEADERS}\n${TEMPLATE_ROW1}\n${TEMPLATE_ROW2}\n${TEMPLATE_ROW3}`;
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -560,7 +698,13 @@ function PreviewStep({ previewRows, importing, error, onBack, onImport }: {
                       {status === "invalid" && <span style={{ color: "#fca5a5" }}>✗</span>}
                     </td>
                     <td className="px-4 py-3 font-medium" style={{ color: status === "invalid" ? "#64748b" : "#f1f5f9" }}>{row.title || <em style={{ color: "#475569" }}>empty</em>}</td>
-                    <td className="px-4 py-3" style={{ color: SEVERITY_COLORS[row.severity] ?? "#94a3b8" }}>{row.severity || "—"}</td>
+                    {/* Shows what will actually be stored. A row with no
+                        canonical severity displays the report's own word, so a
+                        reviewer sees "Informational" rather than an em-dash
+                        that reads as missing data. */}
+                    <td className="px-4 py-3" style={{ color: row.severity ? SEVERITY_COLORS[row.severity] ?? "#94a3b8" : "#94a3b8" }}>
+                      {row.severity ?? (row.source_severity ? `${row.source_severity} · normalised on import` : "—")}
+                    </td>
                     <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.source_type || "—"}</td>
                     <td className="px-4 py-3" style={{ color: "#cbd5e1" }}>{row.priority || "—"}</td>
                   </tr>

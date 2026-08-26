@@ -98,7 +98,55 @@ describe("validateControlMatcherResponse", () => {
   });
 });
 
+
 // --- runner (mocked pg + injected LLM) -------------------------------------
+//
+// The runner now performs verdict-cache I/O around the provider call, so the
+// mock routes by SQL instead of by call position: a positional chain would
+// break on every internal change and tells the reader nothing about which
+// query is which.
+
+type DbState = {
+  controls?: Array<{ id: string; name: string; description: string | null }>;
+  dedupHash?: string | null;
+  /** Row returned by the exact-key verdict lookup, or null for a miss. */
+  verdictRow?: Record<string, unknown> | null;
+  /** Whether the reservation is won. */
+  reserveClaimed?: boolean;
+  suggestionInsertRowCount?: number;
+};
+
+function routeDb(state: DbState): void {
+  const {
+    controls = [{ id: CTRL_A, name: "Patch Mgmt", description: "d" }],
+    dedupHash = "sha256:signal-hash",
+    verdictRow = null,
+    reserveClaimed = true,
+    suggestionInsertRowCount = 1
+  } = state;
+
+  mockQuery.mockImplementation(async (sql: string) => {
+    if (/FROM controls/.test(sql)) return { rows: controls, rowCount: controls.length };
+    if (/dedup_hash FROM cyber_signals/.test(sql)) {
+      return dedupHash === null ? { rows: [], rowCount: 0 } : { rows: [{ dedup_hash: dedupHash }], rowCount: 1 };
+    }
+    if (/SELECT state, verdict/.test(sql)) {
+      return verdictRow ? { rows: [verdictRow], rowCount: 1 } : { rows: [], rowCount: 0 };
+    }
+    if (/SELECT control_inventory_digest/.test(sql)) return { rows: [], rowCount: 0 };
+    if (/INSERT INTO llm_control_matcher_verdicts/.test(sql)) {
+      return reserveClaimed ? { rows: [{ attempts: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    }
+    if (/UPDATE llm_control_matcher_verdicts/.test(sql)) return { rows: [], rowCount: 1 };
+    if (/INSERT INTO signal_match_suggestions/.test(sql)) {
+      return { rows: [{ id: "s1" }], rowCount: suggestionInsertRowCount };
+    }
+    return { rows: [], rowCount: 0 };
+  });
+}
+
+const sqlCalls = (pattern: RegExp) =>
+  mockQuery.mock.calls.filter((c) => pattern.test(c[0] as string));
 
 describe("runLlmControlMatcherForSignal", () => {
   const okCall = (text: string) => async (): Promise<LlmCallResult> => ({ ok: true, text });
@@ -113,9 +161,12 @@ describe("runLlmControlMatcherForSignal", () => {
 
   it("flag ON + valid response → writes control suggestions (>= threshold, capped)", async () => {
     process.env[FLAG] = "true";
-    mockQuery
-      .mockResolvedValueOnce({ rows: [ { id: CTRL_A, name: "Patch Mgmt", description: "d" }, { id: CTRL_B, name: "Access", description: null } ] }) // controls SELECT
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: "s1" }] });  // one suggestion INSERT (the below-threshold one is filtered out)
+    routeDb({
+      controls: [
+        { id: CTRL_A, name: "Patch Mgmt", description: "d" },
+        { id: CTRL_B, name: "Access", description: null }
+      ]
+    });
     const resp = JSON.stringify({ matches: [
       { control_id: CTRL_A, score: 90, reasoning: "patch the CVE" },
       { control_id: CTRL_B, score: CONTROL_MATCH_MIN_SCORE - 10, reasoning: "weak" } // below threshold → not written
@@ -123,34 +174,95 @@ describe("runLlmControlMatcherForSignal", () => {
 
     const written = await runLlmControlMatcherForSignal(sig(), "org-1", okCall(resp));
     expect(written).toBe(1);
-    // suggestion INSERT used target_type 'control' + reason 'control_llm_match'
-    const insertCall = mockQuery.mock.calls.find((c) => /INSERT INTO signal_match_suggestions/.test(c[0] as string));
+    const insertCall = sqlCalls(/INSERT INTO signal_match_suggestions/)[0];
     expect(insertCall![0]).toContain("'control'");
     expect(insertCall![0]).toContain("control_llm_match");
     expect((insertCall![1] as unknown[])[2]).toBe(CTRL_A);   // target_id = the high-score control
   });
 
-  it("invalid JSON → 0 writes (no INSERT)", async () => {
+  it("caches the verdict it just paid for, with the tokens the call consumed", async () => {
     process.env[FLAG] = "true";
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: CTRL_A, name: "x", description: null }] });
+    routeDb({});
+    const call = async (): Promise<LlmCallResult> => ({
+      ok: true,
+      text: JSON.stringify({ matches: [{ control_id: CTRL_A, score: 90, reasoning: "r" }] }),
+      inputTokens: 1234,
+      outputTokens: 56
+    });
+
+    await runLlmControlMatcherForSignal(sig(), "org-1", call);
+
+    const update = sqlCalls(/UPDATE llm_control_matcher_verdicts/)[0];
+    expect(update![0]).toContain("state = 'answered'");
+    expect(update![1] as unknown[]).toContain(1234);
+    expect(update![1] as unknown[]).toContain(56);
+  });
+
+  it("CACHE HIT → replays the stored verdict and makes NO provider call", async () => {
+    process.env[FLAG] = "true";
+    routeDb({
+      verdictRow: {
+        state: "answered",
+        verdict: { matches: [{ control_id: CTRL_A, score: 95, reasoning: "cached" }] },
+        input_tokens: 900,
+        output_tokens: 40,
+        model: "claude-sonnet-4-6",
+        attempts: 1,
+        next_attempt_at: null,
+        reserved_at: null
+      }
+    });
+    const llm = vi.fn();
+
+    const written = await runLlmControlMatcherForSignal(sig(), "org-1", llm as never);
+
+    expect(llm).not.toHaveBeenCalled();
+    expect(written).toBe(1);
+    // It still writes the same suggestion rows — a hit is not a no-op.
+    expect(sqlCalls(/INSERT INTO signal_match_suggestions/)).toHaveLength(1);
+    // And it never re-reserves or re-answers.
+    expect(sqlCalls(/INSERT INTO llm_control_matcher_verdicts/)).toHaveLength(0);
+  });
+
+  it("LOSES the reservation race → skips the provider call entirely", async () => {
+    process.env[FLAG] = "true";
+    routeDb({ reserveClaimed: false });
+    const llm = vi.fn();
+
+    const written = await runLlmControlMatcherForSignal(sig(), "org-1", llm as never);
+
+    expect(written).toBe(0);
+    expect(llm).not.toHaveBeenCalled();
+    expect(sqlCalls(/INSERT INTO signal_match_suggestions/)).toHaveLength(0);
+  });
+
+  it("invalid JSON → 0 writes, no suggestion INSERT, and the failure is recorded as unparseable", async () => {
+    process.env[FLAG] = "true";
+    routeDb({});
     const n = await runLlmControlMatcherForSignal(sig(), "org-1", okCall("not json"));
     expect(n).toBe(0);
-    expect(mockQuery.mock.calls.filter((c) => /INSERT/.test(c[0] as string))).toHaveLength(0);
+    expect(sqlCalls(/INSERT INTO signal_match_suggestions/)).toHaveLength(0);
+    const update = sqlCalls(/UPDATE llm_control_matcher_verdicts/)[0];
+    expect(update![1] as unknown[]).toContain("unparseable");
+    expect(update![1] as unknown[]).toContain("invalid_json");
   });
 
-  it("LLM call failure → 0 writes, never throws", async () => {
+  it("LLM call failure → 0 writes, never throws, recorded as a transport failure", async () => {
     process.env[FLAG] = "true";
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: CTRL_A, name: "x", description: null }] });
+    routeDb({});
     const failCall = async (): Promise<LlmCallResult> => ({ ok: false, code: "llm_failed", detail: "boom" });
     await expect(runLlmControlMatcherForSignal(sig(), "org-1", failCall)).resolves.toBe(0);
+    const update = sqlCalls(/UPDATE llm_control_matcher_verdicts/)[0];
+    expect(update![1] as unknown[]).toContain("failed");
   });
 
-  it("no controls → 0 writes, no LLM call", async () => {
+  it("no controls → 0 writes, no LLM call, no cache I/O", async () => {
     process.env[FLAG] = "true";
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    routeDb({ controls: [] });
     const llm = vi.fn();
     const n = await runLlmControlMatcherForSignal(sig(), "org-1", llm as never);
     expect(n).toBe(0);
     expect(llm).not.toHaveBeenCalled();
+    expect(sqlCalls(/llm_control_matcher_verdicts/)).toHaveLength(0);
   });
 });

@@ -74,8 +74,9 @@ vi.mock("resend", () => ({
   },
 }));
 vi.mock("../infra/postgres.js", () => ({
-  pg: { query: h.pgQuery },
-  pgElevated: { connect: vi.fn(async () => h.fakeClient), query: vi.fn(async () => ({ rows: [] })) },
+  // M-1 PR-2: identity-plane queries moved to the elevated channel.
+  pg: { query: vi.fn(async () => ({ rows: [] })) },
+  pgElevated: { connect: vi.fn(async () => h.fakeClient), query: h.pgQuery },
 }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
 vi.mock("../lib/sentry.js", () => ({ captureException: vi.fn() }));

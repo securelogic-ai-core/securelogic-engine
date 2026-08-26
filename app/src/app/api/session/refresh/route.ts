@@ -32,7 +32,6 @@ export async function POST() {
   }
 
   session.entitlementLevel = me.entitlementLevel;
-  session.billingActive    = me.billingActive;
   session.organizationName = me.organizationName;
   await session.save();
 

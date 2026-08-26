@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff surface behind requireAdminKey — every site is a cross-org
+// list-all or a by-PK read/write of platform-level (NULL-org-capable) rows, so
+// the elevated owner channel is the correct disposition (A04-G1 §3 Strategy A).
+// No tenant GUC exists to scope these; withTenant would return zero rows.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -75,7 +79,7 @@ function buildWhere(
 
 router.get("/brief-subscribers/summary", async (_req, res) => {
   try {
-    const result = await pg.query(`
+    const result = await pgElevated.query(`
       SELECT
         COUNT(*) FILTER (WHERE ibs.active = true)::int AS total_active,
         COUNT(*) FILTER (WHERE ibs.active = true AND COALESCE(o.entitlement_level, 'starter') IN ('starter', 'free'))::int AS free_count,
@@ -132,7 +136,7 @@ router.get("/brief-subscribers", async (req, res) => {
     const countParams = countWhere.params;
 
     const [dataResult, countResult] = await Promise.all([
-      pg.query(
+      pgElevated.query(
         `SELECT
            ibs.id,
            ibs.email,
@@ -155,7 +159,7 @@ router.get("/brief-subscribers", async (req, res) => {
          LIMIT $1 OFFSET $2`,
         mainParams
       ),
-      pg.query(
+      pgElevated.query(
         `SELECT COUNT(DISTINCT ibs.id)::int AS total
          FROM intelligence_brief_subscribers ibs
          LEFT JOIN organizations o ON o.id = ibs.organization_id

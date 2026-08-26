@@ -103,6 +103,7 @@ import { Pool, type PoolClient } from "pg";
 // The PRODUCTION canonicalizer — imported, never re-implemented, so seeded
 // canonical_key values cannot drift from what the resolver computes at runtime.
 import { canonicalizeVendorName } from "../../src/api/lib/vendorNameCanonical.js";
+import { resolvePgSsl } from "../../src/api/infra/pgSsl.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(DATABASE_URL);
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: isLocal ? undefined : { rejectUnauthorized: false },
+  ssl: isLocal ? undefined : resolvePgSsl(),
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -229,7 +230,14 @@ async function ensureWalkthroughUser(
             totp_enabled          = FALSE,
             totp_secret           = NULL,
             deleted_at            = NULL,
-            deletion_scheduled_at = NULL
+            deletion_scheduled_at = NULL,
+            -- SEC-JWT-EPOCH: re-seeding installs a fresh credential, so it is a
+            -- credential rotation and MUST invalidate outstanding sessions.
+            -- Re-hashing the password alone does NOT do that: requireAuth's
+            -- legacy check short-circuits when password_changed_at IS NULL,
+            -- and this upsert never wrote that column, so before this line a
+            -- pre-reset JWT survived a --reset indefinitely.
+            session_epoch         = users.session_epoch + 1
       WHERE users.organization_id = $1`,
     [orgId, email, name, role, passwordHash]
   );

@@ -31,6 +31,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
+import { withLlmCallContext } from "./llm/llmTelemetry.js";
 import { logger } from "../infra/logger.js";
 import { pg } from "../infra/postgres.js";
 import { parseContentJson } from "./parseBriefContentJson.js";
@@ -297,11 +298,15 @@ Counter-examples (too long, embedded clauses, magazine-style — DO NOT do this)
 Return plain text only. One sentence. No trailing period needed.`;
 
   try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 60,
-      messages: [{ role: "user", content: prompt }]
-    });
+    const message = await withLlmCallContext(
+      { purpose: "brief_headline", organizationId },
+      () =>
+        client.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 60,
+          messages: [{ role: "user", content: prompt }]
+        })
+    );
     const text = extractText(message).replace(/\.$/, "");
     return text || null;
   } catch (err) {
@@ -486,13 +491,17 @@ async function generateExecSummary(
   const userPrompt = buildExecSummaryUserPrompt(signalLines, priorContext);
 
   try {
-    const message = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 450,
-      temperature: 0.5,
-      system: EXEC_SUMMARY_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }]
-    });
+    const message = await withLlmCallContext(
+      { purpose: "brief_exec_summary", organizationId },
+      () =>
+        client.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 450,
+          temperature: 0.5,
+          system: EXEC_SUMMARY_SYSTEM_PROMPT,
+          messages: [{ role: "user", content: userPrompt }]
+        })
+    );
 
     const rawText = extractText(message);
     // Strip markdown code fences if Claude wrapped the JSON — same pattern

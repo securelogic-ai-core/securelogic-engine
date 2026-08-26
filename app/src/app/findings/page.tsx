@@ -45,7 +45,21 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   risk:                 "Risk",
 };
 
+// REPORT-1: the filter vocabulary is what makes a source type FINDABLE. It is a
+// hand-maintained subset of FINDING_SOURCE_TYPES, and it had silently fallen
+// behind: `vulnerability` (SL-VULN-1) and `pen_test` (SL-PENTEST-IN) were
+// ingestible, SLA-governed and linkable to the Risk Register, but a customer had
+// no way to filter to them — the findings list mixed them in with everything
+// else and nothing else in the product named them. A capability nobody can find
+// is not a capability.
+//
+// Deliberately NOT added: `vendor_engagement`. The engagement→findings path
+// exists in code but has never produced a finding, and surfacing a filter for a
+// workflow that does not yet complete would make Vendor Assurance look finished
+// through reporting. It belongs to the Vendor Assurance completion package.
 const SOURCE_TYPE_VALUES: Array<{ label: string; value: string }> = [
+  { label: "Vulnerability",       value: "vulnerability" },
+  { label: "Penetration Test",    value: "pen_test" },
   { label: "Vendor Assessment",   value: "vendor_review" },
   { label: "Control Test",        value: "control_test" },
   { label: "Obligation Review",   value: "obligation_review" },

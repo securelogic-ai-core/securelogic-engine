@@ -1,9 +1,17 @@
 import { Router } from "express";
 import { logger } from "../infra/logger.js";
+import { graceState, graceEndsAt } from "../lib/graceWindow.js";
 import { getStripe } from "../infra/stripeClient.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: billing surface. Org context exists (requireApiKey chain), but
+// every DB site reads/writes the ROOT-TENANT `organizations` row (Stripe
+// customer id, trial timestamps) — writes the A04-G1 grant matrix keeps
+// owner-side BY DESIGN (Tier C: "admin / Stripe / signup paths on the owner
+// role"; app_request holds SELECT only). The handlers also block on Stripe
+// API calls, which must not hold a tenant transaction open. Elevated channel,
+// per the grant-matrix design.
+import { pgElevated } from "../infra/postgres.js";
 
 const router = Router();
 
@@ -31,7 +39,7 @@ async function resolveStripeCustomer(
   description: string | null,
   apiKeyId: string | null
 ): Promise<string> {
-  const existing = await pg.query(
+  const existing = await pgElevated.query(
     `SELECT stripe_customer_id FROM organizations WHERE id = $1 LIMIT 1`,
     [organizationId]
   );
@@ -50,7 +58,7 @@ async function resolveStripeCustomer(
     },
   });
 
-  await pg.query(
+  await pgElevated.query(
     `UPDATE organizations SET stripe_customer_id = $1 WHERE id = $2`,
     [customer.id, organizationId]
   );
@@ -185,6 +193,8 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
 
     // Platform free trial — Platform tiers only, flag-gated, one per org.
     const applyTrial = platformTrialEnabled() && PLATFORM_TRIAL_TIERS.has(tier);
+    // Narrowed below if this org has already used its single trial.
+    let applyTrialForThisSession = applyTrial;
 
     if (applyTrial) {
       // Re-trial guard: ONE trial per organization, enforced here at
@@ -192,20 +202,29 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
       // by the webhook when a trial actually begins (not here), so an abandoned
       // trial checkout never burns the org's single trial. On any DB error the
       // outer catch returns 500 — no session, no trial (fail closed).
-      const priorTrial = await pg.query<{ trial_started_at: string | null }>(
+      const priorTrial = await pgElevated.query<{ trial_started_at: string | null }>(
         `SELECT trial_started_at FROM organizations WHERE id = $1 LIMIT 1`,
         [orgId]
       );
       if (priorTrial.rows[0]?.trial_started_at) {
+        // ONE trial per organization — still enforced, but by DROPPING the
+        // trial from this checkout rather than refusing the checkout (PR-H).
+        //
+        // The 409 this replaces was a dead end on the re-subscription path.
+        // Under ruling P6 the end of dunning CANCELS the subscription, so a
+        // returning Platform customer who had already trialed was told
+        // "subscribe without a trial from Manage Billing" — and the Stripe
+        // portal has nothing to manage for a cancelled subscription. The
+        // customer was trying to pay us and the API said no.
+        //
+        // Refusing money to enforce a trial policy that dropping the trial
+        // already enforces is the wrong trade. The policy is unchanged: this
+        // org gets no second trial.
+        applyTrialForThisSession = false;
         logger.info(
           { event: "billing_trial_already_used", orgId, tier },
-          "POST /api/billing/checkout: org already used its Platform trial — rejecting trial checkout"
+          "POST /api/billing/checkout: org already used its Platform trial — proceeding WITHOUT a trial"
         );
-        res.status(409).json({
-          error: "trial_already_used",
-          detail: `This organization has already used its ${trialPeriodDays()}-day Platform free trial. You can subscribe without a trial from Manage Billing.`,
-        });
-        return;
       }
     }
 
@@ -213,7 +232,7 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
     // in subscription mode (we never set payment_method_collection:if_required).
     // trial_settings.missing_payment_method:cancel is a safety net so a trial
     // with no card ends by canceling rather than leaving an unpaid invoice.
-    const trialFields = applyTrial
+    const trialFields = applyTrialForThisSession
       ? {
           trial_period_days: trialPeriodDays(),
           trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
@@ -253,7 +272,8 @@ router.post("/billing/checkout", requireApiKey, attachOrganizationContext, async
         customerId,
         sessionId: session.id,
         tier,
-        trialDays: applyTrial ? trialPeriodDays() : null,
+        trialDays: applyTrialForThisSession ? trialPeriodDays() : null,
+        trialDroppedAsAlreadyUsed: applyTrial && !applyTrialForThisSession,
       },
       "Stripe checkout session created"
     );
@@ -391,7 +411,7 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       entitlement_level:           string;
       stripe_customer_id:          string | null;
       payment_failed_at:           string | null;
@@ -427,6 +447,18 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       entitlement_level === "premium"      ? "premium"      : "free";
 
     // No billing account — key has never gone through checkout
+    // ONE authority for the grace decision. The app must not re-derive it from
+    // payment_failed_at and a day count of its own: the /account copy has to say
+    // the same thing the request path enforces and the dunning emails promise,
+    // and three implementations of one rule is two too many.
+    const graceInputs = {
+      paymentFailedAt: payment_failed_at ?? null,
+      subscriptionStatus: stripe_subscription_status ?? null,
+    };
+    const grace_state = graceState(graceInputs);
+    const grace_ends_at =
+      grace_state === "in_grace" ? (graceEndsAt(graceInputs)?.toISOString() ?? null) : null;
+
     if (!stripe_customer_id) {
       res.status(200).json({
         tier,
@@ -435,6 +467,8 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
         stripe_customer_id: null,
         current_period_end: null,
         payment_failed_at:  payment_failed_at ?? null,
+        grace_state,
+        grace_ends_at,
         subscription_tier:  stripe_subscription_tier ?? null,
         trial_end:          null,
         amount:             null,
@@ -535,6 +569,8 @@ router.get("/billing/subscription", requireApiKey, attachOrganizationContext, as
       stripe_customer_id,
       current_period_end,
       payment_failed_at:  payment_failed_at ?? null,
+      grace_state,
+      grace_ends_at,
       subscription_tier:  stripe_subscription_tier ?? null,
       trial_end,
       amount,

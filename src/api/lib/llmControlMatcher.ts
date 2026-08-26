@@ -29,10 +29,35 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { instrumentAnthropicClient } from "../infra/providerQuotaAlert.js";
+import { withLlmCallContext } from "./llm/llmTelemetry.js";
+import {
+  lookupVerdict,
+  reserveVerdict,
+  recordAnsweredVerdict,
+  recordFailedVerdict,
+  type VerdictKey
+} from "./llm/verdictCache.js";
+import {
+  controlInventoryDigest,
+  decideVerdictFailureState,
+  responseFingerprint,
+  classifyTransportFailure,
+  VERDICT_RESERVATION_TIMEOUT_MS
+} from "./llm/verdictCachePolicy.js";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 export const LLM_CONTROL_MATCHER_MODEL_ID = "claude-sonnet-4-6";
+
+/**
+ * The `purpose` every matcher provider call is tagged with.
+ *
+ * Exported so the worker's tick rollup can select THIS purpose out of the
+ * shared run accumulator instead of reporting whatever else happened to run in
+ * the same process. A string literal duplicated across the two files would let
+ * them drift silently, and the rollup would quietly report zero.
+ */
+export const LLM_CONTROL_MATCHER_PURPOSE = "llm_control_matcher";
 export const LLM_CONTROL_MATCHER_PROMPT_VERSION = "control-matcher-v1";
 
 /** Min LLM confidence (0-100) to write a suggestion. */
@@ -56,7 +81,11 @@ export type ControlRow = { id: string; name: string; description: string | null 
 export type ControlMatch = { control_id: string; score: number; reasoning: string };
 
 export type LlmCallResult =
-  | { ok: true; text: string }
+  // Token counts are carried so an ANSWERED verdict can record what the call
+  // actually cost — that is what lets a later cache hit report the exact spend
+  // it avoided instead of a modelled guess. Optional: injected test doubles and
+  // any future non-Anthropic path need not supply them.
+  | { ok: true; text: string; inputTokens?: number; outputTokens?: number }
   | { ok: false; code: "llm_unavailable" | "llm_failed"; detail: string };
 
 export type SignalForControlMatch = {
@@ -182,7 +211,12 @@ async function defaultLlmCall(prompt: string): Promise<LlmCallResult> {
       .map((c) => (c as { type: "text"; text: string }).text)
       .join("")
       .trim();
-    return { ok: true, text };
+    return {
+      ok: true,
+      text,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0
+    };
   } catch (err) {
     return { ok: false, code: "llm_failed", detail: (err as Error)?.message ?? "anthropic call failed" };
   }
@@ -205,6 +239,82 @@ export function shouldRunControlMatcher(
 }
 
 // ---------------------------------------------------------------------------
+// writeControlSuggestions — the persist step, shared by the cache-hit and
+// fresh-verdict paths so a replayed verdict writes IDENTICAL rows to the call
+// that produced it. Caller supplies the tenant scope.
+// ---------------------------------------------------------------------------
+
+async function writeControlSuggestions(
+  orgId: string,
+  signalId: string,
+  matches: ReadonlyArray<{ control_id: string; score: number; reasoning: string }>
+): Promise<number> {
+  let written = 0;
+  for (const m of matches) {
+    const ins = await pg.query<{ id: string }>(
+      `
+      INSERT INTO signal_match_suggestions (
+        organization_id, signal_id, target_type, target_id,
+        match_reason, match_score, match_metadata
+      )
+      VALUES ($1, $2::uuid, 'control', $3::uuid, 'control_llm_match', $4, $5::jsonb)
+      ON CONFLICT (organization_id, signal_id, target_type, target_id)
+        WHERE accepted_at IS NULL AND dismissed_at IS NULL
+        DO NOTHING
+      RETURNING id
+      `,
+      [
+        orgId,
+        signalId,
+        m.control_id,
+        m.score,
+        JSON.stringify({
+          source: "llm",
+          matched_branch: "control_llm",
+          model: LLM_CONTROL_MATCHER_MODEL_ID,
+          prompt_version: LLM_CONTROL_MATCHER_PROMPT_VERSION,
+          reasoning: m.reasoning
+        })
+      ]
+    );
+    if ((ins.rowCount ?? 0) > 0) written++;
+  }
+  return written;
+}
+
+/**
+ * What one matcher invocation actually did.
+ *
+ * The numeric return of `runLlmControlMatcherForSignal` cannot distinguish
+ * "wrote nothing because the org has no controls" from "wrote nothing because
+ * the provider failed" — both are 0. Once the work runs asynchronously that
+ * distinction is load-bearing: the job queue must retry the second and not the
+ * first, and the operator must be able to tell a quiet system from a broken one.
+ */
+export type ControlMatcherOutcome = {
+  /** Suggestions written to signal_match_suggestions by THIS invocation. */
+  written: number;
+  /** Stable telemetry label for what happened. */
+  outcome:
+    | "written"
+    | "cache_hit"
+    | "ineligible"
+    | "no_controls"
+    | "deferred"
+    | "exhausted"
+    | "provider_failed"
+    | "unparseable";
+  /**
+   * Could a later re-invocation still produce a verdict?
+   *
+   * True only for failures the verdict cache has left retryable. `exhausted`
+   * (dead-lettered) is false by design — it needs a human, not another attempt —
+   * and the terminal successes are obviously false.
+   */
+  retryable: boolean;
+};
+
+// ---------------------------------------------------------------------------
 // runLlmControlMatcherForSignal — I/O (self-contained, error-swallowing)
 // ---------------------------------------------------------------------------
 
@@ -220,88 +330,231 @@ export async function runLlmControlMatcherForSignal(
   orgId: string,
   llmCall: (prompt: string) => Promise<LlmCallResult> = defaultLlmCall
 ): Promise<number> {
-  if (!shouldRunControlMatcher(signal)) return 0;
+  return (await runControlMatcherWithOutcome(signal, orgId, llmCall)).written;
+}
+
+/**
+ * The implementation. Identical behaviour to the numeric wrapper above — same
+ * gate, same cache semantics, same rows written, same swallowing of every
+ * failure — but it reports WHICH outcome occurred so an asynchronous caller can
+ * decide whether to retry.
+ */
+export async function runControlMatcherWithOutcome(
+  signal: SignalForControlMatch,
+  orgId: string,
+  llmCall: (prompt: string) => Promise<LlmCallResult> = defaultLlmCall
+): Promise<ControlMatcherOutcome> {
+  if (!shouldRunControlMatcher(signal)) {
+    return { written: 0, outcome: "ineligible", retryable: false };
+  }
 
   try {
-    return await withTenant(orgId, async () => {
+    // ── Phase 1: inputs + cache lookup + reservation (own tenant scope) ──────
+    //
+    // This scope COMMITS before the LLM call, which two things depend on:
+    // the reservation must be visible to the other matcher invocation sites
+    // (the hourly worker pipeline and the 15-minute KEV poller) for
+    // cross-process stampede control to work at all; and a tenant transaction
+    // must not be held open across a multi-second provider call.
+    const phase1 = await withTenant(orgId, async () => {
       const controlsResult = await pg.query<ControlRow>(
         `SELECT id, name, description FROM controls WHERE organization_id = $1 ORDER BY created_at ASC LIMIT $2`,
         [orgId, MAX_CONTROLS_IN_PROMPT]
       );
       const controls = controlsResult.rows;
-      if (controls.length === 0) return 0;
+      if (controls.length === 0) return null;
 
-      const prompt = buildControlMatcherPrompt({ signal, controls });
-      logger.info(
-        { event: "llm_control_matcher_start", orgId, signalId: signal.id, controlCount: controls.length, model: LLM_CONTROL_MATCHER_MODEL_ID },
-        "LLM control matcher: calling"
+      // The cache key needs the signal's CONTENT identity, not its row id: a
+      // re-ingested CVE gets a new id but the same dedup_hash. Read it here
+      // rather than widening SignalForControlMatch across all three call
+      // sites; if dedup_hash is ever threaded through those types, this lookup
+      // can be dropped.
+      //
+      // Same-org OR GLOBAL, for the same reason as controlMatcherWorker's
+      // loadSignal: `cyber_signals` is a TENANT_ISOLATION_STANDARD.md §1
+      // shared/global table and public-source intelligence carries
+      // `organization_id IS NULL`. A bare `organization_id = $2` here returned
+      // no row for every global signal, and phase 1 then reported the run as
+      // `no_controls` — silently, with no job failure and no telemetry that
+      // distinguished it from an org that owns no controls. That silent arm was
+      // the SECOND half of #883, unreachable only because loadSignal failed
+      // first; fixing the worker alone would have exposed it.
+      const hashResult = await pg.query<{ dedup_hash: string }>(
+        `SELECT dedup_hash FROM cyber_signals
+          WHERE id = $1
+            AND (organization_id = $2 OR organization_id IS NULL)`,
+        [signal.id, orgId]
       );
+      const dedupHash = hashResult.rows[0]?.dedup_hash;
+      if (!dedupHash) return null;
 
-      const result = await llmCall(prompt);
-      if (!result.ok) {
-        logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
-        return 0;
+      const key: VerdictKey = {
+        organizationId: orgId,
+        signalDedupHash: dedupHash,
+        controlInventoryDigest: controlInventoryDigest(controls),
+        promptVersion: LLM_CONTROL_MATCHER_PROMPT_VERSION
+      };
+
+      const lookup = await lookupVerdict(key);
+
+      if (lookup.outcome === "hit") {
+        return { kind: "hit" as const, key, controls, verdict: lookup.verdict };
+      }
+      if (lookup.outcome === "skip") {
+        // Another process holds a live reservation, or the key is
+        // dead-lettered. Either way: make no call and record no verdict.
+        // Suggestions are advisory and re-derived next pass — this defers
+        // work, it does not suppress it.
+        return { kind: "skip" as const, reason: lookup.reason };
       }
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(stripJsonFences(result.text));
-      } catch {
-        logger.warn({ event: "llm_control_matcher_invalid_json", orgId, signalId: signal.id }, "LLM control matcher: response did not JSON-parse");
-        return 0;
+      const reservation = await reserveVerdict(key, new Date(), VERDICT_RESERVATION_TIMEOUT_MS);
+      if (!reservation.claimed) {
+        return { kind: "skip" as const, reason: "reserved_by_other" as const };
       }
+      return { kind: "compute" as const, key, controls, attempts: reservation.attempts };
+    });
 
-      const knownIds = new Set(controls.map((c) => c.id.toLowerCase()));
-      const validated = validateControlMatcherResponse(parsed, knownIds);
-      if (!validated.ok) {
-        logger.warn({ event: "llm_control_matcher_invalid_shape", orgId, signalId: signal.id, error: validated.error }, "LLM control matcher: invalid response shape");
-        return 0;
-      }
+    if (phase1 === null) {
+      return { written: 0, outcome: "no_controls", retryable: false };
+    }
+    if (phase1.kind === "skip") {
+      logger.info(
+        { event: "llm_control_matcher_skipped", orgId, signalId: signal.id, reason: phase1.reason },
+        "LLM control matcher: skipped without calling (reserved elsewhere or dead-lettered)"
+      );
+      return phase1.reason === "reserved_by_other"
+        // Another process holds the reservation. Retrying is cheap and correct:
+        // the next attempt either replays that winner's cached verdict or
+        // re-claims a reservation the winner abandoned.
+        ? { written: 0, outcome: "deferred", retryable: true }
+        // Dead-lettered keys are never auto-retried — they need a human.
+        : { written: 0, outcome: "exhausted", retryable: false };
+    }
+
+    const { key, controls } = phase1;
+    const knownIds = new Set(controls.map((c) => c.id.toLowerCase()));
+
+    // ── Cache hit: replay the stored verdict, no provider call ───────────────
+    if (phase1.kind === "hit") {
+      const toWrite = phase1.verdict.matches
+        .filter((m) => m.score >= CONTROL_MATCH_MIN_SCORE)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, CONTROL_SUGGESTION_CAP);
+      const written = await withTenant(orgId, () =>
+        writeControlSuggestions(orgId, signal.id, toWrite)
+      );
+      logger.info(
+        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: phase1.verdict.matches.length, written, cached: true },
+        "LLM control matcher: wrote control suggestions from cached verdict"
+      );
+      return { written, outcome: "cache_hit", retryable: false };
+    }
+
+    // ── Phase 2: the provider call, with NO DB connection held ───────────────
+    const prompt = buildControlMatcherPrompt({ signal, controls });
+    logger.info(
+      { event: "llm_control_matcher_start", orgId, signalId: signal.id, controlCount: controls.length, model: LLM_CONTROL_MATCHER_MODEL_ID },
+      "LLM control matcher: calling"
+    );
+
+    const result = await withLlmCallContext(
+      { purpose: LLM_CONTROL_MATCHER_PURPOSE, organizationId: orgId },
+      () => llmCall(prompt)
+    );
+
+    // ── Phase 3: settle the verdict (own tenant scope) ───────────────────────
+    if (!result.ok) {
+      const decision = decideVerdictFailureState("transport", phase1.attempts, new Date());
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          failureClass: classifyTransportFailure(result.code),
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_call_failed", orgId, signalId: signal.id, code: result.code }, "LLM control matcher: call failed — no suggestions");
+      return {
+        written: 0,
+        outcome: "provider_failed",
+        retryable: decision.state !== "dead_lettered"
+      };
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonFences(result.text));
+    } catch {
+      const decision = decideVerdictFailureState("unparseable", phase1.attempts, new Date());
+      const fingerprint = responseFingerprint(result.text);
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          parseErrorCode: "invalid_json",
+          responseSha256: fingerprint.sha256,
+          responseChars: fingerprint.chars,
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_invalid_json", orgId, signalId: signal.id }, "LLM control matcher: response did not JSON-parse");
+      return {
+        written: 0,
+        outcome: "unparseable",
+        retryable: decision.state !== "dead_lettered"
+      };
+    }
+
+    const validated = validateControlMatcherResponse(parsed, knownIds);
+    if (!validated.ok) {
+      const decision = decideVerdictFailureState("unparseable", phase1.attempts, new Date());
+      const fingerprint = responseFingerprint(result.text);
+      await withTenant(orgId, () =>
+        recordFailedVerdict(key, {
+          state: decision.state as "failed" | "unparseable" | "dead_lettered",
+          parseErrorCode: "invalid_shape",
+          responseSha256: fingerprint.sha256,
+          responseChars: fingerprint.chars,
+          nextAttemptAt: decision.nextAttemptAt
+        })
+      );
+      logger.warn({ event: "llm_control_matcher_invalid_shape", orgId, signalId: signal.id, error: validated.error }, "LLM control matcher: invalid response shape");
+      return {
+        written: 0,
+        outcome: "unparseable",
+        retryable: decision.state !== "dead_lettered"
+      };
+    }
+
+    return await withTenant(orgId, async () => {
+      // An EMPTY match list is a real, reusable answer — "no controls match"
+      // cost money to learn and must not be re-learned every run.
+      await recordAnsweredVerdict(
+        key,
+        { matches: validated.matches },
+        {
+          model: LLM_CONTROL_MATCHER_MODEL_ID,
+          inputTokens: result.inputTokens ?? 0,
+          outputTokens: result.outputTokens ?? 0
+        }
+      );
 
       const toWrite = validated.matches
         .filter((m) => m.score >= CONTROL_MATCH_MIN_SCORE)
         .sort((a, b) => b.score - a.score)
         .slice(0, CONTROL_SUGGESTION_CAP);
 
-      let written = 0;
-      for (const m of toWrite) {
-        const ins = await pg.query<{ id: string }>(
-          `
-          INSERT INTO signal_match_suggestions (
-            organization_id, signal_id, target_type, target_id,
-            match_reason, match_score, match_metadata
-          )
-          VALUES ($1, $2::uuid, 'control', $3::uuid, 'control_llm_match', $4, $5::jsonb)
-          ON CONFLICT (organization_id, signal_id, target_type, target_id)
-            WHERE accepted_at IS NULL AND dismissed_at IS NULL
-            DO NOTHING
-          RETURNING id
-          `,
-          [
-            orgId,
-            signal.id,
-            m.control_id,
-            m.score,
-            JSON.stringify({
-              source: "llm",
-              matched_branch: "control_llm",
-              model: LLM_CONTROL_MATCHER_MODEL_ID,
-              prompt_version: LLM_CONTROL_MATCHER_PROMPT_VERSION,
-              reasoning: m.reasoning
-            })
-          ]
-        );
-        if ((ins.rowCount ?? 0) > 0) written++;
-      }
+      const written = await writeControlSuggestions(orgId, signal.id, toWrite);
 
       logger.info(
-        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: validated.matches.length, written },
+        { event: "llm_control_matcher_done", orgId, signalId: signal.id, candidates: validated.matches.length, written, cached: false },
         "LLM control matcher: wrote control suggestions"
       );
-      return written;
+      return { written, outcome: "written" as const, retryable: false };
     });
   } catch (err) {
     logger.warn({ event: "llm_control_matcher_failed", orgId, signalId: signal.id, err }, "LLM control matcher failed (non-fatal)");
-    return 0;
+    // An unforeseen throw (a DB blip settling the verdict, say) leaves no
+    // terminal verdict state, so a later attempt can still succeed.
+    return { written: 0, outcome: "provider_failed" as const, retryable: true };
   }
 }

@@ -1,5 +1,12 @@
 import { Router } from "express";
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: staff surface behind requireAdminKey, operating on `organizations`
+// — the ROOT-TENANT table. Its writes are owner-side BY DESIGN (the A04-G1
+// grant matrix gives app_request SELECT only, Tier C), and staff reads are
+// cross-org (list-all / by-PK of any org). All four sites therefore use the
+// elevated owner channel (Strategy A, matching the 7.e convergence); a
+// withTenant scope would have no RLS effect (organizations carries no policy)
+// and could not perform the UPDATE/INSERT at all under app_request.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 const router = Router();
@@ -54,7 +61,7 @@ router.get("/organizations", async (req, res) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       SELECT id, name, slug, plan, status,
              regulated, handles_pii, safety_critical, scale,
@@ -96,7 +103,7 @@ router.get("/organizations/:id", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `SELECT id, name, slug, plan, status,
               regulated, handles_pii, safety_critical, scale,
               created_at, updated_at
@@ -173,7 +180,7 @@ router.post("/organizations", async (req, res) => {
 
     let result;
     try {
-      result = await pg.query(
+      result = await pgElevated.query(
         `
         INSERT INTO organizations (
           name, slug, plan, status,
@@ -325,7 +332,7 @@ router.patch("/organizations/:id", async (req, res) => {
       return;
     }
 
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       UPDATE organizations
       SET

@@ -9,11 +9,17 @@ import {
   getRiskAcceptancesForFinding,
   type Finding,
   type Action,
+  getFindingRiskLinks,
+  getFindingOccurrences,
+  getRisks,
+  getAuthMe,
 } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
+import { RiskRegisterPanel } from "./RiskRegisterPanel";
+import { AffectedAssetsPanel } from "./AffectedAssetsPanel";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -248,8 +254,11 @@ function FindingDetailsCard({ finding }: { finding: Finding }) {
         )}
         <div className="flex items-center justify-between">
           <span className="text-xs" style={{ color: "#94a3b8" }}>Severity</span>
-          <span className="text-xs font-semibold" style={(SEVERITY_STYLES[finding.severity] ?? {}) as React.CSSProperties}>
-            {finding.severity}
+          <span
+            className="text-xs font-semibold"
+            style={(finding.severity ? SEVERITY_STYLES[finding.severity] ?? {} : {}) as React.CSSProperties}
+          >
+            {finding.severity ?? "No severity"}
           </span>
         </div>
         {finding.likelihood && (
@@ -432,22 +441,47 @@ function RemediationTab({
 
 export default async function FindingDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  // Affected-assets paging lives in the URL so a page of hosts is linkable and
+  // survives a refresh. Bounded here as well as in the engine: a hostile value
+  // must not reach the query, and the engine caps it again regardless.
+  const sp = (await searchParams) ?? {};
+  const rawOccOffset = Array.isArray(sp["occ_offset"]) ? sp["occ_offset"][0] : sp["occ_offset"];
+  const parsedOffset = Number(rawOccOffset);
+  const occOffset =
+    Number.isFinite(parsedOffset) && parsedOffset > 0
+      ? Math.min(Math.floor(parsedOffset), 100_000)
+      : 0;
   const session = await getSession();
 
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData, teamData] = await Promise.all([
+  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData] =
+    await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
     // Org members, so remediation work can be ASSIGNED from the finding you are
     // looking at. Read-only and best-effort: if the team endpoint is unavailable the
     // owner controls simply do not render, and the tab degrades to what it was.
     getTeamMembers(token),
+    // The register entries this finding already supports. An empty list is the
+    // NORMAL answer — standalone is the default — so the panel renders it as a
+    // decision not yet taken, not as missing data.
+    getFindingRiskLinks(token, id),
+    // Candidates to link to. Bounded: the picker is for attaching a finding to
+    // a risk someone already accepted into the register, not for browsing it.
+    getRisks(token, { limit: 100, active: true }),
+    session.jwtToken ? getAuthMe(session.jwtToken) : Promise.resolve(null),
+    // Which assets this vulnerability affects. PAGINATED — a finding can affect
+    // thousands of hosts, so there is no "fetch all" variant; the rollup counts
+    // come from a server-side aggregate, never from the returned page.
+    getFindingOccurrences(token, id, { limit: 25, offset: occOffset }),
   ]);
 
   if (!findingData) redirect("/findings");
@@ -486,6 +520,28 @@ export default async function FindingDetailPage({
             currentUserId={session.userId ?? null}
             openActionCount={actions.filter((a) => ACTION_ACTIVE.has(a.status)).length}
             homeLabel={findingsHomeLabel(process.env.SECURELOGIC_RISK_WORKSPACE_ENABLED === "true")}
+            /* Carried into the workspace so activating it does not remove
+               Finding ↔ Risk visibility. Same component, same data, same
+               permissions as the legacy layout — one implementation, not two. */
+            affectedAssets={
+              <AffectedAssetsPanel
+                findingId={finding.id}
+                occurrences={occurrenceData.occurrences}
+                rollup={occurrenceData.rollup}
+                limit={occurrenceData.limit}
+                offset={occurrenceData.offset}
+              />
+            }
+            riskRegister={
+              <RiskRegisterPanel
+                findingId={finding.id}
+                links={riskLinks}
+                availableRisks={(registerRisks?.risks ?? []).map((r) => ({
+                  id: r.id, title: r.title, risk_rating: r.risk_rating ?? "Unrated",
+                }))}
+                canDecide={(authMe?.role ?? "viewer") !== "viewer"}
+              />
+            }
           >
             {/* R-3: the recommendation is ADVISORY guidance — distinct from the
                 executable actions below it. Labeled so the two are never conflated. */}
@@ -531,7 +587,7 @@ export default async function FindingDetailPage({
           {/* Finding header card */}
           <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
             <div className="flex items-center gap-2 flex-wrap mb-3">
-              <SeverityBadge severity={finding.severity} />
+              <SeverityBadge severity={finding.severity ?? "No severity"} />
               <span
                 className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
                 style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
@@ -571,6 +627,32 @@ export default async function FindingDetailPage({
               </div>
             </div>
           )}
+
+          {/* Affected assets — ABOVE the Risk Register, because "where is this"
+              precedes "are we carrying it". Rendered in BOTH layouts: the
+              Decision Workspace is a different tree, so a panel added to only
+              one of them disappears the moment the flag flips. */}
+          <div className="mb-5">
+            <AffectedAssetsPanel
+              findingId={finding.id}
+              occurrences={occurrenceData.occurrences}
+              rollup={occurrenceData.rollup}
+              limit={occurrenceData.limit}
+              offset={occurrenceData.offset}
+            />
+          </div>
+
+          {/* Risk Register — deliberately ABOVE remediation. The first question
+              about a finding is whether the organization is carrying it as a
+              risk; what work it spawned is the second. */}
+          <RiskRegisterPanel
+            findingId={finding.id}
+            links={riskLinks}
+            availableRisks={(registerRisks?.risks ?? []).map((r) => ({
+              id: r.id, title: r.title, risk_rating: r.risk_rating ?? "Unrated",
+            }))}
+            canDecide={(authMe?.role ?? "viewer") !== "viewer"}
+          />
 
           {/* Remediation Actions */}
           <RemediationActionsSection finding={finding} actions={actions} />

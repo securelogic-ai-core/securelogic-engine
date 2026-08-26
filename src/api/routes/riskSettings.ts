@@ -35,7 +35,7 @@ import { requireAdminRole } from "../middleware/requireRole.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { DEFAULT_CADENCE_BY_RATING, VALID_RATINGS } from "../lib/riskCadence.js";
-import { validateRiskSettingsPut } from "../lib/riskSettingsValidation.js";
+import { SLA_POLICY_SEVERITIES, validateRiskSettingsPut } from "../lib/riskSettingsValidation.js";
 
 const router = Router();
 
@@ -178,8 +178,9 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
     // change rather than a black box.
     const beforeResult = await pg.query<{
       cadence_by_rating: Record<string, unknown> | null;
+      finding_sla_by_severity: Record<string, unknown> | null;
     }>(
-      `SELECT cadence_by_rating
+      `SELECT cadence_by_rating, finding_sla_by_severity
          FROM risk_settings
         WHERE organization_id = $1
         LIMIT 1`,
@@ -239,6 +240,35 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
       }
     }
 
+    // Per-severity SLA delta. `null` on either side is meaningful and is
+    // recorded as such: null before = the org had NO due-date automation and
+    // findings were created with no deadline; null after = the policy was
+    // CLEARED, which stops future findings getting one. Collapsing either into
+    // an empty map would hide the two changes that matter most.
+    const beforeSla =
+      (beforeResult.rows[0]?.finding_sla_by_severity as Record<string, unknown> | null) ?? null;
+    const finding_sla_diff: {
+      before: Record<string, number | null> | null;
+      after: Record<string, number | null> | null;
+    } = { before: null, after: null };
+    if (slaProvided) {
+      const afterSla = finding_sla_by_severity ?? null;
+      if (beforeSla === null && afterSla === null) {
+        // No-op write; leave both null rather than inventing a diff.
+      } else {
+        finding_sla_diff.before = {};
+        finding_sla_diff.after = {};
+        for (const sev of SLA_POLICY_SEVERITIES) {
+          const b = typeof beforeSla?.[sev] === "number" ? (beforeSla[sev] as number) : null;
+          const a = typeof afterSla?.[sev] === "number" ? (afterSla[sev] as number) : null;
+          if (b !== a) {
+            finding_sla_diff.before[sev] = b;
+            finding_sla_diff.after[sev] = a;
+          }
+        }
+      }
+    }
+
     logger.info(
       {
         event: "risk_settings_updated",
@@ -258,7 +288,13 @@ export async function putRiskSettings(req: Request, res: Response): Promise<void
       payload:       {
         cadence_by_rating,
         cadence_diff,
-        ...(slaProvided ? { finding_sla_by_severity } : {}),
+        // The SLA governs REMEDIATION DEADLINES, so an auditor asking "when did
+        // the deadline for High findings change, and from what?" needs the
+        // before value. Recording only the new map answers what the policy is
+        // now and not what changed — which is the one question an audit trail
+        // exists for. Same shape as cadence_diff, and only present when the
+        // caller actually supplied the field.
+        ...(slaProvided ? { finding_sla_by_severity, finding_sla_diff } : {}),
         ...(require_finding_closure_sod !== undefined ? { require_finding_closure_sod } : {}),
         ...(require_evidence_gate !== undefined ? { require_evidence_gate } : {}),
       },

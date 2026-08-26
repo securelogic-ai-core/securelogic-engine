@@ -40,6 +40,17 @@ export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
 /** Class A deny-all for Contributors. */
 export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "aiGovernanceAssessments.ts",
+  // SL-RISK-LINK. Deny-all, not read-scoped: deciding that a finding belongs on
+  // the Risk Register is a governance act, and the reverse read
+  // (/risks/:id/findings) is a cross-tenant-shaped roll-up with no trustworthy
+  // per-Contributor ownership predicate — the same posture risks.ts takes on
+  // risk creation. denyContributor() is on every route in the file.
+  "findingRiskLinks.ts",
+  "findingAssetOccurrences.ts",
+  // SL-PENTEST-IN. Deny-all: recording a security assessment and reading the
+  // org's testing history are governance acts with no per-Contributor
+  // ownership predicate, matching every other assessment family.
+  "penTestEngagements.ts",
   "aiSystemGovernanceContext.ts",
   "aiSystemVendorDependencies.ts",
   "aiSystemsExport.ts",

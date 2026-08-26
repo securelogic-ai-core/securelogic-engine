@@ -37,10 +37,13 @@ describe("JWT bridge — a Viewer SEAT with a non-viewer role cannot mutate (fla
   beforeEach(() => {
     vi.stubEnv("SECURELOGIC_SEAT_MODEL_ENABLED", "true");
     // JWT verifies; the user row is an incompatible viewer-seat + analyst-role.
-    verifyJwtMock.mockReturnValue({ sub: "u1", iat: Math.floor(Date.now() / 1000) });
+    // SEC-JWT-EPOCH: a real session carries `se`; the row carries the matching
+    // epoch, so this fixture exercises seat/role logic rather than tripping the
+    // epoch gate.
+    verifyJwtMock.mockReturnValue({ sub: "u1", se: 0, iat: Math.floor(Date.now() / 1000) });
     queryMock.mockImplementation((sql: string) => {
       if (/password_changed_at, status, role, seat_type/.test(sql))
-        return Promise.resolve({ rows: [{ password_changed_at: null, status: "active", role: "analyst", seat_type: "viewer" }] });
+        return Promise.resolve({ rows: [{ password_changed_at: null, status: "active", role: "analyst", seat_type: "viewer", session_epoch: 0 }] });
       if (/FROM api_keys/.test(sql)) return Promise.resolve({ rows: [{ id: "k", organization_id: "o", status: "active" }], rowCount: 1 });
       return Promise.resolve({ rows: [], rowCount: 0 });
     });

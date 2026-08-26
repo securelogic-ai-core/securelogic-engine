@@ -577,10 +577,22 @@ export type Finding = {
   source_type: string;
   source_id: string | null;
   title: string;
-  severity: string;
+  /**
+   * Canonical, SLA-BEARING severity. NULL means the finding has NO canonical
+   * severity — the source said Informational/None, or its value could not be
+   * mapped. NULL is never a hidden fifth level and never acquires a due date.
+   * When it is null, `source_severity` says what the source actually stated.
+   */
+  severity: string | null;
   description: string;
   recommendation: string | null;
   framework_control_id: string | null;
+  /** What the SOURCE called the severity, verbatim. Never normalised. */
+  source_severity?: string | null;
+  /** The finding's id in the source report, e.g. "PT-2026-014". */
+  source_reference_id?: string | null;
+  cvss_score?: number | string | null;
+  cvss_vector?: string | null;
   domain: string | null;
   priority: string | null;
   likelihood: string | null;
@@ -1379,6 +1391,15 @@ export interface SubscriptionInfo {
   stripe_customer_id: string | null;
   current_period_end: string | null;
   payment_failed_at: string | null;
+  /**
+   * The ENGINE's grace decision, not a client-side derivation. Computed by the
+   * same graceWindow function that the request path enforces with and the
+   * dunning emails are worded from, so /account cannot tell a customer
+   * something different from what the platform is doing.
+   */
+  grace_state: "healthy" | "in_grace" | "lapsed";
+  /** ISO date access ends, present only while grace_state is "in_grace". */
+  grace_ends_at: string | null;
   subscription_tier: string | null;
   /** ISO timestamp the trial converts to a paid subscription (trialing only). */
   trial_end: string | null;
@@ -2578,6 +2599,14 @@ export type RiskAcceptance = {
   organization_id: string;
   finding_id: string;
   state: RiskAcceptanceState;
+  /**
+   * 'acceptance' = the organisation accepts the risk; remediation is finished
+   * and the finding CLOSES. 'exception' = the organisation authorises a
+   * temporary deviation; remediation remains OUTSTANDING and the finding stays
+   * OPEN. Optional for backward compatibility with reads that predate it;
+   * absent is read as 'acceptance', which is what every historical row is.
+   */
+  kind?: "acceptance" | "exception";
   owner_user_id: string | null;
   rationale: string | null;
   requested_by_user_id: string | null;
@@ -2591,6 +2620,10 @@ export type RiskAcceptance = {
   withdrawal_reason: string | null;
   governance_review_required: boolean;
   promoted_risk_id: string | null;
+  /** What reduces the exposure while an exception stands. */
+  compensating_control?: string | null;
+  /** The finding's remediation due date when the request was made. Frozen. */
+  sla_due_date_at_request?: string | null;
   created_at: string;
   updated_at: string;
   // JOINed finding columns the register/per-finding read returns (optional).
@@ -4884,6 +4917,17 @@ export type RiskSettings = {
   is_default:           boolean;
   organization_id:      string;
   cadence_by_rating:    Record<string, number>;
+  /**
+   * Remediation SLA: severity → CALENDAR days. The engine computes a due date
+   * as CURRENT_DATE + days (findingSlaPolicyRules.ts) — there is no
+   * business-day or holiday arithmetic anywhere in the platform, so nothing
+   * built on this may imply one.
+   *
+   * `null` means NO due-date automation: findings are created with whatever
+   * due date the caller supplied, and none if they supplied nothing. That is a
+   * real, distinct state from "configured", not a missing value.
+   */
+  finding_sla_by_severity: Record<string, number> | null;
   created_at:           string | null;
   updated_at:           string | null;
   updated_by_user_id:   string | null;
@@ -4917,14 +4961,31 @@ export async function getRiskSettingsServer(
   }
 }
 
+/**
+ * The engine treats an ABSENT finding_sla_by_severity as "leave the stored
+ * policy unchanged" and an explicit null as "clear it". That distinction is
+ * load-bearing, so this signature preserves it: omit the option to leave the
+ * SLA alone (what the cadence form does), pass a map to set it, pass null to
+ * turn due-date automation off.
+ *
+ * cadence_by_rating is always required by the endpoint, so every caller sends
+ * the cadence it is currently showing — saving one section must never blank
+ * the other.
+ */
 export async function putRiskSettings(
-  cadence_by_rating: Record<string, number>
+  cadence_by_rating: Record<string, number>,
+  options?: { finding_sla_by_severity?: Record<string, number> | null }
 ): Promise<{ ok: true; settings: RiskSettings } | { ok: false; error: string }> {
   try {
     const res = await fetch("/api/orgs/me/risk-settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cadence_by_rating }),
+      body: JSON.stringify({
+        cadence_by_rating,
+        ...(options && "finding_sla_by_severity" in options
+          ? { finding_sla_by_severity: options.finding_sla_by_severity }
+          : {}),
+      }),
       cache: "no-store",
     });
     if (!res.ok) {
@@ -6174,7 +6235,22 @@ export async function rejectVendorAssuranceDocument(
 // CUEC matcher package: cuecs + N:M control mappings + control search
 // ---------------------------------------------------------------------------
 
-export type CuecReviewStatus = "pending" | "reviewed_no_match";
+/**
+ * VA-1/VA-2. The old vocabulary was ["pending","reviewed_no_match"], and
+ * `reviewed_no_match` conflated "this does not apply to us" with "this applies
+ * and we do not do it" — which is why a reviewed document could never produce
+ * remediation work. `reviewed_no_match` remains readable so legacy rows render,
+ * but the review UI offers only the four explicit outcomes.
+ */
+export type CuecReviewStatus =
+  | "pending"
+  | "not_applicable"
+  | "satisfied"
+  | "gap"
+  | "reviewed_no_match";
+
+/** The determinations a reviewer may now record. */
+export const CUEC_DETERMINATIONS = ["not_applicable", "satisfied", "gap"] as const;
 export type CuecMappingStatus = "suggested" | "accepted" | "dismissed";
 export type CuecMappingSource = "auto" | "manual";
 
@@ -6203,6 +6279,20 @@ export type VendorAssuranceCuec = {
   review_status_reason: string | null;
   review_status_updated_by_user_id: string | null;
   review_status_updated_at: string | null;
+  /** Snapshot of the mapped controls and their state at determination time. */
+  gap_basis: {
+    determined_at?: string;
+    determined_status?: string;
+    mapped_controls?: Array<{
+      control_id: string; control_name: string;
+      implementation_status: string | null; maturity_level: string | null;
+      last_tested_at: string | null;
+    }>;
+    mapped_control_count?: number;
+    basis?: string;
+  } | null;
+  /** The finding this gap produced, if promoted. NULL is the normal state. */
+  promoted_finding_id: string | null;
   created_at: string;
   updated_at: string;
   mappings: VendorAssuranceCuecMapping[];
@@ -6322,6 +6412,32 @@ export async function updateCuecMapping(
 }
 
 /** POST /cuecs/:id/review-status — set/clear the "no applicable control in inventory" marker. */
+/**
+ * Promote a CUEC gap into an ordinary Finding.
+ *
+ * Explicit by design: recording a gap and opening remediation work are two
+ * different acts, so this is never called automatically. Severity is REQUIRED —
+ * it drives the SLA, and a deadline the platform invented would have no author.
+ */
+export async function promoteCuecToFinding(
+  token: string,
+  cuecId: string,
+  severity: "Critical" | "High" | "Moderate" | "Low",
+): Promise<VendorAssuranceActionResult<{ finding: { id: string; title: string; severity: string; due_date: string | null }; created: boolean }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/promote-to-finding`,
+      token,
+      { method: "POST", body: JSON.stringify({ severity }) },
+    );
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { error: String(body["error"] ?? "cuec_promotion_failed") };
+    return body as { finding: { id: string; title: string; severity: string; due_date: string | null }; created: boolean };
+  } catch {
+    return { error: "cuec_promotion_failed" };
+  }
+}
+
 export async function updateCuecReviewStatus(
   token: string,
   cuecId: string,
@@ -6332,7 +6448,17 @@ export async function updateCuecReviewStatus(
     const res = await engineFetch(
       `/api/vendor-assurance/cuecs/${encodeURIComponent(cuecId)}/review-status`,
       token,
-      { method: "POST", body: JSON.stringify(reviewStatus === "reviewed_no_match" && reason && reason.trim().length > 0 ? { review_status: reviewStatus, reason: reason.trim() } : { review_status: reviewStatus }) }
+      // A reason accompanies any determination that carries one. The engine
+      // REQUIRES it on `gap` — asserting the organisation fails an obligation
+      // has to be explained — and ignores it when clearing back to pending.
+      {
+        method: "POST",
+        body: JSON.stringify(
+          reviewStatus !== "pending" && reason && reason.trim().length > 0
+            ? { review_status: reviewStatus, reason: reason.trim() }
+            : { review_status: reviewStatus },
+        ),
+      }
     );
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) return { error: String(body["error"] ?? "cuec_review_status_update_failed") };
@@ -7808,5 +7934,143 @@ export async function startVendorEngagementMonitoring(
     };
   } catch {
     return { failure: { error: "monitoring_start_failed" } };
+  }
+}
+
+
+/* ── Findings ↔ Risk Register (SL-RISK-LINK) ─────────────────────────────── */
+
+export interface FindingRiskLink {
+  risk_id: string;
+  link_type: "linked" | "promoted";
+  note: string | null;
+  created_at: string;
+  created_by_user_id: string | null;
+  risk_title: string;
+  risk_domain: string;
+  risk_rating: string;
+  risk_status: string;
+}
+
+export interface RiskSupportingFinding {
+  finding_id: string;
+  link_type: "linked" | "promoted";
+  note: string | null;
+  created_at: string;
+  finding_title: string;
+  finding_severity: string;
+  finding_status: string;
+  finding_source_type: string;
+  finding_due_date: string | null;
+}
+
+/**
+ * The register entries this finding supports. An EMPTY list is the normal,
+ * correct answer for most findings — standalone is the default and is never
+ * changed by automation — so callers must render "not linked" as a state, not
+ * as an absence of data.
+ */
+/**
+ * Which assets a vulnerability affects, and the rollup shown beside it.
+ *
+ * PAGINATED BY CONTRACT. A finding can affect thousands of hosts, so there is no
+ * "fetch them all" variant — the caller always asks for a page, and the rollup
+ * comes from a grouped aggregate rather than from counting the page it happened
+ * to receive. Returning zero occurrences is a legitimate state ("no asset
+ * recorded"), never an error, so failures degrade to an empty page with a zero
+ * rollup rather than throwing into a finding page that is otherwise fine.
+ */
+export interface FindingOccurrence {
+  id: string;
+  finding_id: string;
+  asset_id: string;
+  presence_status: "present" | "absent" | "remediated";
+  first_seen_at: string;
+  last_seen_at: string;
+  absent_since: string | null;
+  remediated_at: string | null;
+  reappeared_count: number;
+  last_reappeared_at: string | null;
+  source: string | null;
+  source_occurrence_id: string | null;
+  asset_type: string | null;
+  asset_lifecycle_status: string | null;
+}
+
+export interface OccurrenceRollup {
+  affected: number;
+  active: number;
+  absent: number;
+  remediated: number;
+  recurring: number;
+}
+
+export async function getFindingOccurrences(
+  token: string,
+  findingId: string,
+  opts: { limit?: number; offset?: number; presenceStatus?: string } = {}
+): Promise<{ occurrences: FindingOccurrence[]; rollup: OccurrenceRollup; limit: number; offset: number }> {
+  const empty = {
+    occurrences: [] as FindingOccurrence[],
+    rollup: { affected: 0, active: 0, absent: 0, remediated: 0, recurring: 0 },
+    limit: opts.limit ?? 25,
+    offset: opts.offset ?? 0,
+  };
+  try {
+    const qs = new URLSearchParams();
+    if (opts.limit !== undefined) qs.set("limit", String(opts.limit));
+    if (opts.offset !== undefined) qs.set("offset", String(opts.offset));
+    if (opts.presenceStatus) qs.set("presence_status", opts.presenceStatus);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/occurrences${suffix}`,
+      token
+    );
+    if (!res.ok) return empty;
+    const body = (await res.json()) as Partial<typeof empty>;
+    return {
+      occurrences: body.occurrences ?? [],
+      rollup: body.rollup ?? empty.rollup,
+      limit: body.limit ?? empty.limit,
+      offset: body.offset ?? empty.offset,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export async function getFindingRiskLinks(
+  token: string,
+  findingId: string
+): Promise<FindingRiskLink[]> {
+  try {
+    const res = await engineFetch(`/api/findings/${findingId}/risk-links`, token);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { links?: FindingRiskLink[] };
+    return body.links ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The findings that EVIDENCE this register entry.
+ *
+ * Distinct from findings raised FROM a risk (`source_type='risk'`), which the
+ * risk page already shows. One is "this risk produced work"; this is "this is
+ * why we believe the risk is real". Conflating them would let a register entry
+ * look evidenced by findings it generated itself.
+ */
+export async function getRiskSupportingFindings(
+  token: string,
+  riskId: string
+): Promise<RiskSupportingFinding[]> {
+  try {
+    const res = await engineFetch(`/api/risks/${riskId}/findings`, token);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { findings?: RiskSupportingFinding[] };
+    return body.findings ?? [];
+  } catch {
+    return [];
   }
 }

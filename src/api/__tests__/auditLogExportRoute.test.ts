@@ -19,7 +19,9 @@ const queryMock = vi.fn();
 
 vi.mock("../infra/postgres.js", () => ({
   pg: { query: (...args: unknown[]) => queryMock(...args) },
-  withTenant: vi.fn(),
+  // M-1 PR-2: transparent passthrough — the wrap/withTenant scope is proven
+  // over a real DB in test/isolation; unit tests exercise the handler body.
+  withTenant: (_orgId: unknown, fn: () => unknown) => fn(),
 }));
 vi.mock("../infra/logger.js", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },

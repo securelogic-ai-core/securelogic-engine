@@ -7,6 +7,7 @@
 
 import pg from "pg";
 import { FRAMEWORK_TEMPLATES } from "../src/api/lib/frameworkTemplates.js";
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -14,7 +15,7 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: resolvePgSsl() });
 
 async function main() {
   const client = await pool.connect();

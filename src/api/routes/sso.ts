@@ -14,7 +14,17 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import * as samlify from "samlify";
-import { pg, pgElevated } from "../infra/postgres.js";
+// M-1 PR-2 channel dispositions for this file:
+//   • The SSO LOGIN PLANE (check-domain, /:orgId/login, ACS + JIT user
+//     provisioning, /sso/exchange, metadata, and the shared loadSsoConfig
+//     helper the login plane reads through) is PRE-AUTH — no org-scoped
+//     session exists yet — so those sites use the elevated channel.
+//   • The /sso/config admin trio runs with a session (requireAuth +
+//     requireRole("admin")); its org_sso_configs write/delete are wrapped in
+//     withTenant(orgId) so the RLS backstop applies post-flip. GET shares the
+//     elevated loadSsoConfig helper with the login plane (read-only).
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { signJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
@@ -61,7 +71,7 @@ const checkDomainLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: "rate_limit_exceeded" },
 });
 
@@ -123,7 +133,8 @@ function firstAttr(attrs: Record<string, string | string[]>, key: string): strin
 }
 
 async function loadSsoConfig(orgId: string): Promise<SsoConfigRow | null> {
-  const result = await pg.query<SsoConfigRow>(
+  // Elevated: called from the pre-auth login plane (no session/GUC exists).
+  const result = await pgElevated.query<SsoConfigRow>(
     `SELECT * FROM org_sso_configs WHERE organization_id = $1 LIMIT 1`,
     [orgId]
   );
@@ -148,7 +159,7 @@ router.get("/sso/check-domain", checkDomainLimiter, async (req: Request, res: Re
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       organization_id: string;
       is_enforced: boolean;
       sp_entity_id: string;
@@ -246,15 +257,16 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
     ).trim();
 
     // Find or JIT-create the user
-    const existing = await pg.query<{
+    const existing = await pgElevated.query<{
       id: string;
       name: string;
       email: string;
       role: string;
       organization_id: string;
       status: string;
+      session_epoch: number;
     }>(
-      `SELECT id, name, email, role, organization_id, status
+      `SELECT id, name, email, role, organization_id, status, session_epoch
        FROM users
        WHERE email = $1 AND organization_id = $2
        LIMIT 1`,
@@ -281,6 +293,11 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
 
     let userId: string;
     let userRole: string;
+    // SEC-JWT-EPOCH: whichever branch resolves the user also resolves the epoch
+    // its session is minted under. Declared here so neither branch can fall
+    // through without setting it — a defaulted 0 would mint a session that
+    // silently dies for any user whose epoch has ever been bumped.
+    let userEpoch: number;
     let wasNewUser = false;
 
     if (existing.rows.length > 0) {
@@ -305,8 +322,9 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
         return;
       }
 
-      userId   = u.id;
-      userRole = u.role ?? "analyst";
+      userId    = u.id;
+      userRole  = u.role ?? "analyst";
+      userEpoch = u.session_epoch;
     } else {
       // Seat-cap enforcement BEFORE JIT provisioning (#9a). Without this, SSO
       // JIT silently bypassed the `max_members` cap that the invite-acceptance
@@ -324,7 +342,7 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       let jitSeatType = "full";
       let jitRole = "analyst";
       if (seatModelOn) {
-        const defaults = await pg.query<{ default_sso_seat_type: string; default_sso_role: string }>(
+        const defaults = await pgElevated.query<{ default_sso_seat_type: string; default_sso_role: string }>(
           `SELECT default_sso_seat_type, default_sso_role FROM organizations WHERE id = $1`,
           [orgId]
         );
@@ -360,14 +378,15 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
       // consent_required for these users until they accept terms via
       // POST /api/auth/accept-terms (handled by the customer app UI in a
       // separate PR).
-      const inserted = await pg.query<{ id: string }>(
+      const inserted = await pgElevated.query<{ id: string; session_epoch: number }>(
         `INSERT INTO users (organization_id, email, name, password_hash, email_verified, role, seat_type, sso_provider)
          VALUES ($1, $2, $3, '', true, $4, $5, 'saml')
-         RETURNING id`,
+         RETURNING id, session_epoch`,
         [orgId, email, displayName, jitRole, jitSeatType]
       );
       userId     = inserted.rows[0]!.id;
       userRole   = jitRole;
+      userEpoch  = inserted.rows[0]!.session_epoch;
       wasNewUser = true;
     }
 
@@ -397,7 +416,7 @@ router.post("/sso/:orgId/acs", async (req: Request, res: Response) => {
     // Legacy handoff (flag off): session JWT + profile in the URL. Kept
     // byte-identical until the operator flips the exchange flag, so either
     // service can deploy first.
-    const token = signJwt(userId, orgId, userRole);
+    const token = signJwt(userId, orgId, userRole, userEpoch);
     const callbackUrl =
       `${APP_URL}/api/auth-sso-callback` +
       `?token=${encodeURIComponent(token)}` +
@@ -431,7 +450,7 @@ const exchangeLimiter = rateLimit({
   max: 600,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : "unknown",
+  keyGenerator: rateLimitKeyGenerator,
   handler: (req, res) => {
     logger.warn(
       { event: "sso_exchange_rate_limited", ip: req.ip ?? null },
@@ -477,8 +496,8 @@ router.post("/sso/exchange", exchangeFlagGate, exchangeLimiter, async (req: Requ
     // #732) holds at this mint site too: a member removed ('inactive') or in
     // the deletion lifecycle between ACS and exchange must not mint a JWT
     // here when every other login door refuses them. Uniform 401 regardless.
-    const userResult = await pgElevated.query<{ role: string; status: string | null }>(
-      `SELECT role, status FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    const userResult = await pgElevated.query<{ role: string; status: string | null; session_epoch: number }>(
+      `SELECT role, status, session_epoch FROM users WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [payload.userId, payload.organizationId]
     );
     const user = userResult.rows[0];
@@ -498,7 +517,9 @@ router.post("/sso/exchange", exchangeFlagGate, exchangeLimiter, async (req: Requ
       return;
     }
 
-    const token = signJwt(payload.userId, payload.organizationId, user.role);
+    // Epoch read at exchange time, like role and status — a reset between code
+    // issue and code redemption must invalidate, not mint.
+    const token = signJwt(payload.userId, payload.organizationId, user.role, user.session_epoch);
 
     // The exchange is where the session JWT is actually minted now — audit it
     // (security review N2): an intercepted-and-raced code leaves a winning
@@ -602,7 +623,8 @@ router.post(
         return;
       }
 
-      const result = await pg.query<SsoConfigRow>(
+      const result = await withTenant(orgId, () =>
+        pg.query<SsoConfigRow>(
         `INSERT INTO org_sso_configs
            (organization_id, idp_entity_id, idp_sso_url, idp_certificate, sp_entity_id, is_enforced)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -615,7 +637,7 @@ router.post(
            updated_at      = NOW()
          RETURNING *`,
         [orgId, idp_entity_id, idp_sso_url, idp_certificate, sp_entity_id, is_enforced]
-      );
+      ));
 
       writeAuditEvent({
         organizationId: orgId,
@@ -677,9 +699,8 @@ router.delete(
       const orgId = req.jwtPayload?.org;
       if (!orgId) { res.status(401).json({ error: "unauthorized" }); return; }
 
-      await pg.query(
-        `DELETE FROM org_sso_configs WHERE organization_id = $1`,
-        [orgId]
+      await withTenant(orgId, () =>
+        pg.query(`DELETE FROM org_sso_configs WHERE organization_id = $1`, [orgId])
       );
 
       writeAuditEvent({

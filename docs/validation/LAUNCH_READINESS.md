@@ -1,5 +1,23 @@
 # Launch Readiness Checklist
 
+> **STATUS TABLE SUPERSEDED — 2026-08-21.** The **seven gates below remain the
+> ratified definition of a complete workflow** and are used unchanged by the
+> Sept 15 program. The *status table* that follows them is from 2026-07-14 and is
+> now materially wrong in at least three places: Pen Test is no longer "does not
+> exist" (SL-PENTEST-IN, #840), Incident Response is no longer "does not exist"
+> (SUP-SEC-1, #848), and Reporting is not "zero tests / no home" (REPORT-1, #849,
+> which verified the executive PDF live on staging).
+>
+> **The authoritative per-domain status is the completeness matrix in
+> `docs/launch/SEPT15-LAUNCH-RECONCILIATION.md` §3–§4**, which rates 17 domains on
+> code completeness, workflow completeness and enterprise readiness against these
+> same seven gates.
+>
+> The observation below the table that "gates 6 and 7 are unrecorded across the
+> board" is **still true** and is the single most repeated finding of the
+> 2026-08-21 reconciliation.
+
+
 **Standard set 2026-07-14.** We optimize for launch readiness, not implementation count.
 
 A workflow is **complete** only when ALL SEVEN hold:

@@ -409,6 +409,57 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-08-21 — active governing program restated (this file only; no
+> application code, no feature flag, no merge, no promotion).**
+>
+> The rows below this notice froze in July and no longer describe the live
+> workstream. Every entry beneath is retained as dated history, not erased, per
+> this file's own convention.
+>
+> **The active governing program is the Sept 15 design-partner launch.** Its
+> reconciled state, per-domain completeness matrix, gap register, dependency
+> graph, build sequence, feature cutoff and `develop`→`main` promotion point are
+> in **`docs/launch/SEPT15-LAUNCH-RECONCILIATION.md`** (2026-08-21), which is the
+> sequence of record until superseded. It also supersedes the status table in
+> `docs/validation/LAUNCH_READINESS.md` and the Sept 15 relevance of
+> `docs/launch/LAUNCH_MASTER_PLAN.md` (which describes the 2026-07-21 launch).
+> `LAUNCH_READINESS.md`'s **seven gates remain the ratified definition of a
+> complete workflow** and are used unchanged.
+>
+> **Verified state at this sync** — `origin/develop` `4fe16808`, `origin/main`
+> `011e1f1d`, production engine live on `011e1f1d`, staging engine/app/vendor
+> worker live on `4fe16808`; develop is **93 commits and 16 migrations ahead of
+> main**; the pending batch adds 9 tables with **zero destructive DDL**.
+>
+> **The packages that shipped to `develop` since the last sync**, none of which
+> is named anywhere in this file: SL-BILL-1 dunning (#828–#835), SL-RISK-LINK
+> (#837), SL-SLA-UI (#838), SL-DW-ACTIVATE (#839), SL-PENTEST-IN (#840),
+> SL-EXC-1 (#841), SL-VULN-1 (#842), SL-OCC-1a/1b/2 (#843–#845), SUPPORT-1/2
+> (#846, #847), SUP-SEC-1 (#848), REPORT-1 (#849), VA-1/VA-1b/VA-2 (#850–#852).
+> **All of it is HARNESS-tier evidence** — tested, including real-Postgres and
+> cross-org isolation suites, but not exercised as a product on staging.
+>
+> **Three facts from the reconciliation that change sequencing decisions:**
+> 1. **Production is running without every security fix since #799** — TLS
+>    certificate verification, token digest at rest, session-epoch invalidation,
+>    rate-limiter client identity, dependency advisories. The `develop`→`main`
+>    promotion is outstanding security remediation, not a feature release, and
+>    should run **early** (after #826 clears, ~Aug 26–27) rather than last.
+> 2. **Vendor Assurance is NOT DONE.** VA-2 named the staging operational
+>    exercise as the last item in its Sept 15 definition of done; it was blocked
+>    by sequencing and is unblocked as of 2026-08-21. 54 documents have been
+>    ingested and zero findings have ever come out of the document path.
+> 3. **Issue #826 remains a hard `develop`→`main` gate**, window
+>    2026-08-25T07:00:00Z. Unmodified by this sync.
+>
+> **Recommended feature cutoff:** schema 2026-08-29, features 2026-09-05.
+> **Recommended next package:** VA-3 (Vendor Assurance staging operational
+> exercise) — recommended only; **not started**.
+>
+> Cross-cutting hardening (A04-G1 / M-1) continues to run in parallel and is not
+> folded into this program.
+
+
 > **Reality-sync (2026-07-28, doc-sync package):** the row below is retained as history but no
 > longer describes the live workstream. Priority 4 stalled after slices 4A.1(a)/(b) + A3
 > (2026-06-26); the actual post-launch workstream on `develop` has been EAR Phase-1
@@ -586,7 +637,7 @@ GDPR umbrella — deferred tails (NOT authorized; orientation only):
 ## In-Flight Infrastructure
 Cross-cutting hardening that runs in parallel with the active product package — neither queued nor blocked. It is not a feature increment, so it does not pass through the Active-package one-at-a-time discipline; it is sequenced internally by its own rollout plan.
 
-- **A04-G1 — Postgres Row-Level Security rollout.** Table-by-table RLS enablement toward an eventual `owner → app_request` role flip. Landed: the route-wrap mechanism (`asTenant`), the commit-before-respond shim, the findings/risks/posture route wraps, and — as of this doc-sync — **RLS policies enabled on ~22 tables** through successive batches (findings pilot + batch A.1 `risks`/`posture_snapshots`, through `vendor_assessments` #312, the risk/signal link + signal tables #313–#324, `risk_scoring_weights` #330, and `risk_settings`/`dashboard_preferences`/`dependencies`/`dependency_assessments`/`risk_treatments`/`assessments`/`evidence` #331–#337, where `evidence` is the 22nd table — #337 `41c8b01b`; **VERIFIED** via commits #312–#337). All policies remain INERT pre-flip (owner cred, NOT FORCE). Remaining: any final per-table batches, then the `DATABASE_URL` `app_request` flip (phase-3) and the staging flip. Tracked in `TENANT_ISOLATION_STANDARD.md` and the A04-G1 rollout docs. Genuinely parallel to the active product package — do not fold it into the priority queue.
+- **A04-G1 / M-1 — Postgres Row-Level Security rollout → `app_request` flip.** Table-by-table RLS enablement toward the `owner → app_request` role flip, now **code-complete** (M-1 PRs #802 + #803, 2026-08-17). Authoritative live census (identical staging + prod): **78 RLS-enabled / 78 policied / 0 FORCE** of 142 public tables — the earlier "~22 tables" figure in this entry undercounted (it predated the later batches; the live catalogs are the source of truth). Landed since that text: the M1-G1 grant catch-up (17 Option-Y misses cured; Tier-D allowlist formalized + CI-asserted bidirectionally), the full per-site channel disposition of every route/worker DB call site (72 new `asTenant` wraps, explicit `withTenant` for streaming/redirect handlers, GUC-set explicit transactions, justified `pgElevated` conversions across the admin/identity/system surfaces, worker claim/terminal-write fixes), the C-1 coverage-matrix tool + committed report, the C-2 strict-mode `db_query_outside_tenant_scope` soak instrumentation, and the activation gate pair `m1-preflight.sql` (fail-closed) / `m1-proof.ts` (both-sides battery, 29/29 on the harness with real identities). All policies remain INERT pre-flip (owner cred, NOT FORCE). Remaining: **operator activation only** — credential issuance, `MIGRATION_DATABASE_URL`/`DATABASE_URL` repoints, staging soak, prod (design + sequence: `docs/M1-app-request-flip-design.md`). Genuinely parallel to the active product package — do not fold it into the priority queue.
 
 ## Current build priorities
 Priority order is fixed unless explicitly changed in this document.

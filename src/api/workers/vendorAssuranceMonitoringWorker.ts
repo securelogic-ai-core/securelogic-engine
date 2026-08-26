@@ -22,7 +22,10 @@
  * a bug in this loop must not be able to touch two customers.
  */
 
-import { pg, withTenant } from "../infra/postgres.js";
+// M-1 PR-2: the DISTINCT-organization_id scans below are CROSS-ORG BY DESIGN
+// (the canonical worker enumeration pattern) — they run on the elevated
+// channel; every per-org body stays inside withTenant exactly as before.
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { vendorAssuranceEnabled } from "../lib/vendorAssuranceFeatureFlag.js";
@@ -41,7 +44,7 @@ export async function runEngagementReviewDueSweep(): Promise<{
   if (!vendorAssuranceEnabled()) return { organizations: 0, overdue: 0 };
 
   // Only orgs that actually have a lapsed engagement — most ticks touch nothing.
-  const orgs = await pg.query<{ organization_id: string }>(
+  const orgs = await pgElevated.query<{ organization_id: string }>(
     `SELECT DISTINCT organization_id
        FROM vendor_engagements
       WHERE status = 'monitoring'
@@ -126,7 +129,7 @@ export async function runEngagementIntelligenceSweep(): Promise<{
 }> {
   if (!vendorAssuranceEnabled()) return { organizations: 0, recommended: 0 };
 
-  const orgs = await pg.query<{ organization_id: string }>(
+  const orgs = await pgElevated.query<{ organization_id: string }>(
     `SELECT DISTINCT e.organization_id
        FROM vendor_engagements e
        JOIN signal_match_suggestions m

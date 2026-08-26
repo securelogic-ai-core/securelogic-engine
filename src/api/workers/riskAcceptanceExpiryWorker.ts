@@ -22,7 +22,10 @@
  * this loop must not be able to touch two customers.
  */
 
-import { pg, withTenant } from "../infra/postgres.js";
+// M-1 PR-2: the DISTINCT-organization_id scans below are CROSS-ORG BY DESIGN
+// (the canonical worker enumeration pattern) — they run on the elevated
+// channel; every per-org body stays inside withTenant exactly as before.
+import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { sweepExpiredAcceptances } from "../lib/riskAcceptance.js";
 import { riskAcceptanceEnabled } from "../lib/riskAcceptanceFeatureFlag.js";
@@ -46,7 +49,7 @@ export async function runRiskAcceptanceExpirySweep(): Promise<{
 
   // Only orgs that actually have a lapsed acceptance. The overwhelming majority of ticks
   // touch nothing, and this keeps the per-tenant transaction count at zero on those.
-  const orgs = await pg.query<{ organization_id: string }>(
+  const orgs = await pgElevated.query<{ organization_id: string }>(
     `SELECT DISTINCT organization_id
        FROM finding_risk_acceptances
       WHERE state = 'approved'
@@ -116,7 +119,7 @@ export async function runRiskAcceptanceExpiringWarnings(): Promise<{
     return { organizations: 0, warned: 0 };
   }
 
-  const orgs = await pg.query<{ organization_id: string }>(
+  const orgs = await pgElevated.query<{ organization_id: string }>(
     `SELECT DISTINCT organization_id
        FROM finding_risk_acceptances
       WHERE state = 'approved'

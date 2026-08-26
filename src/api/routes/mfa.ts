@@ -17,7 +17,13 @@ import argon2 from "argon2";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
 
-import { pg } from "../infra/postgres.js";
+// M-1 PR-2: identity-plane surface. Every site operates on the caller's own
+// `users` row (by session user id) or reads the org name for the login
+// response — during login/MFA there is no organization context to scope a
+// tenant transaction to, so these sites use the elevated channel (the
+// customerAuth pre-auth pattern). RBAC semantics unchanged: requireAuth /
+// requireAdminRole still gate each route exactly as before.
+import { pgElevated } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { signJwt, signMfaChallenge, verifyMfaChallenge } from "../lib/jwt.js";
@@ -64,11 +70,11 @@ const TOTP_OPTS = {
 
 async function buildFullLoginResponse(userId: string, orgId: string, role: string) {
   const [userResult, orgResult] = await Promise.all([
-    pg.query<{ id: string; email: string; name: string }>(
-      `SELECT id, email, name FROM users WHERE id = $1 LIMIT 1`,
+    pgElevated.query<{ id: string; email: string; name: string; session_epoch: number }>(
+      `SELECT id, email, name, session_epoch FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     ),
-    pg.query<{ name: string; entitlement_level: string; onboarding_completed_at: string | null }>(
+    pgElevated.query<{ name: string; entitlement_level: string; onboarding_completed_at: string | null }>(
       `SELECT name, entitlement_level, onboarding_completed_at
          FROM organizations
         WHERE id = $1
@@ -79,10 +85,12 @@ async function buildFullLoginResponse(userId: string, orgId: string, role: strin
 
   const user  = userResult.rows[0]!;
   const org   = orgResult.rows[0];
-  const token = signJwt(userId, orgId, role);
+  // SEC-JWT-EPOCH: MFA completion mints the real session, so it must carry the
+  // user's current epoch — not the 0 default.
+  const token = signJwt(userId, orgId, role, user.session_epoch);
 
   // Stamp last login — best-effort, never blocks login
-  pg.query(
+  pgElevated.query(
     `UPDATE users SET previous_login_at = last_login_at, last_login_at = NOW() WHERE id = $1`,
     [userId]
   ).catch(() => {/* ignore */});
@@ -113,7 +121,7 @@ router.post("/auth/mfa/setup", requireAuth, async (req, res) => {
   try {
     const userId = req.jwtPayload!.sub;
 
-    const result = await pg.query<{ totp_enabled: boolean; email: string }>(
+    const result = await pgElevated.query<{ totp_enabled: boolean; email: string }>(
       `SELECT totp_enabled, email FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
@@ -132,7 +140,7 @@ router.post("/auth/mfa/setup", requireAuth, async (req, res) => {
     const secret    = generateSecret();
     const encrypted = encryptSecret(secret);
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users SET totp_secret = $1, totp_enabled = false, updated_at = NOW() WHERE id = $2`,
       [encrypted, userId]
     );
@@ -175,7 +183,7 @@ router.post("/auth/mfa/verify-setup", requireAuth, async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{ totp_secret: string | null; totp_enabled: boolean }>(
+    const result = await pgElevated.query<{ totp_secret: string | null; totp_enabled: boolean }>(
       `SELECT totp_secret, totp_enabled FROM users WHERE id = $1 LIMIT 1`,
       [userId]
     );
@@ -212,7 +220,7 @@ router.post("/auth/mfa/verify-setup", requireAuth, async (req, res) => {
       plainCodes.map((c) => bcrypt.hash(c, 10))
     );
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET totp_enabled = true, totp_backup_codes = $1, updated_at = NOW()
        WHERE id = $2`,
@@ -268,7 +276,7 @@ router.post("/auth/mfa/verify", async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       totp_secret: string | null;
       totp_enabled: boolean;
       role: string;
@@ -345,7 +353,7 @@ router.post("/auth/mfa/use-backup", async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       totp_backup_codes: string[];
       totp_enabled: boolean;
       role: string;
@@ -376,7 +384,7 @@ router.post("/auth/mfa/use-backup", async (req, res) => {
 
     // Remove the used backup code (single-use)
     const remaining = storedHashes.filter((_, i) => i !== matchIndex);
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users SET totp_backup_codes = $1, updated_at = NOW() WHERE id = $2`,
       [remaining, userId]
     );
@@ -427,7 +435,7 @@ router.post("/auth/mfa/disable", requireAuth, async (req, res) => {
       return;
     }
 
-    const result = await pg.query<{
+    const result = await pgElevated.query<{
       password_hash: string;
       totp_secret: string | null;
       totp_enabled: boolean;
@@ -468,7 +476,7 @@ router.post("/auth/mfa/disable", requireAuth, async (req, res) => {
       return;
     }
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET totp_secret = NULL, totp_enabled = false, totp_backup_codes = '{}', updated_at = NOW()
        WHERE id = $1`,
@@ -509,7 +517,7 @@ router.delete("/auth/mfa/reset/:userId", requireAuth, requireAdminRole, async (r
       return;
     }
 
-    const result = await pg.query<{ id: string; organization_id: string }>(
+    const result = await pgElevated.query<{ id: string; organization_id: string }>(
       `SELECT id, organization_id FROM users WHERE id = $1 LIMIT 1`,
       [targetUserId]
     );
@@ -524,7 +532,7 @@ router.delete("/auth/mfa/reset/:userId", requireAuth, requireAdminRole, async (r
       return;
     }
 
-    await pg.query(
+    await pgElevated.query(
       `UPDATE users
        SET totp_secret = NULL, totp_enabled = false, totp_backup_codes = '{}', updated_at = NOW()
        WHERE id = $1`,

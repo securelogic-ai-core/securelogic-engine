@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
+import { resolvePgSsl } from "../src/api/infra/pgSsl.js";
 import {
   applyMigration,
   describeMigrationFailure,
@@ -27,7 +28,7 @@ const timeouts = resolveMigrationTimeouts();
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: resolvePgSsl()
 });
 
 const migrationsDir = migrationsDirFrom(process.cwd());

@@ -15,6 +15,7 @@
 import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { pg } from "../infra/postgres.js";
+import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
@@ -55,7 +56,7 @@ function getOrgId(req: Request): string | null {
 router.get(
   "/customer/keys",
   ...keyMiddleware,
-  async (req: Request, res: Response) => {
+  asTenant(async (req: Request, res: Response) => {
     const orgId = getOrgId(req);
     if (!orgId) { res.status(401).json({ error: "unauthorized" }); return; }
 
@@ -77,14 +78,14 @@ router.get(
       res.status(500).json({ error: "internal_error" });
     }
   }
-);
+));
 
 // ─── POST /api/customer/keys ──────────────────────────────────────────────────
 
 router.post(
   "/customer/keys",
   ...keyMiddleware,
-  async (req: Request, res: Response) => {
+  asTenant(async (req: Request, res: Response) => {
     const orgId  = getOrgId(req);
     const userId = (req as any).jwtPayload?.sub as string | undefined ?? null;
 
@@ -153,7 +154,7 @@ router.post(
       res.status(500).json({ error: "internal_error" });
     }
   }
-);
+));
 
 // ─── GET /api/customer/keys/usage ────────────────────────────────────────────
 // Must be defined BEFORE /:keyId to avoid route collision.
@@ -161,7 +162,7 @@ router.post(
 router.get(
   "/customer/keys/usage",
   ...keyMiddleware,
-  async (req: Request, res: Response) => {
+  asTenant(async (req: Request, res: Response) => {
     const orgId = getOrgId(req);
     if (!orgId) { res.status(401).json({ error: "unauthorized" }); return; }
 
@@ -229,14 +230,14 @@ router.get(
       res.status(500).json({ error: "internal_error" });
     }
   }
-);
+));
 
 // ─── DELETE /api/customer/keys/:keyId ────────────────────────────────────────
 
 router.delete(
   "/customer/keys/:keyId",
   ...keyMiddleware,
-  async (req: Request, res: Response) => {
+  asTenant(async (req: Request, res: Response) => {
     const orgId  = getOrgId(req);
     const userId = (req as any).jwtPayload?.sub as string | undefined ?? null;
     const keyId  = typeof req.params.keyId === "string" ? req.params.keyId : String(req.params.keyId ?? "");
@@ -303,6 +304,6 @@ router.delete(
       res.status(500).json({ error: "internal_error" });
     }
   }
-);
+));
 
 export default router;

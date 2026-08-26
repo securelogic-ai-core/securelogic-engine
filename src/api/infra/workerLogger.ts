@@ -1,4 +1,11 @@
-import { pg } from "./postgres.js"
+// M-1 activation fix (staging flip 2026-08-17): `worker_runs` is Tier-D
+// owner-only BY DESIGN (20260618 grant matrix — "worker telemetry"), and this
+// logger is called from worker RUNNERS outside any tenant scope. Under the
+// flipped app_request runtime it failed 42501 and killed the intelligence
+// worker's scheduler startup. The elevated channel is the designed
+// disposition; it was missed by the C-1 matrix because infra/ libs were out
+// of the route/worker scan boundary.
+import { pgElevated } from "./postgres.js"
 import { logger } from "./logger.js"
 
 type WorkerRunRow = {
@@ -7,7 +14,7 @@ type WorkerRunRow = {
 }
 
 export async function startWorkerRun(workerName: string): Promise<WorkerRunRow> {
-  const result = await pg.query(
+  const result = await pgElevated.query(
     `
     INSERT INTO worker_runs (worker_name, status, metadata)
     VALUES ($1, 'running', '{}'::jsonb)
@@ -30,7 +37,7 @@ export async function completeWorkerRun(
 
   const durationMs = Math.max(0, Date.now() - started)
 
-  await pg.query(
+  await pgElevated.query(
     `
     UPDATE worker_runs
     SET status = $2,
@@ -60,7 +67,7 @@ export async function cleanupStaleRuns(
   thresholdMinutes = 30
 ): Promise<void> {
   try {
-    const result = await pg.query(
+    const result = await pgElevated.query(
       `
       UPDATE worker_runs
       SET

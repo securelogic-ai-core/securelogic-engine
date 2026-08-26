@@ -3,6 +3,13 @@ import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+// Tier-2 auth-anomaly fix: audit events on this surface feed the
+// credential-stuffing / key-probing detectors, which GROUP BY ip_address.
+// `req.ip` here is a ROTATING Cloudflare edge node (see infra/clientIp.ts),
+// which fragmented one client across many identities and kept the anomaly
+// ledger empty for all time. Record the resolved caller instead — same
+// trusted mechanism (CF-Connecting-IP) the enforcing admin controls key on.
+import { resolveClientIp } from "../infra/clientIp.js";
 import { verifyJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 
 declare global {
@@ -47,7 +54,7 @@ export async function requireApiKey(
         eventType: "auth.missing_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(401).json({ error: "api_key_required" });
       return;
@@ -66,9 +73,30 @@ export async function requireApiKey(
           eventType: "auth.invalid_jwt",
           resourceType: "user",
           payload: { route: req.originalUrl, method: req.method },
-          ipAddress: req.ip ?? null
+          ipAddress: resolveClientIp(req).ip
         });
         res.status(401).json({ error: "invalid_token" });
+        return;
+      }
+
+      // SEC-JWT-EPOCH: mirrors requireAuth. A session token MUST carry the
+      // epoch it was minted under; absence is invalid session state, not a
+      // compatibility fallback. Checked BEFORE the users lookup so it stays a
+      // pure function of the token and cannot be conflated with — or rescued
+      // by — the fail-closed DB handler below.
+      if (typeof payload.se !== "number") {
+        writeAuditEvent({
+          actorUserId: payload.sub,
+          eventType: "auth.session_epoch_missing",
+          resourceType: "user",
+          resourceId: payload.sub,
+          payload: { route: req.originalUrl, method: req.method },
+          ipAddress: resolveClientIp(req).ip
+        });
+        res.status(401).json({
+          error: "session_epoch_missing",
+          detail: "This session predates a security update. Please sign in again."
+        });
         return;
       }
 
@@ -88,8 +116,9 @@ export async function requireApiKey(
           status: string;
           role: string;
           seat_type: string | null;
+          session_epoch: number;
         }>(
-          `SELECT password_changed_at, status, role, seat_type FROM users WHERE id = $1 LIMIT 1`,
+          `SELECT password_changed_at, status, role, seat_type, session_epoch FROM users WHERE id = $1 LIMIT 1`,
           [payload.sub]
         );
         const userRow = pwResult.rows[0] ?? null;
@@ -104,7 +133,7 @@ export async function requireApiKey(
             resourceType: "user",
             resourceId: payload.sub,
             payload: { route: req.originalUrl, method: req.method, status: userRow?.status ?? "missing" },
-            ipAddress: req.ip ?? null
+            ipAddress: resolveClientIp(req).ip
           });
           res.status(401).json({
             error: "account_inactive",
@@ -113,6 +142,14 @@ export async function requireApiKey(
           return;
         }
 
+        // Deterministic invalidation — integer equality, no clock. Subsumes the
+        // legacy timestamp check below and closes its sub-second bypass.
+        if (payload.se !== userRow.session_epoch) {
+          res.status(401).json({ error: "session_invalidated", detail: "This session is no longer valid. Please sign in again." });
+          return;
+        }
+
+        // Legacy timestamp check, retained unchanged (belt and braces).
         const changedAt = userRow.password_changed_at;
         if (changedAt !== null && payload.iat < Math.floor(new Date(changedAt).getTime() / 1000)) {
           res.status(401).json({ error: "session_invalidated", detail: "Password was changed. Please sign in again." });
@@ -133,7 +170,7 @@ export async function requireApiKey(
           eventType: "auth.jwt_bridge_db_failure",
           resourceType: "user",
           payload: { route: req.originalUrl, method: req.method },
-          ipAddress: req.ip ?? null
+          ipAddress: resolveClientIp(req).ip
         });
         res.status(503).json({
           error: "auth_unavailable",
@@ -209,7 +246,7 @@ export async function requireApiKey(
         eventType: "auth.invalid_api_key",
         resourceType: "api_key",
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(401).json({ error: "invalid_api_key" });
       return;
@@ -230,7 +267,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({ error: "api_key_inactive" });
       return;
@@ -245,7 +282,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({ error: "api_key_revoked" });
       return;
@@ -260,7 +297,7 @@ export async function requireApiKey(
         resourceType: "api_key",
         resourceId: apiKey.id as string ?? null,
         payload: { route: req.originalUrl, method: req.method, expires_at: apiKey.expires_at },
-        ipAddress: req.ip ?? null
+        ipAddress: resolveClientIp(req).ip
       });
       res.status(403).json({
         error: "api_key_expired",

@@ -29,6 +29,7 @@ import bodyParser from "body-parser";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import { rateLimitKeyGenerator } from "./infra/clientIp.js";
 import slowDown from "express-slow-down";
 import hpp from "hpp";
 
@@ -277,12 +278,14 @@ export function createApp(opts: CreateAppOptions): express.Express {
   const globalLimiter = rateLimit({
     windowMs: 60_000,
     max: 300,
+    keyGenerator: rateLimitKeyGenerator,
     standardHeaders: true,
     legacyHeaders: false
   });
 
   const globalSlowdown = slowDown({
     windowMs: 60_000,
+    keyGenerator: rateLimitKeyGenerator,
     delayAfter: 100,
     delayMs: () => 250
   });
@@ -351,6 +354,7 @@ export function createApp(opts: CreateAppOptions): express.Express {
   const stripeWebhookLimiter = rateLimit({
     windowMs: 60_000,
     max: 200,
+    keyGenerator: rateLimitKeyGenerator,
     standardHeaders: true,
     legacyHeaders: false
   });
