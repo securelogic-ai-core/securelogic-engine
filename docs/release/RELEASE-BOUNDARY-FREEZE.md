@@ -2,6 +2,8 @@
 
 **Declared:** 2026-08-21. **Authority:** operator instruction, this session.
 **Status of enforcement:** **documentary only — see §4.**
+**Boundary re-cut:** 2026-08-26 — the freeze was deliberately broken three times
+and the candidate re-minted. See §1.1. §7.5 was followed and its test passes.
 
 ---
 
@@ -9,17 +11,52 @@
 
 | | |
 |---|---|
-| **Promotion candidate SHA** | **`65cd333064e19443c72626ddd16780705b13bf08`** |
-| Subject | `docs(launch): Sept 15 launch reconciliation and governing doc sync (#853)` |
-| Minted by | Squash-merge of PR #853 into `develop`, 2026-08-21 |
-| Prior tip | `4fe16808` — **superseded**, and never a valid candidate (§2) |
-| `origin/main` | `011e1f1d` |
-| Delta | 94 commits · 376 files · +40,092 / −1,413 · **16 migrations (232 → 248)** |
-| Evidence pack | `docs/release/R1-PROMOTION-READINESS-PACK.md` |
-| Rollback | `docs/release/ROLLBACK-20261021-20261036.sql` |
+| **Promotion candidate SHA** | **`59efdab7`** — re-pinned 2026-08-26 |
+| Subject | `Merge PR #888: docs(gate): correct three Tier 2B criteria that would misfire on 09-01 (#826)` |
+| Minted by | Merge of PR #888 into `develop`, 2026-08-26 |
+| Prior candidate | `65cd3330` (#853) — **superseded**, see §1.1 |
+| Prior tip | `4fe16808` — superseded, and never a valid candidate (§2) |
+| `origin/main` | `011e1f1d` — unchanged |
+| Delta | 100 commits · 389 files · +43,945 / −1,414 · **16 migrations (232 → 248)** |
+| CI on the candidate | **8/8 green**, push event |
+| Evidence pack | `docs/release/R1-PROMOTION-READINESS-PACK.md` §A.0 |
+| Rollback | `docs/release/ROLLBACK-20261021-20261036.sql` — **unchanged and still valid** (§1.1) |
 
-The R-1 pack's §A rule is now satisfiable: CI runs on this SHA directly, as a
+The R-1 pack's §A rule is satisfied on this SHA: CI runs on it directly, as a
 push event, not on an ancestor and not on a PR head.
+
+### 1.1 Why the boundary was re-cut
+
+The freeze held from 2026-08-21 until 2026-08-26, when it was broken three
+times — deliberately, and for the reason the freeze existed to serve. The Tier 2
+gate the freeze was waiting on (**#826**) is not a formality; it found two real
+defects in the very code this release promotes:
+
+| Merge | Why it could not wait | Migrations |
+|---|---|---|
+| `6647fc5d` (#885) | **F-1** — the async control matcher could not process global signals at all. Promoting it would have shipped a matcher that silently drops every global signal | 0 |
+| `5fa33c2c` (#887) | **F-4** — the scheduler published cost/telemetry metrics it cannot measure post-Wave-4, so the first post-promotion cost report would have been confidently wrong | 0 |
+| `59efdab7` (#888) | Three Tier 2B criteria would have misfired on 09-01, reading FAIL against a healthy system | 0 |
+
+Breaking the freeze to fix these is the correct trade. A frozen candidate is
+worth having only while freezing it does not preserve a known defect.
+
+**§7.5 was followed and the boundary survives it.** Its confirmation command,
+re-run 2026-08-26 against `59efdab7`, still lists exactly `20261021`–`20261036`
+— 16 files, no additions, no removals:
+
+```
+$ comm -13 <(git ls-tree -r --name-only origin/main db/migrations | LC_ALL=C sort) \
+           <(git ls-tree -r --name-only 59efdab7    db/migrations | LC_ALL=C sort) | wc -l
+16
+```
+
+Therefore **the four rollback rehearsals and `ROLLBACK-20261021-20261036.sql`
+stand unmodified.** All three merges added zero migrations. What was re-cut is
+the SHA label and the delta size, not the schema risk.
+
+**#854 re-mints the candidate a fourth time**, and §7.1's ordering is superseded
+accordingly — see §7.1.
 
 ## 2. Why the freeze exists
 
@@ -123,10 +160,24 @@ by a design partner, in production, being told their file is corrupt.
 
 ## 7. Unfreeze conditions and the ratified merge sequence
 
-### 7.1 Ratified 2026-08-21 — promote first, merge second
+### 7.1 Ratified 2026-08-21 — promote first, merge second — **SUPERSEDED 2026-08-26**
 
-**Operator decision: the candidate `65cd3330` stays intact. Nothing merges into
-`develop` until the promotion completes.**
+> **SUPERSEDED.** This ordering did not survive contact with #826. Three defect
+> fixes merged ahead of the promotion (§1.1), and **#854 — this evidence pack —
+> merges ahead of it too**, on operator instruction 2026-08-26.
+>
+> The reasoning below is preserved because its *cost analysis* was right: the
+> re-mint costs a fresh CI cycle and nothing else, and it did. What it got wrong
+> was treating "no held PR blocks the promotion" as "nothing should merge" — F-1
+> and F-4 were not held PRs, they were defects the gate had not yet found.
+>
+> Moving #854 ahead of the promotion is a deliberate improvement on the original
+> plan: it puts the rehearsed rollback procedure on `main`'s own lineage, so the
+> release carries the instructions for undoing it instead of leaving them on an
+> unmerged branch. Steps 7–9 below are unchanged and still follow the promotion.
+
+**Operator decision (2026-08-21, superseded): the candidate `65cd3330` stays
+intact. Nothing merges into `develop` until the promotion completes.**
 
 The alternative — merging the held PRs as soon as #826 clears — was considered
 and declined. It would re-mint the candidate, re-open R-1 blocker **K-1** (green
@@ -155,7 +206,8 @@ see `docs/validation/VA-3-RERUN-PLAN.md` §0.1, option C.
       └─ 27-box checklist, live log evidence, recorded on the issue
   2.  R-1 blockers K-2 … K-5 closed (operator: OP-1, OP-2, OP-4, OP-5, OP-6)
   3.  R-4 / B-5 ruling recorded — dark or target state
-  4.  PROMOTE  develop(65cd3330) -> main   as a true merge commit
+  4.  PROMOTE  develop(<successor of 59efdab7, incl. #854>) -> main
+      as a true merge commit
       └─ acceptance test: resolved tree == origin/develop^{tree}   (R-1 §F.4)
       └─ verify origin/main..origin/develop == 0 afterwards
   5.  Production deploy observed green on all six services
@@ -164,7 +216,7 @@ see `docs/validation/VA-3-RERUN-PLAN.md` §0.1, option C.
       └─ gates ADVERTISING Vendor Assurance, not the promotion
       └─ Options 1 and 2 need a migration, so the 08-29 schema
          cutoff makes an undecided ADR choose Option 3/4 by default
-  6.  Merge #854   (evidence; documentation only)
+  6.  Merge #854   (evidence; docs + 1 test)  <- MOVED: now precedes step 4
   7.  Merge #855   (extraction fix)      <- MUST follow #854, see 7.3
   8.  Merge #827   (storage-fault error truthfulness)
   9.  Merge the 12 Dependabot PRs
@@ -188,7 +240,8 @@ with deliberately opposite assertions:
 | Asserts | `[]` is rejected (pre-fix behaviour) | `[]` is accepted (fixed behaviour) |
 
 Merging #854 first and #855 second produces a conflict on that single file.
-**Resolution: take #855's version.** Merging in the other order would leave a
+**Resolution: take #855's version.** As of 2026-08-26 #854 **has** merged first,
+so this is now the live instruction for whoever lands #855, not a hypothetical. Merging in the other order would leave a
 test asserting the broken behaviour on a tree where it is fixed, and CI would
 fail — loudly, which is the safe direction, but avoid it.
 
@@ -222,8 +275,9 @@ orders migrations differently from Node's `Array.sort()` and will mislead you.
 Nothing below has been configured. This is a proposal for deliberate
 application once the frozen candidate is promoted or abandoned. Applying it
 during the freeze risks blocking the very promotion the freeze exists to
-protect: a newly required check that has never run on `65cd3330` would show as
-missing, and a new review rule would gate an already-evidenced candidate.
+protect: a newly required check that has never run on the pinned candidate
+(`59efdab7`, §1) would show as missing, and a new review rule would gate an
+already-evidenced candidate.
 
 ### 9.1 Required status checks
 

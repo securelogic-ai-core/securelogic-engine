@@ -15,11 +15,52 @@ which is tracked separately and none of which is closed by this document.
 **Companion artifact.** `docs/release/ROLLBACK-20261021-20261036.sql` — the
 rollback procedure written and rehearsed here.
 
+**Re-pinned:** 2026-08-26. The candidate SHA moved after this pack was produced.
+The current pin, the reason it moved, and what survived the move are in **§A.0**.
+Sections A.1–A.2 are preserved as the original 2026-08-21 record.
+
 ---
 
 ## A. Promotion candidate SHA and CI evidence
 
-### A.1 The candidate does not exist yet, and that is the correct state
+### A.0 RE-PIN — 2026-08-26: the candidate is `59efdab7`
+
+The candidate minted by #853 (`65cd3330`) is **superseded**. The freeze declared
+in `RELEASE-BOUNDARY-FREEZE.md` was deliberately broken three times, because the
+Tier 2 gate the freeze was waiting on (#826) found real defects that must not be
+promoted:
+
+| Merge | What it fixed | Migrations added |
+|---|---|---|
+| `6647fc5d` (#885) | **F-1** — the async control matcher could not process global signals | 0 |
+| `5fa33c2c` (#887) | **F-4** — the scheduler published telemetry it cannot measure | 0 |
+| `59efdab7` (#888) | Corrected three Tier 2B criteria that would have misfired on 09-01 | 0 |
+
+| Fact | Value | Verified by |
+|---|---|---|
+| **Promotion candidate** | **`59efdab7`** | `git rev-parse` |
+| Subject | `Merge PR #888: docs(gate): correct three Tier 2B criteria that would misfire on 09-01 (#826)` | `git log` |
+| `origin/main` tip | `011e1f1d` — unchanged | `git rev-parse` |
+| Check-runs on `59efdab7` | **8/8 success**, push event | GitHub check-runs API |
+| Migrations | **232 → 248 (16 pending)** — unchanged since 2026-08-21 | `git ls-tree` |
+
+**Every migration-specific claim in this pack survives the re-mint.** The three
+merges added **zero migrations**, so §C's inventory, §D's four rehearsals and the
+companion `ROLLBACK-20261021-20261036.sql` are unchanged in substance. What moved
+is the size of the delta (§B.1) and the SHA label.
+
+**This document's own PR (#854) re-mints the candidate once more.** That is
+accepted deliberately, and it costs nothing measurable. #854 changes only files
+under `docs/` plus one test file,
+`src/api/__tests__/va3CleanSoc2ExtractionRepro.test.ts`. `tsconfig.prod.json`
+excludes `**/__tests__/**` and `**/*.test.ts`, and no non-test source file
+differs between `59efdab7` and the merge result — so the **production build
+artifact at the successor SHA is identical in content to `59efdab7`**.
+
+The rule in §A.2 is unchanged and applies to the successor SHA: confirm 8/8
+green on it, from the push-event run, before promoting.
+
+### A.1 *(historical — 2026-08-21)* The candidate does not exist yet, and that is the correct state
 
 | Fact | Value | Verified by |
 |---|---|---|
@@ -48,7 +89,7 @@ This is not a defect to repair. It is resolved as a by-product of ordinary work:
 Local pre-push checks also passed on that commit: `scripts/guard-imports.sh`,
 `scripts/check-env-url-drift.mjs`, `scripts/check-contract-version.sh`.
 
-### A.2 The rule to apply at promotion time
+### A.2 The rule to apply at promotion time *(still in force — see §A.0)*
 
 1. Merge #853. Record the resulting `develop` SHA.
 2. Confirm 8/8 green **on that SHA**, from the push-event run, not a PR-head run.
@@ -64,18 +105,27 @@ closed the moment #853 merges and its successor run reports green.
 
 ### B.1 Shape
 
-| Measure | Value |
-|---|---|
-| Commits `main..develop` | **93** |
-| First-parent (merge/PR level) | **59** |
-| Commits `develop..main` | **2** (see §F) |
-| Merge base | `38eb535f` (2026-08-16) |
-| Files changed | **376** |
-| Lines | **+40,092 / −1,413** |
-| Migrations | **232 → 248** (16 pending) |
-| New engine route modules | **4** |
-| New app pages | **0** |
-| Files present on `main` but absent from `develop` | **0** |
+Re-measured 2026-08-26 against the re-pinned candidate `59efdab7` (§A.0). The
+2026-08-21 figures, taken at `4fe16808`, are shown for comparison.
+
+| Measure | Value at `59efdab7` | Was, at `4fe16808` |
+|---|---|---|
+| Commits `main..develop` | **100** | 93 |
+| First-parent (merge/PR level) | **63** | 59 |
+| Commits `develop..main` | **2** (see §F) | 2 |
+| Merge base | `38eb535f` (2026-08-16) | same |
+| Files changed | **389** | 376 |
+| Lines | **+43,945 / −1,414** | +40,092 / −1,413 |
+| Migrations | **232 → 248** (16 pending) | **unchanged** |
+| New engine route modules | **4** | 4 |
+| New app pages | **0** | 0 |
+| Files present on `main` but absent from `develop` | **0** | 0 |
+
+**Measurement basis.** These are two-dot diffs — `git diff main..<candidate>`.
+Stated explicitly because the original figures were reproducible only on that
+basis; the three-dot form (`main...<candidate>`) reports 439 files at the
+re-pinned candidate, and mixing the two makes the delta look like it grew by 50
+files when it grew by 13.
 
 ### B.2 Classification of the 59 first-parent commits
 
@@ -620,8 +670,8 @@ None requires a secret to be revealed to anyone, including this assistant.
 | **OP-4** | Decide the deploy-order treatment in §G.4 | Changes Blueprint/dashboard state | **Yes** |
 | **OP-5** | Run `SELECT count(*)` on `findings`, `vendor_assurance_cuecs`, `finding_risk_acceptances`, `jobs`, `signal_match_suggestions` in production and confirm the validating scans in §C.3 fit inside `statement_timeout=300s` | Requires a production DB connection. Read-only, returns no personal data, exposes no secret | **Yes** |
 | **OP-6** | Take a physical backup / PITR marker immediately before promotion | Production credential | **Yes** |
-| **OP-7** | **R-2.** Observe #826 Tier 2 at the 2026-08-25T07:00Z window and complete its 27-box checklist with live log evidence | The cron fires weekly; nothing can accelerate it | **Yes — hard gate** |
-| **OP-8** | Merge PR #853 and confirm 8/8 green on the resulting `develop` SHA (§A.2) | Merge authority | **Yes** — mints the candidate |
+| **OP-7** | **R-2.** Observe #826 Tier 2 at the 2026-08-25T07:00Z window and complete its 27-box checklist with live log evidence | The cron fires weekly; nothing can accelerate it | **DISCHARGED 2026-08-26** — #826 **closed**: Tier 2A 14/14, Tier 2B 14 PASS + 2 N/A. It found F-1 and F-4, which is why the candidate moved (§A.0) |
+| **OP-8** | Merge PR #853 and confirm 8/8 green on the resulting `develop` SHA (§A.2) | Merge authority | **DISCHARGED** — superseded by the re-pin: candidate is `59efdab7`, 8/8 green (§A.0). The rule persists for the successor SHA this pack's own PR mints |
 | **OP-9** | Confirm the staging Stripe price-ID transposition does not exist in production | Requires Stripe production access | No — activation-time |
 | **OP-10** | If a rollback is ever executed: global session invalidation (§E.1) and billing-webhook suspension (§E.2) | Production operations | Contingent |
 
@@ -737,7 +787,7 @@ as **OP-10**.
 
 | # | Blocker | Owner | State |
 |---|---|---|---|
-| K-1 | Green CI on the **exact** candidate SHA. `4fe16808` has none; #853's merge mints the candidate | Operator (**OP-8**) | **OPEN** — procedurally closed by merging #853 |
+| K-1 | Green CI on the **exact** candidate SHA | Operator (**OP-8**) | **CLOSED 2026-08-26** — `59efdab7` carries its own 8/8 push-event run (§A.0). Re-opens on any further merge into `develop`, including this pack's own PR — re-confirm on the successor SHA |
 | K-2 | Production row counts for the five tables taking validating scans, to confirm they fit in 300s | Operator (**OP-5**) | **OPEN** |
 | K-3 | Confirm production's **synced** flag state matches `render.yaml`'s declared state | Operator (**OP-1**) | **OPEN** |
 | K-4 | Decide the deploy-order treatment — `autoDeploy: true` on all six production services defeats the stated engine→workers→app order | Operator (**OP-4**) | **OPEN — new finding, §G.4** |
