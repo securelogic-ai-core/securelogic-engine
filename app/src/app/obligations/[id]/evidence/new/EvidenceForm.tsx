@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createObligationEvidence, type CreateObligationEvidenceResult } from "./actions";
 import { uploadEvidenceFile, type ObligationAssessment } from "@/lib/api";
 import { EvidenceFileField } from "@/components/evidence/EvidenceFileField";
+import { evidenceUploadErrorMessage } from "@/lib/evidenceErrorCopy";
 
 const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
@@ -85,7 +86,8 @@ export function EvidenceForm({ obligationId, obligationTitle, assessments }: Pro
         );
         setProgress(null);
         if (!res.ok) {
-          setError(`Could not upload the file: ${res.error}`);
+          // SL-EVID-1: the raw engine code used to be printed here verbatim.
+          setError(evidenceUploadErrorMessage(res.error));
           return;
         }
         router.push(`/obligations/${obligationId}`);

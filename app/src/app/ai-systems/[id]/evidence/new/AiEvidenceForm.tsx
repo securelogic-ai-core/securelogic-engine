@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createAiSystemEvidence, type CreateAiSystemEvidenceResult } from "./actions";
 import { uploadEvidenceFile, type GovernanceReview, type AiGovernanceAssessment } from "@/lib/api";
 import { EvidenceFileField } from "@/components/evidence/EvidenceFileField";
+import { evidenceUploadErrorMessage } from "@/lib/evidenceErrorCopy";
 
 const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
@@ -94,7 +95,8 @@ export function AiEvidenceForm({ systemId, systemName, reviews, assessments }: P
         );
         setProgress(null);
         if (!res.ok) {
-          setError(`Could not upload the file: ${res.error}`);
+          // SL-EVID-1: the raw engine code used to be printed here verbatim.
+          setError(evidenceUploadErrorMessage(res.error));
           return;
         }
         router.push(`/ai-systems/${systemId}`);

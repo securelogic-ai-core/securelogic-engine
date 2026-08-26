@@ -19,6 +19,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     },
     {
       "type": "link",
+      "label": "Posture",
+      "href": "/posture",
+      "access": "platform"
+    },
+    {
+      "type": "link",
       "label": "Briefs",
       "href": "/briefs",
       "access": "all"
@@ -99,6 +105,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
         {
           "label": "Obligations",
           "href": "/obligations"
+        },
+        {
+          "label": "Evidence",
+          "href": "/evidence"
         }
       ]
     },
@@ -118,6 +128,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
         {
           "label": "Risk Register",
           "href": "/risks"
+        },
+        {
+          "label": "Approvals",
+          "href": "/approvals"
         }
       ]
     },
@@ -133,6 +147,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "label": "Dashboard",
       "href": "/dashboard",
       "access": "all",
+      "group": null
+    },
+    {
+      "label": "Posture",
+      "href": "/posture",
+      "access": "platform",
       "group": null
     },
     {
@@ -220,6 +240,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "group": "Compliance"
     },
     {
+      "label": "Evidence",
+      "href": "/evidence",
+      "access": "platform",
+      "group": "Compliance"
+    },
+    {
       "label": "Findings",
       "href": "/findings",
       "access": "platform",
@@ -234,6 +260,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "label": "Risk Register",
       "href": "/risks",
+      "access": "platform",
+      "group": "Risk"
+    },
+    {
+      "label": "Approvals",
+      "href": "/approvals",
       "access": "platform",
       "group": "Risk"
     },
@@ -350,7 +382,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/approvals",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Approvals",
       "access": "platform"
     },
     {
@@ -560,7 +592,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/evidence",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Evidence",
       "access": "platform"
     },
     {
@@ -734,7 +766,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/posture",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Posture",
       "access": "platform"
     },
     {
@@ -1032,6 +1064,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "href": "/pricing",
       "group": "Billing",
       "access": "all"
+    },
+    {
+      "label": "Organization",
+      "href": "/settings/organization",
+      "group": "Settings",
+      "access": "admin"
     },
     {
       "label": "Security settings",

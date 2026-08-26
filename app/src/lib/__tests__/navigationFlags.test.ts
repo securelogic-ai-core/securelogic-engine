@@ -203,17 +203,26 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   it("leads Risk Operations with the two findings destinations and surfaces Approvals", () => {
     // Operations Workspace (the work hub) then Finding Explorer (the searchable
     // inventory) — one route, two distinct user intents, both reachable from the nav.
-    expect(groupChildren(ws(true, false), "Risk Operations")).toEqual([
+    // SL-NAV-1: /approvals is now gated on the derived `approvals` flag, so the
+    // full membership is asserted with that capability on.
+    expect(groupChildren(ws(true, false, { approvals: true }), "Risk Operations")).toEqual([
       "/findings",
       "/findings?queue=all",
       "/actions",
       "/risks",
       "/approvals",
     ]);
+    // …and the queue is absent while both approval families are dark.
+    expect(groupChildren(ws(true, false), "Risk Operations")).toEqual([
+      "/findings",
+      "/findings?queue=all",
+      "/actions",
+      "/risks",
+    ]);
   });
 
   it("names the Risk Operations destinations by task, not by feature", () => {
-    const group = ws(true, false).find(
+    const group = ws(true, false, { approvals: true }).find(
       (i): i is Extract<typeof i, { type: "group" }> =>
         i.type === "group" && i.label === "Risk Operations",
     );
@@ -269,9 +278,11 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     expect(allHrefs(ws(true, false))).toContain("/posture");
     // Platform-gated like the other org-analytics surfaces.
     expect(allHrefs(ws(false, false))).not.toContain("/posture");
-    // The legacy menu (the live flag-off nav and the knowledge-index source)
-    // deliberately does NOT carry it.
-    expect(allHrefs(filterNav(NAV_ITEMS, true, true, true))).not.toContain("/posture");
+    // SL-NAV-1 REVERSED the old expectation here. The legacy menu is the one
+    // production actually renders, so "workspace nav only" meant the posture
+    // surface was unreachable for every paying prod customer. It now carries
+    // /posture too, and remains the knowledge-index source.
+    expect(allHrefs(filterNav(NAV_ITEMS, true, true, true))).toContain("/posture");
   });
 
   it("keeps Executive and Context dark until their own flags flip", () => {

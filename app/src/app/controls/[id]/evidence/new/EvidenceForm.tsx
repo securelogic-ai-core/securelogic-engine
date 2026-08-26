@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createControlEvidence, type CreateControlEvidenceResult } from "./actions";
 import { uploadEvidenceFile, type ControlAssessment } from "@/lib/api";
 import { EvidenceFileField } from "@/components/evidence/EvidenceFileField";
+import { evidenceUploadErrorMessage } from "@/lib/evidenceErrorCopy";
 
 const INPUT_STYLE: React.CSSProperties = {
   width: "100%",
@@ -78,7 +79,8 @@ export function EvidenceForm({ controlId, controlName, assessments }: Props) {
         );
         setProgress(null);
         if (!res.ok) {
-          setError(`Could not upload the file: ${res.error}`);
+          // SL-EVID-1: the raw engine code used to be printed here verbatim.
+          setError(evidenceUploadErrorMessage(res.error));
           return;
         }
         router.push(`/controls/${controlId}`);

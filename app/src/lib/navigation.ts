@@ -43,7 +43,14 @@ export type NavFeatureFlag =
   // the knowledge index stay byte-identical. Vocabulary: the "Briefing" label was
   // operator-ratified (2026-07-21) — deliberately distinct from the Intelligence
   // group's "Briefs" (the Intelligence Brief wedge product).
-  | "briefing";
+  | "briefing"
+  // SL-NAV-1 — DERIVED, not a single env var. The Approvals queue is useful when
+  // EITHER approval family is live: risk-lifecycle treatment approvals
+  // (SECURELOGIC_RISK_LIFECYCLE_ENABLED) or risk acceptances
+  // (SECURELOGIC_RISK_ACCEPTANCE_ENABLED). With both off the page renders a
+  // heading over two suppressed sections, so the nav entry stays hidden rather
+  // than advertising an empty queue. app/layout.tsx ORs the two envs into this.
+  | "approvals";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -81,6 +88,14 @@ export type NavItem =
 
 export const NAV_ITEMS: NavItem[] = [
   { type: "link",  label: "Dashboard", href: "/dashboard" },
+  // SL-NAV-1: the Posture Dashboard is complete, ungated and live, and it is
+  // where the Executive Report PDF is downloaded from — but it lived ONLY in
+  // WORKSPACE_NAV_ITEMS, so with `risk_workspace` off (the PRODUCTION flag
+  // state) a paying customer could reach the platform's core "how are we
+  // doing?" surface only by typing the URL. Declared here so it is reachable in
+  // both IAs and so the Application Knowledge Index — generated from NAV_ITEMS
+  // only — can give Ask a real path to it.
+  { type: "link",  label: "Posture",   href: "/posture",   platform: true },
   { type: "link",  label: "Briefs",    href: "/briefs" },
   // Search and Ask SecureLogic are NOT here. They are GLOBAL UTILITIES rendered
   // in the header's upper-right cluster at every breakpoint (see
@@ -140,6 +155,10 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Frameworks",  href: "/frameworks" },
       { label: "Policies",    href: "/policies" },
       { label: "Obligations", href: "/obligations" },
+      // SL-NAV-1: the org-wide evidence inventory — live and ungated, but
+      // workspace-nav-only until now, so production had no way to answer
+      // "what evidence do we have, and where?".
+      { label: "Evidence",    href: "/evidence" },
     ],
   },
   { type: "group", label: "Risk", platform: true,
@@ -147,6 +166,11 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Findings",      href: "/findings" },
       { label: "Actions",       href: "/actions" },
       { label: "Risk Register", href: "/risks" },
+      // SL-NAV-1: flag-gated, NOT flat. Unlike Posture and Evidence this
+      // destination depends on a capability that is dark in every environment
+      // today, and making a dark surface reachable is not the same as making it
+      // useful. Fail-closed via filterNav.
+      { label: "Approvals",     href: "/approvals", featureFlag: "approvals" },
     ],
   },
   { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
@@ -206,7 +230,10 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Finding Explorer",     href: "/findings?queue=all" },
       { label: "Actions",              href: "/actions" },
       { label: "Risk Register",        href: "/risks" },
-      { label: "Approvals",            href: "/approvals" },
+      // SL-NAV-1: same gate as the legacy nav. Previously ungated here, so
+      // staging advertised an Approvals queue that renders as an empty shell
+      // while both approval flags are off.
+      { label: "Approvals",            href: "/approvals", featureFlag: "approvals" },
     ],
   },
   { type: "group", label: "Assets", platform: true,
@@ -546,6 +573,12 @@ export const SECONDARY_NAV_ITEMS: SecondaryNavItem[] = [
   // /settings/security redirects non-admins away; /settings/sso shows non-Pro
   // orgs an upsell wall instead of the feature. Both gates live in the page
   // body, so their entitlement is declared explicitly here.
+  // SL-NAV-1: /settings/organization was in NEITHER nav model nor this listing,
+  // while the risk-context fields it edits (regulated / handles PII /
+  // safety-critical / scale) drive posture scoring and finding business impact.
+  // An org that never found this page sits at defaults and the weighting never
+  // applies. Admin-only, matching the page's own redirect.
+  { group: "Settings", label: "Organization",              href: "/settings/organization", access: "admin" },
   { group: "Settings", label: "Security settings",           href: "/settings/security", access: "admin" },
   { group: "Settings", label: "Single sign-on (SSO)",        href: "/settings/sso",      access: "premium" },
   { group: "Settings", label: "Webhooks",                    href: "/settings/webhooks" },
