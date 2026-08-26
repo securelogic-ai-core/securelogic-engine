@@ -70,8 +70,21 @@ import {
 import {
   runControlMatcherWithOutcome,
   llmControlMatcherEnabled,
+  LLM_CONTROL_MATCHER_PURPOSE,
   type SignalForControlMatch
 } from "../lib/llmControlMatcher.js";
+import {
+  beginLlmRunAccumulation,
+  endLlmRunAccumulation,
+  isLlmRunAccumulating,
+  type LlmPurposeTotals
+} from "../lib/llm/llmTelemetry.js";
+import {
+  beginVerdictCacheAccumulation,
+  endVerdictCacheAccumulation,
+  isVerdictCacheAccumulating,
+  type VerdictCacheTotals
+} from "../lib/llm/verdictCacheMetrics.js";
 
 export interface JobRow {
   id: string;
@@ -349,20 +362,96 @@ export async function processClaimedJob(job: JobRow, deps: WorkerDeps = {}): Pro
 export async function runOneTick(deps: WorkerDeps = {}): Promise<number> {
   if (!llmControlMatcherEnabled()) return 0;
 
+  // ── Tick-scoped cost / cache measurement ────────────────────────────────
+  //
+  // THE TICK IS THE AGGREGATION BOUNDARY, and it is the truthful one. A tick
+  // drains the queue to empty, never overlaps itself (the caller guards), and
+  // runs entirely in this process. It is NOT a Brief run: ticks fire every
+  // minute whether or not the weekly scheduler is running, and a signal
+  // enqueued by a Brief run is routinely matched hours after that run ended.
+  // Attributing these totals to a Brief run would be a fiction, so the event
+  // does not claim one.
+  //
+  // Only close what we opened — `begin…` silently no-ops when an accumulation
+  // is already active, so an unconditional `end…` would report someone else's
+  // totals as this tick's.
+  const ownsLlmAccumulation = !isLlmRunAccumulating();
+  const ownsCacheAccumulation = !isVerdictCacheAccumulating();
+  if (ownsLlmAccumulation) beginLlmRunAccumulation();
+  if (ownsCacheAccumulation) beginVerdictCacheAccumulation();
+
   const workerId = deps.workerId ?? `control-matcher-${process.pid}`;
+  const startedAt = Date.now();
   let processed = 0;
-  for (;;) {
-    if (deps.shouldContinue && !deps.shouldContinue()) break;
-    const job = await claimNextJob(workerId);
-    if (!job) break;
-    await processClaimedJob(job, deps);
-    processed += 1;
+  try {
+    for (;;) {
+      if (deps.shouldContinue && !deps.shouldContinue()) break;
+      const job = await claimNextJob(workerId);
+      if (!job) break;
+      await processClaimedJob(job, deps);
+      processed += 1;
+    }
+    return processed;
+  } finally {
+    // In `finally` so a throw mid-drain still reports the spend already
+    // incurred. Partial spend is real money; dropping it is how the previous
+    // gate ended up with no cost figure at all.
+    const llm = ownsLlmAccumulation ? endLlmRunAccumulation() : null;
+    const cache = ownsCacheAccumulation ? endVerdictCacheAccumulation() : null;
+    if (processed > 0) {
+      emitTickTelemetry({
+        processed,
+        durationMs: Date.now() - startedAt,
+        // Purpose-FILTERED, not the run total. The intelligence worker also
+        // runs the hourly ingest cycle, whose provider calls land in other
+        // buckets of the same accumulator; selecting the matcher's bucket is
+        // what keeps this number honestly about matching.
+        matcherLlm: llm ? (llm.by_purpose[LLM_CONTROL_MATCHER_PURPOSE] ?? null) : null,
+        // Not purpose-filtered because it does not need to be: the verdict
+        // cache is reachable only from verdictCache.ts <- llmControlMatcher.ts,
+        // so every event in it is matcher work by construction.
+        verdictCache: cache
+      });
+    }
   }
-  if (processed > 0) {
+}
+
+/**
+ * Emit `control_matcher_tick_complete` with the tick's real cost and cache
+ * behaviour.
+ *
+ * This is the event `SchedulerRunSummary.verdict_cache` points at. It carries
+ * no tenant data — counts, tokens, cost and latency only, aggregated across
+ * whatever orgs the tick happened to drain. Per-org attribution is deliberately
+ * absent: `llm_call_usage` and `llm_verdict_cache_lookup` already carry
+ * `organizationId` per event for anyone who needs it, and this line exists to
+ * be read by operators and the #826 gate, not to become a second tenant
+ * surface.
+ *
+ * A field is only present when it was measured. `null` means "this tick did not
+ * own the accumulator", never "zero".
+ */
+function emitTickTelemetry(input: {
+  processed: number;
+  durationMs: number;
+  matcherLlm: LlmPurposeTotals | null;
+  verdictCache: VerdictCacheTotals | null;
+}): void {
+  try {
     logger.info(
-      { event: "control_matcher_tick_complete", processed },
+      {
+        event: "control_matcher_tick_complete",
+        processed: input.processed,
+        duration_ms: input.durationMs,
+        // Named so a reader knows what these totals are scoped to without
+        // having to know the worker's internals.
+        aggregation: "worker_tick",
+        llm: input.matcherLlm,
+        verdict_cache: input.verdictCache
+      },
       "Control-suggestion worker tick complete"
     );
+  } catch {
+    // Telemetry is never load-bearing.
   }
-  return processed;
 }
