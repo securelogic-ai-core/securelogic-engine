@@ -13,6 +13,15 @@ export type AiSystemEditData = {
   deployment_status?: string | null;
   criticality?: string | null;
   risk_classification?: string | null;
+  // ── Governance enrichment (T2-C) — closed vocabularies; the engine validates
+  // against the one declaration the migration CHECKs mirror. null clears.
+  eu_ai_act_tier?: string | null;
+  human_oversight_level?: string | null;
+  /** null = never declared; [] = declared "none". The form distinguishes them. */
+  sensitive_data_categories?: string[] | null;
+  business_owner_user_id?: string | null;
+  review_cadence_days?: number | null;
+  next_review_due?: string | null;
 };
 
 export async function updateAiSystemAction(
@@ -23,13 +32,19 @@ export async function updateAiSystemAction(
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) return { error: "Not authenticated" };
 
-  const body: Record<string, string | null> = { name: data.name };
+  const body: Record<string, string | number | string[] | null> = { name: data.name };
   body.use_case            = data.use_case            ?? null;
   body.model_type          = data.model_type          ?? null;
   body.data_classification = data.data_classification ?? null;
   body.deployment_status   = data.deployment_status   ?? null;
   body.criticality         = data.criticality         ?? null;
   body.risk_classification = data.risk_classification ?? null;
+  body.eu_ai_act_tier            = data.eu_ai_act_tier            ?? null;
+  body.human_oversight_level     = data.human_oversight_level     ?? null;
+  body.sensitive_data_categories = data.sensitive_data_categories ?? null;
+  body.business_owner_user_id    = data.business_owner_user_id    ?? null;
+  body.review_cadence_days       = data.review_cadence_days       ?? null;
+  body.next_review_due           = data.next_review_due           ?? null;
 
   let res: Response;
   try {

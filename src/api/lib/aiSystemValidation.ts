@@ -147,3 +147,68 @@ export function validateAiSystemCreate(
     }
   };
 }
+
+// ----------------------------------------------------------------
+// Governance enrichment vocabularies (T2-C) — the ONE declaration.
+//
+// These mirror the CHECK constraints in
+// db/migrations/20261037_ai_system_governance_enrichment.sql exactly, and the
+// routes import them rather than re-declaring — a re-declared enum that
+// drifts from the migration is how a 400 and a 23514 end up disagreeing
+// about the same value. `human_oversight_level` is deliberately the
+// vendor_engagements.ai_autonomy vocabulary, verbatim: one AI-autonomy word
+// list platform-wide, whether the subject is a vendor's AI or the org's own.
+// ----------------------------------------------------------------
+
+export const EU_AI_ACT_TIERS = new Set([
+  "prohibited",
+  "high_risk",
+  "limited_risk",
+  "minimal_risk",
+  "not_applicable"
+]);
+
+export const HUMAN_OVERSIGHT_LEVELS = new Set([
+  "none",
+  "human_in_the_loop",
+  "human_on_the_loop",
+  "autonomous_consequential"
+]);
+
+export const SENSITIVE_DATA_CATEGORIES = new Set([
+  "pii",
+  "phi",
+  "payment_card",
+  "credentials",
+  "biometric",
+  "financial",
+  "proprietary"
+]);
+
+/**
+ * The load-bearing governance fields (T2-D). A PATCH that CHANGES any of these
+ * increments ai_systems.material_state_version and records a reassessment
+ * recommendation — because a system whose regulatory tier, oversight model,
+ * data exposure, purpose, deployment state or criticality has moved is no
+ * longer the system the last assessment (or use approval) described.
+ *
+ * Deliberately NOT here: name (a rename is not a material change), owner
+ * fields (accountability transfers are audited but do not invalidate an
+ * assessment), model_type (free-text legacy), and the reassessment-clock
+ * fields themselves (setting the clock must not wind the clock).
+ */
+export const MATERIAL_GOVERNANCE_FIELDS = new Set([
+  "eu_ai_act_tier",
+  "human_oversight_level",
+  "sensitive_data_categories",
+  "use_case",
+  "deployment_status",
+  "criticality"
+]);
+
+export const AI_USE_APPROVAL_DECISIONS = new Set([
+  "approved",
+  "approved_with_conditions",
+  "rejected",
+  "suspended"
+]);

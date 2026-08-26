@@ -20,6 +20,7 @@ import { startConnectorWritebackWorker } from "./workers/connectorWritebackWorke
 import { startRiskHistoryWorker } from "./workers/riskHistoryWorker.js";
 import { startRiskAcceptanceExpiryWorker } from "./workers/riskAcceptanceExpiryWorker.js";
 import { startVendorAssuranceMonitoringWorker } from "./workers/vendorAssuranceMonitoringWorker.js";
+import { startAiReviewOverdueWorker } from "./workers/aiReviewOverdueWorker.js";
 import { startPredictiveForecastWorker } from "./workers/predictiveForecastWorker.js";
 import { startOrchestrationPlaybookWorker } from "./workers/orchestrationPlaybookWorker.js";
 import { startWebhookRetryWorker } from "./workers/webhookRetryWorker.js";
@@ -171,6 +172,9 @@ startRiskAcceptanceExpiryWorker();
 // Vendor Assurance monitoring: overdue reviews + intelligence-triggered
 // reassessment recommendations. Self-gates on SECURELOGIC_VENDOR_ASSURANCE_ENABLED.
 startVendorAssuranceMonitoringWorker();
+// AI T2: overdue AI-system review notifications (audit-event sweep, mirrors the
+// vendor sibling). Each tick self-gates on SECURELOGIC_AI_REVIEW_SWEEP_ENABLED.
+startAiReviewOverdueWorker();
 // ERIP E5: daily predictive forecast inference/retraining. Registered always;
 // self-gates on SECURELOGIC_PREDICTIVE_INTELLIGENCE_ENABLED + asset-registry flag.
 startPredictiveForecastWorker();

@@ -645,7 +645,11 @@ import type {
   AiGovernanceAssessment,
   AiGovernanceAssessmentsResponse,
   AiSystem,
+  AiSystemGovernanceLink,
   AiSystemLinkedSignal,
+  AiUseApproval,
+  AiUseApprovalCurrent,
+  AiUseApprovalsResponse,
   AiVendorDependency,
   GovernanceReview,
   GovernanceReviewsResponse,
@@ -861,14 +865,75 @@ export function anAiSystem(overrides: Partial<AiSystem> = {}): AiSystem {
     name: "Claims Triage Copilot",
     use_case: "Ranks inbound claims for adjuster review.",
     owner_user_id: null,
+    business_owner_user_id: null,
     model_type: "LLM",
     data_classification: "PHI",
     deployment_status: "production",
     criticality: "high",
     risk_classification: "high_risk",
+    eu_ai_act_tier: null,
+    human_oversight_level: null,
+    sensitive_data_categories: null,
+    review_cadence_days: null,
+    next_review_due: null,
+    review_overdue: false,
+    material_state_version: 1,
+    reassessment_recommended_at: null,
+    reassessment_reason: null,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-05-01T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+export function anAiSystemGovernanceLink(
+  overrides: Partial<AiSystemGovernanceLink> = {}
+): AiSystemGovernanceLink {
+  return {
+    id: "gl-1",
+    target_id: "target-1",
+    target_name: "NIST AI RMF",
+    created_by_user_id: null,
+    created_at: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+export function anAiUseApproval(overrides: Partial<AiUseApproval> = {}): AiUseApproval {
+  return {
+    id: "ua-1",
+    organization_id: "org-1",
+    ai_system_id: "ai-1",
+    decision: "approved",
+    rationale: "Assessment complete; residual risk accepted by the CISO.",
+    conditions: null,
+    decided_by_user_id: null,
+    decided_at: "2026-06-01T00:00:00.000Z",
+    expires_at: null,
+    assessment_id: null,
+    material_state_version: 1,
+    created_at: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * The use-approvals payload, shaped like the engine's: newest first, and the
+ * current decision carries the two staleness facts the ENGINE computed. The
+ * defaults are the un-stale case; tests override them to express staleness —
+ * they are separate fields precisely because the client must never re-derive them.
+ */
+export function anAiUseApprovalsResponse(
+  approvals: AiUseApproval[],
+  currentOverrides: Partial<AiUseApprovalCurrent> = {}
+): AiUseApprovalsResponse {
+  const current = approvals[0] ?? null;
+  return {
+    count: approvals.length,
+    current_decision: current
+      ? { ...current, materially_changed_since: false, expired: false, ...currentOverrides }
+      : null,
+    approvals,
   };
 }
 
