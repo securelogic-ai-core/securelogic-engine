@@ -27,11 +27,18 @@ import {
   RISK_BANDS,
   portalInviteUrl,
 } from "@/lib/vendorEngagements";
-import { VENDOR_ENGAGEMENT_DECISIONS, type VendorEngagementDecision } from "@/lib/api";
+import {
+  VENDOR_ENGAGEMENT_DECISIONS,
+  type VendorEngagementDecision,
+  type VendorEngagementInviteBlock,
+  type VendorContact,
+} from "@/lib/api";
 import {
   resolveScope,
   overrideInherent,
   issueEngagement,
+  revokeInvite,
+  reissueInvite,
   beginReview,
   completeAnalysis,
   recomputeRisk,
@@ -44,9 +51,15 @@ type Props = {
   engagementId: string;
   state: EngagementState;
   inherentRating: string | null;
+  /** VA-L1 — invite status from the engagement read; null pre-issue. */
+  invite?: VendorEngagementInviteBlock | null;
+  /** VA-C1 — the supplier's contact directory (active + inactive). */
+  contacts?: VendorContact[];
+  /** A FAILED read, which is not the same as an empty directory. */
+  contactsLoadFailed?: boolean;
 };
 
-type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring";
+type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring" | "reissue" | "revoke";
 
 const DECISION_LABELS: Record<VendorEngagementDecision, string> = {
   approved: "Approved",
@@ -59,6 +72,9 @@ export default function EngagementActionPanel({
   engagementId,
   state,
   inherentRating,
+  invite = null,
+  contacts = [],
+  contactsLoadFailed = false,
 }: Props): JSX.Element {
   const [openForm, setOpenForm] = useState<OpenForm>("none");
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +87,16 @@ export default function EngagementActionPanel({
   // Form fields
   const [contactEmail, setContactEmail] = useState("");
   const [contactName, setContactName] = useState("");
+  const [revokeReason, setRevokeReason] = useState("");
+  // VA-C1: "" means "someone not in the directory" — the raw-address path stays
+  // available, because a customer chasing an assessment at 6pm should not have
+  // to create a directory entry first.
+  const activeContacts = contacts.filter((c) => c.status === "active");
+  const primaryContact = activeContacts.find((c) => c.is_primary_contact) ?? activeContacts[0] ?? null;
+  const [issueContactId, setIssueContactId] = useState<string>(primaryContact?.id ?? "");
+  const [reissueContactId, setReissueContactId] = useState<string>(primaryContact?.id ?? "");
+  const [reissueEmail, setReissueEmail] = useState(invite?.latest?.contact_email ?? "");
+  const [reissueName, setReissueName] = useState(invite?.latest?.contact_name ?? "");
   const [overrideRating, setOverrideRating] = useState(inherentRating ?? "");
   const [overrideRationale, setOverrideRationale] = useState("");
   const [decision, setDecision] = useState<VendorEngagementDecision>("approved");
@@ -191,30 +217,48 @@ export default function EngagementActionPanel({
         />
         {openForm === "issue" && (
           <InlineForm>
-            <label style={lbl()}>
-              Vendor contact email
-              <input
-                type="email"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                disabled={pending}
-                style={input()}
-                placeholder="security@vendor.example"
-              />
-            </label>
-            <label style={lbl()}>
-              Contact name (optional)
-              <input
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                disabled={pending}
-                style={input()}
-              />
-            </label>
+            {/* VA-C1: address the questionnaire to a PERSON in the supplier's
+                directory. The raw-address path stays, and a failed directory
+                read says so rather than pretending the supplier has nobody. */}
+            <ContactPicker
+              contacts={activeContacts}
+              loadFailed={contactsLoadFailed}
+              value={issueContactId}
+              onChange={setIssueContactId}
+              pending={pending}
+            />
+            {issueContactId === "" && (
+              <>
+                <label style={lbl()}>
+                  Vendor contact email
+                  <input
+                    type="email"
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                    placeholder="security@vendor.example"
+                  />
+                </label>
+                <label style={lbl()}>
+                  Contact name (optional)
+                  <input
+                    value={contactName}
+                    onChange={(e) => setContactName(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+              </>
+            )}
             <FormButtons
               pending={pending}
               submitLabel="Issue questionnaire"
-              disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())}
+              disabled={
+                issueContactId === ""
+                  ? !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())
+                  : false
+              }
               onCancel={() => setOpenForm("none")}
               onSubmit={() =>
                 run(
@@ -222,17 +266,217 @@ export default function EngagementActionPanel({
                     issueEngagement(
                       engagementId,
                       contactEmail.trim(),
-                      contactName.trim() || undefined
+                      contactName.trim() || undefined,
+                      issueContactId || undefined
                     ),
-                  (r: { inviteToken: string; expiresAt: string }) => {
+                  (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
                     setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
                     setInviteExpires(r.expiresAt);
                     setCopied(false);
+                    setNotice(
+                      r.emailDelivery === "sent"
+                        ? "Invitation emailed to the vendor contact. The link below is your copy."
+                        : "Email delivery is not active — copy the link below and send it to the vendor yourself."
+                    );
                   }
                 )
               }
             />
           </InlineForm>
+        )}
+
+        {/* VA-L1 — invite lifecycle: status the customer could never see, the
+            revoke that never existed, and the resend that un-strands an
+            expired link. Access is revoked; history is preserved. */}
+        {invite?.latest && (
+          <div
+            style={{
+              marginTop: 6,
+              padding: "10px 12px",
+              border: "1px solid #374151",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#9ca3af",
+              display: "grid",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+              <span style={{ color: "#e5e7eb", fontWeight: 600, fontSize: 13 }}>
+                Vendor invitation
+              </span>
+              <span>
+                sent to {invite.latest.contact_email}
+                {invite.latest.contact_name ? ` (${invite.latest.contact_name})` : ""}
+              </span>
+              {invite.latest.revoked_at ? (
+                <span style={{ color: "#fca5a5" }}>revoked</span>
+              ) : new Date(invite.latest.expires_at).getTime() <= Date.now() ? (
+                <span style={{ color: "#fcd34d" }}>expired — resend to restore access</span>
+              ) : (
+                <span style={{ color: "#86efac" }}>
+                  active · expires {new Date(invite.latest.expires_at).toLocaleDateString()}
+                </span>
+              )}
+              <span>
+                {invite.latest.first_exchanged_at
+                  ? `opened ${invite.latest.exchange_count}× · last ${new Date(
+                      invite.latest.last_exchanged_at ?? invite.latest.first_exchanged_at
+                    ).toLocaleDateString()}`
+                  : "never opened"}
+              </span>
+              {invite.history_count > 1 && <span>{invite.history_count} links issued</span>}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => toggleForm("reissue")}
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #374151",
+                  background: openForm === "reissue" ? "rgba(30,58,138,0.25)" : "transparent",
+                  color: "#93c5fd",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                Resend (new link)
+              </button>
+              {invite.active && (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => toggleForm("revoke")}
+                  style={{
+                    padding: "4px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #7f1d1d",
+                    background: openForm === "revoke" ? "rgba(127,29,29,0.2)" : "transparent",
+                    color: "#fca5a5",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  Revoke access
+                </button>
+              )}
+            </div>
+
+            {openForm === "reissue" && (
+              <InlineForm>
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                  Resending mints a NEW link — the previous link and any open vendor sessions
+                  stop working immediately. Answers and evidence already provided are kept.
+                </div>
+                {/* Re-issuing to a DIFFERENT person is the common case — the
+                    original contact left — so the picker leads here too. */}
+                <ContactPicker
+                  contacts={activeContacts}
+                  loadFailed={contactsLoadFailed}
+                  value={reissueContactId}
+                  onChange={setReissueContactId}
+                  pending={pending}
+                />
+                {reissueContactId === "" && (
+                  <>
+                    <label style={lbl()}>
+                      Vendor contact email
+                      <input
+                        type="email"
+                        value={reissueEmail}
+                        onChange={(e) => setReissueEmail(e.target.value)}
+                        disabled={pending}
+                        style={input()}
+                      />
+                    </label>
+                    <label style={lbl()}>
+                      Contact name (optional)
+                      <input
+                        value={reissueName}
+                        onChange={(e) => setReissueName(e.target.value)}
+                        disabled={pending}
+                        style={input()}
+                      />
+                    </label>
+                  </>
+                )}
+                <FormButtons
+                  pending={pending}
+                  submitLabel="Mint replacement link"
+                  disabled={
+                    reissueContactId === ""
+                      ? !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reissueEmail.trim())
+                      : false
+                  }
+                  onCancel={() => setOpenForm("none")}
+                  onSubmit={() =>
+                    run(
+                      () =>
+                        reissueInvite(
+                          engagementId,
+                          reissueEmail.trim(),
+                          reissueName.trim() || undefined,
+                          reissueContactId || undefined
+                        ),
+                      (r: { inviteToken: string; expiresAt: string; emailDelivery: string }) => {
+                        setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
+                        setInviteExpires(r.expiresAt);
+                        setCopied(false);
+                        setNotice(
+                          r.emailDelivery === "sent"
+                            ? "Replacement link emailed. The previous link is dead."
+                            : "Replacement link minted — email delivery is not active, so copy it below and send it yourself. The previous link is dead."
+                        );
+                      }
+                    )
+                  }
+                />
+              </InlineForm>
+            )}
+
+            {openForm === "revoke" && (
+              <InlineForm>
+                <div style={{ fontSize: 12, color: "#fca5a5" }}>
+                  Revoking stops ALL vendor access on this engagement immediately — the link
+                  and any open sessions die. Answers, evidence and history are preserved.
+                </div>
+                <label style={lbl()}>
+                  Reason (optional, recorded in the audit trail)
+                  <input
+                    value={revokeReason}
+                    onChange={(e) => setRevokeReason(e.target.value)}
+                    disabled={pending}
+                    style={input()}
+                  />
+                </label>
+                <FormButtons
+                  pending={pending}
+                  submitLabel="Revoke vendor access"
+                  // Nothing to validate — the reason is optional and the engine
+                  // supplies the audit default when it is left blank.
+                  disabled={false}
+                  onCancel={() => setOpenForm("none")}
+                  onSubmit={() =>
+                    run(
+                      () => revokeInvite(engagementId, revokeReason.trim() || undefined),
+                      (r: { sessionsRevoked: number }) => {
+                        setNotice(
+                          `Access revoked${
+                            r.sessionsRevoked > 0
+                              ? ` — ${r.sessionsRevoked} open vendor session(s) terminated`
+                              : ""
+                          }. History preserved.`
+                        );
+                      }
+                    )
+                  }
+                />
+              </InlineForm>
+            )}
+          </div>
         )}
 
         <ActionRow
@@ -429,13 +673,26 @@ export default function EngagementActionPanel({
             run(
               () => promoteFindings(engagementId),
               (r: {
-                result: { promoted: number; created: number; updated: number };
-              }) =>
-                setNotice(
+                result: {
+                  promoted: number;
+                  created: number;
+                  updated: number;
+                  superseded_by_source?: Array<{ finding_id: string }>;
+                };
+              }) => {
+                const base =
                   r.result.promoted === 0
                     ? "No promotable gaps — no failed, partial or unanswered controls."
-                    : `Promoted ${r.result.promoted} control gap${r.result.promoted === 1 ? "" : "s"} to Findings (${r.result.created} new, ${r.result.updated} updated).`
-                )
+                    : `Promoted ${r.result.promoted} control gap${r.result.promoted === 1 ? "" : "s"} to Findings (${r.result.created} new, ${r.result.updated} updated).`;
+                // Supersede-on-pass ruling: a pass closes nothing — the human
+                // is told, here, that open findings now have passing controls.
+                const superseded = r.result.superseded_by_source?.length ?? 0;
+                setNotice(
+                  superseded === 0
+                    ? base
+                    : `${base} ${superseded} open finding${superseded === 1 ? "" : "s"} NOT auto-closed — the source now reports pass or N/A for ${superseded === 1 ? "its control" : "their controls"}; review and close through the normal gate.`
+                );
+              }
             )
           }
         />
@@ -645,4 +902,62 @@ function input(): React.CSSProperties {
     color: "#e5e7eb",
     fontSize: 13,
   };
+}
+
+/**
+ * ContactPicker — choose a person from the supplier's directory (VA-C1).
+ *
+ * Three states, never collapsed: people to choose from, an empty directory,
+ * and a directory that could not be READ. The last one matters — silently
+ * showing "no contacts" after a failed request would tell the customer their
+ * supplier has nobody on file, which may be false.
+ */
+function ContactPicker({
+  contacts,
+  loadFailed,
+  value,
+  onChange,
+  pending,
+}: {
+  contacts: VendorContact[];
+  loadFailed: boolean;
+  value: string;
+  onChange: (next: string) => void;
+  pending: boolean;
+}): JSX.Element {
+  if (loadFailed) {
+    return (
+      <p style={{ fontSize: 12, color: "#fca5a5", margin: 0 }}>
+        The supplier&apos;s contact directory could not be loaded, so enter an address below.
+        This is a load failure, not an empty directory.
+      </p>
+    );
+  }
+  if (contacts.length === 0) {
+    return (
+      <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>
+        No contacts on file for this supplier yet — enter an address below, or add
+        contacts on the vendor page so future questionnaires can be addressed to a person.
+      </p>
+    );
+  }
+  return (
+    <label style={lbl()}>
+      Send to
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={pending}
+        style={input()}
+      >
+        {contacts.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.full_name} — {c.email}
+            {c.is_primary_contact ? " (primary)" : ""}
+          </option>
+        ))}
+        <option value="">Someone else — enter an address</option>
+      </select>
+    </label>
+  );
 }

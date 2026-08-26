@@ -22,6 +22,8 @@ import {
   overrideVendorEngagementInherent,
   resolveVendorEngagementScope,
   issueVendorEngagement,
+  revokeVendorEngagementInvite,
+  reissueVendorEngagementInvite,
   recomputeVendorEngagementRisk,
   recordVendorEngagementDecision,
   reviewVendorEngagementEvidence,
@@ -101,19 +103,73 @@ export async function resolveScope(
 export async function issueEngagement(
   id: string,
   contactEmail: string,
-  contactName?: string
+  contactName?: string,
+  /** VA-C1: a person in the supplier's directory, instead of a typed address. */
+  contactId?: string
 ): Promise<
-  | { ok: true; inviteToken: string; expiresAt: string }
+  | { ok: true; inviteToken: string; expiresAt: string; emailDelivery: string }
   | { ok: false; error: string }
 > {
   const token = await sessionToken();
   if (!token) return { ok: false, error: "Not authenticated" };
-  const result = await issueVendorEngagement(token, id, contactEmail, contactName);
+  const result = await issueVendorEngagement(token, id, contactEmail, contactName, contactId);
   if (isEngagementFailure(result)) {
     return { ok: false, error: vendorEngagementFailureText(result.failure) };
   }
   revalidateEngagement(id);
-  return { ok: true, inviteToken: result.invite_token, expiresAt: result.expires_at };
+  return {
+    ok: true,
+    inviteToken: result.invite_token,
+    expiresAt: result.expires_at,
+    // Older engines omit the field; "disabled" is the honest reading — no
+    // email left the building.
+    emailDelivery: result.email_delivery ?? "disabled",
+  };
+}
+
+/** VA-L1: kill the link. Access is revoked; history is preserved. */
+export async function revokeInvite(
+  id: string,
+  reason?: string
+): Promise<{ ok: true; sessionsRevoked: number } | { ok: false; error: string }> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await revokeVendorEngagementInvite(token, id, reason);
+  if (isEngagementFailure(result)) {
+    return { ok: false, error: vendorEngagementFailureText(result.failure) };
+  }
+  revalidateEngagement(id);
+  return { ok: true, sessionsRevoked: result.sessions_revoked };
+}
+
+/**
+ * VA-L1: mint a replacement link (the resend path — only a hash survives
+ * issuance, so resending IS re-minting). The prior link and its live sessions
+ * die; the new RAW token passes through once, same contract as issue.
+ */
+export async function reissueInvite(
+  id: string,
+  contactEmail: string,
+  contactName?: string,
+  /** VA-C1: often a DIFFERENT person — the original contact left. */
+  contactId?: string
+): Promise<
+  | { ok: true; inviteToken: string; expiresAt: string; emailDelivery: string }
+  | { ok: false; error: string }
+> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await reissueVendorEngagementInvite(token, id, contactEmail, contactName, contactId);
+  if (isEngagementFailure(result)) {
+    return { ok: false, error: vendorEngagementFailureText(result.failure) };
+  }
+  revalidateEngagement(id);
+  return {
+    ok: true,
+    inviteToken: result.invite_token,
+    expiresAt: result.expires_at,
+    emailDelivery: result.email_delivery,
+  };
 }
 
 export async function beginReview(id: string): Promise<EngagementActionState> {

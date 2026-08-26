@@ -48,6 +48,7 @@ import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
 import findingRiskLinksRouter from "./findingRiskLinks.js";
 import findingAssetOccurrencesRouter from "./findingAssetOccurrences.js";
+import findingVendorProvenanceRouter from "./findingVendorProvenance.js";
 import penTestEngagementsRouter from "./penTestEngagements.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
@@ -76,6 +77,8 @@ import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
 import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import vendorPortalRouter from "./vendorPortal.js";
+import vendorContactsRouter from "./vendorContacts.js";
+import vendorEngagementParticipantsRouter from "./vendorEngagementParticipants.js";
 import vendorEngagementsRouter from "./vendorEngagements.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
@@ -486,6 +489,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // /findings/:id/risk-links as an id of "risk-links".
   router.use("/api", findingRiskLinksRouter);
   router.use("/api", findingAssetOccurrencesRouter);
+  // Same reason: /findings/:id/vendor-provenance must not be captured as an id.
+  router.use("/api", findingVendorProvenanceRouter);
   router.use("/api", penTestEngagementsRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
@@ -494,6 +499,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorReviewsRouter);
   router.use("/api", vendorAssessmentAnalysisRouter);
   router.use("/api", vendorAssuranceDocumentsRouter);
+  router.use("/api", vendorContactsRouter);
+  router.use("/api", vendorEngagementParticipantsRouter);
   router.use("/api", vendorEngagementsRouter);
   router.use("/api", vendorSignalContextRouter);
   // EXTERNAL surface — reachable without a platform account. Every route inside

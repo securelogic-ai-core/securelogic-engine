@@ -76,9 +76,129 @@ import {
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
+import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
+import { sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
+import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js";
+import { addParticipant } from "../lib/vendorPortal/participants.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
+
+/* =========================================================
+   Supersede-on-pass observation (ruled 2026-08-22).
+
+   A PASS SUPERSEDES NOTHING AUTOMATICALLY — the fourth appearance of the
+   machines-observe-humans-decide principle (scanner reappearance never
+   reopens; monitoring recommendation never transitions; a pen-test retest
+   never closes; this: an engagement control transitioning to pass never
+   closes the finding it once promoted). Closure stays with the human gate
+   (SoD, evidence, decision_state); the machine's obligation is to NAME the
+   divergence, everywhere a human is looking, and to DERIVE it fresh at read
+   rather than caching a marker that would itself go stale the moment the
+   vendor revises again. finding_lifecycle_events is deliberately NOT used:
+   it is a closed-vocabulary TRANSITION ledger, and a pass is an observation.
+
+   CROSS-ENGAGEMENT (ruled 2026-08-23): the observation spans every
+   engagement of the SAME VENDOR — an annual re-assessment opened as a new
+   engagement must not make the earlier engagement's finding invisible.
+   Equivalence is deterministic-or-declared: same vendor_id (FK) + same
+   requirement_id (FK), never text matching; a finding whose requirement_id
+   is NULL is surfaced as equivalence_undetermined instead of being guessed
+   about or silently dropped. Each named row carries source_engagement_id so
+   provenance of BOTH engagements survives.
+
+   `pass` and `not_applicable` are both "the source no longer asserts a gap",
+   but they are DIFFERENT assertions ("we do it" vs "does not apply") and a
+   human closing on the second is often adjudicating a scope dispute — so the
+   row says which. `as_of` is requirement_responses.assessed_at: when the
+   vendor last asserted this answer (the portal upsert is its only writer).
+   ========================================================= */
+type SupersededBySource = {
+  finding_id: string;
+  reference: string;
+  requirement_id: string;
+  source_engagement_id: string;
+  current_response: "pass" | "not_applicable";
+  as_of: string;
+};
+
+type SupersedeObservation = {
+  superseded: SupersededBySource[];
+  /** Open engagement findings of the SAME VENDOR whose requirement_id is
+   *  NULL: equivalence to a current response cannot be established
+   *  deterministically, so the machine SAYS SO instead of guessing
+   *  (cross-engagement ruling, 2026-08-23). */
+  equivalence_undetermined: string[];
+};
+
+/** Open vendor_engagement findings — of ANY engagement of this engagement's
+ *  vendor (cross-engagement ruling, 2026-08-23: a new engagement must not
+ *  make an earlier engagement's finding invisible) — whose requirement's
+ *  CURRENT response in THIS engagement no longer asserts a gap.
+ *
+ *  Equivalence is established deterministically or not at all: the finding's
+ *  source engagement must belong to the same vendor (FK identity) and the
+ *  requirement_id must match exactly (FK identity). No text matching. A
+ *  finding whose requirement_id is NULL is reported as undetermined, never
+ *  silently dropped and never guessed at.
+ *
+ *  Tenant-first on every leg — the joins must never be able to plan a
+ *  cross-org read. `rr.assessment_type = 'vendor'` pins the response lane so
+ *  a future non-vendor assessment row for the same requirement cannot fan
+ *  out the observation. */
+async function listFindingsSupersededBySource(
+  organizationId: string,
+  engagementId: string
+): Promise<SupersedeObservation> {
+  const rows = await pg.query<SupersededBySource>(
+    `SELECT f.id AS finding_id, r.reference_id AS reference, f.requirement_id,
+            f.source_id AS source_engagement_id,
+            rr.status AS current_response, rr.assessed_at AS as_of
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
+       JOIN requirement_responses rr
+         ON rr.organization_id = f.organization_id
+        AND rr.engagement_id = e.id
+        AND rr.assessment_type = 'vendor'
+        AND rr.requirement_id = f.requirement_id
+       JOIN requirements r ON r.id = f.requirement_id
+      WHERE e.organization_id = $1
+        AND e.id = $2
+        AND f.requirement_id IS NOT NULL
+        AND rr.status IN ('pass', 'not_applicable')
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY r.reference_id, f.id`,
+    [organizationId, engagementId]
+  );
+  const undetermined = await pg.query<{ id: string }>(
+    `SELECT f.id
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
+      WHERE e.organization_id = $1
+        AND e.id = $2
+        AND f.requirement_id IS NULL
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY f.id`,
+    [organizationId, engagementId]
+  );
+  return {
+    superseded: rows.rows,
+    equivalence_undetermined: undetermined.rows.map((r) => r.id),
+  };
+}
 
 function orgOf(req: Request): string | null {
   return (
@@ -356,7 +476,13 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
 
   try {
     const result = await pg.query(
-      `SELECT e.*, v.name AS vendor_name
+      // VA-C1 / owner ruling 2026-08-23: the ENDURING vendor-level criticality
+      // travels with the engagement read so a reviewer can see it beside this
+      // engagement's assessment_tier. They are different concepts — the
+      // organisation's standing view of the relationship versus the depth of
+      // one assessment — and until now only the second reached this surface,
+      // which is how two ideas quietly become one.
+      `SELECT e.*, v.name AS vendor_name, v.criticality AS vendor_criticality
          FROM vendor_engagements e
          JOIN vendors v ON v.id = e.vendor_id
         WHERE e.id = $1 AND e.organization_id = $2
@@ -381,12 +507,55 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       [id, organizationId]
     );
 
+    // The engagement view previously said nothing about findings at all — so
+    // it could assert "this control passes" while the finding it once
+    // promoted stayed open, with the divergence visible nowhere. Derived
+    // fresh on every read (the supersede-on-pass ruling, 2026-08-22): counts
+    // plus the named list of open findings whose controls no longer assert a
+    // gap. Nothing here transitions anything.
+    const findingsSummary = await pg.query<{ total: string; open: string }>(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE ${sqlFindingActive("operational_status")})::text AS open
+         FROM findings
+        WHERE organization_id = $2 AND source_type = 'vendor_engagement' AND source_id = $1`,
+      [id, organizationId]
+    );
+    const observation = await listFindingsSupersededBySource(organizationId, id);
+
+    // VA-L1: the customer can finally see whether the vendor ever opened the
+    // link. Metadata only — token material never leaves the invites table.
+    const inviteRows = await pg.query<InviteStatusRow>(
+      `SELECT ${INVITE_STATUS_SELECT}
+         FROM vendor_engagement_invites
+        WHERE engagement_id = $1 AND organization_id = $2
+        ORDER BY created_at DESC`,
+      [id, organizationId]
+    );
+    const activeInvite =
+      inviteRows.rows.find(
+        (r) => r.revoked_at === null && new Date(r.expires_at).getTime() > Date.now()
+      ) ?? null;
+
     res.status(200).json({
       engagement: result.rows[0],
+      invite: {
+        active: activeInvite,
+        latest: inviteRows.rows[0] ?? null,
+        history_count: inviteRows.rowCount,
+      },
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
         mandatory: Number(scope.rows[0]?.mandatory ?? "0"),
+      },
+      findings: {
+        total: Number(findingsSummary.rows[0]?.total ?? "0"),
+        open: Number(findingsSummary.rows[0]?.open ?? "0"),
+        superseded_by_source: observation.superseded,
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+          finding_ids: observation.equivalence_undetermined,
+        },
       },
     });
   } catch (err) {
@@ -641,6 +810,74 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
    again — only its SHA-256 is persisted, so a database read cannot reconstruct
    a working vendor credential.
    ========================================================= */
+
+/* =========================================================
+   VA-C1 — who the invitation is actually for.
+
+   A credential may be addressed either to a KNOWN PERSON at the supplier
+   (contact_id, the intended path now that vendors have a contact directory) or
+   to a raw address (contact_email, still supported: a customer chasing an
+   assessment at 6pm should not have to create a directory entry first).
+
+   Either way the invite keeps its own contact_email/contact_name SNAPSHOT.
+   That snapshot is the historical record of who we mailed at the address we
+   used, and editing the contact row two years later must not rewrite it.
+   ========================================================= */
+
+type InviteAddressee = {
+  email: string;
+  name: string | null;
+  contactId: string | null;
+};
+
+async function resolveInviteAddressee(
+  organizationId: string,
+  engagementId: string,
+  body: Record<string, unknown>
+): Promise<
+  | { ok: true; addressee: InviteAddressee }
+  | { ok: false; status: number; error: string; message?: string }
+> {
+  const contactId = typeof body.contact_id === "string" ? body.contact_id.trim() : "";
+  if (contactId) {
+    const vendor = await pg.query<{ vendor_id: string }>(
+      `SELECT vendor_id FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [engagementId, organizationId]
+    );
+    const vendorId = vendor.rows[0]?.vendor_id;
+    if (!vendorId) return { ok: false, status: 404, error: "engagement_not_found" };
+
+    // Scoped to THIS engagement's vendor: a contact id belonging to another
+    // supplier of the same customer must not be addressable here, and must not
+    // be distinguishable from one that does not exist.
+    const contact: VendorContactRow | null = await resolveVendorContact(
+      organizationId,
+      vendorId,
+      contactId
+    );
+    if (!contact) return { ok: false, status: 404, error: "contact_not_found" };
+    if (contact.status !== "active") {
+      return {
+        ok: false,
+        status: 409,
+        error: "contact_inactive",
+        message: "That contact is marked inactive. Reactivate them or choose someone else.",
+      };
+    }
+    return {
+      ok: true,
+      addressee: { email: contact.email, name: contact.full_name, contactId: contact.id },
+    };
+  }
+
+  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
+  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return { ok: false, status: 400, error: "valid_contact_email_required" };
+  }
+  return { ok: true, addressee: { email, name: name || null, contactId: null } };
+}
+
 export async function issueEngagement(req: Request, res: Response): Promise<void> {
   const organizationId = orgOf(req);
   if (!organizationId) {
@@ -649,15 +886,21 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
   }
   const id = String(req.params["id"] ?? "");
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const email = typeof body.contact_email === "string" ? body.contact_email.trim() : "";
-  const name = typeof body.contact_name === "string" ? body.contact_name.trim() : null;
-
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    res.status(400).json({ error: "valid_contact_email_required" });
-    return;
-  }
 
   try {
+    // VA-C1: a contact id names a person in the supplier's directory; a raw
+    // address still works. Either way the invite snapshots what we mailed.
+    const addressee = await resolveInviteAddressee(organizationId, id, body);
+    if (!addressee.ok) {
+      res.status(addressee.status).json(
+        addressee.message
+          ? { error: addressee.error, message: addressee.message }
+          : { error: addressee.error }
+      );
+      return;
+    }
+    const { email, name, contactId } = addressee.addressee;
+
     const eng = await pg.query<{ status: string }>(
       `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -701,18 +944,49 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       return;
     }
 
-    const invite = mintInviteToken();
+    // VA-P1 — the first recipient becomes the engagement's COORDINATOR.
+    //
+    // Addressed to a directory contact this is a real person: addParticipant
+    // creates the participation record and mints their credential, and from
+    // that moment every answer, file and comment they author resolves to them
+    // through the invite. Addressed to a raw typed address there is no person
+    // to record, so the legacy single-recipient invite is minted exactly as
+    // before; such a session is treated as the sole recipient and keeps its
+    // submission authority (see portalCanCoordinate).
+    let invite: { token: string; expiresAt: Date };
+    let coordinatorParticipantId: string | null = null;
 
-    // Elevated: the invite is the credential a not-yet-authenticated external
-    // party will present, and its lookup at exchange time necessarily precedes
-    // org context. Written on the same channel that will read it.
-    await pgElevated.query(
-      `INSERT INTO vendor_engagement_invites
-         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
-    );
+    if (contactId) {
+      const added = await addParticipant({
+        organizationId,
+        engagementId: id,
+        contactId,
+        role: "coordinator",
+        invitedBy: { userId: userOf(req) },
+      });
+      if (!added.ok) {
+        res
+          .status(added.failure === "contact_not_found" ? 404 : 409)
+          .json({ error: added.failure });
+        return;
+      }
+      coordinatorParticipantId = added.participant.id;
+      invite = { token: added.inviteToken, expiresAt: added.expiresAt };
+    } else {
+      const minted = mintInviteToken();
+      invite = { token: minted.token, expiresAt: minted.expiresAt };
+
+      // Elevated: the invite is the credential a not-yet-authenticated external
+      // party will present, and its lookup at exchange time necessarily precedes
+      // org context. Written on the same channel that will read it.
+      await pgElevated.query(
+        `INSERT INTO vendor_engagement_invites
+           (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+            expires_at, created_by_user_id, contact_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [organizationId, id, minted.tokenHash, email, name, minted.expiresAt, userOf(req), contactId]
+      );
+    }
 
     await pg.query(
       `UPDATE vendor_engagements
@@ -729,8 +1003,29 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       resourceId: id,
       // The token is NEVER in the audit payload. An audit log readable by more
       // people than the vendor's mailbox must not contain a working credential.
-      payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
+      payload: {
+        contact_email: email,
+        contact_id: contactId,
+        participant_id: coordinatorParticipantId,
+        expires_at: invite.expiresAt.toISOString(),
+      },
       ipAddress: req.ip ?? null,
+    });
+
+    // VA-L1: actually deliver the link. Before this the route's own comments
+    // claimed email delivery while no send site existed — the customer mailed
+    // the credential themselves. The copy-link box REMAINS the fallback path:
+    // a failed or disabled send never strands the issue.
+    const orgName = await pg.query<{ name: string }>(
+      `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+    const emailDelivery = await sendVendorInviteEmail({
+      contactEmail: email,
+      contactName: name,
+      organizationName: orgName.rows[0]?.name ?? "Your customer",
+      rawToken: invite.token,
+      expiresAt: invite.expiresAt,
     });
 
     res.status(200).json({
@@ -739,10 +1034,315 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       // Returned ONCE. Only the hash is stored.
       invite_token: invite.token,
       expires_at: invite.expiresAt,
+      // "sent" | "failed" | "disabled" — the customer is told the truth about
+      // whether anything left the building, so the copy box is never a guess.
+      email_delivery: emailDelivery,
     });
   } catch (err) {
     logger.error({ event: "vendor_engagement_issue_failed", organizationId, err }, "Engagement issue failed");
     res.status(500).json({ error: "issue_failed" });
+  }
+}
+
+/* =========================================================
+   Invite lifecycle (VA-L1, authorized 2026-08-23).
+
+   Until now the invite had a birth and nothing else: no route ever set the
+   revocation columns 20260923 shipped, nothing read the invites table back
+   to the customer, and a 30-day expiry stranded the engagement because
+   `scoped → issued` is one-shot. Three operational dead ends, closed here.
+
+   Owner ruling (revocation): ACCESS IS REVOKED, HISTORY IS PRESERVED.
+   Revoking kills the invite AND its live sessions (the session store and
+   middleware already support it — revoked_at is checked on every request),
+   and touches nothing else: responses, revisions, evidence, comments and
+   audit rows all stay exactly as they were, still attributed to the invite
+   id they were made under.
+   ========================================================= */
+
+type InviteStatusRow = {
+  id: string;
+  contact_email: string;
+  contact_name: string | null;
+  /** VA-C1: the directory person this went to, or null for a raw address. */
+  contact_id: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+/** The customer-visible invite record. NEVER includes token material. */
+const INVITE_STATUS_SELECT = `
+  id, contact_email, contact_name, contact_id, created_at, expires_at, revoked_at,
+  first_exchanged_at, last_exchanged_at, exchange_count`;
+
+export async function revokeEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // The schema's CHECK requires a non-empty reason whenever revoked_at is set
+  // (20260923), and the UI marks the reason optional — so an omitted reason
+  // gets the honest default rather than a 23514 the customer cannot act on.
+  const reason =
+    typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 500)
+      : "revoked by customer";
+
+  try {
+    const eng = await pg.query<{ id: string }>(
+      `SELECT id FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const revoked = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_invites
+          SET revoked_at = NOW(), revoked_by_user_id = $3, revocation_reason = $4
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req), reason]
+    );
+    if (revoked.rowCount === 0) {
+      res.status(404).json({ error: "no_active_invite" });
+      return;
+    }
+
+    // Ruling: revocation terminates FUTURE access — including sessions already
+    // minted from the invite. The portal middleware checks session revocation
+    // on every request, so this is immediate, not eventual.
+    const sessions = await pg.query<{ id: string }>(
+      `UPDATE vendor_portal_sessions
+          SET revoked_at = NOW()
+        WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [revoked.rows.map((r) => r.id), organizationId]
+    );
+
+    // VA-P1: this endpoint means "cut this supplier off from this assessment",
+    // so with several people on it, it ends ALL of their access — the invites
+    // above already did that. Closing the participant rows too keeps the
+    // participant list from claiming access that no longer exists; history,
+    // attribution and everything they authored are untouched, per the ruling.
+    // To remove ONE person, use
+    // POST /vendor-engagements/:id/participants/:participantId/revoke.
+    const participants = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_participants
+          SET status = 'revoked', revoked_at = NOW(), revoked_by_user_id = $3,
+              revocation_reason = $4, updated_at = NOW()
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req), reason]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.invite_revoked",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        invites_revoked: revoked.rowCount,
+        sessions_revoked: sessions.rowCount,
+        participants_revoked: participants.rowCount,
+        reason,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      ok: true,
+      invites_revoked: revoked.rowCount,
+      sessions_revoked: sessions.rowCount,
+      participants_revoked: participants.rowCount,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_revoke_failed", organizationId, err }, "Invite revoke failed");
+    res.status(500).json({ error: "invite_revoke_failed" });
+  }
+}
+
+export async function reissueEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  try {
+    // VA-C1: same addressee rules as issue — a directory contact, or a raw
+    // address. Re-issuing to a DIFFERENT person is legitimate and common (the
+    // original contact left), which is why this is not pinned to the prior
+    // invite's addressee.
+    const addressee = await resolveInviteAddressee(organizationId, id, body);
+    if (!addressee.ok) {
+      res.status(addressee.status === 400 ? 400 : addressee.status).json(
+        addressee.message
+          ? { error: addressee.error === "valid_contact_email_required" ? "invalid_contact_email" : addressee.error, message: addressee.message }
+          : { error: addressee.error === "valid_contact_email_required" ? "invalid_contact_email" : addressee.error }
+      );
+      return;
+    }
+    const { email, name, contactId } = addressee.addressee;
+
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+    // Re-issue replaces the credential for an ALREADY-ISSUED engagement — the
+    // recovery valve for an expired or revoked link (and the "resend" path,
+    // since only a hash survives issuance: resending means re-minting). A
+    // never-issued engagement still uses /issue; a submitted one has nothing
+    // for a vendor to do with a link.
+    if (!["issued", "in_progress", "clarification_requested"].includes(from)) {
+      res.status(409).json({
+        error: "cannot_reissue",
+        from,
+        message:
+          from === "draft" || from === "scoping" || from === "scoped"
+            ? "This engagement has not been issued yet — use issue."
+            : "The questionnaire is no longer open for vendor work — a new link would have nothing to do.",
+      });
+      return;
+    }
+
+    // VA-P1 — THE SINGLE-ACTIVE-INVITE RULE IS NOW PER PARTICIPANT.
+    //
+    // It was a security property and it keeps exactly the same force: the old
+    // credential and its live sessions die when the replacement is born. What
+    // changes is the blast radius. Engagement-wide supersession made sense when
+    // an engagement had one recipient; with a team on it, re-sending Jane's
+    // link would have silently thrown Robert out mid-answer.
+    //
+    //   directory contact -> addParticipant supersedes THAT PERSON's credential
+    //                        (partial unique index on live participant invites)
+    //                        and reuses their participation row, so re-sending
+    //                        is a resend and never a second identity;
+    //   raw address       -> the legacy path, and it now supersedes only OTHER
+    //                        legacy invites (participant_id IS NULL). Without
+    //                        that predicate a customer re-sending to a typed
+    //                        address would revoke every participant's access.
+    let invite: { token: string; expiresAt: Date };
+    let priorRevoked = 0;
+    let reissuedParticipantId: string | null = null;
+
+    if (contactId) {
+      // A new person re-issued into an engagement that already has a live
+      // coordinator joins as a contributor; if the seat is vacant they take it,
+      // which is what makes re-issue a working recovery path after the
+      // coordinator was revoked. An EXISTING participant keeps their own role —
+      // addParticipant reuses the row and ignores this argument.
+      const liveCoordinator = await pg.query(
+        `SELECT 1 FROM vendor_engagement_participants
+          WHERE organization_id = $1 AND engagement_id = $2
+            AND participant_role = 'coordinator' AND status <> 'revoked'
+          LIMIT 1`,
+        [organizationId, id]
+      );
+      const added = await addParticipant({
+        organizationId,
+        engagementId: id,
+        contactId,
+        role: (liveCoordinator.rowCount ?? 0) > 0 ? "contributor" : "coordinator",
+        invitedBy: { userId: userOf(req) },
+      });
+      if (!added.ok) {
+        res
+          .status(added.failure === "contact_not_found" ? 404 : 409)
+          .json({ error: added.failure });
+        return;
+      }
+      reissuedParticipantId = added.participant.id;
+      priorRevoked = added.reused ? 1 : 0;
+      invite = { token: added.inviteToken, expiresAt: added.expiresAt };
+    } else {
+      const priorInvites = await pg.query<{ id: string }>(
+        `UPDATE vendor_engagement_invites
+            SET revoked_at = NOW(), revoked_by_user_id = $3,
+                revocation_reason = 'superseded by re-issue'
+          WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+            AND participant_id IS NULL
+          RETURNING id`,
+        [id, organizationId, userOf(req)]
+      );
+      priorRevoked = priorInvites.rowCount ?? 0;
+      if (priorRevoked > 0) {
+        await pg.query(
+          `UPDATE vendor_portal_sessions
+              SET revoked_at = NOW()
+            WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL`,
+          [priorInvites.rows.map((r) => r.id), organizationId]
+        );
+      }
+
+      const minted = mintInviteToken();
+      invite = { token: minted.token, expiresAt: minted.expiresAt };
+      await pgElevated.query(
+        `INSERT INTO vendor_engagement_invites
+           (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+            expires_at, created_by_user_id, contact_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [organizationId, id, minted.tokenHash, email, name, minted.expiresAt, userOf(req), contactId]
+      );
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.invite_reissued",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      // Token NEVER in the payload — same rule as issue.
+      payload: {
+        contact_email: email,
+        contact_id: contactId,
+        participant_id: reissuedParticipantId,
+        expires_at: invite.expiresAt.toISOString(),
+        prior_invites_revoked: priorRevoked,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    const orgName = await pg.query<{ name: string }>(
+      `SELECT name FROM organizations WHERE id = $1 LIMIT 1`,
+      [organizationId]
+    );
+    const emailDelivery = await sendVendorInviteEmail({
+      contactEmail: email,
+      contactName: name,
+      organizationName: orgName.rows[0]?.name ?? "Your customer",
+      rawToken: invite.token,
+      expiresAt: invite.expiresAt,
+    });
+
+    res.status(200).json({
+      ok: true,
+      // Returned ONCE, same contract as issue.
+      invite_token: invite.token,
+      expires_at: invite.expiresAt,
+      prior_invites_revoked: priorRevoked,
+      participant_id: reissuedParticipantId,
+      email_delivery: emailDelivery,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_reissue_failed", organizationId, err }, "Invite re-issue failed");
+    res.status(500).json({ error: "invite_reissue_failed" });
   }
 }
 
@@ -1182,8 +1782,12 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
   const id = String(req.params["id"] ?? "");
 
   try {
-    const eng = await pg.query<{ inherent_rating: string | null; vendor_name: string }>(
-      `SELECT e.inherent_rating, v.name AS vendor_name
+    const eng = await pg.query<{
+      inherent_rating: string | null;
+      vendor_id: string;
+      vendor_name: string;
+    }>(
+      `SELECT e.inherent_rating, e.vendor_id, v.name AS vendor_name
          FROM vendor_engagements e JOIN vendors v ON v.id = e.vendor_id
         WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -1270,6 +1874,44 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
       else updated += 1;
     }
 
+    // THE VENDOR'S RISK SCORE MUST MOVE WHEN A GAP IS RECORDED AGAINST IT.
+    // Engagement promotion was — like CUEC promotion before it — a
+    // vendor-finding-creating path that scheduled no recompute at all: with
+    // the fourth linkage arm in place the resolver and the scoring query now
+    // see these findings, but nothing would trigger them until some UNRELATED
+    // finding on the same vendor changed state, which is indistinguishable
+    // from "the gap does not count". The known-vendor variant is used because
+    // the engagement row already carries vendor_id; fire-and-forget and
+    // best-effort by contract, so a score refresh failure can never fail the
+    // promotion. It defers with setImmediate and opens its OWN tenant scope,
+    // so calling it inside this asTenant-wrapped handler runs it after the
+    // request's tenant transaction has committed (A04-G1 γ.3) — the same
+    // placement promoteVendorAssuranceCuecToFinding uses. Guarded on a
+    // non-empty promotion because upserts are the only writes here: zero
+    // promoted findings means zero score inputs changed.
+    if (findings.length > 0) {
+      scheduleVendorScoreRecompute(organizationId, eng.rows[0]!.vendor_id);
+    }
+
+    // Supersede-on-pass observation (ruled 2026-08-22): controls that now
+    // report pass/not_applicable are ABSENT from the promoted set, so their
+    // previously promoted findings would otherwise vanish from this summary
+    // while staying open — and a resolution the summary hides is a resolution
+    // nobody reviews. Name them; close nothing.
+    const observation = await listFindingsSupersededBySource(organizationId, id);
+    const superseded = observation.superseded;
+    if (superseded.length > 0) {
+      logger.info(
+        {
+          event: "vendor_engagement_findings_not_closed_on_pass",
+          organizationId,
+          engagementId: id,
+          count: superseded.length,
+        },
+        `${superseded.length} open finding(s) NOT closed automatically — the source now reports pass/not_applicable for their controls; closure remains a human decision through the ordinary gate`
+      );
+    }
+
     writeAuditEvent({
       organizationId,
       actorUserId: userOf(req),
@@ -1283,6 +1925,17 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
           acc[f.severity] = (acc[f.severity] ?? 0) + 1;
           return acc;
         }, {}),
+        // Capped so the payload stays operationally small; the full list is
+        // in the response and derivable at any time.
+        not_closed_superseded_by_source: {
+          count: superseded.length,
+          findings: superseded
+            .slice(0, 20)
+            .map((s) => ({ id: s.finding_id, current_response: s.current_response })),
+        },
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+        },
         methodology_version: METHODOLOGY_VERSION,
       },
       ipAddress: req.ip ?? null,
@@ -1298,6 +1951,11 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
         title: f.title,
         severity_rationale: f.severity_rationale,
       })),
+      superseded_by_source: superseded,
+      supersede_equivalence_undetermined: {
+        count: observation.equivalence_undetermined.length,
+        finding_ids: observation.equivalence_undetermined,
+      },
     });
   } catch (err) {
     logger.error({ event: "finding_promotion_failed", organizationId, err }, "Finding promotion failed");
@@ -1468,6 +2126,183 @@ export async function beginReview(req: Request, res: Response): Promise<void> {
   } catch (err) {
     logger.error({ event: "begin_review_failed", organizationId, err }, "Begin review failed");
     res.status(500).json({ error: "begin_review_failed" });
+  }
+}
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/responses — the reviewer's view of the
+   questionnaire itself (VA-R1, authorized 2026-08-23).
+
+   Before this route the customer could see COUNTS ("7/12 answered"), scores,
+   evidence rows and comments — but never the answers. The one hop named
+   "review" contained no reviewable content: findings were promoted against
+   aggregates. This is the read surface that makes the review workflow mean
+   something.
+
+   It is also the pre-issue answer to "what will my vendor be asked?" (owner
+   ruling on derived scoping, 2026-08-23): for a scoped-but-unissued
+   engagement every row simply carries response: null, so the same surface
+   shows exactly what will be sent before any invitation exists. The scope
+   population uses the SAME predicate as recompute and the portal
+   questionnaire (deterministic OR accepted) — the reviewer reads the same
+   questionnaire the vendor answers, never a superset and never a subset.
+
+   Includes the first read surface over requirement_response_revisions —
+   append-only since 20260924, durable but invisible until now. Revisions are
+   capped per response and the cap is REPORTED (`truncated`), so a long edit
+   history is elided loudly, never silently.
+   ========================================================= */
+const REVISIONS_PER_RESPONSE_CAP = 50;
+
+export async function listEngagementResponses(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const rows = await pg.query<{
+      requirement_id: string;
+      reference_id: string;
+      title: string;
+      description: string | null;
+      depth: string;
+      mandatory: boolean;
+      response_id: string | null;
+      status: string | null;
+      notes: string | null;
+      responder_type: string | null;
+      answered_via_invite_id: string | null;
+      assessed_by: string | null;
+      assessed_at: string | null;
+      updated_at: string | null;
+      evidence_count: string;
+      evidence_confirmed: boolean;
+    }>(
+      `SELECT si.requirement_id, r.reference_id, r.title, r.description,
+              si.depth, si.mandatory,
+              rr.id AS response_id, rr.status, rr.notes, rr.responder_type,
+              rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at,
+              COUNT(ev.id)::text AS evidence_count,
+              COALESCE(bool_or(ev.reviewed_at IS NOT NULL), FALSE) AS evidence_confirmed
+         FROM vendor_engagement_scope_items si
+         JOIN requirements r ON r.id = si.requirement_id
+         LEFT JOIN requirement_responses rr
+                ON rr.requirement_id  = si.requirement_id
+               AND rr.engagement_id   = si.engagement_id
+               AND rr.organization_id = si.organization_id
+         LEFT JOIN evidence ev
+                ON ev.engagement_id   = si.engagement_id
+               AND ev.requirement_id  = si.requirement_id
+               AND ev.organization_id = si.organization_id
+               AND ev.detached_at IS NULL
+        WHERE si.engagement_id = $1 AND si.organization_id = $2
+          AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
+        GROUP BY si.requirement_id, r.reference_id, r.title, r.description,
+                 si.depth, si.mandatory,
+                 rr.id, rr.status, rr.notes, rr.responder_type,
+                 rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at
+        ORDER BY si.mandatory DESC, r.reference_id, si.requirement_id`,
+      [id, organizationId]
+    );
+
+    // One pass for every revision of every response on this engagement. The
+    // join re-checks the org on BOTH legs — the revision table is reachable
+    // only through a same-org response row.
+    const revisions = await pg.query<{
+      response_id: string;
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>(
+      `SELECT rev.response_id, rev.status, rev.notes, rev.responder_type,
+              rev.answered_by_user_id, rev.answered_via_invite_id, rev.created_at
+         FROM requirement_response_revisions rev
+         JOIN requirement_responses rr
+           ON rr.id = rev.response_id
+          AND rr.organization_id = rev.organization_id
+        WHERE rev.organization_id = $2 AND rr.engagement_id = $1
+        ORDER BY rev.created_at ASC`,
+      [id, organizationId]
+    );
+    const revisionsByResponse = new Map<string, typeof revisions.rows>();
+    for (const rev of revisions.rows) {
+      const list = revisionsByResponse.get(rev.response_id) ?? [];
+      list.push(rev);
+      revisionsByResponse.set(rev.response_id, list);
+    }
+
+    const items = rows.rows.map((row) => {
+      const revs = row.response_id ? (revisionsByResponse.get(row.response_id) ?? []) : [];
+      return {
+        requirement: {
+          id: row.requirement_id,
+          reference: row.reference_id,
+          title: row.title,
+          description: row.description,
+        },
+        scope: { depth: row.depth, mandatory: row.mandatory },
+        response:
+          row.response_id === null
+            ? null
+            : {
+                status: row.status,
+                notes: row.notes,
+                responder_type: row.responder_type,
+                answered_via_invite_id: row.answered_via_invite_id,
+                assessed_by_user_id: row.assessed_by,
+                assessed_at: row.assessed_at,
+                updated_at: row.updated_at,
+              },
+        evidence: {
+          count: Number(row.evidence_count),
+          confirmed: row.evidence_confirmed,
+        },
+        revisions: {
+          total: revs.length,
+          truncated: revs.length > REVISIONS_PER_RESPONSE_CAP,
+          entries: revs.slice(-REVISIONS_PER_RESPONSE_CAP).map((rev) => ({
+            status: rev.status,
+            notes: rev.notes,
+            responder_type: rev.responder_type,
+            answered_by_user_id: rev.answered_by_user_id,
+            answered_via_invite_id: rev.answered_via_invite_id,
+            created_at: rev.created_at,
+          })),
+        },
+      };
+    });
+
+    res.status(200).json({
+      engagement_id: id,
+      engagement_status: eng.rows[0]!.status,
+      counts: {
+        scoped: items.length,
+        answered: items.filter((i) => i.response !== null).length,
+        mandatory: items.filter((i) => i.scope.mandatory).length,
+      },
+      items,
+    });
+  } catch (err) {
+    logger.error(
+      { event: "engagement_responses_read_failed", organizationId, err },
+      "Engagement responses read failed"
+    );
+    res.status(500).json({ error: "engagement_responses_read_failed" });
   }
 }
 
@@ -1680,6 +2515,9 @@ router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
+router.get("/vendor-engagements/:id/responses", ...chain, asTenant(listEngagementResponses));
+router.post("/vendor-engagements/:id/invite/revoke", ...chain, asTenant(revokeEngagementInvite));
+router.post("/vendor-engagements/:id/invite/reissue", ...chain, asTenant(reissueEngagementInvite));
 router.post(
   "/vendor-engagements/:id/evidence/:evidenceId/review",
   ...chain,

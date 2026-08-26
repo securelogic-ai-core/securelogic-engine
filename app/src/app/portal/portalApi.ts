@@ -20,6 +20,13 @@ export type PortalEngagement = {
   due_date: string | null;
   /** True while answers may still be edited (issued / in_progress). */
   accepting_responses: boolean;
+  /**
+   * VA-P1. Whether THIS participant may submit. Only the main contact can —
+   * submitting freezes the questionnaire for everybody. Undefined on an engine
+   * that predates VA-P1, which the review screen treats as permitted.
+   */
+  can_submit?: boolean;
+  participant_role?: "coordinator" | "contributor" | null;
 };
 
 export type ScopeReason = {
@@ -39,6 +46,38 @@ export type PortalQuestion = {
   why_we_are_asking: ScopeReason[] | null;
   answer: string | null;
   notes: string | null;
+  /**
+   * VA-P1 collaboration. `answered_at` doubles as the optimistic-concurrency
+   * token: send it back as `prev_answered_at` and a save whose stored value has
+   * moved on since is refused with 412 instead of quietly replacing a
+   * colleague's work.
+   */
+  answered_at: string | null;
+  answered_by_name: string | null;
+  answered_by_you: boolean;
+};
+
+/** VA-P1 — a teammate at the same supplier, on the same engagement. */
+export type PortalParticipant = {
+  id: string;
+  full_name: string;
+  email: string;
+  title: string | null;
+  participant_role: "coordinator" | "contributor";
+  status: "invited" | "active" | "revoked";
+  first_accepted_at: string | null;
+  last_accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  is_you: boolean;
+  invited_by_teammate: boolean;
+  has_live_invite: boolean;
+  invite_expires_at: string | null;
+};
+
+export type PortalParticipants = {
+  participants: PortalParticipant[];
+  you: { participant_id: string | null; can_manage_team: boolean };
 };
 
 export type PortalEvidenceFile = {
@@ -155,6 +194,67 @@ export type PortalResult<T> = {
   status: number;
   ok: boolean;
   body: (T & PortalErrorBody) | null;
+};
+
+
+/* VA-D1 — delegation. */
+
+export type PortalAssignmentItem = {
+  requirement_id: string;
+  reference: string;
+  title: string;
+  mandatory: boolean;
+  framework_id: string;
+  framework_name: string;
+  /** Derived from the real response state — there is no stored completion flag. */
+  complete: boolean;
+  /** Answered, but the reviewer has come back on it since. A separate fact. */
+  clarification_open: boolean;
+  assigned_to_participant_id: string | null;
+  assignee_name: string | null;
+  assigned_at: string | null;
+  assigned_to_you: boolean;
+};
+
+export type PortalAssignments = {
+  items: PortalAssignmentItem[];
+  mine: PortalAssignmentItem[];
+  mine_outstanding: number;
+  unassigned: number;
+  you: { participant_id: string | null; can_manage_work: boolean };
+  /** Null when the assessment covers ONE framework — a single group is not a section. */
+  assignable_frameworks:
+    | Array<{ framework_id: string; framework_name: string; question_count: number }>
+    | null;
+  framework_grouping_available: boolean;
+};
+
+export type PortalProgress = {
+  total: number;
+  complete: number;
+  outstanding: number;
+  assigned: number;
+  unassigned: number;
+  mandatory_total: number;
+  mandatory_complete: number;
+  by_participant: Array<{
+    participant_id: string;
+    full_name: string;
+    participant_role: string;
+    status: string;
+    assigned: number;
+    complete: number;
+    outstanding: number;
+  }>;
+  by_framework: Array<{
+    framework_id: string;
+    framework_name: string;
+    total: number;
+    complete: number;
+    assigned: number;
+    unassigned: number;
+  }> | null;
+  framework_grouping_available: boolean;
 };
 
 /**

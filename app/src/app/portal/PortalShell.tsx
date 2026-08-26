@@ -129,8 +129,14 @@ function ErrorNotice({ onRetry }: { onRetry: () => void }) {
 const PORTAL_TABS: Array<{ href: string; label: string }> = [
   { href: "/portal", label: "Overview" },
   { href: "/portal/questionnaire", label: "Questionnaire" },
+  // VA-D1. Next to the questionnaire because "what am I supposed to answer" is
+  // the question people ask immediately after opening it.
+  { href: "/portal/work", label: "Work" },
   { href: "/portal/evidence", label: "Attachments" },
   { href: "/portal/clarifications", label: "Messages" },
+  // VA-P1. Placed before "Review & submit" because deciding who else should
+  // answer happens while the work is in progress, not at the end.
+  { href: "/portal/team", label: "Your team" },
   { href: "/portal/review", label: "Review & submit" },
 ];
 

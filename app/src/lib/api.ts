@@ -7385,12 +7385,18 @@ export type VendorEngagementListRow = {
   updated_at: string;
 };
 
-/** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name. */
+/** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name + criticality. */
 export type VendorEngagementDetail = {
   id: string;
   organization_id: string;
   vendor_id: string;
   vendor_name: string;
+  /**
+   * VA-C1 — the ENDURING vendor-level criticality (vendors.criticality), not
+   * this engagement's depth. `assessment_tier` below is the engagement one.
+   * Optional during rolling deploy: older engines omit it.
+   */
+  vendor_criticality?: string | null;
   engagement_type: string;
   parent_engagement_id: string | null;
   title: string | null;
@@ -7522,13 +7528,19 @@ export async function listVendorEngagements(
 export async function getVendorEngagement(
   token: string,
   id: string
-): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null> {
+): Promise<{
+  engagement: VendorEngagementDetail;
+  questionnaire: VendorEngagementQuestionnaire;
+  /** VA-L1 — optional during rolling deploy: older engines omit it. */
+  invite?: VendorEngagementInviteBlock;
+} | null> {
   try {
     const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
     if (!res.ok) return null;
     return res.json() as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      invite?: VendorEngagementInviteBlock;
     }>;
   } catch {
     return null;
@@ -7615,9 +7627,18 @@ export async function issueVendorEngagement(
   token: string,
   id: string,
   contactEmail: string,
-  contactName?: string
+  contactName?: string,
+  /** VA-C1: address the invitation to a person in the supplier's directory. */
+  contactId?: string
 ): Promise<
-  VendorEngagementResult<{ ok: true; status: "issued"; invite_token: string; expires_at: string }>
+  VendorEngagementResult<{
+    ok: true;
+    status: "issued";
+    invite_token: string;
+    expires_at: string;
+    /** VA-L1 — optional during rolling deploy: older engines omit it. */
+    email_delivery?: InviteEmailDelivery;
+  }>
 > {
   try {
     const res = await engineFetch(
@@ -7625,10 +7646,14 @@ export async function issueVendorEngagement(
       token,
       {
         method: "POST",
-        body: JSON.stringify({
-          contact_email: contactEmail,
-          ...(contactName ? { contact_name: contactName } : {}),
-        }),
+        body: JSON.stringify(
+          contactId
+            ? { contact_id: contactId }
+            : {
+                contact_email: contactEmail,
+                ...(contactName ? { contact_name: contactName } : {}),
+              }
+        ),
       }
     );
     if (!res.ok) return engagementFailureFrom(res, "issue_failed");
@@ -7637,9 +7662,370 @@ export async function issueVendorEngagement(
       status: "issued";
       invite_token: string;
       expires_at: string;
+      email_delivery?: InviteEmailDelivery;
     };
   } catch {
     return { failure: { error: "issue_failed" } };
+  }
+}
+
+/** VA-L1 (2026-08-23): invite lifecycle. */
+export type InviteEmailDelivery = "sent" | "failed" | "disabled";
+
+/* ─────────────────────────────────────────────────────────────
+   VA-C1 — the supplier's contact directory.
+
+   A contact is a PERSON at a third party, not a user account and not an
+   engagement participant. The invite keeps its own email/name snapshot, so
+   editing a contact never rewrites who was historically invited.
+   ───────────────────────────────────────────────────────────── */
+
+export const VENDOR_CONTACT_ROLES = [
+  "security",
+  "privacy",
+  "legal",
+  "executive",
+  "commercial",
+  "other",
+] as const;
+
+export type VendorContactRole = (typeof VENDOR_CONTACT_ROLES)[number];
+
+export type VendorContact = {
+  id: string;
+  vendor_id: string;
+  full_name: string;
+  email: string;
+  title: string | null;
+  phone: string | null;
+  contact_role: VendorContactRole;
+  is_primary_contact: boolean;
+  status: "active" | "inactive";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorContactsResponse = {
+  contacts: VendorContact[];
+  count: number;
+  active_count: number;
+};
+
+export async function listVendorContacts(
+  token: string,
+  vendorId: string
+): Promise<VendorContactsResponse | null> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(vendorId)}/contacts`, token);
+    if (!res.ok) return null;
+    return (await res.json()) as VendorContactsResponse;
+  } catch {
+    return null;
+  }
+}
+
+export type VendorContactResult<T> = T | { failure: { error: string; message?: string } };
+
+async function contactFailureFrom(
+  res: Response,
+  fallback: string
+): Promise<{ failure: { error: string; message?: string } }> {
+  try {
+    const body = (await res.json()) as { error?: string; message?: string };
+    return { failure: { error: body.error ?? fallback, message: body.message } };
+  } catch {
+    return { failure: { error: fallback } };
+  }
+}
+
+/* =========================================================================
+   VA-P1 — engagement participants (who at the supplier works on this)
+   ========================================================================= */
+
+export const PARTICIPANT_ROLES = ["coordinator", "contributor"] as const;
+export type ParticipantRole = (typeof PARTICIPANT_ROLES)[number];
+
+export type EngagementParticipant = {
+  id: string;
+  contact_id: string;
+  full_name: string;
+  email: string;
+  title: string | null;
+  contact_status: string;
+  participant_role: ParticipantRole;
+  status: "invited" | "active" | "revoked";
+  invited_by_user_id: string | null;
+  invited_by_participant_id: string | null;
+  first_accepted_at: string | null;
+  last_accepted_at: string | null;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  /** Live credential only — a superseded invite is history and is not listed. */
+  invite_id: string | null;
+  invite_expires_at: string | null;
+  invite_exchange_count: number | null;
+};
+
+export type EngagementParticipantsResponse = {
+  participants: EngagementParticipant[];
+  count: number;
+  active_count: number;
+  /** False after the coordinator is revoked — nobody can submit until one is named. */
+  has_coordinator: boolean;
+};
+
+/** VA-D1 — what the CUSTOMER sees of vendor-side delegation: shape, not the map. */
+export type EngagementProgress = {
+  total: number;
+  complete: number;
+  outstanding: number;
+  mandatory_total: number;
+  mandatory_complete: number;
+  contributors: Array<{
+    full_name: string;
+    participant_role: string;
+    status: string;
+    assigned: number;
+    complete: number;
+  }>;
+  by_framework: Array<{
+    framework_id: string;
+    framework_name: string;
+    total: number;
+    complete: number;
+    assigned: number;
+    unassigned: number;
+  }> | null;
+  framework_grouping_available: boolean;
+};
+
+export async function getEngagementProgress(
+  token: string,
+  engagementId: string
+): Promise<EngagementProgress | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/progress`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as EngagementProgress;
+  } catch {
+    return null;
+  }
+}
+
+export async function listEngagementParticipants(
+  token: string,
+  engagementId: string
+): Promise<EngagementParticipantsResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as EngagementParticipantsResponse;
+  } catch {
+    return null;
+  }
+}
+
+export type AddParticipantSuccess = {
+  participant_id: string;
+  reused: boolean;
+  /** Shown ONCE — only a hash is persisted and it can never be read back. */
+  invite_token: string;
+  expires_at: string;
+  email_delivery: string;
+};
+
+export async function addEngagementParticipant(
+  token: string,
+  engagementId: string,
+  input: { contact_id: string; participant_role?: ParticipantRole }
+): Promise<VendorContactResult<AddParticipantSuccess>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants`,
+      token,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "participant_add_failed");
+    return (await res.json()) as AddParticipantSuccess;
+  } catch {
+    return { failure: { error: "participant_add_failed" } };
+  }
+}
+
+export async function revokeEngagementParticipant(
+  token: string,
+  engagementId: string,
+  participantId: string,
+  reason?: string
+): Promise<VendorContactResult<{ ok: true; coordinator_vacant: boolean }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(engagementId)}/participants/${encodeURIComponent(participantId)}/revoke`,
+      token,
+      { method: "POST", body: JSON.stringify({ reason }) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "participant_revoke_failed");
+    return (await res.json()) as { ok: true; coordinator_vacant: boolean };
+  } catch {
+    return { failure: { error: "participant_revoke_failed" } };
+  }
+}
+
+export function isVendorContactFailure<T>(
+  value: VendorContactResult<T>
+): value is { failure: { error: string; message?: string } } {
+  return typeof value === "object" && value !== null && "failure" in value;
+}
+
+export async function createVendorContact(
+  token: string,
+  vendorId: string,
+  input: Partial<VendorContact>
+): Promise<VendorContactResult<{ contact: VendorContact }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/contacts`,
+      token,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "vendor_contact_create_failed");
+    return (await res.json()) as { contact: VendorContact };
+  } catch {
+    return { failure: { error: "vendor_contact_create_failed" } };
+  }
+}
+
+export async function updateVendorContact(
+  token: string,
+  vendorId: string,
+  contactId: string,
+  patch: Partial<VendorContact>
+): Promise<VendorContactResult<{ contact: VendorContact }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/contacts/${encodeURIComponent(contactId)}`,
+      token,
+      { method: "PATCH", body: JSON.stringify(patch) }
+    );
+    if (!res.ok) return contactFailureFrom(res, "vendor_contact_update_failed");
+    return (await res.json()) as { contact: VendorContact };
+  } catch {
+    return { failure: { error: "vendor_contact_update_failed" } };
+  }
+}
+
+export async function deleteVendorContact(
+  token: string,
+  vendorId: string,
+  contactId: string
+): Promise<VendorContactResult<{ ok: true }>> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/contacts/${encodeURIComponent(contactId)}`,
+      token,
+      { method: "DELETE" }
+    );
+    if (!res.ok) return contactFailureFrom(res, "vendor_contact_delete_failed");
+    return (await res.json()) as { ok: true };
+  } catch {
+    return { failure: { error: "vendor_contact_delete_failed" } };
+  }
+}
+
+/** Customer-visible invite record — the engine never includes token material. */
+export type VendorEngagementInviteStatus = {
+  id: string;
+  contact_email: string;
+  contact_name: string | null;
+  /** VA-C1 — the directory person, or null for a raw address. */
+  contact_id?: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+export type VendorEngagementInviteBlock = {
+  active: VendorEngagementInviteStatus | null;
+  latest: VendorEngagementInviteStatus | null;
+  history_count: number;
+};
+
+export async function revokeVendorEngagementInvite(
+  token: string,
+  id: string,
+  reason?: string
+): Promise<
+  VendorEngagementResult<{ ok: true; invites_revoked: number; sessions_revoked: number }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/invite/revoke`,
+      token,
+      { method: "POST", body: JSON.stringify(reason ? { reason } : {}) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "invite_revoke_failed");
+    return (await res.json()) as {
+      ok: true;
+      invites_revoked: number;
+      sessions_revoked: number;
+    };
+  } catch {
+    return { failure: { error: "invite_revoke_failed" } };
+  }
+}
+
+export async function reissueVendorEngagementInvite(
+  token: string,
+  id: string,
+  contactEmail: string,
+  contactName?: string,
+  /** VA-C1: re-issue to a directory contact (often a DIFFERENT person). */
+  contactId?: string
+): Promise<
+  VendorEngagementResult<{
+    ok: true;
+    invite_token: string;
+    expires_at: string;
+    prior_invites_revoked: number;
+    email_delivery: InviteEmailDelivery;
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/invite/reissue`,
+      token,
+      {
+        method: "POST",
+        body: JSON.stringify(
+          contactId
+            ? { contact_id: contactId }
+            : {
+                contact_email: contactEmail,
+                ...(contactName ? { contact_name: contactName } : {}),
+              }
+        ),
+      }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "invite_reissue_failed");
+    return (await res.json()) as {
+      ok: true;
+      invite_token: string;
+      expires_at: string;
+      prior_invites_revoked: number;
+      email_delivery: InviteEmailDelivery;
+    };
+  } catch {
+    return { failure: { error: "invite_reissue_failed" } };
   }
 }
 
@@ -7730,6 +8116,65 @@ export async function recordVendorEngagementDecision(
   }
 }
 
+/** VA-R1 (2026-08-23): the reviewer's per-question view of the questionnaire.
+ *  Pre-issue this is "what will be sent" (every response is null); post-submit
+ *  it is the review surface. The engine computes everything — never derive
+ *  answered/complete locally. */
+export type VendorEngagementResponseItem = {
+  requirement: {
+    id: string;
+    reference: string;
+    title: string;
+    description: string | null;
+  };
+  scope: { depth: string; mandatory: boolean };
+  response: {
+    status: string | null;
+    notes: string | null;
+    responder_type: string | null;
+    answered_via_invite_id: string | null;
+    assessed_by_user_id: string | null;
+    assessed_at: string | null;
+    updated_at: string | null;
+  } | null;
+  evidence: { count: number; confirmed: boolean };
+  revisions: {
+    total: number;
+    truncated: boolean;
+    entries: Array<{
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>;
+  };
+};
+
+export type VendorEngagementResponses = {
+  engagement_id: string;
+  engagement_status: string;
+  counts: { scoped: number; answered: number; mandatory: number };
+  items: VendorEngagementResponseItem[];
+};
+
+export async function getVendorEngagementResponses(
+  token: string,
+  id: string
+): Promise<VendorEngagementResponses | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/responses`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorEngagementResponses>;
+  } catch {
+    return null;
+  }
+}
+
 export async function listVendorEngagementEvidence(
   token: string,
   id: string
@@ -7784,6 +8229,27 @@ export type VendorEngagementPromotionResult = {
     title: string;
     severity_rationale: string;
   }>;
+  /** Supersede-on-pass ruling (2026-08-22, cross-engagement 2026-08-23):
+   *  open findings — from ANY engagement of this vendor — whose controls now
+   *  report pass/not_applicable in THIS engagement. Named, never auto-closed.
+   *  `source_engagement_id` may name an EARLIER engagement than the one
+   *  promoted against; the engine computes this — never recompute here. */
+  superseded_by_source: Array<{
+    finding_id: string;
+    reference: string;
+    requirement_id: string;
+    /** Optional during rolling deploy — older engine payloads omit it. */
+    source_engagement_id?: string;
+    current_response: "pass" | "not_applicable";
+    as_of: string;
+  }>;
+  /** Findings whose equivalence to a current response CANNOT be established
+   *  deterministically (requirement_id is NULL). Surfaced, never guessed.
+   *  Optional during rolling deploy. */
+  supersede_equivalence_undetermined?: {
+    count: number;
+    finding_ids: string[];
+  };
 };
 
 export async function promoteVendorEngagementFindings(
@@ -8036,6 +8502,91 @@ export async function getFindingOccurrences(
     };
   } catch {
     return empty;
+  }
+}
+
+/**
+ * T1-B — where a promoted Vendor Assurance finding came from.
+ *
+ * `source` is a three-state answer, not a nullable payload:
+ *   "vendor_assurance_cuec" — promoted from a reviewed CUEC; `provenance` is set
+ *   "vendor_assessment"     — a vendor_review finding with no CUEC. Legitimate
+ *   "not_applicable"        — some other source_type entirely
+ *
+ * Absence is an answer rather than an error, so the panel can say which of those
+ * three it is instead of rendering an empty box. Fails soft like every other
+ * finding-detail panel: a provenance lookup must never take down the page.
+ */
+export interface FindingVendorProvenance {
+  finding_id: string;
+  source_type: string;
+  source:
+    | "vendor_assurance_cuec"
+    | "vendor_assessment"
+    | "vendor_engagement"
+    | "not_applicable";
+  /** VA-10: set only for source === "vendor_engagement"; null there means a
+   *  dangling source_id (convention arm) — reported honestly, not 404'd. */
+  engagement_provenance?: {
+    vendor: { id: string; name: string };
+    engagement: {
+      id: string;
+      title: string | null;
+      engagement_type: string;
+      status: string;
+      decision: string | null;
+      decided_at: string | null;
+      submitted_at: string | null;
+      methodology_version: string;
+    };
+    requirement: {
+      id: string;
+      reference: string | null;
+      title: string | null;
+    } | null;
+    /** Promotion-time snapshot, stamped with the methodology version. */
+    severity_rationale: string | null;
+    /** Today's source assertion — labeled CURRENT in the UI. Per the
+     *  supersede-on-pass ruling a pass here never closes the finding. */
+    current_response: {
+      status: string;
+      as_of: string | null;
+      responder_type: string | null;
+    } | null;
+  } | null;
+  provenance: {
+    vendor: { id: string; name: string };
+    document: {
+      id: string;
+      original_filename: string;
+      sha256: string;
+      document_type_hint: string | null;
+      processing_status: string;
+    };
+    cuec: { id: string; ordinal: number; text: string; review_status: string };
+    determination: {
+      review_status: string;
+      reason: string | null;
+      decided_at: string | null;
+      decided_by: { user_id: string; email: string | null; name: string | null } | null;
+      basis: unknown;
+    };
+  } | null;
+}
+
+export async function getFindingVendorProvenance(
+  token: string,
+  findingId: string
+): Promise<FindingVendorProvenance | null> {
+  try {
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/vendor-provenance`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as FindingVendorProvenance;
+  } catch {
+    return null;
   }
 }
 

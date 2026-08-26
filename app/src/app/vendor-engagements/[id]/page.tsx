@@ -4,12 +4,17 @@ import { getSession } from "@/lib/session";
 import { isPlatformEntitled } from "@/lib/entitlements";
 import {
   getVendorEngagement,
+  getVendorEngagementResponses,
   listVendorEngagementEvidence,
   listVendorEngagementComments,
+  listVendorContacts,
+  listEngagementParticipants,
+  getEngagementProgress,
   type VendorEngagementDetail,
   type VendorEngagementQuestionnaire,
   type VendorEngagementEvidenceRow,
   type VendorEngagementComment,
+  type VendorEngagementInviteBlock,
 } from "@/lib/api";
 import {
   ENGAGEMENT_STATE_LABELS,
@@ -21,7 +26,9 @@ import {
 } from "@/lib/vendorEngagements";
 import EngagementActionPanel from "@/components/vendorEngagements/EngagementActionPanel";
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
+import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
+import ParticipantsSection from "@/components/vendorEngagements/ParticipantsSection";
 
 /**
  * /vendor-engagements/[id] — the reviewer's workspace for one engagement.
@@ -95,14 +102,28 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp]: [
-    { engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null,
-    { evidence: VendorEngagementEvidenceRow[]; count: number } | null,
-    { comments: VendorEngagementComment[]; count: number } | null,
-  ] = await Promise.all([
-    getVendorEngagement(token, id),
-    listVendorEngagementEvidence(token, id),
-    listVendorEngagementComments(token, id),
+  const [detail, evidenceResp, commentsResp, responsesResp, participantsResp, progressResp] =
+    await Promise.all([
+    getVendorEngagement(token, id) as Promise<{
+      engagement: VendorEngagementDetail;
+      questionnaire: VendorEngagementQuestionnaire;
+      invite?: VendorEngagementInviteBlock | null;
+    } | null>,
+    listVendorEngagementEvidence(token, id) as Promise<{
+      evidence: VendorEngagementEvidenceRow[];
+      count: number;
+    } | null>,
+    listVendorEngagementComments(token, id) as Promise<{
+      comments: VendorEngagementComment[];
+      count: number;
+    } | null>,
+    getVendorEngagementResponses(token, id),
+    // VA-P1: who at the supplier is working on this. null means the read
+    // FAILED, which the section renders differently from an empty team.
+    listEngagementParticipants(token, id),
+    // VA-D1: how far the vendor has got. Shape only — the customer does not see
+    // the supplier's internal per-question delegation map.
+    getEngagementProgress(token, id),
   ]);
 
   if (!detail) {
@@ -119,6 +140,11 @@ export default async function VendorEngagementPage({
   }
 
   const e = detail.engagement;
+
+  // VA-C1: the supplier's directory, so the invitation can be addressed to a
+  // person rather than a typed-in string. A failed read is NOT an empty
+  // directory — the panel falls back to the raw-address form and says so.
+  const contactsData = await listVendorContacts(token, e.vendor_id);
   const q = detail.questionnaire;
   const state: EngagementState = isEngagementState(e.status) ? e.status : "draft";
   const stateLabel = isEngagementState(e.status) ? ENGAGEMENT_STATE_LABELS[e.status] : e.status;
@@ -156,8 +182,31 @@ export default async function VendorEngagementPage({
           <Link href={`/vendors/${e.vendor_id}`} style={{ color: "#93c5fd" }}>
             {e.vendor_name}
           </Link>{" "}
-          · {e.engagement_type} engagement · tier {e.assessment_tier ?? "—"} · opened{" "}
-          {fmtDate(e.created_at)} · methodology {e.methodology_version}
+          · {e.engagement_type} engagement · opened {fmtDate(e.created_at)} · methodology{" "}
+          {e.methodology_version}
+        </p>
+
+        {/* VA-C1 / owner ruling 2026-08-23. Two ratings that look alike and are
+            not: what this supplier means to the business, which outlives every
+            assessment, and how deep THIS assessment goes. Shown side by side
+            and labelled, because the way they get collapsed is by only ever
+            seeing one of them. */}
+        <p style={{ color: "#9ca3af", marginTop: 6, fontSize: 13 }}>
+          <span title="The organization's standing view of this supplier. Set on the vendor, unchanged by opening an engagement.">
+            Vendor criticality:{" "}
+            <strong style={{ color: "#e5e7eb" }}>
+              {e.vendor_criticality
+                ? e.vendor_criticality.charAt(0).toUpperCase() + e.vendor_criticality.slice(1)
+                : "not set"}
+            </strong>{" "}
+            <span style={{ color: "#6b7280" }}>(enduring)</span>
+          </span>
+          <span style={{ color: "#4b5563" }}> · </span>
+          <span title="The depth and cadence of this particular assessment. Derived per engagement.">
+            Assessment tier:{" "}
+            <strong style={{ color: "#e5e7eb" }}>{e.assessment_tier ?? "—"}</strong>{" "}
+            <span style={{ color: "#6b7280" }}>(this engagement)</span>
+          </span>
         </p>
 
         <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -312,7 +361,21 @@ export default async function VendorEngagementPage({
           engagementId={e.id}
           state={state}
           inherentRating={e.inherent_rating}
+          invite={detail.invite ?? null}
+          contacts={contactsData?.contacts ?? []}
+          contactsLoadFailed={contactsData === null}
         />
+
+        <ParticipantsSection
+          engagementId={e.id}
+          participants={participantsResp?.participants ?? []}
+          contacts={contactsData?.contacts ?? []}
+          hasCoordinator={participantsResp?.has_coordinator ?? false}
+          loadFailed={participantsResp === null}
+          progress={progressResp}
+        />
+
+        <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />
 
         <EvidenceSection engagementId={e.id} evidence={evidence} />
 
