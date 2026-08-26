@@ -39,6 +39,10 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import {
+  portalExchangeRateLimiter,
+  recordExchangeFailure,
+} from "../middleware/portalExchangeRateLimiter.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
@@ -99,7 +103,13 @@ export async function exchangeInviteForSession(
   res: Response
 ): Promise<void> {
   const token = (req.body as Record<string, unknown>)?.token;
+  // Every rejection below is charged to the caller's address (VA-S1a). A
+  // SUCCESSFUL exchange costs nothing: a vendor office behind one NAT address
+  // legitimately exchanges valid links all day, and what no honest caller does
+  // is present tokens that do not resolve.
+  const chargeFailure = (): void => recordExchangeFailure(req.ip ?? "unknown");
   if (typeof token !== "string" || token.length === 0) {
+    chargeFailure();
     invalidLink(res);
     return;
   }
@@ -136,6 +146,7 @@ export async function exchangeInviteForSession(
       // being told it aged out, and one who does not cannot reach this branch.
       // revoked and not_found collapse — those WOULD distinguish "this existed
       // and we killed it" from "this never existed".
+      chargeFailure();
       if (validity.reason === "expired") {
         res.status(410).json({
           error: "portal_link_expired",
@@ -1229,7 +1240,16 @@ function runPortalUpload(req: Request, res: Response, next: () => void): void {
 // read, and — on the exchange route — before any token is even hashed.
 // ---------------------------------------------------------------------------
 
-router.post("/vendor-portal/session", vendorPortalFeatureFlag, exchangeInviteForSession);
+// The limiter sits between the flag and the handler: a disabled portal still
+// 404s before any counting, and an enabled one counts before any token is
+// hashed or any invite row is read. See portalExchangeRateLimiter.ts for what
+// it does and does not defend against.
+router.post(
+  "/vendor-portal/session",
+  vendorPortalFeatureFlag,
+  portalExchangeRateLimiter,
+  exchangeInviteForSession
+);
 
 router.delete(
   "/vendor-portal/session",

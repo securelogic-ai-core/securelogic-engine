@@ -47,6 +47,12 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // risk creation. denyContributor() is on every route in the file.
   "findingRiskLinks.ts",
   "findingAssetOccurrences.ts",
+  // T1-B. Deny-all, matching its two siblings on the same finding-detail surface.
+  // Vendor Assurance provenance is governance evidence — which obligation, whose
+  // determination, on what basis — and there is no per-Contributor ownership
+  // predicate over a vendor's assurance document. Read-only, but "read-only" is
+  // not the axis this classification turns on.
+  "findingVendorProvenance.ts",
   // SL-PENTEST-IN. Deny-all: recording a security assessment and reading the
   // org's testing history are governance acts with no per-Contributor
   // ownership predicate, matching every other assessment family.
@@ -109,6 +115,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "trends.ts",
   "vendorAssessmentAnalysis.ts",
   "vendorAssuranceDocuments.ts",
+  // VA-C1. Deny-all: naming who at a third party receives a credential is a
+  // governance act, and the family has no per-Contributor ownership predicate
+  // worth trusting — same posture as the engagement routes it feeds.
+  "vendorContacts.ts",
   // Every route carries denyContributor(): opening an engagement, overriding an
   // inherent rating, issuing a vendor credential and recording a governance
   // decision are all owner/admin actions, and issuing in particular mints a

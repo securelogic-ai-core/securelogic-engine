@@ -73,6 +73,7 @@ import { loadCuecsWithMappings, buildExportBundle } from "../lib/vendorAssurance
 // bespoke deadline logic — a vendor gap is a finding, and the org's policy
 // decides its due date exactly as it does for a pen-test result or a control gap.
 import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
+import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { buildVendorAssuranceWorkbookBuffer, workbookDownloadFilename } from "../lib/vendorAssuranceExcelExporter.js";
 import { buildVendorAssurancePdf, pdfDownloadFilename } from "../lib/vendorAssurancePdfExporter.js";
 
@@ -1693,6 +1694,19 @@ export async function promoteVendorAssuranceCuecToFinding(req: Request, res: Res
       WHERE id = $1 AND organization_id = $2`,
     [cuecId, organizationId, findingId]
   );
+
+  // THE VENDOR'S RISK SCORE MUST MOVE WHEN A GAP IS RECORDED AGAINST IT.
+  // Promotion was the one vendor-finding-creating path that scheduled no
+  // recompute at all — the third, independent reason a promoted CUEC never
+  // reached vendor risk, after the resolver and the scoring query. Without this
+  // the score only corrects itself the next time some UNRELATED finding on the
+  // same vendor changes state, which is indistinguishable from "the gap does not
+  // count". The known-vendor variant is used because the vendor id is already in
+  // hand; fire-and-forget and best-effort by contract, so a score refresh
+  // failure can never fail the promotion.
+  if (cuec.vendor_id != null) {
+    scheduleVendorScoreRecompute(organizationId, cuec.vendor_id);
+  }
 
   writeAuditEvent({
     organizationId,
