@@ -80,7 +80,7 @@ export function BriefSignupForm() {
         <div>
           <p className="text-text font-semibold text-sm">{MESSAGES.success}</p>
           <p className="text-text-muted text-xs mt-1">
-            Check your inbox to confirm your address.
+            Briefs are sent every Tuesday.
           </p>
         </div>
       </div>
