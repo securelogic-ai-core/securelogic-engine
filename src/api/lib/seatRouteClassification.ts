@@ -61,6 +61,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "askActions.ts",
   "assess.ts",
   "assetAssessments.ts",
+  // PLAT-ASSET-1. Deny-all: deciding which asset an identifier means (or
+  // that the question is noise) is an estate-governance act with no
+  // per-Contributor ownership predicate — the penTestEngagements posture.
+  "assetResolutionReviews.ts",
   "auditLog.ts",
   "auditPackage.ts",
   "briefingChanges.ts",
