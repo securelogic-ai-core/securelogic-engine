@@ -2567,6 +2567,131 @@ export type FindingContext = {
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 };
 
+// ─── Pen-test engagements (SL-PENTEST-IN / PEN-1) ────────────────────────────
+// The penetration test a finding came from — provenance, not a lifecycle. Its
+// findings are ordinary Findings reached through getFindings({ source_type:
+// "pen_test", source_id }): there is deliberately NO pentest-specific findings
+// endpoint, so nothing here duplicates the finding list contract.
+
+/** T2-I lifecycle — a STATEMENT of where the engagement is, not a lock:
+ *  transitions are free (the engine rules why), the audit log holds history. */
+export type PenTestEngagementStatus =
+  | "planned"
+  | "testing"
+  | "report_received"
+  | "remediation"
+  | "closed";
+
+export type PenTestTestType =
+  | "network"
+  | "web_application"
+  | "mobile_application"
+  | "api"
+  | "cloud"
+  | "social_engineering"
+  | "physical"
+  | "red_team"
+  | "other";
+
+export type PenTestEngagement = {
+  id: string;
+  name: string;
+  /** The testing firm — free text, deliberately not a Vendor record. */
+  provider: string | null;
+  started_on: string | null;
+  ended_on: string | null;
+  /** Where the report lives — a URL, a document id, or a filing reference. */
+  report_reference: string | null;
+  /** T2-I: where the engagement is in its lifecycle. */
+  status: PenTestEngagementStatus;
+  test_type: PenTestTestType | null;
+  /** The recurrence clock ("annual test due"), YYYY-MM-DD or null. */
+  next_test_due: string | null;
+  /**
+   * Overdue is COMPUTED BY THE ENGINE at read (next_test_due < today) — the
+   * app renders it and never recomputes it client-side.
+   */
+  test_overdue: boolean;
+  /** Detail-only (the list row omits them): the provider's own words. */
+  methodology?: string | null;
+  scope_summary?: string | null;
+  /** Stamped by the engine on entry to 'closed', cleared on leaving — the
+   *  closed <=> stamped pair is a DB CHECK and can never disagree. */
+  closed_at?: string | null;
+  created_at: string;
+  /**
+   * Findings referencing this engagement (source_type='pen_test'). Computed by
+   * the engine in SQL — an engagement showing zero is either brand new or an
+   * import that failed, and those look identical without the count.
+   */
+  finding_count: number;
+};
+
+/** One retest act on a pen-test finding (T2-I). APPEND-ONLY on the engine —
+ *  the newest row is the current verification state, and a 'remediated'
+ *  retest NEVER closes the finding (the closure gate is the only path). */
+export type PenTestRetestResult =
+  | "remediated"
+  | "not_remediated"
+  | "partially_remediated";
+
+export type PenTestRetest = {
+  id: string;
+  engagement_id: string;
+  /** Joined by the engine: the name of the engagement that DID the retest —
+   *  legitimately a later engagement than the one that found the issue. */
+  engagement_name: string;
+  result: PenTestRetestResult;
+  notes: string | null;
+  performed_on: string;
+  recorded_by_user_id: string | null;
+  created_at: string;
+};
+
+/** Verification history for one pen-test finding, newest first. null = the
+ *  fetch failed (an outage), which is a DIFFERENT fact from an empty history
+ *  ("never retested") — callers must not collapse the two. */
+export async function getFindingRetests(
+  apiKey: string,
+  findingId: string
+): Promise<{ count: number; retests: PenTestRetest[] } | null> {
+  try {
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/retests`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<{ count: number; retests: PenTestRetest[] }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPenTestEngagements(
+  apiKey: string
+): Promise<{ engagements: PenTestEngagement[]; count: number } | null> {
+  try {
+    const res = await engineFetch(`/api/pen-test-engagements`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagements: PenTestEngagement[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPenTestEngagement(
+  apiKey: string,
+  id: string
+): Promise<{ engagement: PenTestEngagement } | null> {
+  try {
+    const res = await engineFetch(`/api/pen-test-engagements/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagement: PenTestEngagement }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFindingContext(
   apiKey: string,
   id: string

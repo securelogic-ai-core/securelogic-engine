@@ -551,6 +551,8 @@ export function DecisionWorkspace({
   children,
   riskRegister,
   affectedAssets,
+  sourceProvenance,
+  retestHistory,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -600,6 +602,23 @@ export function DecisionWorkspace({
    * before they ask anything else about it.
    */
   affectedAssets?: React.ReactNode;
+  /**
+   * Source provenance for the identity row (PEN-1), composed server-side by
+   * the page that owns the fetch — e.g. the pen-test engagement a pen_test
+   * finding came from, linked to /pen-tests/[id]. A node rather than data so
+   * this client component fetches nothing and renders nothing when the source
+   * has no richer provenance than its label.
+   */
+  sourceProvenance?: React.ReactNode;
+  /**
+   * T2-I: the verification (retest) history of a pen_test finding, composed
+   * server-side by the page that owns the fetch — same delivery as the PEN-1
+   * provenance beside it. Rendered as its own zone with the Risk Register,
+   * not inside a tab, for the same reason: an auditor's "was this verified?"
+   * must not disappear the moment the workspace flag flips. Undefined for
+   * every other source type — the section is ABSENT, never empty.
+   */
+  retestHistory?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -893,6 +912,9 @@ export function DecisionWorkspace({
           <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
           <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
+          {/* Where this finding CAME FROM, when the source has a destination —
+              the pen-test engagement link (PEN-1). Server-composed. */}
+          {sourceProvenance}
         </div>
         {/* DW-4: risk-score explainability — the factors that produced the number,
             already computed by the engine (context.risk.rationale) and previously dropped. */}
@@ -1167,6 +1189,8 @@ export function DecisionWorkspace({
           unconditionally. */}
       {affectedAssets && <div style={{ marginBottom: 20 }}>{affectedAssets}</div>}
       {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
+      {/* T2-I: retest verification history (pen_test findings only). */}
+      {retestHistory && <div style={{ marginBottom: 20 }}>{retestHistory}</div>}
 
       {/* Tab strip — executive zones A–C stay above; the detail body splits into
           Overview (context) and Remediation (recommendation + actions). */}
