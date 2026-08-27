@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { penTestEnabled } from "@/lib/penTestFeatureFlag";
+import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
   getPenTestEngagement,
@@ -49,6 +50,15 @@ export default async function PenTestDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // ACTIVATION gate, checked BEFORE the entitlement redirect below. The two
+  // controls answer different questions and fail differently on purpose: a
+  // disabled capability is notFound() (the page does not exist for anyone,
+  // whatever their tier), an unentitled user is redirect("/dashboard") (the
+  // page exists, this account may not use it). Direct navigation to the URL is
+  // the bypass this closes — the nav entry is hidden by the same flag, and the
+  // engine 404s the API underneath, so all three doors are shut by one key.
+  if (!penTestEnabled()) notFound();
+
   const { id } = await params;
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
