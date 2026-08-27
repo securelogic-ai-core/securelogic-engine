@@ -122,6 +122,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
         {
           "label": "Risk Register",
           "href": "/risks"
+        },
+        {
+          "label": "Approvals",
+          "href": "/approvals"
         }
       ]
     },
@@ -248,6 +252,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
       "group": "Risk"
     },
     {
+      "label": "Approvals",
+      "href": "/approvals",
+      "access": "platform",
+      "group": "Risk"
+    },
+    {
       "label": "Audit Log",
       "href": "/audit-log",
       "access": "admin",
@@ -360,7 +370,7 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "path": "/approvals",
       "dynamic": false,
-      "navLabel": null,
+      "navLabel": "Approvals",
       "access": "platform"
     },
     {

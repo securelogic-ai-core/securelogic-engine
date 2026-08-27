@@ -203,9 +203,10 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   it("leads Risk Operations with the two findings destinations and surfaces Approvals", () => {
     // Operations Workspace (the work hub) then Finding Explorer (the searchable
     // inventory) — one route, two distinct user intents, both reachable from the nav.
-    // Pen Tests is ACTIVATION-flagged, so the ordering is asserted with it on;
-    // its absence when the flag is off is a separate case below.
-    expect(groupChildren(ws(true, false, { pen_test: true }), "Risk Operations")).toEqual([
+    // Pen Tests and Approvals are both ACTIVATION-flagged, so the ordering is
+    // asserted with them on; their absence when the flags are off is a separate
+    // case below.
+    expect(groupChildren(ws(true, false, { pen_test: true, risk_acceptance: true }), "Risk Operations")).toEqual([
       "/findings",
       "/findings?queue=all",
       "/actions",
@@ -216,7 +217,7 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   });
 
   it("names the Risk Operations destinations by task, not by feature", () => {
-    const group = ws(true, false, { pen_test: true }).find(
+    const group = ws(true, false, { pen_test: true, risk_acceptance: true }).find(
       (i): i is Extract<typeof i, { type: "group" }> =>
         i.type === "group" && i.label === "Risk Operations",
     );
@@ -471,5 +472,103 @@ describe("destination labels follow the risk_workspace flag", () => {
   it("does not invent a Finding Explorer the user cannot see", () => {
     expect(findingExplorerLabel(true)).toBe("Finding Explorer");
     expect(findingExplorerLabel(false)).toBe("All findings");
+  });
+});
+
+// ─── NAV-1: Approvals is declared in BOTH nav models, ACTIVATION-flagged ──────
+//
+// The defect: "Approvals" existed ONLY in WORKSPACE_NAV_ITEMS. Production
+// renders the LEGACY model (risk_workspace is off there), so the org-wide
+// approvals queue was nav-orphaned in the only model customers actually see —
+// reachable from a /risks back-link or a typed URL and nothing else.
+//
+// The fix is NOT simply "add it to the legacy menu". /approvals is entitlement-
+// gated but NOT flag-gated in its page body: it degrades to an "unavailable"
+// state when the engine 404s. An UNGATED legacy entry would therefore have
+// advertised a dead page to every platform user in production, where both
+// backing flags are off. So the entry ships in both models behind
+// `risk_acceptance`, mirroring the engine's SECURELOGIC_RISK_ACCEPTANCE_ENABLED.
+describe("NAV-1 — Approvals declaration + activation flag", () => {
+  const legacy = (flags?: NavFlags) => filterNav(NAV_ITEMS, true, true, true, flags);
+  const workspace = (flags?: NavFlags) =>
+    filterNav(WORKSPACE_NAV_ITEMS, true, true, true, { risk_workspace: true, ...flags });
+
+  it("is DARK by default in BOTH nav models (fail-closed)", () => {
+    // No flags passed at all — the production posture. The entry must be
+    // invisible in the model production renders AND in the workspace model, so
+    // flipping risk_workspace can never surface it on its own.
+    expect(allHrefs(legacy())).not.toContain("/approvals");
+    expect(allHrefs(workspace())).not.toContain("/approvals");
+  });
+
+  it("stays dark when the flag is explicitly false — no permissive fallback", () => {
+    expect(allHrefs(legacy({ risk_acceptance: false }))).not.toContain("/approvals");
+    expect(allHrefs(workspace({ risk_acceptance: false }))).not.toContain("/approvals");
+  });
+
+  it("appears in the LEGACY Risk group when the flag is on — the NAV-1 fix", () => {
+    // This is the assertion the whole package exists for: the model production
+    // renders can now reach Approvals.
+    expect(groupChildren(legacy({ risk_acceptance: true }), "Risk")).toContain("/approvals");
+  });
+
+  it("sits after Risk Register in the legacy Risk group, mirroring the workspace order", () => {
+    expect(groupChildren(legacy({ risk_acceptance: true, pen_test: true }), "Risk")).toEqual([
+      "/findings",
+      "/pen-tests",
+      "/actions",
+      "/risks",
+      "/approvals",
+    ]);
+  });
+
+  it("keeps the two nav models semantically consistent for Approvals", () => {
+    // Same destination, same flag, same entitlement — the two models must not
+    // disagree about whether Approvals exists, or a risk_workspace flip would
+    // silently add or remove a governance surface.
+    const flags = { risk_acceptance: true } as const;
+    expect(allHrefs(legacy(flags))).toContain("/approvals");
+    expect(allHrefs(workspace(flags))).toContain("/approvals");
+
+    const legacyItem = NAV_ITEMS.flatMap((i) => (i.type === "group" ? i.items : [])).find(
+      (c) => c.href === "/approvals",
+    );
+    const workspaceItem = WORKSPACE_NAV_ITEMS.flatMap((i) =>
+      i.type === "group" ? i.items : [],
+    ).find((c) => c.href === "/approvals");
+    expect(legacyItem?.featureFlag).toBe("risk_acceptance");
+    expect(workspaceItem?.featureFlag).toBe("risk_acceptance");
+    expect(legacyItem?.label).toBe(workspaceItem?.label);
+  });
+
+  it("does not weaken the platform entitlement gate — the flag only subtracts", () => {
+    // Flag ON but not a platform user: still hidden. Activation can never grant
+    // reach that entitlement refuses; effective visibility is flag AND
+    // entitlement, and the group itself carries `platform: true`.
+    const notPlatform = filterNav(NAV_ITEMS, false, true, true, { risk_acceptance: true });
+    expect(allHrefs(notPlatform)).not.toContain("/approvals");
+
+    const wsNotPlatform = filterNav(WORKSPACE_NAV_ITEMS, false, true, true, {
+      risk_workspace: true,
+      risk_acceptance: true,
+    });
+    expect(allHrefs(wsNotPlatform)).not.toContain("/approvals");
+  });
+
+  it("does not disturb the other Risk destinations in either position", () => {
+    // The regression this guards: gating one child must not gate its siblings.
+    for (const flags of [{}, { risk_acceptance: true }]) {
+      const children = groupChildren(legacy(flags), "Risk");
+      expect(children).toContain("/findings");
+      expect(children).toContain("/actions");
+      expect(children).toContain("/risks");
+    }
+  });
+
+  it("carries Approvals in ROUTE_ACCESS_DECLARATIONS at the same access it renders at", () => {
+    // The knowledge index reads both; if they disagree, Ask names a destination
+    // whose real gate refuses the caller.
+    const declared = ROUTE_ACCESS_DECLARATIONS.find((d) => d.prefix === "/approvals");
+    expect(declared?.access).toBe("platform");
   });
 });
