@@ -43,11 +43,21 @@
  *
  * which is true by construction for exactly the findings this endpoint describes.
  *
- * (The same ambiguity is a live defect elsewhere: resolveVendorForFinding() in
- * vendorRiskScoreRecompute.ts joins vendor_assessments on source_id, so it
- * resolves NULL for every CUEC-promoted finding and those gaps never reach the
- * vendor risk score. Reported separately; deliberately NOT fixed here, because
- * this package is read-only.)
+ * (The same ambiguity is a live defect elsewhere, and re-checked against the
+ * tree on 2026-08-27 it is WIDER than first reported. The function is
+ * `resolveVendorIdForFinding()` — not `resolveVendorForFinding()` — in
+ * `src/api/lib/vendorRiskScoreRecompute.ts:44`, and four more call sites join
+ * the same way: vendorRiskScoreRecompute.ts:85 and vendors.ts:453 / :649 /
+ * :1251. All of them LEFT/INNER JOIN vendor_assessments on
+ * `va.id::text = f.source_id::text` for source_type='vendor_review'. A
+ * CUEC-promoted finding carries a vendors.id there, so it matches no assessment
+ * row: the gap resolves NULL for the risk score AND drops out of
+ * active_findings_count / open_findings_count on the vendor list, the vendor
+ * risk board, and GET /api/vendors/:id/findings. CANONICAL_DOMAIN_MODEL.md:246
+ * still records `vendor_review -> vendor_assessments` as the single mapping, so
+ * the CUEC writer is the side that diverged from the ratified model. Reported
+ * separately; deliberately NOT fixed here, because this package is read-only and
+ * the fix needs its own decision about which writer is wrong.)
  *
  * ABSENCE IS AN ANSWER, NOT AN ERROR
  * ----------------------------------
