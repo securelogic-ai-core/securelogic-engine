@@ -12,7 +12,7 @@
  * other source has NO retest section at all — "no retests" is not a claim the
  * platform can make about a control-test finding.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderPage, signedIn, sp, hrefOf } from "@/test/harness";
 import {
@@ -67,9 +67,20 @@ const twoRetests = () => ({
   ],
 });
 
+const ORIGINAL_ENV = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   signedIn();
+  // The retest section is behind the pen-test ACTIVATION flag as well as the
+  // source-type check: this page is not otherwise pen-test gated, so a dark
+  // capability must not surface anything here. These cases describe the
+  // capability when it is ON; the dark case is its own describe below.
+  process.env["SECURELOGIC_PEN_TEST_ENABLED"] = "true";
   api.getFinding.mockResolvedValue({ finding: penTestFinding() });
   api.getActionsForFinding.mockResolvedValue(anActionsResponse([]));
   api.getFindingContext.mockResolvedValue(null);
@@ -159,5 +170,62 @@ describe("Decision Workspace layout — the history survives the flag flip", () 
 
     expect(screen.queryByText("Retest History")).not.toBeInTheDocument();
     expect(api.getFindingRetests).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The activation flag reaches this page too (NAV/T2-I reconciliation) ─────
+//
+// /findings/[id] is NOT pen-test gated — any platform user reaches it for any
+// finding. #868 hung retest history off it, which created a leak the pen-test
+// pages themselves cannot have: with the capability dark the engine 404s
+// /api/findings/:id/retests, `getFindingRetests` resolves null, and null is
+// rendered by RetestHistorySection as "Retest history couldn't be loaded right
+// now — an outage, not an empty history".
+//
+// So turning the capability OFF would have made every pen_test finding announce
+// an OUTAGE about a capability that is deliberately off — a false alarm, on a
+// page nobody gated, aimed at the one word ("outage") a customer escalates.
+// Dark means ABSENT, exactly as it already is for a control_test finding.
+describe("FLAG FALSE — the retest section is absent, not an outage notice", () => {
+  beforeEach(() => {
+    delete process.env["SECURELOGIC_PEN_TEST_ENABLED"];
+  });
+
+  it("renders no retest section at all for a pen_test finding", async () => {
+    await renderPage(FindingDetailPage, props());
+    expect(screen.queryByText("Retest History")).not.toBeInTheDocument();
+  });
+
+  it("never claims an outage while the capability is merely off", async () => {
+    await renderPage(FindingDetailPage, props());
+    expect(screen.queryByText(/couldn’t be loaded right now/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/outage/i)).not.toBeInTheDocument();
+  });
+
+  it("does not claim 'never retested' either — silence, not a false fact", async () => {
+    // The opposite failure mode. We cannot know the history while dark, so the
+    // page must assert nothing about it in either direction.
+    await renderPage(FindingDetailPage, props());
+    expect(screen.queryByText(/never retested/i)).not.toBeInTheDocument();
+  });
+
+  it("spends NO retest fetch when dark — the gate precedes the load", async () => {
+    await renderPage(FindingDetailPage, props());
+    expect(api.getFindingRetests).not.toHaveBeenCalled();
+  });
+
+  it("leaves PEN-1 provenance exactly as develop already ships it", async () => {
+    // Deliberately NOT gated by this package: the engagement arm degrades to the
+    // plain source label on its own and that behaviour is already shipped and
+    // validated. Changing it here would be scope the reconciliation has no
+    // mandate for — so it must still be fetched.
+    await renderPage(FindingDetailPage, props());
+    expect(api.getPenTestEngagement).toHaveBeenCalled();
+  });
+
+  it("the rest of the finding page is unaffected", async () => {
+    const { container } = await renderPage(FindingDetailPage, props());
+    expect(container.textContent).toBeTruthy();
+    expect(screen.queryByText("Retest History")).not.toBeInTheDocument();
   });
 });
