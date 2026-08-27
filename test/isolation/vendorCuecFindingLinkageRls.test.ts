@@ -611,3 +611,135 @@ describe("tenancy — cross-wired ids cannot cross the boundary", () => {
     }
   });
 });
+
+/* ===========================================================================
+   The two count populations are DIFFERENT PREDICATES, and the CUEC arm obeys
+   both.
+
+   Added during the 2026-08-27 integration reconciliation. The cases above seed
+   all three findings `status='open'` AND `operational_status='open'`, so
+   active_findings_count and open_findings_count are both 3 and the file cannot
+   tell them apart: a regression that answered one predicate with the other
+   would pass every assertion above it.
+
+   That matters more here than it usually would. `active_findings_count`
+   (operational_status <> 'closed') is the canonical enterprise metric and
+   `open_findings_count` (status = 'open') is what these surfaces display today,
+   and this package rewrites the join underneath BOTH of them on a live
+   production spine.
+
+   The two axes are NOT free of each other — `findings_closure_axes_agree`
+   (migration 20260906) makes CLOSURE identical on both by CHECK:
+
+       (operational_status = 'closed') = (status IN ('closed','accepted'))
+
+   so the honest divergence to test is the NON-closed one the constraint
+   deliberately leaves open: a finding moved to `in_progress` is still ACTIVE
+   (it has not been closed) but is no longer strictly OPEN. That is precisely
+   the distinction the two counts exist to express, and it is the case where a
+   join rewrite could quietly answer one question with the other.
+
+   Mutations are applied here and left in place: this is the last block in the
+   file, and every count it asserts is computed fresh from the database.
+   =========================================================================== */
+
+describe("the two vendor-card counts answer different questions", () => {
+  const cardCounts = async (): Promise<{ active: number; open: number }> => {
+    const res = await asOrgA.get("/api/vendors?limit=100");
+    expect(res.status).toBe(200);
+    const vendor = (res.body.vendors as Array<Record<string, unknown>>).find(
+      (v) => v.id === A.vendorId,
+    );
+    expect(vendor).toBeDefined();
+    return {
+      active: Number(vendor!.active_findings_count),
+      open: Number(vendor!.open_findings_count),
+    };
+  };
+
+  it("starts from the three-arm baseline, both populations agreeing", async () => {
+    expect(await cardCounts()).toEqual({ active: 3, open: 3 });
+  });
+
+  it("CLOSING the CUEC finding drops BOTH counts — closure is one fact, per the CHECK", async () => {
+    // The CUEC arm deliberately, because it is the arm this package adds: if it
+    // were wired in a way that ignored the finding's own lifecycle columns, a
+    // promoted gap would count forever and a vendor could never be cleared.
+    await pool.query(
+      `UPDATE findings SET status = 'closed', operational_status = 'closed' WHERE id = $1`,
+      [A.cuecFindingId],
+    );
+    expect(await cardCounts()).toEqual({ active: 2, open: 2 });
+  });
+
+  it("a closed CUEC gap leaves the vendor's risk-score population", async () => {
+    const population = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(SCORE_POPULATION_SQL, [A.vendorId, seed.orgA.id])).rows,
+    );
+    expect(population.map((r) => r.id)).not.toContain(A.cuecFindingId);
+    expect(population).toHaveLength(2);
+  });
+
+  it("but it is STILL LISTED on the vendor page — closed is a state, not a deletion", async () => {
+    // The list is the audit surface. A gap that stops being counted must not
+    // also stop being visible, or a reader cannot tell "remediated" from
+    // "never happened".
+    const res = await asOrgA.get(`/api/vendors/${A.vendorId}/findings`);
+    expect(res.status).toBe(200);
+    const ids = (res.body.findings as Array<{ id: string }>).map((f) => f.id);
+    expect(ids).toContain(A.cuecFindingId);
+  });
+
+  it("moving the assessment finding to IN_PROGRESS drops OPEN but not ACTIVE", async () => {
+    // The divergence the CHECK permits, and the reason there are two counts.
+    // Work started is not work finished: it must leave the strictly-open display
+    // population without leaving the canonical enterprise metric.
+    await pool.query(
+      `UPDATE findings SET status = 'in_progress', operational_status = 'in_progress'
+        WHERE id = $1`,
+      [A.assessmentFindingId],
+    );
+    expect(await cardCounts()).toEqual({ active: 2, open: 1 });
+  });
+
+  it("the summary shares the LINKAGE but not the word: its `open_findings` is Active", async () => {
+    // NAMING COLLISION, PRE-EXISTING AND NOW VISIBLE — pinned here deliberately.
+    //
+    //   GET /api/vendors        open_findings_count   = status = 'open'          -> 1
+    //   GET /api/vendors        active_findings_count = operational_status<>closed -> 2
+    //   GET /api/vendors/summary open_findings        = operational_status<>closed -> 2
+    //
+    // The summary's field is named `open_findings` but computes ACTIVE. That
+    // came from the #645 Active-Findings convergence rewriting the predicate
+    // without renaming the field — the same rewrite that left it selecting a
+    // column the derived table did not expose, which is why this endpoint has
+    // answered 500 ever since and nobody has seen the number.
+    //
+    // This package makes the endpoint answer. It does NOT rename the field:
+    // that is a wire change on a live surface and belongs to its own decision.
+    // What it must not do is let the collision go unrecorded, so the expectation
+    // below states the real semantics. If the field is ever renamed or its
+    // predicate changed, this fails and the change is deliberate.
+    const res = await asOrgA.get("/api/vendors/summary");
+    expect(res.status).toBe(200);
+    const vendor = (res.body.summary.top_vendors_by_risk as Array<Record<string, unknown>>)
+      .find((v) => v.id === A.vendorId);
+    expect(vendor).toBeDefined();
+    expect(Number(vendor!.open_findings)).toBe(2);
+
+    // The card, same org, same vendor, same instant: 1. Two live surfaces, one
+    // word, two populations.
+    expect((await cardCounts()).open).toBe(1);
+  });
+
+  it("neither mutation reached org B — its identical chain still counts 3 and 3", async () => {
+    const res = await asOrgB.get("/api/vendors?limit=100");
+    expect(res.status).toBe(200);
+    const vendorB = (res.body.vendors as Array<Record<string, unknown>>).find(
+      (v) => v.id === B.vendorId,
+    );
+    expect(vendorB).toBeDefined();
+    expect(Number(vendorB!.active_findings_count)).toBe(3);
+    expect(Number(vendorB!.open_findings_count)).toBe(3);
+  });
+});

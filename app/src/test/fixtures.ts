@@ -1182,3 +1182,51 @@ export function aSubscription(overrides: Partial<SubscriptionInfo> = {}): Subscr
     grace_state: derivedGrace,
   };
 }
+
+import type { PenTestEngagement, PenTestRetest } from "@/lib/api";
+
+/** A pen-test engagement (PEN-1) — provenance for pen_test-sourced findings. */
+export function aPenTestEngagement(
+  overrides: Partial<PenTestEngagement> = {}
+): PenTestEngagement {
+  return {
+    id: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+    name: "Q3 external network test",
+    provider: "Redwood Security",
+    started_on: "2026-07-01",
+    ended_on: "2026-07-12",
+    report_reference: "PT-2026-Q3.pdf",
+    // T2-I lifecycle defaults: the report is in and remediation is running —
+    // the mid-life state most engagements sit in. No recurrence clock unless
+    // a test sets one; test_overdue is the ENGINE's computed flag and the
+    // fixtures mirror that contract (the app never recomputes it).
+    status: "remediation",
+    test_type: "network",
+    methodology: "PTES",
+    scope_summary: "External perimeter and the customer portal; payments API out of scope.",
+    next_test_due: null,
+    test_overdue: false,
+    closed_at: null,
+    created_at: "2026-07-15T00:00:00.000Z",
+    finding_count: 2,
+    ...overrides,
+  };
+}
+
+/** One retest act (T2-I) — append-only on the engine; newest row is the
+ *  current verification state, and a retest NEVER closes the finding. */
+export function aPenTestRetest(
+  overrides: Partial<PenTestRetest> = {}
+): PenTestRetest {
+  return {
+    id: "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
+    engagement_id: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+    engagement_name: "Q3 external network test",
+    result: "remediated",
+    notes: "Patched host no longer reachable on the vulnerable service.",
+    performed_on: "2026-08-01",
+    recorded_by_user_id: "user-1",
+    created_at: "2026-08-01T00:00:00.000Z",
+    ...overrides,
+  };
+}

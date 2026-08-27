@@ -88,7 +88,10 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworks.ts": 4,
   "frameworkActivation.ts": 1,
   "frameworkReadiness.ts": 1,
-  "requirements.ts": 6,
+  // 8 since VA-6: +1 GET /requirements/scope-tag-coverage, +1 PATCH
+  // /requirements/:id (curation, additionally admin-gated) — both premium
+  // like every sibling; the STD==0 assertion still holds.
+  "requirements.ts": 8,
   // obligations
   // 7 since GET /obligations/:id/history — dual-gated like the rest.
   "obligations.ts": 7,
