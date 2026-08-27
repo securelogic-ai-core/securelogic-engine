@@ -48,6 +48,7 @@ import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
 import findingRiskLinksRouter from "./findingRiskLinks.js";
 import findingAssetOccurrencesRouter from "./findingAssetOccurrences.js";
+import findingVendorProvenanceRouter from "./findingVendorProvenance.js";
 import penTestEngagementsRouter from "./penTestEngagements.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
@@ -489,6 +490,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // /findings/:id/risk-links as an id of "risk-links".
   router.use("/api", findingRiskLinksRouter);
   router.use("/api", findingAssetOccurrencesRouter);
+  // Same reason: /findings/:id/vendor-provenance must not be captured as an id.
+  router.use("/api", findingVendorProvenanceRouter);
   router.use("/api", penTestEngagementsRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);

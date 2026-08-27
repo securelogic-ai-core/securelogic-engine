@@ -11,6 +11,7 @@ import {
   type Action,
   getFindingRiskLinks,
   getFindingOccurrences,
+  getFindingVendorProvenance,
   getRisks,
   getAuthMe,
   getPenTestEngagement,
@@ -26,6 +27,7 @@ import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
 import { RiskRegisterPanel } from "./RiskRegisterPanel";
 import { AffectedAssetsPanel } from "./AffectedAssetsPanel";
+import { VendorProvenancePanel } from "./VendorProvenancePanel";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -488,7 +490,7 @@ export default async function FindingDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData] =
+  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData, vendorProvenance] =
     await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
@@ -508,6 +510,8 @@ export default async function FindingDetailPage({
     // thousands of hosts, so there is no "fetch all" variant; the rollup counts
     // come from a server-side aggregate, never from the returned page.
     getFindingOccurrences(token, id, { limit: 25, offset: occOffset }),
+    // T1-B. Fails soft to null; a provenance lookup must never take down the page.
+    getFindingVendorProvenance(token, id),
   ]);
 
   if (!findingData) redirect("/findings");
@@ -584,6 +588,7 @@ export default async function FindingDetailPage({
             /* Carried into the workspace so activating it does not remove
                Finding ↔ Risk visibility. Same component, same data, same
                permissions as the legacy layout — one implementation, not two. */
+            vendorProvenance={<VendorProvenancePanel data={vendorProvenance} />}
             affectedAssets={
               <AffectedAssetsPanel
                 findingId={finding.id}
@@ -733,6 +738,16 @@ export default async function FindingDetailPage({
               </div>
             </div>
           )}
+
+          {/* Provenance — FIRST. "What is this and where did it come from"
+              precedes "where is it" and "are we carrying it". Rendered in BOTH
+              layouts for the same reason the panels below are: the Decision
+              Workspace is a different tree, so a panel added to only one of them
+              disappears the moment the flag flips. Renders nothing unless the
+              finding was promoted from a CUEC. */}
+          <div className="mb-5">
+            <VendorProvenancePanel data={vendorProvenance} />
+          </div>
 
           {/* Affected assets — ABOVE the Risk Register, because "where is this"
               precedes "are we carrying it". Rendered in BOTH layouts: the

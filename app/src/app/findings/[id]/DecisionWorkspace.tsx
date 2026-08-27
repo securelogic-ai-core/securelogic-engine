@@ -553,6 +553,7 @@ export function DecisionWorkspace({
   affectedAssets,
   sourceProvenance,
   retestHistory,
+  vendorProvenance,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -619,6 +620,14 @@ export function DecisionWorkspace({
    * every other source type — the section is ABSENT, never empty.
    */
   retestHistory?: React.ReactNode;
+  /**
+   * Vendor Assurance provenance, composed server-side by the page that owns the
+   * fetch. Rendered FIRST among the zones, above affected assets: before asking
+   * where a finding is or whether we are carrying it, a reader has to know what it
+   * IS and which vendor obligation produced it. Renders nothing at all unless the
+   * finding was promoted from a CUEC, so non-vendor findings pay no vertical space.
+   */
+  vendorProvenance?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1187,6 +1196,7 @@ export function DecisionWorkspace({
           about the finding, and putting it inside a tab would mean activating
           this workspace REMOVED a capability the legacy layout shows
           unconditionally. */}
+      {vendorProvenance && <div style={{ marginBottom: 20 }}>{vendorProvenance}</div>}
       {affectedAssets && <div style={{ marginBottom: 20 }}>{affectedAssets}</div>}
       {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
       {/* T2-I: retest verification history (pen_test findings only). */}
