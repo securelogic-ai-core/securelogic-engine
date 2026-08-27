@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -16,6 +17,15 @@ export type CreatePenTestResult = { error: string };
 export async function createPenTest(
   formData: FormData
 ): Promise<CreatePenTestResult | void> {
+  // A server action is its own endpoint: Next.js will invoke it from a direct
+  // POST carrying the action id, without ever rendering the page whose
+  // notFound() gate would have stopped a browser. So the flag is re-checked
+  // HERE rather than trusted from the page — the page gate and this one close
+  // different doors. The engine 404s the create route underneath as the final
+  // backstop; this just refuses before spending a network call, and keeps the
+  // action's contract (a returned error, never a thrown one).
+  if (!penTestEnabled()) return { error: "Not available" };
+
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
 

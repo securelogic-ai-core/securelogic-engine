@@ -43,7 +43,14 @@ export type NavFeatureFlag =
   // the knowledge index stay byte-identical. Vocabulary: the "Briefing" label was
   // operator-ratified (2026-07-21) — deliberately distinct from the Intelligence
   // group's "Briefs" (the Intelligence Brief wedge product).
-  | "briefing";
+  | "briefing"
+  // Pen-test capability (PEN-1 / T2-I) — DARK (default off). The ACTIVATION
+  // control, distinct from the Risk group's `platform` entitlement above it:
+  // entitlement says who may use Pen Tests, this says whether Pen Tests are
+  // exposed at all. Mirrors the engine's SECURELOGIC_PEN_TEST_ENABLED, which
+  // 404s every pen-test route independently, so nav and API go dark together
+  // and neither can be reached by way of the other.
+  | "pen_test";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -152,7 +159,7 @@ export const NAV_ITEMS: NavItem[] = [
       // production renders (risk_workspace is off there), so a workspace-only
       // entry would ship the pages nav-orphaned — the exact defect the Vendor
       // Assurance group above exists to prevent.
-      { label: "Pen Tests",     href: "/pen-tests" },
+      { label: "Pen Tests",     href: "/pen-tests", featureFlag: "pen_test" },
       { label: "Actions",       href: "/actions" },
       { label: "Risk Register", href: "/risks" },
     ],
@@ -218,7 +225,7 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       // Pen-test engagements (PEN-1) — the finding-source registry, mirrored
       // from the legacy Risk group. Appended after the task-led ordering the
       // group leads with, so the two findings destinations stay first.
-      { label: "Pen Tests",            href: "/pen-tests" },
+      { label: "Pen Tests",            href: "/pen-tests", featureFlag: "pen_test" },
     ],
   },
   { type: "group", label: "Assets", platform: true,

@@ -203,7 +203,9 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   it("leads Risk Operations with the two findings destinations and surfaces Approvals", () => {
     // Operations Workspace (the work hub) then Finding Explorer (the searchable
     // inventory) — one route, two distinct user intents, both reachable from the nav.
-    expect(groupChildren(ws(true, false), "Risk Operations")).toEqual([
+    // Pen Tests is ACTIVATION-flagged, so the ordering is asserted with it on;
+    // its absence when the flag is off is a separate case below.
+    expect(groupChildren(ws(true, false, { pen_test: true }), "Risk Operations")).toEqual([
       "/findings",
       "/findings?queue=all",
       "/actions",
@@ -214,7 +216,7 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   });
 
   it("names the Risk Operations destinations by task, not by feature", () => {
-    const group = ws(true, false).find(
+    const group = ws(true, false, { pen_test: true }).find(
       (i): i is Extract<typeof i, { type: "group" }> =>
         i.type === "group" && i.label === "Risk Operations",
     );
@@ -228,16 +230,49 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     ]);
   });
 
-  it("keeps Pen Tests reachable in BOTH nav models (PEN-1 — production renders the legacy menu)", () => {
-    // Workspace IA (flag on).
-    expect(allHrefs(ws(true, false))).toContain("/pen-tests");
-    // Legacy IA — the LIVE flag-off menu. A workspace-only entry would ship the
+  it("Pen Tests is DARK by default in BOTH nav models (PEN-1 activation flag)", () => {
+    // The entry ships in code and stays invisible everywhere the flag is off —
+    // fail-closed, and the reason a platform entitlement alone is no longer
+    // enough to surface it. Production renders the legacy menu, so the legacy
+    // model is the one that actually decides prod exposure.
+    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).not.toContain("/pen-tests");
+    expect(groupChildren(filterNav(NAV_ITEMS, true, true, false), "Risk")).not.toContain("/pen-tests");
+    expect(allHrefs(ws(true, false))).not.toContain("/pen-tests");
+  });
+
+  it("keeps Pen Tests reachable in BOTH nav models once ACTIVATED (production renders the legacy menu)", () => {
+    // Workspace IA.
+    expect(allHrefs(ws(true, false, { pen_test: true }))).toContain("/pen-tests");
+    // Legacy IA — the LIVE menu. A workspace-only entry would ship the
     // /pen-tests pages nav-orphaned in production.
-    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).toContain("/pen-tests");
-    expect(groupChildren(filterNav(NAV_ITEMS, true, true, false), "Risk")).toContain("/pen-tests");
-    // Platform-gated like the rest of the Risk group.
-    expect(allHrefs(filterNav(NAV_ITEMS, false, true, false))).not.toContain("/pen-tests");
-    expect(allHrefs(ws(false, false))).not.toContain("/pen-tests");
+    const legacyOn = filterNav(NAV_ITEMS, true, true, false, { pen_test: true });
+    expect(allHrefs(legacyOn)).toContain("/pen-tests");
+    expect(groupChildren(legacyOn, "Risk")).toContain("/pen-tests");
+  });
+
+  it("activation and entitlement are INDEPENDENT — both are required", () => {
+    // Entitled but not activated -> hidden.
+    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).not.toContain("/pen-tests");
+    // Activated but not entitled -> still hidden (the Risk group is platform-only).
+    expect(
+      allHrefs(filterNav(NAV_ITEMS, false, true, false, { pen_test: true })),
+    ).not.toContain("/pen-tests");
+    expect(allHrefs(ws(false, false, { pen_test: true }))).not.toContain("/pen-tests");
+    // Both -> visible.
+    expect(
+      allHrefs(filterNav(NAV_ITEMS, true, true, false, { pen_test: true })),
+    ).toContain("/pen-tests");
+  });
+
+  it("the pen-test flag is an independent switch — no other flag reveals it", () => {
+    const others = filterNav(NAV_ITEMS, true, true, true, {
+      enterprise_context: true,
+      asset_registry: true,
+      risk_intelligence: true,
+      risk_workspace: true,
+      briefing: true,
+    });
+    expect(allHrefs(others)).not.toContain("/pen-tests");
   });
 
   it("preserves EAR asset-registry behavior under Assets", () => {
