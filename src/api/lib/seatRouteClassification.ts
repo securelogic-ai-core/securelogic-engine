@@ -61,6 +61,13 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "askActions.ts",
   "assess.ts",
   "assetAssessments.ts",
+  // PLAT-ASSET-1. Deny-all: withdrawing an identity claim is estate
+  // governance — the same posture as the review queue it completes.
+  "assetIdentifierWithdrawal.ts",
+  // PLAT-ASSET-1. Deny-all: deciding which asset an identifier means (or
+  // that the question is noise) is an estate-governance act with no
+  // per-Contributor ownership predicate — the penTestEngagements posture.
+  "assetResolutionReviews.ts",
   "auditLog.ts",
   "auditPackage.ts",
   "briefingChanges.ts",
@@ -115,6 +122,12 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // credential for a party outside the organisation.
   "vendorEngagements.ts",
   "vendorSignalContext.ts",
+  // SL-OCC-3 (classified here by the stacked PLAT-ASSET-1 branch — the file
+  // shipped on the held SL-OCC-3 branch without a classification entry, which
+  // fails seatRouteCoverage there). Deny-all: importing a scan report creates
+  // findings and occurrences at scale, a governance act; denyContributor()
+  // is on the route.
+  "vulnerabilityScanImports.ts",
   "webhooks.ts"
 ];
 

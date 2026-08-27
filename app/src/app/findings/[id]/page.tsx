@@ -19,6 +19,7 @@ import {
   type PenTestRetest,
 } from "@/lib/api";
 import { RetestHistorySection } from "@/components/findings/RetestHistorySection";
+import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { HistorySection } from "@/components/HistorySection";
@@ -521,7 +522,18 @@ export default async function FindingDetailPage({
   // second fact costs no extra waterfall; best-effort — a failed engagement
   // fetch falls back to the label, a failed retest fetch renders as an outage
   // notice (never as "never retested"), neither blocks the page.
+  //
+  // The retest arm is ALSO gated on the pen-test activation flag, and this page
+  // is not otherwise pen-test gated. Without that gate, turning the capability
+  // off would make every pen_test finding claim "Retest history couldn't be
+  // loaded right now — an outage" — a false alarm about a capability that is
+  // deliberately dark, on a page any platform user reaches. Dark means the
+  // section is ABSENT, exactly as it is for every non-pen_test source.
+  // The ENGAGEMENT arm is deliberately left as develop has it: PEN-1 provenance
+  // already degrades to the plain label while dark, and that is shipped,
+  // validated behaviour this package does not change.
   const isPenTestFinding = finding.source_type === "pen_test";
+  const retestsVisible = isPenTestFinding && penTestEnabled();
   const [penTestEngagementData, findingRetests]: [
     { engagement: PenTestEngagement } | null,
     { count: number; retests: PenTestRetest[] } | null,
@@ -530,7 +542,7 @@ export default async function FindingDetailPage({
         finding.source_id
           ? getPenTestEngagement(token, finding.source_id)
           : Promise.resolve(null),
-        getFindingRetests(token, id),
+        retestsVisible ? getFindingRetests(token, id) : Promise.resolve(null),
       ])
     : [null, null];
   const penTestEngagement: PenTestEngagement | null =
@@ -601,7 +613,7 @@ export default async function FindingDetailPage({
                about a control-test finding, so the section is absent, not
                empty. */
             retestHistory={
-              isPenTestFinding ? (
+              retestsVisible ? (
                 <RetestHistorySection retests={findingRetests} />
               ) : undefined
             }
@@ -755,7 +767,7 @@ export default async function FindingDetailPage({
               remediation work, because a retest VERIFIES that work. In both
               layouts (like the PEN-1 provenance beside it), and absent — not
               empty — for every other source type. */}
-          {isPenTestFinding && <RetestHistorySection retests={findingRetests} />}
+          {retestsVisible && <RetestHistorySection retests={findingRetests} />}
 
           {/* Activity history — finding events plus its risk acceptances
               and the actions it spawned (shared per-object audit trail). */}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
+import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
 
@@ -30,6 +31,16 @@ export async function updatePenTestEngagement(
   engagementId: string,
   formData: FormData
 ): Promise<PenTestActionResult> {
+  // A server action is its own endpoint: Next.js will invoke it from a direct
+  // POST carrying the action id, without ever rendering the page whose
+  // notFound() gate would have stopped a browser. So the flag is re-checked
+  // HERE rather than trusted from the page — the page gate and this one close
+  // different doors. Matches createPenTest (PEN-FLAG-1); the app and engine are
+  // separately-configured services, so app-off/engine-on is a reachable state
+  // during a staged flip and this is the door that closes in it. The engine
+  // 404s the route underneath as the final backstop.
+  if (!penTestEnabled()) return { error: "Not available" };
+
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 
@@ -91,6 +102,16 @@ export async function recordRetest(
   findingId: string,
   formData: FormData
 ): Promise<PenTestActionResult> {
+  // A server action is its own endpoint: Next.js will invoke it from a direct
+  // POST carrying the action id, without ever rendering the page whose
+  // notFound() gate would have stopped a browser. So the flag is re-checked
+  // HERE rather than trusted from the page — the page gate and this one close
+  // different doors. Matches createPenTest (PEN-FLAG-1); the app and engine are
+  // separately-configured services, so app-off/engine-on is a reachable state
+  // during a staged flip and this is the door that closes in it. The engine
+  // 404s the route underneath as the final backstop.
+  if (!penTestEnabled()) return { error: "Not available" };
+
   const token = await getToken();
   if (!token) return { error: "Not authenticated" };
 

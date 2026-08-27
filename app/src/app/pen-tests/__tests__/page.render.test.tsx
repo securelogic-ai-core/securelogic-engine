@@ -7,7 +7,7 @@
  * the empty state says what would populate the register; and a failed fetch is
  * an outage, never rendered as an empty register.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, hrefOf } from "@/test/harness";
 import { aPenTestEngagement } from "@/test/fixtures";
@@ -28,7 +28,17 @@ const ok = (engagements = [aPenTestEngagement()]) => ({
   count: engagements.length,
 });
 
+const ORIGINAL_ENV = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
+
 beforeEach(() => {
+  // TWO-CONTROL MODEL: these pages are gated by ACTIVATION as well as
+  // entitlement. The cases below are the render contract with the
+  // capability ON; the flag-off case lives in its own describe.
+  process.env["SECURELOGIC_PEN_TEST_ENABLED"] = "true";
   vi.clearAllMocks();
   signedIn();
   api.getPenTestEngagements.mockResolvedValue(ok());

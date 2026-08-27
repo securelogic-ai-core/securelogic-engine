@@ -9,7 +9,7 @@
  * never a blank or an invented level; and the empty state says EXACTLY how to
  * import findings referencing this engagement, id included.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { renderPage, expectRedirect, signedIn, sp, hrefOf } from "@/test/harness";
 import { aFinding, aFindingsResponse, aPenTestEngagement } from "@/test/fixtures";
@@ -36,7 +36,17 @@ const penTestFinding = (over: Parameters<typeof aFinding>[0] = {}) =>
     ...over,
   });
 
+const ORIGINAL_ENV = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+});
+
 beforeEach(() => {
+  // TWO-CONTROL MODEL: these pages are gated by ACTIVATION as well as
+  // entitlement. The cases below are the render contract with the
+  // capability ON; the flag-off case lives in its own describe.
+  process.env["SECURELOGIC_PEN_TEST_ENABLED"] = "true";
   vi.clearAllMocks();
   signedIn();
   api.getPenTestEngagement.mockResolvedValue({ engagement: aPenTestEngagement() });
