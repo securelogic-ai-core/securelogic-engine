@@ -48,6 +48,16 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 
 export const LLM_CONTROL_MATCHER_MODEL_ID = "claude-sonnet-4-6";
+
+/**
+ * The `purpose` every matcher provider call is tagged with.
+ *
+ * Exported so the worker's tick rollup can select THIS purpose out of the
+ * shared run accumulator instead of reporting whatever else happened to run in
+ * the same process. A string literal duplicated across the two files would let
+ * them drift silently, and the rollup would quietly report zero.
+ */
+export const LLM_CONTROL_MATCHER_PURPOSE = "llm_control_matcher";
 export const LLM_CONTROL_MATCHER_PROMPT_VERSION = "control-matcher-v1";
 
 /** Min LLM confidence (0-100) to write a suggestion. */
@@ -359,8 +369,20 @@ export async function runControlMatcherWithOutcome(
       // rather than widening SignalForControlMatch across all three call
       // sites; if dedup_hash is ever threaded through those types, this lookup
       // can be dropped.
+      //
+      // Same-org OR GLOBAL, for the same reason as controlMatcherWorker's
+      // loadSignal: `cyber_signals` is a TENANT_ISOLATION_STANDARD.md §1
+      // shared/global table and public-source intelligence carries
+      // `organization_id IS NULL`. A bare `organization_id = $2` here returned
+      // no row for every global signal, and phase 1 then reported the run as
+      // `no_controls` — silently, with no job failure and no telemetry that
+      // distinguished it from an org that owns no controls. That silent arm was
+      // the SECOND half of #883, unreachable only because loadSignal failed
+      // first; fixing the worker alone would have exposed it.
       const hashResult = await pg.query<{ dedup_hash: string }>(
-        `SELECT dedup_hash FROM cyber_signals WHERE id = $1 AND organization_id = $2`,
+        `SELECT dedup_hash FROM cyber_signals
+          WHERE id = $1
+            AND (organization_id = $2 OR organization_id IS NULL)`,
         [signal.id, orgId]
       );
       const dedupHash = hashResult.rows[0]?.dedup_hash;
@@ -437,7 +459,7 @@ export async function runControlMatcherWithOutcome(
     );
 
     const result = await withLlmCallContext(
-      { purpose: "llm_control_matcher", organizationId: orgId },
+      { purpose: LLM_CONTROL_MATCHER_PURPOSE, organizationId: orgId },
       () => llmCall(prompt)
     );
 

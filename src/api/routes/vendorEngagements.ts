@@ -625,8 +625,10 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       tier: resolution.tier,
       scope_rule_version: resolution.scope_rule_version,
       // Caps are surfaced, never silent — a truncated questionnaire that looks
-      // complete is the failure this field exists to prevent.
-      notes: (resolution as { notes?: unknown }).notes ?? null,
+      // complete is the failure this field exists to prevent. (VA-6 repaired
+      // this line: it previously read a `notes` field the resolver has never
+      // had, so the tier cap was computed and then always reported as null.)
+      truncated: resolution.truncated ?? null,
     });
   } catch (err) {
     logger.error({ event: "vendor_scope_resolve_failed", organizationId, err }, "Scope resolve failed");

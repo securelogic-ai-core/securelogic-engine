@@ -59,6 +59,7 @@ import {
   type OccurrenceState,
   type PresenceStatus,
 } from "../lib/occurrenceLifecycle.js";
+import { recordOccurrenceObservation } from "../lib/occurrenceStore.js";
 
 const router = Router();
 
@@ -255,80 +256,48 @@ router.post(
     const source = readSource(req.body, "source");
     const sourceOccurrenceId = readSource(req.body, "source_occurrence_id");
     const { userId } = actor(req);
+    // The convergent upsert lives in occurrenceStore.ts — ONE writer semantics
+    // shared with the scanner-ingestion intake (SL-OCC-3). Extracted, not
+    // duplicated, the moment a second writer existed; behavior is unchanged
+    // and the isolation suite pins it.
+    const result = await recordOccurrenceObservation(pg, {
+      organizationId,
+      findingId,
+      assetId,
+      source,
+      sourceOccurrenceId,
+      createdByUserId: userId,
+    });
 
-    // ON CONFLICT rather than a pre-check: the identity IS
-    // (organization_id, finding_id, asset_id), so recording the same exposure
-    // twice must converge on one row instead of erroring or duplicating. Two
-    // concurrent importers therefore produce one occurrence, not a race.
-    // The DO UPDATE refreshes last_seen_at and reapplies the presence
-    // transition, so re-reporting an absent exposure correctly reappears it.
-    const existing = await pg.query<OccurrenceState & { id: string }>(
-      `SELECT id, presence_status, first_seen_at, last_seen_at, absent_since,
-              remediated_at, reappeared_count, last_reappeared_at
-         FROM finding_asset_occurrences
-        WHERE organization_id = $1 AND finding_id = $2 AND asset_id = $3`,
-      [organizationId, findingId, assetId],
-    );
-
-    if (existing.rowCount && existing.rows[0]) {
-      const state = existing.rows[0];
-      const now = new Date().toISOString();
-      const patch = observe(state, now);
-      const updated = await pg.query(
-        `UPDATE finding_asset_occurrences
-            SET presence_status = $4, last_seen_at = $5, absent_since = NULL,
-                remediated_at = NULL,
-                reappeared_count = COALESCE($6, reappeared_count),
-                last_reappeared_at = COALESCE($7, last_reappeared_at),
-                source = COALESCE($8, source),
-                source_occurrence_id = COALESCE($9, source_occurrence_id),
-                updated_at = NOW()
-          WHERE organization_id = $1 AND finding_id = $2 AND asset_id = $3
-          RETURNING *`,
-        [
-          organizationId, findingId, assetId,
-          patch.presence_status, patch.last_seen_at,
-          patch.reappeared_count ?? null, patch.last_reappeared_at ?? null,
-          source, sourceOccurrenceId,
-        ],
+    if (!result.created && result.reappeared) {
+      writeAuditEvent({
+        organizationId, actorUserId: userId, actorApiKeyId: actor(req).apiKeyId,
+        eventType: "finding.occurrence_reappeared",
+        resourceType: "finding_asset_occurrence", resourceId: result.occurrenceId,
+        payload: { finding_id: findingId, asset_id: assetId,
+                   reappeared_count: (result.occurrence as { reappeared_count?: number }).reappeared_count },
+        ipAddress: req.ip ?? null,
+      });
+    }
+    if (result.created) {
+      writeAuditEvent({
+        organizationId, actorUserId: userId, actorApiKeyId: actor(req).apiKeyId,
+        eventType: "finding.occurrence_recorded",
+        resourceType: "finding_asset_occurrence", resourceId: result.occurrenceId,
+        payload: { finding_id: findingId, asset_id: assetId, source },
+        ipAddress: req.ip ?? null,
+      });
+      logger.info(
+        { event: "finding_occurrence_recorded", organizationId, findingId, assetId },
+        "Vulnerability occurrence recorded",
       );
-      const reappeared = (patch.reappeared_count ?? 0) > state.reappeared_count;
-      if (reappeared) {
-        writeAuditEvent({
-          organizationId, actorUserId: userId, actorApiKeyId: actor(req).apiKeyId,
-          eventType: "finding.occurrence_reappeared",
-          resourceType: "finding_asset_occurrence", resourceId: state.id,
-          payload: { finding_id: findingId, asset_id: assetId,
-                     reappeared_count: patch.reappeared_count },
-          ipAddress: req.ip ?? null,
-        });
-      }
-      res.status(200).json({ occurrence: updated.rows[0], created: false, reappeared });
-      return;
     }
 
-    const inserted = await pg.query(
-      `INSERT INTO finding_asset_occurrences
-         (organization_id, finding_id, asset_id, source, source_occurrence_id,
-          created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [organizationId, findingId, assetId, source, sourceOccurrenceId, userId],
-    );
-
-    writeAuditEvent({
-      organizationId, actorUserId: userId, actorApiKeyId: actor(req).apiKeyId,
-      eventType: "finding.occurrence_recorded",
-      resourceType: "finding_asset_occurrence", resourceId: inserted.rows[0].id,
-      payload: { finding_id: findingId, asset_id: assetId, source },
-      ipAddress: req.ip ?? null,
+    res.status(result.created ? 201 : 200).json({
+      occurrence: result.occurrence,
+      created: result.created,
+      reappeared: result.reappeared,
     });
-    logger.info(
-      { event: "finding_occurrence_recorded", organizationId, findingId, assetId },
-      "Vulnerability occurrence recorded",
-    );
-
-    res.status(201).json({ occurrence: inserted.rows[0], created: true, reappeared: false });
   }),
 );
 
