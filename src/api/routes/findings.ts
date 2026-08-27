@@ -17,7 +17,8 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
-import { validateFindingCreate, FINDING_SOURCE_TYPES } from "../lib/findingValidation.js";
+import { validateFindingCreate, FINDING_SOURCE_TYPES, USER_CREATABLE_SOURCE_TYPES } from "../lib/findingValidation.js";
+import { penTestEnabled } from "../lib/penTestFeatureFlag.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { dispatchWebhookEvent } from "../lib/webhookDispatcher.js";
 import { triggerFindingAlert } from "../lib/findingAlertTrigger.js";
@@ -228,6 +229,23 @@ router.post(
       // without this check one tenant could attach findings to another
       // tenant's engagement and inherit its provenance.
       if (source_type === "pen_test") {
+        // The activation flag gates this write path too. penTestEngagements.ts
+        // is not the only door into pen-test data: a caller who already knows
+        // an engagement id could otherwise keep attaching findings to it while
+        // the capability is nominally off. When the flag is dark `pen_test`
+        // stops being a source type a caller may claim, so the response is the
+        // validator's own invalid_source_type — byte-identical to the answer an
+        // unknown source type gets, and listing the types that ARE available.
+        // The findings route itself is untouched for every other source type.
+        if (!penTestEnabled()) {
+          res.status(400).json({
+            error: "invalid_source_type",
+            detail: `Must be one of: ${[...USER_CREATABLE_SOURCE_TYPES]
+              .filter((t) => t !== "pen_test")
+              .join(", ")}`,
+          });
+          return;
+        }
         if (source_id === null) {
           res.status(400).json({
             error: "source_id_required",

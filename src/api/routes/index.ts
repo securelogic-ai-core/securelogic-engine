@@ -113,6 +113,9 @@ import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
+import vulnerabilityScanImportsRouter from "./vulnerabilityScanImports.js";
+import assetResolutionReviewsRouter from "./assetResolutionReviews.js";
+import assetIdentifierWithdrawalRouter from "./assetIdentifierWithdrawal.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
@@ -575,6 +578,12 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
+  // SL-OCC-3: scanner-ingestion producer (dark behind SECURELOGIC_VULN_SCAN_INGESTION_ENABLED).
+  router.use("/api", vulnerabilityScanImportsRouter);
+  // PLAT-ASSET-1: identity-resolution review queue (dark behind SECURELOGIC_ASSET_AUTO_CREATE_ENABLED).
+  router.use("/api", assetResolutionReviewsRouter);
+  // PLAT-ASSET-1: deliberate alias withdrawal (same flag — wakes with the claims it withdraws).
+  router.use("/api", assetIdentifierWithdrawalRouter);
   router.use("/api", riskScoringWeightsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);

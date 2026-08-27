@@ -5,10 +5,14 @@ import {
   getFrameworkDetail,
   getFrameworkReadiness,
   getControls,
+  getFrameworkRequirements,
+  getScopeTagCoverage,
   type ReadinessRequirement,
 } from "@/lib/api";
 import { MapControlButton } from "./MapControlButton";
 import { DownloadButtons } from "./DownloadButtons";
+import { CurateRequirementButton } from "./CurateRequirementButton";
+import { AddQuestionForm } from "./AddQuestionForm";
 import { CoverageBar, coverageColor } from "@/lib/frameworkCoverage";
 
 // ─────────────────────────────────────────────────────────────
@@ -97,14 +101,26 @@ function AssessmentBadge({ status }: { status: string | null }) {
 // Requirement row
 // ─────────────────────────────────────────────────────────────
 
+/** VA-6 content-layer fields for one requirement, keyed off the requirements
+ *  endpoint (the readiness payload deliberately stays mapping-only). */
+type RequirementContent = {
+  description: string | null;
+  scope_tags: string[];
+  scope_tags_source: string | null;
+};
+
 function RequirementRow({
   req,
   frameworkId,
   controls,
+  content,
+  vocabulary,
 }: {
   req: ReadinessRequirement;
   frameworkId: string;
   controls: Array<{ id: string; name: string }>;
+  content: RequirementContent | null;
+  vocabulary: string[];
 }) {
   const alreadyMappedControlIds = req.mapped_controls.map((mc) => mc.control_id);
   const showMapper = req.status === "unmapped" || req.status === "partial";
@@ -121,10 +137,57 @@ function RequirementRow({
               {req.reference_id}
             </span>
             <ReqStatusBadge status={req.status} />
+            {content?.scope_tags_source ? (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-xs"
+                style={
+                  content.scope_tags_source === "curated"
+                    ? { background: "rgba(34,197,94,0.12)", color: "#86efac" }
+                    : { background: "rgba(245,158,11,0.12)", color: "#fcd34d" }
+                }
+                title={
+                  content.scope_tags_source === "curated"
+                    ? "Scope tags reviewed by a person"
+                    : "Scope tags derived from the title — not yet reviewed"
+                }
+              >
+                {content.scope_tags_source === "curated" ? "curated" : "heuristic tags"}
+              </span>
+            ) : null}
           </div>
           <p className="text-sm" style={{ color: "#cbd5e1" }}>
             {req.title}
           </p>
+          {content?.description ? (
+            <p className="text-xs mt-1.5" style={{ color: "#64748b" }}>
+              {content.description}
+            </p>
+          ) : null}
+          {content && content.scope_tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {content.scope_tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="px-1.5 py-0.5 rounded text-xs"
+                  style={{ background: "rgba(148,163,184,0.08)", color: "#94a3b8" }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {content ? (
+            <div className="mt-2">
+              <CurateRequirementButton
+                requirementId={req.id}
+                frameworkId={frameworkId}
+                description={content.description}
+                scopeTags={content.scope_tags}
+                scopeTagsSource={content.scope_tags_source}
+                vocabulary={vocabulary}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -177,17 +240,35 @@ export default async function FrameworkDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [frameworkDetail, readiness, controlsData] = await Promise.all([
-    getFrameworkDetail(token, id),
-    getFrameworkReadiness(token, id),
-    getControls(token),
-  ]);
+  const [frameworkDetail, readiness, controlsData, contentData, coverageReport] =
+    await Promise.all([
+      getFrameworkDetail(token, id),
+      getFrameworkReadiness(token, id),
+      getControls(token),
+      // VA-6 content layer: guidance + scope tags per requirement.
+      getFrameworkRequirements(token, id, "self"),
+      getScopeTagCoverage(token),
+    ]);
 
   if (!frameworkDetail) redirect("/frameworks");
   const framework = frameworkDetail.framework;
   const selfProgress = frameworkDetail.assessment_progress.self;
 
   const controls = (controlsData?.controls ?? []).map((c) => ({ id: c.id, name: c.name }));
+
+  const contentById = new Map(
+    (contentData?.requirements ?? []).map((r) => [
+      r.id,
+      {
+        description: r.description ?? null,
+        scope_tags: r.scope_tags ?? [],
+        scope_tags_source: r.scope_tags_source ?? null,
+      },
+    ])
+  );
+  const vocabulary = coverageReport?.vocabulary ?? [];
+  const frameworkCoverage =
+    coverageReport?.frameworks.find((f) => f.framework_id === id)?.coverage ?? null;
 
   const allRequirements = readiness?.requirements ?? [];
   const statusFilter = sp["status"] ?? "";
@@ -296,6 +377,48 @@ export default async function FrameworkDetailPage({
         </div>
       )}
 
+      {/* VA-6: scope-tag curation coverage — how much of the vendor
+          questionnaire scoping a person has actually stood behind. Rendered
+          honestly: heuristic tags are a weak signal and say so. */}
+      {frameworkCoverage && frameworkCoverage.total > 0 && (
+        <div className="bg-brand-surface border border-brand-line rounded-xl p-6 mb-8">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2
+                className="text-xs font-semibold uppercase tracking-wide mb-1"
+                style={{ color: "#94a3b8" }}
+              >
+                Scope-Tag Curation
+              </h2>
+              <p className="text-xs" style={{ color: "#475569" }}>
+                Tags decide which questions vendor questionnaires ask. Heuristic
+                tags were derived from titles and are not yet reviewed.
+              </p>
+            </div>
+            <div className="flex items-center gap-5">
+              <div className="text-center">
+                <p className="text-2xl font-bold" style={{ color: "#86efac" }}>
+                  {frameworkCoverage.curated_pct}%
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Curated</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold" style={{ color: "#fcd34d" }}>
+                  {frameworkCoverage.heuristic}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Heuristic</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold" style={{ color: "#94a3b8" }}>
+                  {frameworkCoverage.untagged}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: "#475569" }}>Untagged</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Self-assessment progress — O-5: completion of the questionnaire,
           a separate truth from readiness, never blended into it. */}
       {selfProgress.total > 0 && (
@@ -395,10 +518,17 @@ export default async function FrameworkDetailPage({
                 req={req}
                 frameworkId={framework.id}
                 controls={controls}
+                content={contentById.get(req.id) ?? null}
+                vocabulary={vocabulary}
               />
             ))}
           </div>
         )}
+
+        {/* VA-6: customer questions — an org extends its own framework. */}
+        <div className="mt-6">
+          <AddQuestionForm frameworkId={framework.id} />
+        </div>
       </div>
     </div>
   );
