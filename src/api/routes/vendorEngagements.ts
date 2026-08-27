@@ -76,6 +76,7 @@ import {
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
+import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
 
 const router = Router();
@@ -1184,8 +1185,12 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
   const id = String(req.params["id"] ?? "");
 
   try {
-    const eng = await pg.query<{ inherent_rating: string | null; vendor_name: string }>(
-      `SELECT e.inherent_rating, v.name AS vendor_name
+    const eng = await pg.query<{
+      inherent_rating: string | null;
+      vendor_id: string;
+      vendor_name: string;
+    }>(
+      `SELECT e.inherent_rating, e.vendor_id, v.name AS vendor_name
          FROM vendor_engagements e JOIN vendors v ON v.id = e.vendor_id
         WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -1270,6 +1275,25 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
       );
       if (result.rows[0]?.inserted) created += 1;
       else updated += 1;
+    }
+
+    // THE VENDOR'S RISK SCORE MUST MOVE WHEN A GAP IS RECORDED AGAINST IT.
+    // Engagement promotion was — like CUEC promotion before it — a
+    // vendor-finding-creating path that scheduled no recompute at all: with
+    // the fourth linkage arm in place the resolver and the scoring query now
+    // see these findings, but nothing would trigger them until some UNRELATED
+    // finding on the same vendor changed state, which is indistinguishable
+    // from "the gap does not count". The known-vendor variant is used because
+    // the engagement row already carries vendor_id; fire-and-forget and
+    // best-effort by contract, so a score refresh failure can never fail the
+    // promotion. It defers with setImmediate and opens its OWN tenant scope,
+    // so calling it inside this asTenant-wrapped handler runs it after the
+    // request's tenant transaction has committed (A04-G1 γ.3) — the same
+    // placement promoteVendorAssuranceCuecToFinding uses. Guarded on a
+    // non-empty promotion because upserts are the only writes here: zero
+    // promoted findings means zero score inputs changed.
+    if (findings.length > 0) {
+      scheduleVendorScoreRecompute(organizationId, eng.rows[0]!.vendor_id);
     }
 
     writeAuditEvent({

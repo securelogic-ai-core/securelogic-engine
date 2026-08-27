@@ -49,6 +49,26 @@
  * make a correct, database-guaranteed relationship depend on the same
  * convention-by-comment that caused this defect.
  *
+ * THE FOURTH ARM — ENGAGEMENT-PROMOTED FINDINGS
+ * ---------------------------------------------
+ * The Vendor Assurance engagement spine promotes failed, partial and unanswered
+ * controls to findings with `source_type='vendor_engagement'` and
+ * `source_id=<vendor_engagements.id>` (promoteEngagementFindings in
+ * vendorEngagements.ts). This writer obeys the platform source_id convention
+ * EXACTLY — and, unlike 'vendor_review', the tag was deliberately minted with
+ * one writer and one target table (20260928_vendor_engagement_findings.sql:
+ * source_type is a pointer type, not a label; reusing 'vendor_review' would
+ * have made every consumer follow the id into the wrong table, silently,
+ * because both columns are UUIDs). That is what makes the join safe: under this
+ * tag there is exactly one table a source_id can mean.
+ *
+ * The arm is still convention-backed, not FK-backed: nothing in the schema
+ * stops a `vendor_engagement` source_id from dangling. So — the mirror image of
+ * the CUEC arm — the source_type filter here is LOAD-BEARING: the tag is the
+ * only thing that gives the id its meaning, and joining without it would let a
+ * `vendor_engagements.id` accidentally equal to some other workflow's row id
+ * fabricate an edge.
+ *
  * TENANCY — EVERY JOIN IS ORG-SCOPED ON BOTH SIDES
  * ------------------------------------------------
  * The two readers this replaces joined `vendor_assessments` / `vendor_reviews`
@@ -56,7 +76,11 @@
  * finding could leak — but a colliding id could have surfaced another org's
  * `assessment_id` / `assessment_type` / `performed_at`, or attributed a foreign
  * assessment's vendor. Random UUIDs made that impractical rather than
- * impossible; the predicate was simply missing. Every join below carries it.
+ * impossible; the predicate was simply missing. Every join below carries it —
+ * the engagement arm included: without `e.organization_id = f.organization_id`,
+ * an engagement id colliding across orgs would attach the OTHER org's vendor_id
+ * (and surface its submission date) on this org's finding, or hang this org's
+ * finding on a foreign vendor.
  *
  * CALLERS MUST STILL SCOPE THE OUTER QUERY to the caller's organization
  * (`l.organization_id = $n`) and run inside a tenant scope. These fragments are
@@ -71,14 +95,26 @@
  *   organization_id   the org both sides belong to (equal across every join)
  *   vendor_id         vendors.id
  *   linkage           which relationship produced the edge
- *   source_record_id  the workflow row: assessment, review cycle, or CUEC
+ *   source_record_id  the workflow row: assessment, review cycle, CUEC, or
+ *                     engagement
  *   source_label      what to call it on a surface (assessment_type, or the arm)
  *   source_at         when the producing act happened, as a DATE
  *
  * `source_at` is cast to DATE in the CUEC arm on purpose: `performed_at` is a
- * DATE in both other arms, and a UNION of DATE with TIMESTAMPTZ resolves to
+ * DATE in the first two arms, and a UNION of DATE with TIMESTAMPTZ resolves to
  * TIMESTAMPTZ — which would silently change how every EXISTING row serialises
  * on an endpoint that has always returned a date.
+ *
+ * The engagement arm's `source_at` is `COALESCE(e.submitted_at, e.created_at)`,
+ * cast to DATE for the same UNION reason (both columns are TIMESTAMPTZ).
+ * `submitted_at` is the meaningful timestamp: promoted findings are read off
+ * the vendor's SUBMITTED answers, so the submission is the producing act —
+ * `created_at` predates any answer and `closed_at` postdates the promotion.
+ * But `submitted_at` is nullable (promotion is gated on inherent_rating, not on
+ * lifecycle position), and an arm that emits NULL where every other arm always
+ * emits a date would push that special case onto every surface; `created_at` is
+ * NOT NULL and is the honest fallback — the engagement existed, even if its
+ * submission was never stamped.
  */
 export const VENDOR_FINDING_LINKAGE_SQL = `
   SELECT f.id                      AS finding_id,
@@ -128,17 +164,33 @@ export const VENDOR_FINDING_LINKAGE_SQL = `
     JOIN vendors v
       ON v.id = d.vendor_id
      AND v.organization_id = d.organization_id
+
+  UNION ALL
+
+  SELECT f.id,
+         f.organization_id,
+         e.vendor_id,
+         'vendor_engagement'::text,
+         e.id::text,
+         'vendor_engagement'::text,
+         COALESCE(e.submitted_at, e.created_at)::date
+    FROM findings f
+    JOIN vendor_engagements e
+      ON e.id::text = f.source_id::text
+     AND e.organization_id = f.organization_id
+   WHERE f.source_type = 'vendor_engagement'
 `;
 
 /**
  * The same edges, deduplicated to one row per (finding, vendor).
  *
- * Use this wherever findings are COUNTED or SCORED. The three arms are disjoint
+ * Use this wherever findings are COUNTED or SCORED. The four arms are disjoint
  * in practice — a `vendors.id` written as source_id cannot also match a
- * `vendor_assessments.id` — but "in practice" is exactly the reasoning that
- * produced this defect, and a duplicated edge would double-count a finding's
- * severity against its vendor's score. DISTINCT costs nothing here and removes
- * the possibility.
+ * `vendor_assessments.id`, and the source_type filters keep the two
+ * source_id-conventional tags apart — but "in practice" is exactly the
+ * reasoning that produced this defect, and a duplicated edge would
+ * double-count a finding's severity against its vendor's score. DISTINCT costs
+ * nothing here and removes the possibility.
  */
 export const VENDOR_FINDING_EDGES_SQL = `
   SELECT DISTINCT finding_id, organization_id, vendor_id
@@ -146,13 +198,22 @@ export const VENDOR_FINDING_EDGES_SQL = `
 `;
 
 /**
- * Preference order when a finding somehow matches more than one arm: the
- * FK-enforced relationship wins over the convention-based ones. Used where a
- * single row must be chosen (resolution, and the vendor findings list).
+ * Preference order when a finding somehow matches more than one arm. Used where
+ * a single row must be chosen (resolution, and the vendor findings list).
+ *
+ *   0  vendor_assurance_cuec — the only FK-enforced relationship. The database
+ *      guarantees it, so it outranks every convention-based arm.
+ *   1  vendor_engagement — source_id-conventional, so it can never outrank the
+ *      FK; but the tag has exactly one writer and resolves to exactly one table
+ *      by ratified schema decision (20260928_vendor_engagement_findings.sql),
+ *      so a match is unambiguous and outranks the legacy arms.
+ *   2  the legacy arms — 'vendor_review' has TWO writers with two different
+ *      source_id semantics, which is exactly the ambiguity this file exists to
+ *      contain.
  *
  * Takes the column reference so callers can alias the subquery without a
  * string rewrite at the call site.
  */
 export function vendorFindingLinkagePriority(linkageColumn: string): string {
-  return `CASE ${linkageColumn} WHEN 'vendor_assurance_cuec' THEN 0 ELSE 1 END`;
+  return `CASE ${linkageColumn} WHEN 'vendor_assurance_cuec' THEN 0 WHEN 'vendor_engagement' THEN 1 ELSE 2 END`;
 }

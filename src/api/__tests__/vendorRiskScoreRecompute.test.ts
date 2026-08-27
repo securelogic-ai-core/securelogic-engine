@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe("resolveVendorIdForFinding", () => {
-  it("resolves the vendor through ANY of the three vendor linkages", async () => {
+  it("resolves the vendor through ANY of the four vendor linkages", async () => {
     mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ vendor_id: VENDOR }] });
 
     const vendorId = await resolveVendorIdForFinding(ORG, FINDING);
@@ -42,11 +42,17 @@ describe("resolveVendorIdForFinding", () => {
     // The third arm. Its absence is what returned NULL for every CUEC-promoted
     // Vendor Assurance finding, so no recompute was ever scheduled for one.
     expect(String(sql)).toMatch(/promoted_finding_id = f\.id/);
+    // The fourth arm: engagement finding promotion. Its absence repeated the
+    // CUEC defect one producer later — no recompute for a promoted control gap.
+    expect(String(sql)).toMatch(/source_type = 'vendor_engagement'/);
+    expect(String(sql)).toMatch(/JOIN vendor_engagements/);
     // Org scoping now sits on the linkage subquery, which carries the predicate
     // on BOTH sides of every join inside it.
     expect(String(sql)).toMatch(/l\.organization_id = \$2/);
-    // The FK-enforced arm wins if a finding somehow matches more than one.
+    // The FK-enforced arm wins if a finding somehow matches more than one, and
+    // the single-writer engagement tag outranks the ambiguous legacy arms.
     expect(String(sql)).toMatch(/WHEN 'vendor_assurance_cuec' THEN 0/);
+    expect(String(sql)).toMatch(/WHEN 'vendor_engagement' THEN 1/);
     expect(params).toEqual([FINDING, ORG]);
   });
 
@@ -84,6 +90,7 @@ describe("recomputeAndPersistVendorRiskScore", () => {
     expect(unionSql).toMatch(/JOIN vendor_assessments/);
     expect(unionSql).toMatch(/JOIN vendor_reviews/);
     expect(unionSql).toMatch(/JOIN vendor_assurance_cuecs/);
+    expect(unionSql).toMatch(/JOIN vendor_engagements/);
     expect(unionSql).toMatch(/UNION ALL/);
     // DISTINCT over the edges: a finding cannot contribute its severity to the
     // same vendor twice, however many arms it matches.

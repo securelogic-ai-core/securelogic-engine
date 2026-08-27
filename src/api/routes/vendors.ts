@@ -14,9 +14,9 @@
  * Assurance CUEC promotion writes a `vendors.id`.
  *
  * The vendor <- finding relationship is therefore defined in exactly ONE place,
- * `src/api/lib/vendorFindingLinkage.ts`, over three arms (assessment, review
- * cycle, CUEC promotion). Read that file before adding a reader; do not
- * reintroduce a local join on source_id.
+ * `src/api/lib/vendorFindingLinkage.ts`, over four arms (assessment, review
+ * cycle, CUEC promotion, engagement promotion). Read that file before adding
+ * a reader; do not reintroduce a local join on source_id.
  *
  * Routes:
  *   POST   /api/vendors                  — create vendor
@@ -24,7 +24,7 @@
  *   GET    /api/vendors/:id              — get single vendor
  *   PATCH  /api/vendors/:id              — update vendor fields (supports archiving)
  *   GET    /api/vendors/:id/risk-score   — compute + persist vendor risk score
- *   GET    /api/vendors/:id/findings     — findings linked to vendor (all three linkages)
+ *   GET    /api/vendors/:id/findings     — findings linked to vendor (all four linkages)
  *
  * No hard-delete route. Vendors are archived via PATCH status=archived.
  * Hard delete is deferred: assessments hold vendor_id FKs (ON DELETE SET NULL)
