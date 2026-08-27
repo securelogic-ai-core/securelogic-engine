@@ -551,6 +551,7 @@ export function DecisionWorkspace({
   children,
   riskRegister,
   affectedAssets,
+  sourceProvenance,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -600,6 +601,14 @@ export function DecisionWorkspace({
    * before they ask anything else about it.
    */
   affectedAssets?: React.ReactNode;
+  /**
+   * Source provenance for the identity row (PEN-1), composed server-side by
+   * the page that owns the fetch — e.g. the pen-test engagement a pen_test
+   * finding came from, linked to /pen-tests/[id]. A node rather than data so
+   * this client component fetches nothing and renders nothing when the source
+   * has no richer provenance than its label.
+   */
+  sourceProvenance?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -893,6 +902,9 @@ export function DecisionWorkspace({
           <Chip text={`Business impact: ${LEVEL_LABEL[topImpact]}`} color={LEVEL_COLOR[topImpact]} />
           <Chip text={`Risk ${context.risk.score}/100 (${context.risk.band})`} color="#93c5fd" />
           {finding.priority ? <Chip text={finding.priority} color="#fcd34d" /> : null}
+          {/* Where this finding CAME FROM, when the source has a destination —
+              the pen-test engagement link (PEN-1). Server-composed. */}
+          {sourceProvenance}
         </div>
         {/* DW-4: risk-score explainability — the factors that produced the number,
             already computed by the engine (context.risk.rationale) and previously dropped. */}

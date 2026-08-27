@@ -2567,6 +2567,55 @@ export type FindingContext = {
   whats_changed: { since: string | null; changes: Array<{ label: string; at: string }> };
 };
 
+// ─── Pen-test engagements (SL-PENTEST-IN / PEN-1) ────────────────────────────
+// The penetration test a finding came from — provenance, not a lifecycle. Its
+// findings are ordinary Findings reached through getFindings({ source_type:
+// "pen_test", source_id }): there is deliberately NO pentest-specific findings
+// endpoint, so nothing here duplicates the finding list contract.
+
+export type PenTestEngagement = {
+  id: string;
+  name: string;
+  /** The testing firm — free text, deliberately not a Vendor record. */
+  provider: string | null;
+  started_on: string | null;
+  ended_on: string | null;
+  /** Where the report lives — a URL, a document id, or a filing reference. */
+  report_reference: string | null;
+  created_at: string;
+  /**
+   * Findings referencing this engagement (source_type='pen_test'). Computed by
+   * the engine in SQL — an engagement showing zero is either brand new or an
+   * import that failed, and those look identical without the count.
+   */
+  finding_count: number;
+};
+
+export async function getPenTestEngagements(
+  apiKey: string
+): Promise<{ engagements: PenTestEngagement[]; count: number } | null> {
+  try {
+    const res = await engineFetch(`/api/pen-test-engagements`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagements: PenTestEngagement[]; count: number }>;
+  } catch {
+    return null;
+  }
+}
+
+export async function getPenTestEngagement(
+  apiKey: string,
+  id: string
+): Promise<{ engagement: PenTestEngagement } | null> {
+  try {
+    const res = await engineFetch(`/api/pen-test-engagements/${encodeURIComponent(id)}`, apiKey);
+    if (!res.ok) return null;
+    return res.json() as Promise<{ engagement: PenTestEngagement }>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFindingContext(
   apiKey: string,
   id: string

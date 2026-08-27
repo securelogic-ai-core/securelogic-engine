@@ -112,6 +112,10 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
           "href": "/findings"
         },
         {
+          "label": "Pen Tests",
+          "href": "/pen-tests"
+        },
+        {
           "label": "Actions",
           "href": "/actions"
         },
@@ -222,6 +226,12 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     {
       "label": "Findings",
       "href": "/findings",
+      "access": "platform",
+      "group": "Risk"
+    },
+    {
+      "label": "Pen Tests",
+      "href": "/pen-tests",
       "access": "platform",
       "group": "Risk"
     },
@@ -661,6 +671,24 @@ export const APPLICATION_KNOWLEDGE_INDEX: ApplicationKnowledgeIndex =
     },
     {
       "path": "/obligations/new",
+      "dynamic": false,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/pen-tests",
+      "dynamic": false,
+      "navLabel": "Pen Tests",
+      "access": "platform"
+    },
+    {
+      "path": "/pen-tests/[id]",
+      "dynamic": true,
+      "navLabel": null,
+      "access": "platform"
+    },
+    {
+      "path": "/pen-tests/new",
       "dynamic": false,
       "navLabel": null,
       "access": "platform"

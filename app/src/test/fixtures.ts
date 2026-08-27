@@ -1182,3 +1182,22 @@ export function aSubscription(overrides: Partial<SubscriptionInfo> = {}): Subscr
     grace_state: derivedGrace,
   };
 }
+
+import type { PenTestEngagement } from "@/lib/api";
+
+/** A pen-test engagement (PEN-1) — provenance for pen_test-sourced findings. */
+export function aPenTestEngagement(
+  overrides: Partial<PenTestEngagement> = {}
+): PenTestEngagement {
+  return {
+    id: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+    name: "Q3 external network test",
+    provider: "Redwood Security",
+    started_on: "2026-07-01",
+    ended_on: "2026-07-12",
+    report_reference: "PT-2026-Q3.pdf",
+    created_at: "2026-07-15T00:00:00.000Z",
+    finding_count: 2,
+    ...overrides,
+  };
+}

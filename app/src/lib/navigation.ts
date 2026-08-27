@@ -145,6 +145,14 @@ export const NAV_ITEMS: NavItem[] = [
   { type: "group", label: "Risk", platform: true,
     items: [
       { label: "Findings",      href: "/findings" },
+      // Pen-test engagements (PEN-1). Under Risk beside Findings because an
+      // engagement is a finding SOURCE, not an asset or a compliance object —
+      // its output is ordinary Findings and the journey runs list → detail →
+      // /findings/[id]. Declared in BOTH nav models: this legacy menu is what
+      // production renders (risk_workspace is off there), so a workspace-only
+      // entry would ship the pages nav-orphaned — the exact defect the Vendor
+      // Assurance group above exists to prevent.
+      { label: "Pen Tests",     href: "/pen-tests" },
       { label: "Actions",       href: "/actions" },
       { label: "Risk Register", href: "/risks" },
     ],
@@ -207,6 +215,10 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Actions",              href: "/actions" },
       { label: "Risk Register",        href: "/risks" },
       { label: "Approvals",            href: "/approvals" },
+      // Pen-test engagements (PEN-1) — the finding-source registry, mirrored
+      // from the legacy Risk group. Appended after the task-led ordering the
+      // group leads with, so the two findings destinations stay first.
+      { label: "Pen Tests",            href: "/pen-tests" },
     ],
   },
   { type: "group", label: "Assets", platform: true,

@@ -209,6 +209,7 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
       "/actions",
       "/risks",
       "/approvals",
+      "/pen-tests",
     ]);
   });
 
@@ -223,7 +224,20 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
       "Actions",
       "Risk Register",
       "Approvals",
+      "Pen Tests",
     ]);
+  });
+
+  it("keeps Pen Tests reachable in BOTH nav models (PEN-1 — production renders the legacy menu)", () => {
+    // Workspace IA (flag on).
+    expect(allHrefs(ws(true, false))).toContain("/pen-tests");
+    // Legacy IA — the LIVE flag-off menu. A workspace-only entry would ship the
+    // /pen-tests pages nav-orphaned in production.
+    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).toContain("/pen-tests");
+    expect(groupChildren(filterNav(NAV_ITEMS, true, true, false), "Risk")).toContain("/pen-tests");
+    // Platform-gated like the rest of the Risk group.
+    expect(allHrefs(filterNav(NAV_ITEMS, false, true, false))).not.toContain("/pen-tests");
+    expect(allHrefs(ws(false, false))).not.toContain("/pen-tests");
   });
 
   it("preserves EAR asset-registry behavior under Assets", () => {

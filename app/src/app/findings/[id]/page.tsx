@@ -13,6 +13,8 @@ import {
   getFindingOccurrences,
   getRisks,
   getAuthMe,
+  getPenTestEngagement,
+  type PenTestEngagement,
 } from "@/lib/api";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
@@ -89,6 +91,7 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   manual:               "Manual",
   assessment:           "Assessment",
   risk:                 "Risk",
+  pen_test:             "Pen Test",
 };
 
 function SeverityBadge({ severity }: { severity: string }) {
@@ -233,7 +236,14 @@ function StatusPriorityCard({ finding, actions }: { finding: Finding; actions: A
 // Finding Details card (read-only metadata)
 // ─────────────────────────────────────────────────────────────
 
-function FindingDetailsCard({ finding }: { finding: Finding }) {
+function FindingDetailsCard({
+  finding,
+  penTestEngagement,
+}: {
+  finding: Finding;
+  /** PEN-1: the engagement a pen_test finding came from, when it loaded. */
+  penTestEngagement?: PenTestEngagement | null;
+}) {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
@@ -242,9 +252,21 @@ function FindingDetailsCard({ finding }: { finding: Finding }) {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs" style={{ color: "#94a3b8" }}>Source</span>
-          <span className="text-xs font-medium" style={{ color: "#cbd5e1" }}>
-            {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
-          </span>
+          {/* A pen_test finding's source is a destination, not just a word —
+              the engagement name links back to the test that produced it. */}
+          {penTestEngagement ? (
+            <Link
+              href={`/pen-tests/${penTestEngagement.id}`}
+              className="text-xs font-medium text-right transition-opacity hover:opacity-80"
+              style={{ color: "#93c5fd" }}
+            >
+              {penTestEngagement.name}
+            </Link>
+          ) : (
+            <span className="text-xs font-medium" style={{ color: "#cbd5e1" }}>
+              {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
+            </span>
+          )}
         </div>
         {finding.domain && (
           <div className="flex items-center justify-between">
@@ -487,6 +509,17 @@ export default async function FindingDetailPage({
   if (!findingData) redirect("/findings");
 
   const finding = findingData.finding;
+
+  // PEN-1 provenance: a pen_test finding's source_id points at a
+  // pen_test_engagements row, so the source can render as the ENGAGEMENT
+  // (name, linked to /pen-tests/[id]) instead of a bare "Pen Test" label.
+  // Fetched after the finding because it depends on it; best-effort — a
+  // failed fetch falls back to the label, never blocks the page.
+  const penTestEngagement: PenTestEngagement | null =
+    finding.source_type === "pen_test" && finding.source_id
+      ? ((await getPenTestEngagement(token, finding.source_id))?.engagement ?? null)
+      : null;
+
   const actions = actionsData?.actions ?? [];
   const owners = (teamData?.members ?? [])
     .filter((m) => m.status === "active")
@@ -542,6 +575,28 @@ export default async function FindingDetailPage({
                 canDecide={(authMe?.role ?? "viewer") !== "viewer"}
               />
             }
+            /* PEN-1: the pen-test engagement this finding came from, linked —
+               server-composed so the workspace fetches nothing. Undefined for
+               every other source (and when the engagement fetch failed), which
+               renders exactly the pre-PEN-1 identity row. */
+            sourceProvenance={
+              penTestEngagement ? (
+                <Link
+                  href={`/pen-tests/${penTestEngagement.id}`}
+                  className="transition-opacity hover:opacity-80"
+                  style={{
+                    fontSize: 11,
+                    color: "#93c5fd",
+                    border: "1px solid #93c5fd",
+                    borderRadius: 999,
+                    padding: "2px 8px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Pen Test: {penTestEngagement.name}
+                </Link>
+              ) : undefined
+            }
           >
             {/* R-3: the recommendation is ADVISORY guidance — distinct from the
                 executable actions below it. Labeled so the two are never conflated. */}
@@ -588,12 +643,25 @@ export default async function FindingDetailPage({
           <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
             <div className="flex items-center gap-2 flex-wrap mb-3">
               <SeverityBadge severity={finding.severity ?? "No severity"} />
-              <span
-                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
-              >
-                {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
-              </span>
+              {/* PEN-1: a pen_test finding's provenance is the ENGAGEMENT, not
+                  a bare label — the badge links to the test that produced it.
+                  Falls back to the label when the engagement fetch failed. */}
+              {penTestEngagement ? (
+                <Link
+                  href={`/pen-tests/${penTestEngagement.id}`}
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium transition-opacity hover:opacity-80"
+                  style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
+                >
+                  Pen Test: {penTestEngagement.name}
+                </Link>
+              ) : (
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                  style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
+                >
+                  {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
+                </span>
+              )}
               {finding.priority && <PriorityBadge priority={finding.priority} />}
             </div>
             <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
@@ -665,7 +733,7 @@ export default async function FindingDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <StatusPriorityCard finding={finding} actions={actions} />
-          <FindingDetailsCard finding={finding} />
+          <FindingDetailsCard finding={finding} penTestEngagement={penTestEngagement} />
         </div>
       </div>
     </div>
