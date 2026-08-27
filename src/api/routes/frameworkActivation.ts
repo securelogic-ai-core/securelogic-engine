@@ -24,6 +24,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { deriveScopeTags } from "../lib/vendorRisk/requirementScopeTags.js";
 
 const router = Router();
 
@@ -98,13 +99,32 @@ router.post(
         const placeholders: string[] = [];
 
         for (const req of template.requirements) {
+          // VA-6: tag at instantiation, same heuristic + same 'heuristic'
+          // stamp as the 20260926 backfill. Before this, a freshly activated
+          // framework landed with scope_tags='{}' and was invisible to every
+          // tier-2/3/4 vendor questionnaire until someone re-ran a backfill
+          // that only ever runs once.
+          const derived = deriveScopeTags({
+            reference_id: req.reference_id,
+            title: req.title,
+          });
           const base = values.length;
-          values.push(framework.id, req.reference_id, req.title, req.description ?? null);
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+          values.push(
+            framework.id,
+            req.reference_id,
+            req.title,
+            req.description ?? null,
+            derived.tags
+          );
+          placeholders.push(
+            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, 'heuristic', NOW())`
+          );
         }
 
         const insertResult = await client.query(
-          `INSERT INTO requirements (framework_id, reference_id, title, description)
+          `INSERT INTO requirements
+             (framework_id, reference_id, title, description,
+              scope_tags, scope_tags_source, scope_tags_at)
            VALUES ${placeholders.join(", ")}
            ON CONFLICT (framework_id, reference_id) DO NOTHING
            RETURNING id`,
