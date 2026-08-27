@@ -168,6 +168,18 @@ export function beginLlmRunAccumulation(): void {
   activeRun = { ...emptyTotals(), by_purpose: {} };
 }
 
+/**
+ * True while an accumulation is in flight.
+ *
+ * `beginLlmRunAccumulation` is a silent no-op when one is already active, so a
+ * caller that begins/ends unconditionally can END SOMEONE ELSE'S accumulation
+ * and report their totals as its own. Callers that own a nested scope check
+ * this first and only close what they actually opened.
+ */
+export function isLlmRunAccumulating(): boolean {
+  return activeRun !== null;
+}
+
 /** Stop accumulating and return the totals (all zeros if never started). */
 export function endLlmRunAccumulation(): LlmRunTotals {
   const totals = activeRun ?? { ...emptyTotals(), by_purpose: {} };

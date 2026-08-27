@@ -259,6 +259,93 @@ describe("execution", () => {
     expect(read[1]).toEqual([SIGNAL, ORG]);
   });
 
+  // -------------------------------------------------------------------------
+  // #883 / F-1 — GLOBAL SIGNALS
+  //
+  // `cyber_signals` is a TENANT_ISOLATION_STANDARD.md §1 shared table: public
+  // -source intelligence (CISA KEV, NVD, advisory feeds) lands with
+  // `organization_id IS NULL` and is cross-org visible by design. Wave 4 moved
+  // the matcher behind a queue whose worker RE-READS the signal row, and wrote
+  // that read as a bare `organization_id = $2` — which cannot match a global
+  // row. Every global signal therefore read as "not found" and dead-lettered
+  // its job non-retryably: 403 jobs / 31 signals on staging, 2026-08-20..25,
+  // 100% of them global. `shouldRunControlMatcher` gates on Critical/High, so
+  // the signals being lost were exactly the highest-severity ones.
+  //
+  // These four pin the predicate SHAPE, not just its effect, because the
+  // effect is invisible to a mock that returns a row regardless of the WHERE.
+  // -------------------------------------------------------------------------
+  it("admits a GLOBAL signal (organization_id IS NULL) — the #883 regression", async () => {
+    // The mock answers the read the way Postgres would: a row for the canonical
+    // predicate, and NO row for the defective org-only one. A revert to
+    // `organization_id = $2` therefore fails this test rather than passing it.
+    vi.mocked(pg.query).mockImplementation((async (sql: string) => {
+      const text = String(sql);
+      if (text.includes("FROM cyber_signals")) {
+        const admitsGlobal = /organization_id\s*=\s*\$2\s+OR\s+organization_id\s+IS\s+NULL/i.test(
+          text
+        );
+        return admitsGlobal ? { rows: [{ ...signal }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 1 };
+    }) as never);
+
+    await processClaimedJob(job());
+
+    expect(vi.mocked(runControlMatcherWithOutcome)).toHaveBeenCalledTimes(1);
+    expect(events("control_matcher_job_failed")).toHaveLength(0);
+    expect(events("control_matcher_job_completed")).toHaveLength(1);
+  });
+
+  it("the signal read is same-org OR global — the canonical §1 predicate", async () => {
+    vi.mocked(pg.query).mockResolvedValue({ rows: [{ ...signal }], rowCount: 1 } as never);
+
+    await processClaimedJob(job());
+
+    const read = vi
+      .mocked(pg.query)
+      .mock.calls.find((c) => String(c[0]).includes("FROM cyber_signals"))!;
+    // Exactly the form the four sibling signal-link routes use. Anything
+    // narrower drops global signals; anything wider drops tenant scoping.
+    expect(String(read[0])).toMatch(
+      /organization_id\s*=\s*\$2\s+OR\s+organization_id\s+IS\s+NULL/i
+    );
+    // Still parameterised by the job's org — global admission must not become
+    // "read any org's signal".
+    expect(read[1]).toEqual([SIGNAL, ORG]);
+  });
+
+  it("still refuses ANOTHER ORG's private signal — global admission is not a wildcard", async () => {
+    // Postgres semantics again: the row is org-owned by someone else, so
+    // neither disjunct matches and the read is empty.
+    vi.mocked(pg.query).mockImplementation((async (sql: string) => {
+      if (String(sql).includes("FROM cyber_signals")) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    }) as never);
+
+    await processClaimedJob(job());
+
+    expect(vi.mocked(runControlMatcherWithOutcome)).not.toHaveBeenCalled();
+    expect(events("control_matcher_job_failed")).toHaveLength(1);
+  });
+
+  it("the matcher's own dedup_hash read admits global signals too", async () => {
+    // The SECOND half of #883, in llmControlMatcher's phase 1. It was
+    // unreachable only because loadSignal failed first, so fixing the worker
+    // alone would merely have moved the silence: a global signal would have
+    // returned `no_controls` with the job marked SUCCEEDED.
+    const source = await import("node:fs").then((fs) =>
+      fs.readFileSync(
+        new URL("../lib/llmControlMatcher.ts", import.meta.url).pathname,
+        "utf8"
+      )
+    );
+    const dedupRead = source.slice(source.indexOf("SELECT dedup_hash FROM cyber_signals"));
+    expect(dedupRead.slice(0, 200)).toMatch(
+      /organization_id\s*=\s*\$2\s+OR\s+organization_id\s+IS\s+NULL/i
+    );
+  });
+
   it("a retryable outcome re-queues with backoff instead of succeeding silently", async () => {
     vi.mocked(pg.query).mockResolvedValue({ rows: [{ ...signal }], rowCount: 1 } as never);
     vi.mocked(runControlMatcherWithOutcome).mockResolvedValue({
