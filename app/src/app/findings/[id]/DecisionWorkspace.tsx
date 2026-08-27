@@ -552,6 +552,7 @@ export function DecisionWorkspace({
   riskRegister,
   affectedAssets,
   sourceProvenance,
+  retestHistory,
 }: {
   finding: Finding;
   context: FindingContext;
@@ -609,6 +610,15 @@ export function DecisionWorkspace({
    * has no richer provenance than its label.
    */
   sourceProvenance?: React.ReactNode;
+  /**
+   * T2-I: the verification (retest) history of a pen_test finding, composed
+   * server-side by the page that owns the fetch — same delivery as the PEN-1
+   * provenance beside it. Rendered as its own zone with the Risk Register,
+   * not inside a tab, for the same reason: an auditor's "was this verified?"
+   * must not disappear the moment the workspace flag flips. Undefined for
+   * every other source type — the section is ABSENT, never empty.
+   */
+  retestHistory?: React.ReactNode;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1179,6 +1189,8 @@ export function DecisionWorkspace({
           unconditionally. */}
       {affectedAssets && <div style={{ marginBottom: 20 }}>{affectedAssets}</div>}
       {riskRegister && <div style={{ marginBottom: 20 }}>{riskRegister}</div>}
+      {/* T2-I: retest verification history (pen_test findings only). */}
+      {retestHistory && <div style={{ marginBottom: 20 }}>{retestHistory}</div>}
 
       {/* Tab strip — executive zones A–C stay above; the detail body splits into
           Overview (context) and Remediation (recommendation + actions). */}

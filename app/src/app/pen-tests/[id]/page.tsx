@@ -8,6 +8,8 @@ import {
   type Finding,
 } from "@/lib/api";
 import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
+import { EngagementLifecycleCard } from "./EngagementLifecycleCard";
+import { RecordRetestControl } from "./RecordRetestControl";
 
 /**
  * /pen-tests/[id] — one penetration test and the findings it produced (PEN-1).
@@ -138,6 +140,11 @@ export default async function PenTestDetailPage({
         </div>
       </div>
 
+      {/* T2-I: lifecycle, test type, methodology, scope, recurrence clock —
+          with the inline edit form. Overdue is the engine's computed
+          test_overdue, rendered, never recomputed. */}
+      <EngagementLifecycleCard engagement={engagement} />
+
       <div className="mb-4 flex items-baseline justify-between flex-wrap gap-3">
         <h2 className="text-lg font-semibold" style={{ color: "#f1f5f9" }}>
           Findings
@@ -204,9 +211,7 @@ export default async function PenTestDetailPage({
       {findings.length > 0 && (
         <div className="space-y-3">
           {findings.map((f) => (
-            <Link key={f.id} href={`/findings/${f.id}`} className="block">
-              <FindingRow finding={f} />
-            </Link>
+            <FindingRow key={f.id} finding={f} engagementId={engagement.id} />
           ))}
         </div>
       )}
@@ -218,15 +223,27 @@ export default async function PenTestDetailPage({
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
-function FindingRow({ finding }: { finding: Finding }) {
+function FindingRow({
+  finding,
+  engagementId,
+}: {
+  finding: Finding;
+  /** The engagement whose page this row renders on — the engagement DOING a
+   *  recorded retest, which may legitimately differ from the finding's own
+   *  source engagement (the annual test verifying last year's fixes). */
+  engagementId: string;
+}) {
   const severityStyle = finding.severity
     ? SEVERITY_STYLES[finding.severity] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" }
     : { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
   const statusStyle =
     STATUS_STYLES[finding.status] ?? { background: "rgba(148,163,184,0.15)", color: "#94a3b8" };
 
+  // T2-I: the row is no longer one big link — the retest control is a form and
+  // cannot legally nest inside an anchor. The TITLE is the link to the shared
+  // finding detail; the control sits beside the row's metadata.
   return (
-    <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors">
+    <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -241,9 +258,11 @@ function FindingRow({ finding }: { finding: Finding }) {
               {STATUS_LABELS[finding.status] ?? finding.status}
             </span>
           </div>
-          <p className="mt-2 text-sm font-semibold" style={{ color: "#f1f5f9" }}>
-            {finding.title}
-          </p>
+          <Link href={`/findings/${finding.id}`} className="block transition-opacity hover:opacity-80">
+            <p className="mt-2 text-sm font-semibold" style={{ color: "#f1f5f9" }}>
+              {finding.title}
+            </p>
+          </Link>
         </div>
         {finding.source_reference_id && (
           <div className="flex-shrink-0 text-right">
@@ -254,6 +273,12 @@ function FindingRow({ finding }: { finding: Finding }) {
             </span>
           </div>
         )}
+      </div>
+      {/* T2-I: record one retest act. Write-only here on purpose — the
+          verification history renders on the finding detail (its natural
+          home), so this list never fans out into N retest fetches. */}
+      <div className="mt-3">
+        <RecordRetestControl engagementId={engagementId} findingId={finding.id} />
       </div>
     </div>
   );

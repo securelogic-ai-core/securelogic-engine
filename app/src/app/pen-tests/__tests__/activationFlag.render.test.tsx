@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { screen } from "@testing-library/react";
-import { renderPage, expectRedirect, signedIn } from "@/test/harness";
+import { renderPage, expectRedirect, signedIn, signedOut } from "@/test/harness";
 import { aPenTestEngagement } from "@/test/fixtures";
 
 const api = vi.hoisted(() => ({
@@ -35,6 +35,7 @@ import PenTestsPage from "../page";
 import PenTestDetailPage from "../[id]/page";
 import NewPenTestPage from "../new/page";
 import { createPenTest } from "../new/actions";
+import { updatePenTestEngagement, recordRetest } from "../[id]/actions";
 import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 
 const ENGAGEMENT = aPenTestEngagement();
@@ -163,5 +164,114 @@ describe("FLAG TRUE + VALID ENTITLEMENT — the #864 surface is unchanged", () =
   it("/pen-tests/new renders the create form again", async () => {
     const { container } = await renderPage(NewPenTestPage, {});
     expect(container.querySelector("form")).toBeTruthy();
+  });
+});
+
+// ─── T2-I (#868): the surface the lifecycle package adds obeys the SAME flag ──
+//
+// #868 was written against PEN-1, before this activation control existed, and
+// its two new server actions shipped ungated. That is the defect this block
+// exists to keep closed. The point is not that these actions are "extra doors"
+// — it is that a Next.js server action is its OWN endpoint: Next will invoke it
+// from a direct POST carrying the action id, with no page render in between, so
+// the page's notFound() gate never runs and cannot be relied on.
+//
+// It is not merely defence in depth. The app and the engine are separately
+// configured Render services reading the same key, so app-off/engine-on is a
+// REACHABLE state during a staged flip — and in that window an ungated action
+// would have mutated engagement lifecycle and retest history while every UI
+// surface reported the capability dark.
+describe("T2-I FLAG FALSE — the lifecycle and retest actions are shut too", () => {
+  it("updatePenTestEngagement refuses a DIRECT invocation", async () => {
+    const form = new FormData();
+    form.set("status", "closed");
+    expect(await updatePenTestEngagement(ENGAGEMENT.id, form)).toEqual({
+      error: "Not available",
+    });
+  });
+
+  it("recordRetest refuses a DIRECT invocation", async () => {
+    const form = new FormData();
+    form.set("result", "remediated");
+    expect(await recordRetest(ENGAGEMENT.id, "finding-1", form)).toEqual({
+      error: "Not available",
+    });
+  });
+
+  it("refuses BEFORE authentication is even considered", async () => {
+    // Ordering matters: if the token check ran first, an unauthenticated probe
+    // would get "Not authenticated" and a signed-in one "Not available" — and
+    // the difference would confirm the capability exists. Both must be the
+    // flag's answer.
+    signedOut();
+    const form = new FormData();
+    form.set("status", "closed");
+    expect(await updatePenTestEngagement(ENGAGEMENT.id, form)).toEqual({
+      error: "Not available",
+    });
+    expect(await recordRetest(ENGAGEMENT.id, "finding-1", form)).toEqual({
+      error: "Not available",
+    });
+  });
+
+  it("spends NO network call while dark", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const form = new FormData();
+    form.set("status", "closed");
+    await updatePenTestEngagement(ENGAGEMENT.id, form);
+    form.set("result", "remediated");
+    await recordRetest(ENGAGEMENT.id, "finding-1", form);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("a PLATFORM entitlement cannot bypass the flag on either action", async () => {
+    signedIn({ entitlementLevel: "platform" });
+    const form = new FormData();
+    form.set("status", "closed");
+    expect(await updatePenTestEngagement(ENGAGEMENT.id, form)).toEqual({
+      error: "Not available",
+    });
+    form.set("result", "remediated");
+    expect(await recordRetest(ENGAGEMENT.id, "finding-1", form)).toEqual({
+      error: "Not available",
+    });
+  });
+
+  it("returns the refusal, never throws — the action contract is preserved", async () => {
+    // createPenTest established this: an action that throws surfaces as a
+    // framework error page, not a message the form can render.
+    const form = new FormData();
+    form.set("status", "closed");
+    await expect(updatePenTestEngagement(ENGAGEMENT.id, form)).resolves.toBeTruthy();
+    form.set("result", "remediated");
+    await expect(recordRetest(ENGAGEMENT.id, "finding-1", form)).resolves.toBeTruthy();
+  });
+});
+
+describe("T2-I FLAG TRUE + NO ENTITLEMENT — still unavailable", () => {
+  beforeEach(() => {
+    process.env["SECURELOGIC_PEN_TEST_ENABLED"] = "true";
+    signedIn({ entitlementLevel: "free" });
+  });
+
+  it("the actions get past the flag and are refused by the engine, not by the flag", async () => {
+    // Turning the flag on grants nothing entitlement would have refused: the
+    // request now reaches the engine, whose GUARDS chain (requireEntitlement
+    // after penTestFeatureFlag) is the authority. What must NOT happen is the
+    // action succeeding locally.
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: "entitlement_required" }),
+      text: async () => '{"error":"entitlement_required"}',
+    } as unknown as Response)));
+    const form = new FormData();
+    form.set("status", "closed");
+    const res = await updatePenTestEngagement(ENGAGEMENT.id, form);
+    expect(res.error).toBeTruthy();
+    expect(res.error).not.toBe("Not available");
+    vi.unstubAllGlobals();
   });
 });

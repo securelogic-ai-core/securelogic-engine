@@ -85,6 +85,39 @@ describe("/pen-tests — the engagement rows", () => {
   });
 });
 
+describe("/pen-tests — T2-I lifecycle on the list row", () => {
+  it("renders the status badge and the test type", async () => {
+    api.getPenTestEngagements.mockResolvedValue(
+      ok([aPenTestEngagement({ status: "report_received", test_type: "web_application" })])
+    );
+    await renderPage(PenTestsPage, {});
+
+    expect(screen.getByText("Report Received")).toBeInTheDocument();
+    expect(screen.getByText("Web Application")).toBeInTheDocument();
+  });
+
+  it("shows the overdue indicator from the API's computed test_overdue — never a client-side date comparison", async () => {
+    // next_test_due is deliberately in the FUTURE while test_overdue says true:
+    // if the app recomputed overdue from the date it would hide the flag and
+    // this test would catch it. The engine's computed answer is the contract.
+    api.getPenTestEngagements.mockResolvedValue(
+      ok([aPenTestEngagement({ next_test_due: "2099-01-01", test_overdue: true })])
+    );
+    await renderPage(PenTestsPage, {});
+
+    expect(screen.getByText("Test overdue")).toBeInTheDocument();
+  });
+
+  it("shows no overdue indicator when the engine says the clock has not lapsed", async () => {
+    api.getPenTestEngagements.mockResolvedValue(
+      ok([aPenTestEngagement({ next_test_due: "2027-01-01", test_overdue: false })])
+    );
+    await renderPage(PenTestsPage, {});
+
+    expect(screen.queryByText("Test overdue")).not.toBeInTheDocument();
+  });
+});
+
 describe("/pen-tests — empty and unavailable are different answers", () => {
   it("a genuinely empty register says what would populate it", async () => {
     api.getPenTestEngagements.mockResolvedValue(ok([]));

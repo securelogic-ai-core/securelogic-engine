@@ -3,6 +3,11 @@ import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getPenTestEngagements, type PenTestEngagement } from "@/lib/api";
+import {
+  ENGAGEMENT_STATUS_LABELS,
+  ENGAGEMENT_STATUS_STYLES,
+  TEST_TYPE_LABELS,
+} from "./lifecycle";
 import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
 import { isUnavailable } from "@/lib/edx/loadState";
 
@@ -139,10 +144,39 @@ function EngagementRow({ engagement }: { engagement: PenTestEngagement }) {
     <div className="bg-brand-surface border border-brand-line hover:border-slate-500 rounded-xl p-5 cursor-pointer transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <span className="text-sm font-semibold truncate block" style={{ color: "#f1f5f9" }}>
-            {engagement.name}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold truncate" style={{ color: "#f1f5f9" }}>
+              {engagement.name}
+            </span>
+            {/* T2-I lifecycle: where the engagement is. A statement, not a lock. */}
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+              style={
+                ENGAGEMENT_STATUS_STYLES[engagement.status] ?? {
+                  background: "rgba(148,163,184,0.15)",
+                  color: "#94a3b8",
+                }
+              }
+            >
+              {ENGAGEMENT_STATUS_LABELS[engagement.status] ?? engagement.status}
+            </span>
+            {/* Overdue is the ENGINE's computed test_overdue — never recomputed
+                from next_test_due client-side, so list and detail can't disagree. */}
+            {engagement.test_overdue && (
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+                style={{ background: "rgba(239,68,68,0.12)", color: "#fca5a5" }}
+              >
+                Test overdue
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex flex-wrap gap-3">
+            {engagement.test_type && (
+              <span className="text-xs" style={{ color: "#94a3b8" }}>
+                {TEST_TYPE_LABELS[engagement.test_type] ?? engagement.test_type}
+              </span>
+            )}
             {engagement.provider && (
               <span className="text-xs" style={{ color: "#94a3b8" }}>
                 {engagement.provider}
