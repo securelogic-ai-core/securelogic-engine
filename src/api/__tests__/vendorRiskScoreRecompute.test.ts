@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe("resolveVendorIdForFinding", () => {
-  it("resolves the vendor through either vendor workflow source", async () => {
+  it("resolves the vendor through ANY of the three vendor linkages", async () => {
     mockPgQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ vendor_id: VENDOR }] });
 
     const vendorId = await resolveVendorIdForFinding(ORG, FINDING);
@@ -39,7 +39,14 @@ describe("resolveVendorIdForFinding", () => {
     const [sql, params] = mockPgQuery.mock.calls[0]!;
     expect(String(sql)).toMatch(/source_type = 'vendor_review'/);
     expect(String(sql)).toMatch(/source_type = 'vendor_cycle_review'/);
-    expect(String(sql)).toMatch(/f\.organization_id = \$2/);
+    // The third arm. Its absence is what returned NULL for every CUEC-promoted
+    // Vendor Assurance finding, so no recompute was ever scheduled for one.
+    expect(String(sql)).toMatch(/promoted_finding_id = f\.id/);
+    // Org scoping now sits on the linkage subquery, which carries the predicate
+    // on BOTH sides of every join inside it.
+    expect(String(sql)).toMatch(/l\.organization_id = \$2/);
+    // The FK-enforced arm wins if a finding somehow matches more than one.
+    expect(String(sql)).toMatch(/WHEN 'vendor_assurance_cuec' THEN 0/);
     expect(params).toEqual([FINDING, ORG]);
   });
 
@@ -76,7 +83,11 @@ describe("recomputeAndPersistVendorRiskScore", () => {
     const unionSql = String(mockPgQuery.mock.calls[1]![0]);
     expect(unionSql).toMatch(/JOIN vendor_assessments/);
     expect(unionSql).toMatch(/JOIN vendor_reviews/);
+    expect(unionSql).toMatch(/JOIN vendor_assurance_cuecs/);
     expect(unionSql).toMatch(/UNION ALL/);
+    // DISTINCT over the edges: a finding cannot contribute its severity to the
+    // same vendor twice, however many arms it matches.
+    expect(unionSql).toMatch(/SELECT DISTINCT finding_id/);
 
     const [updateSql, updateParams] = mockPgQuery.mock.calls[2]!;
     expect(String(updateSql)).toMatch(/UPDATE vendors SET current_risk_score/);

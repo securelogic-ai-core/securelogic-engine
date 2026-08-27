@@ -8,11 +8,12 @@
  * remembered to click Recalculate (EG2 trust audit, Trap #2). Route hooks now
  * schedule a recompute whenever a vendor-linked finding's lifecycle changes.
  *
- * The finding population is the CANONICAL union the manual endpoint has always
- * used (GET /api/vendors/:id/risk-score): ACTIVE findings from both vendor
- * workflows — `vendor_review` (point-in-time assessments) and
- * `vendor_cycle_review` (review cycles). The assessment-create path previously
- * counted only the first; sharing this module converges both on the same query.
+ * The finding population is the CANONICAL set of ACTIVE findings linked to the
+ * vendor by ANY of the three vendor->finding relationships — point-in-time
+ * assessments, review cycles, and Vendor Assurance CUEC promotions — as defined
+ * once in `vendorFindingLinkage.ts`. The assessment-create path once counted
+ * only the first of those, and the CUEC arm was missing entirely; sharing one
+ * definition is what stops the set from drifting per reader again.
  *
  * Tenancy: `recomputeAndPersistVendorRiskScore` / `resolveVendorIdForFinding`
  * use the ambient `pg` proxy and MUST run inside a tenant scope (a route's
@@ -27,6 +28,11 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { computeVendorRiskScore } from "./vendorRiskScore.js";
 import { sqlFindingActive } from "./metricDefinitions.js";
+import {
+  VENDOR_FINDING_LINKAGE_SQL,
+  VENDOR_FINDING_EDGES_SQL,
+  vendorFindingLinkagePriority,
+} from "./vendorFindingLinkage.js";
 
 export type VendorScoreRecomputeResult = {
   vendor_id: string;
@@ -37,9 +43,16 @@ export type VendorScoreRecomputeResult = {
 };
 
 /**
- * Resolve the vendor a finding belongs to via its workflow source record.
+ * Resolve the vendor a finding belongs to via `vendorFindingLinkage`.
  * Returns null for findings that are not vendor-workflow-sourced. Must run
  * inside a tenant scope.
+ *
+ * This used to join `vendor_assessments` / `vendor_reviews` on `source_id`
+ * directly, which returned NULL for every CUEC-promoted Vendor Assurance
+ * finding — so no recompute was ever scheduled for one. Null is an ordinary
+ * outcome here (most findings are not vendor findings), which is exactly why
+ * the omission was silent: nothing distinguished "not a vendor finding" from
+ * "vendor finding we failed to resolve".
  */
 export async function resolveVendorIdForFinding(
   organizationId: string,
@@ -47,15 +60,12 @@ export async function resolveVendorIdForFinding(
 ): Promise<string | null> {
   const result = await pg.query<{ vendor_id: string | null }>(
     `
-    SELECT COALESCE(va.vendor_id, vr.vendor_id) AS vendor_id
-    FROM findings f
-    LEFT JOIN vendor_assessments va
-      ON f.source_type = 'vendor_review' AND va.id::text = f.source_id::text
-     AND va.organization_id = f.organization_id
-    LEFT JOIN vendor_reviews vr
-      ON f.source_type = 'vendor_cycle_review' AND vr.id::text = f.source_id::text
-     AND vr.organization_id = f.organization_id
-    WHERE f.id = $1 AND f.organization_id = $2
+    SELECT l.vendor_id
+      FROM (${VENDOR_FINDING_LINKAGE_SQL}) l
+     WHERE l.finding_id      = $1
+       AND l.organization_id = $2
+     ORDER BY ${vendorFindingLinkagePriority("l.linkage")}
+     LIMIT 1
     `,
     [findingId, organizationId]
   );
@@ -78,27 +88,25 @@ export async function recomputeAndPersistVendorRiskScore(
   if ((vendorResult.rowCount ?? 0) === 0) return null;
   const criticality = vendorResult.rows[0]!.criticality;
 
+  // The canonical ACTIVE-finding population for this vendor, over ALL THREE
+  // vendor->finding relationships. This is the SECOND, INDEPENDENT exclusion the
+  // CUEC defect had: even once a recompute is triggered by some other finding on
+  // the same vendor, a scoring query that joins vendor_assessments on source_id
+  // drops every CUEC-promoted gap from the input. Fixing the resolver alone left
+  // the score exactly where it was.
+  //
+  // EDGES, not the full linkage: one row per (finding, vendor), so a finding can
+  // never contribute its severity to the same vendor twice.
   const findingsResult = await pg.query<{ severity: string; status: string }>(
     `
     SELECT f.severity, f.status
-    FROM findings f
-    JOIN vendor_assessments va
-      ON va.id::text = f.source_id::text
-      AND f.source_type = 'vendor_review'
-    WHERE va.vendor_id = $1
-      AND f.organization_id = $2
-      AND ${sqlFindingActive("f.operational_status")}
-
-    UNION ALL
-
-    SELECT f.severity, f.status
-    FROM findings f
-    JOIN vendor_reviews vr
-      ON vr.id::text = f.source_id::text
-      AND f.source_type = 'vendor_cycle_review'
-    WHERE vr.vendor_id = $1
-      AND f.organization_id = $2
-      AND ${sqlFindingActive("f.operational_status")}
+      FROM findings f
+      JOIN (${VENDOR_FINDING_EDGES_SQL}) l
+        ON l.finding_id      = f.id
+       AND l.organization_id = f.organization_id
+     WHERE l.vendor_id       = $1
+       AND f.organization_id = $2
+       AND ${sqlFindingActive("f.operational_status")}
     `,
     [vendorId, organizationId]
   );
