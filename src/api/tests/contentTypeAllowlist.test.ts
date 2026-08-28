@@ -14,6 +14,7 @@ const NON_JSON_ENDPOINTS = [
   "/api/vendor-assurance/documents",
   "/api/sso/acme/acs",
   "/api/ask/transcribe", // ← voice audio upload (the regression)
+  "/api/vendor-portal/evidence", // ← external vendor evidence upload (VA-E2E-1)
 ];
 
 describe("isContentTypeEnforcementExempt", () => {
@@ -40,6 +41,32 @@ describe("isContentTypeEnforcementExempt", () => {
 
   it("is not fooled by the transcribe substring appearing elsewhere", () => {
     expect(isContentTypeEnforcementExempt("/api/evil/api/ask/transcribe")).toBe(false);
+  });
+
+  it("exempts the vendor-portal evidence upload (VA-E2E-1: this was the second 415 bug)", () => {
+    expect(isContentTypeEnforcementExempt("/api/vendor-portal/evidence")).toBe(true);
+    expect(isContentTypeEnforcementExempt("/api/vendor-portal/evidence?x=1")).toBe(true);
+  });
+
+  it("does NOT exempt any other vendor-portal route — they are all JSON", () => {
+    for (const url of [
+      "/api/vendor-portal/session",
+      "/api/vendor-portal/engagement",
+      "/api/vendor-portal/questions",
+      "/api/vendor-portal/questions/11111111-1111-1111-1111-111111111111",
+      "/api/vendor-portal/submit",
+      "/api/vendor-portal/comments",
+    ]) {
+      expect(isContentTypeEnforcementExempt(url), url).toBe(false);
+    }
+  });
+
+  it("does NOT exempt the portal evidence SUB-path (DELETE /evidence/:id carries no body)", () => {
+    expect(
+      isContentTypeEnforcementExempt("/api/vendor-portal/evidence/11111111-1111-1111-1111-111111111111")
+    ).toBe(false);
+    // and a sibling route that merely shares the prefix
+    expect(isContentTypeEnforcementExempt("/api/vendor-portal/evidence-export")).toBe(false);
   });
 });
 

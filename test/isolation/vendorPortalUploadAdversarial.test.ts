@@ -56,6 +56,7 @@ vi.mock("../../src/api/lib/evidenceStorage.js", async () => {
 
 import { bootstrapTestDb, seedVendor, type TestDbSeed } from "./testDb.js";
 import { buildRoutes } from "../../src/api/routes/index.js";
+import { enforceJsonContentType } from "../../src/api/lib/contentTypeAllowlist.js";
 import {
   hashPortalToken,
   generatePortalToken,
@@ -176,6 +177,13 @@ beforeAll(async () => {
   users.b = await seedUser(seed.orgB.id, "upl-b");
 
   app = express();
+  // The strict Content-Type gate, in the SAME position createApp() puts it
+  // (src/api/app.ts: enforceJsonContentType -> express.json -> cookieParser ->
+  // buildRoutes). Without it this suite drove the router directly and every
+  // multipart upload below passed while production 415'd at the gate —
+  // VA-E2E-1. The gate belongs here so the whole upload class is exercised
+  // through the chain that actually runs.
+  app.use(enforceJsonContentType);
   app.use(express.json());
   app.use(cookieParser());
   app.use(buildRoutes({ isDev: false, publicApiDisabled: false }));
@@ -198,6 +206,79 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM vendor_engagement_comments WHERE engagement_id = ANY($1::uuid[])`, [
     [fx.a.engagementId, fx.b.engagementId],
   ]);
+});
+
+// ─── VA-E2E-1: the content-type gate is open for FILES, not for callers ─────
+//
+// Opening /api/vendor-portal/evidence in the strict Content-Type allowlist is
+// the smallest change that lets a multipart body reach the route. The risk of
+// that change is that it also lets an ANONYMOUS body reach it. These assert the
+// gate moved and nothing else did: past the gate the request still meets
+// requirePortalSession, and every other portal route is still JSON-only.
+
+describe("VA-E2E-1 · the multipart exemption opens the gate, never the door", () => {
+  it("a multipart upload with NO session is 401 — not 415, and certainly not 201", async () => {
+    const res = await request(app)
+      .post("/api/vendor-portal/evidence")
+      .attach("file", PDF_BYTES, { filename: "soc2.pdf", contentType: "application/pdf" });
+
+    // 415 would mean the gate never opened (the original bug). 201 would mean
+    // the exemption skipped authentication. Only 401 is correct.
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+  });
+
+  it("a multipart upload with a FORGED cookie is 401", async () => {
+    const res = await request(app)
+      .post("/api/vendor-portal/evidence")
+      .set("Cookie", `${PORTAL_SESSION_COOKIE}=${generatePortalToken().token}`)
+      .attach("file", PDF_BYTES, { filename: "soc2.pdf", contentType: "application/pdf" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+  });
+
+  it("an anonymous multipart upload writes NO row and NO blob", async () => {
+    const before = blobs.size;
+    await request(app)
+      .post("/api/vendor-portal/evidence")
+      .attach("file", PDF_BYTES, { filename: "soc2.pdf", contentType: "application/pdf" });
+
+    const rows = await pool.query(
+      `SELECT 1 FROM evidence WHERE engagement_id = ANY($1::uuid[])`,
+      [[fx.a.engagementId, fx.b.engagementId]]
+    );
+    expect(rows.rowCount).toBe(0);
+    expect(blobs.size).toBe(before);
+  });
+
+  it("the OTHER portal routes still 415 a multipart body, session or not", async () => {
+    const cookie = await sessionCookie(fx.a.token);
+    for (const path of [
+      "/api/vendor-portal/session",
+      "/api/vendor-portal/submit",
+      "/api/vendor-portal/comments",
+    ]) {
+      const res = await request(app)
+        .post(path)
+        .set("Cookie", cookie)
+        .attach("file", PDF_BYTES, { filename: "x.pdf", contentType: "application/pdf" });
+      expect(res.status, path).toBe(415);
+      expect(res.body, path).toEqual({ error: "unsupported_media_type" });
+    }
+  });
+
+  it("the evidence route still refuses a body that is not multipart at all", async () => {
+    const cookie = await sessionCookie(fx.a.token);
+    const res = await request(app)
+      .post("/api/vendor-portal/evidence")
+      .set("Cookie", cookie)
+      .set("Content-Type", "application/json")
+      .send({ file: "not-a-file" });
+
+    // Exempt from the gate, so it reaches multer — which finds no file. The
+    // point is that "exempt" never means "accepted".
+    expect(res.status, JSON.stringify(res.body)).not.toBe(201);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 });
 
 // ─── Class 9a: file content abuse ───────────────────────────────────────────

@@ -162,6 +162,10 @@ import { listBriefEligibleOrgIds } from "../lib/briefEligibility.js";
 import { sendBrief } from "../lib/briefEmailSender.js";
 import { enrichBriefItems, generateBrief } from "../lib/intelligenceBriefGenerator.js";
 import { reserveVerdict } from "../lib/llm/verdictCache.js";
+import {
+  isNotMeasuredInThisProcess,
+  NOT_MEASURED_IN_THIS_PROCESS
+} from "../lib/llm/outOfProcessMetric.js";
 import type * as ConcurrencyModule from "../lib/concurrency.js";
 
 // ---------------------------------------------------------------------------
@@ -670,6 +674,92 @@ describe("orgs_deadline_exceeded is a dormant shape, not enforcement", () => {
     expect(source).toMatch(/orgs_deadline_exceeded: 0/);
     expect(source).not.toMatch(/orgs_deadline_exceeded\+\+|orgs_deadline_exceeded \+=/);
     expect(source).not.toMatch(/orgs_deadline_exceeded_ids\.push/);
+  });
+});
+
+describe("the scheduler never publishes a metric it did not measure", () => {
+  // The Wave 4 Tier 2 gate (#826) read `verdict_cache: {hits:0, lookups:0,
+  // tokens_saved:0}` off a run summary and concluded the cache did nothing.
+  // Those zeros were not a measurement: since Wave 4 the verdict cache is
+  // reachable only from the matcher worker's process, which this one does not
+  // start. A zero the process cannot produce is worse than a missing field,
+  // because it reads as evidence.
+
+  it("reports verdict_cache as NOT MEASURED HERE rather than zeros", async () => {
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([1, 2].map(orgId));
+
+    const summary = await runScheduler();
+
+    expect(isNotMeasuredInThisProcess(summary.verdict_cache)).toBe(true);
+    expect(summary.verdict_cache.measurement).toBe(NOT_MEASURED_IN_THIS_PROCESS);
+    // Nothing summable, so a dashboard cannot fold this into a total by accident.
+    expect(summary.verdict_cache).not.toHaveProperty("hits");
+    expect(summary.verdict_cache).not.toHaveProperty("lookups");
+    expect(summary.verdict_cache).not.toHaveProperty("tokens_saved");
+    expect(summary.verdict_cache).not.toHaveProperty("cost_saved_usd");
+  });
+
+  it("points the reader at the process and event that CAN answer", async () => {
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([orgId(1)]);
+
+    const summary = await runScheduler();
+
+    expect(summary.verdict_cache.producer).toBe("securelogic-intelligence-worker");
+    expect(summary.verdict_cache.event).toBe("control_matcher_tick_complete");
+  });
+
+  it("still reports its OWN llm spend as real numbers — this is not blanket silence", async () => {
+    // Brief-synthesis calls do happen in this process, so `llm` stays numeric.
+    // The correction is scoped to what the scheduler cannot see, not to
+    // everything expensive.
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([orgId(1)]);
+
+    const summary = await runScheduler();
+
+    expect(typeof summary.llm.calls).toBe("number");
+    expect(typeof summary.llm.cost_usd).toBe("number");
+    expect(isNotMeasuredInThisProcess(summary.llm)).toBe(false);
+    // …and it never grows a matcher bucket, because that work is elsewhere.
+    expect(summary.llm.by_purpose).not.toHaveProperty("llm_control_matcher");
+  });
+
+  it("scheduler_run_complete carries the measured concurrency bound", async () => {
+    // #826 reconstructed peak concurrency from scheduler_org_start/_complete
+    // interval pairs while the measured value sat in the summary, absent from
+    // this line only. Emitting it is the difference between a run that
+    // evidences itself and one that needs an analyst.
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([1, 2, 3].map(orgId));
+
+    await runScheduler();
+
+    const complete = vi
+      .mocked(logger.info)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((c) => c?.event === "scheduler_run_complete");
+
+    expect(complete).toBeDefined();
+    const concurrency = complete!["org_concurrency"] as { limit: number; peak_in_flight: number };
+    expect(concurrency.limit).toBeGreaterThan(0);
+    expect(concurrency.peak_in_flight).toBeGreaterThan(0);
+    expect(concurrency.peak_in_flight).toBeLessThanOrEqual(concurrency.limit);
+  });
+
+  it("scheduler_run_complete does not print zeroed llm totals it cannot have yet", async () => {
+    // The LLM accumulator closes in runScheduler(), one frame ABOVE this emit,
+    // so any numbers on this line would necessarily be zeros. It says so
+    // instead, and names scheduler_cron_complete as the line that has them.
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([orgId(1)]);
+
+    await runScheduler();
+
+    const complete = vi
+      .mocked(logger.info)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((c) => c?.event === "scheduler_run_complete");
+
+    expect(isNotMeasuredInThisProcess(complete!["llm"])).toBe(true);
+    expect(isNotMeasuredInThisProcess(complete!["verdict_cache"])).toBe(true);
+    expect((complete!["llm"] as { event: string }).event).toBe("scheduler_cron_complete");
   });
 });
 

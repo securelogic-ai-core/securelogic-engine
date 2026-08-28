@@ -3,6 +3,8 @@ import "./globals.css";
 import { Header } from "@/components/Header";
 import { getSession } from "@/lib/session";
 import { getIdleSeconds } from "@/lib/sessionPolicy";
+import { penTestEnabled } from "@/lib/penTestFeatureFlag";
+import { riskAcceptanceEnabled } from "@/lib/riskAcceptanceFeatureFlag";
 import { getConsentStatus } from "@/lib/api";
 import IdleLogout from "@/components/IdleLogout";
 import ConsentInterstitial from "@/components/ConsentInterstitial";
@@ -60,6 +62,15 @@ export default async function RootLayout({
     // workspace nav's home entry "Briefing"; only takes effect together with
     // risk_workspace (the legacy nav is never touched).
     briefing: process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
+    // Pen-test capability (PEN-1 / T2-I) — DARK (default off). ACTIVATION, not
+    // entitlement: the Risk group is already platform-gated, and this is the
+    // separate switch for whether Pen Tests is exposed at all. Same key the
+    // engine reads, so hiding the nav entry never leaves a live route behind it.
+    pen_test: penTestEnabled(),
+    // Risk-acceptance capability (NAV-1 / P1-C) — DARK (default off). ACTIVATION
+    // for the "Approvals" entry in both nav models. Same key the engine reads, so
+    // the nav never advertises Approvals while /api/risk-acceptances 404s.
+    risk_acceptance: riskAcceptanceEnabled(),
   };
 
   return (

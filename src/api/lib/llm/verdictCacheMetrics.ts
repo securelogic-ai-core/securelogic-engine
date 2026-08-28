@@ -53,6 +53,15 @@ export function beginVerdictCacheAccumulation(): void {
   activeRun = emptyVerdictCacheTotals();
 }
 
+/**
+ * True while an accumulation is in flight. Same hazard as
+ * `isLlmRunAccumulating` — `begin…` no-ops when one is already active, so an
+ * unconditional `end…` would steal another scope's totals.
+ */
+export function isVerdictCacheAccumulating(): boolean {
+  return activeRun !== null;
+}
+
 export function endVerdictCacheAccumulation(): VerdictCacheTotals {
   const totals = activeRun ?? emptyVerdictCacheTotals();
   activeRun = null;

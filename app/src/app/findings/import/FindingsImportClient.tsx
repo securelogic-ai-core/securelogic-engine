@@ -33,6 +33,12 @@ const FIELDS: Array<{ key: keyof FindingImportRow; label: string; required?: boo
   { key: "asset_ip",       label: "Asset IP" },
   { key: "asset_cloud_resource_id", label: "Cloud Resource ID" },
   { key: "asset_internal_id",       label: "Internal Asset ID" },
+  // PEN-1. The pen-test engagement a pen_test row came from — the /pen-tests
+  // detail page shows the id to paste. The type field and the server action
+  // already carried source_id; without a FIELDS entry the client could never
+  // MAP it, so every pen_test row was doomed to the engine's
+  // source_id_required 400 and the provenance workflow could not complete.
+  { key: "source_id",               label: "Engagement ID (pen_test)" },
 ];
 
 const VALID_SEVERITIES   = new Set(["Critical", "High", "Moderate", "Low"]);
@@ -94,7 +100,7 @@ const AUTO_MAP_RULES: Record<keyof FindingImportRow, string[]> = {
   asset_ip:            ["ip", "ip address", "ipv4", "address"],
   asset_cloud_resource_id: ["arn", "resource id", "cloud id", "cloud resource id"],
   asset_internal_id:   ["asset id", "cmdb id", "internal id", "ci id"],
-  source_id:           [],
+  source_id:           ["engagement id", "engagement", "source id"],
 };
 
 // Scan the first up to 5 rows of raw sheet data to find the real header row.
@@ -184,6 +190,7 @@ function normalizeRow(raw: Record<string, string>, columnMap: Record<string, str
     asset_ip:       get("asset_ip"),
     asset_cloud_resource_id: get("asset_cloud_resource_id"),
     asset_internal_id:       get("asset_internal_id"),
+    source_id:      get("source_id"),
   };
 }
 
@@ -219,6 +226,26 @@ function validateRow(row: FindingImportRow): { status: RowValidation; warnings: 
   }
   if (!VALID_SOURCE_TYPES.has(row.source_type)) {
     warnings.push(`Source type "${row.source_type}" is not valid — will default to "manual"`);
+  }
+  // ── PEN-1 ─────────────────────────────────────────────────────────────
+  // A pen_test row must name the engagement it came from. The engine REJECTS
+  // it otherwise (source_id_required) — source_id is caller-supplied and
+  // ownership-verified there, so provenance is not an optional column for this
+  // source type. Invalid rather than warned: a warning would imply the row
+  // imports without it. The id to paste is shown on the /pen-tests detail page.
+  if (row.source_type === "pen_test") {
+    if (!row.source_id) {
+      return {
+        status: "invalid",
+        warnings: ["A pen_test row must name its engagement — map an Engagement ID column (the id is on the pen test's page under Pen Tests)"],
+      };
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.source_id.trim())) {
+      return {
+        status: "invalid",
+        warnings: [`Engagement ID "${row.source_id}" is not a valid id — copy it from the pen test's page under Pen Tests`],
+      };
+    }
   }
   if (row.priority && !VALID_PRIORITIES.has(row.priority)) {
     warnings.push(`Priority "${row.priority}" is not valid — will be cleared`);
@@ -284,6 +311,7 @@ function cleanRow(row: FindingImportRow): FindingImportRow {
     asset_ip:       row.asset_ip || undefined,
     asset_cloud_resource_id: row.asset_cloud_resource_id || undefined,
     asset_internal_id:       row.asset_internal_id || undefined,
+    source_id:      row.source_id?.trim() || undefined,
     source_type:    VALID_SOURCE_TYPES.has(row.source_type) ? row.source_type : "manual",
     description:    row.description || undefined,
     domain:         row.domain || undefined,

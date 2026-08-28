@@ -136,3 +136,86 @@ describe("strict Content-Type allowlist (real createApp)", () => {
     expect(r.status).not.toBe(415);
   });
 });
+
+/* ---------------------------------------------------------------------------
+   VA-E2E-1 — the EXTERNAL vendor portal's evidence upload.
+
+   Same defect, second occurrence: POST /api/vendor-portal/evidence is a
+   multipart route that was never added to the exemption list, so the gate 415'd
+   every external evidence upload before requirePortalSession, before multer,
+   before the handler. The portal's adversarial suite did not catch it because
+   it drives the ROUTER; only the assembled app has the gate in front.
+
+   The portal is the platform's one unauthenticated write surface, so the
+   exemption is deliberately narrow: exactly the collection path, exactly the
+   route that receives a file. Every other portal route stays JSON-only —
+   /session, /submit, /comments and PUT /questions/:id are all JSON and a
+   multipart body on any of them is still a 415.
+   --------------------------------------------------------------------------- */
+describe("strict Content-Type allowlist — external vendor portal evidence (VA-E2E-1)", () => {
+  it("permits multipart POST to /api/vendor-portal/evidence (the bug fix)", async () => {
+    const app = buildApp();
+    const r = await send(
+      app,
+      "POST",
+      "/api/vendor-portal/evidence",
+      "multipart/form-data; boundary=----abc"
+    );
+    // Exempt: past the gate it meets requirePortalSession, which 401s an
+    // anonymous caller. Anything but 415 proves the gate let it through.
+    expect(r.status).not.toBe(415);
+  });
+
+  it("permits multipart POST to /api/vendor-portal/evidence with a query string", async () => {
+    const app = buildApp();
+    const r = await send(
+      app,
+      "POST",
+      "/api/vendor-portal/evidence?ts=1",
+      "multipart/form-data; boundary=----abc"
+    );
+    expect(r.status).not.toBe(415);
+  });
+
+  it("still blocks multipart on the JSON portal routes (/session, /submit, /comments)", async () => {
+    for (const path of [
+      "/api/vendor-portal/session",
+      "/api/vendor-portal/submit",
+      "/api/vendor-portal/comments",
+    ]) {
+      const app = buildApp();
+      const r = await send(app, "POST", path, "multipart/form-data; boundary=----abc");
+      expect(r.status, path).toBe(415);
+      expect(r.body, path).toEqual({ error: "unsupported_media_type" });
+    }
+  });
+
+  it("still blocks multipart PUT on /api/vendor-portal/questions/:id", async () => {
+    const app = buildApp();
+    const r = await send(
+      app,
+      "PUT",
+      "/api/vendor-portal/questions/11111111-1111-1111-1111-111111111111",
+      "multipart/form-data; boundary=----abc"
+    );
+    expect(r.status).toBe(415);
+    expect(r.body).toEqual({ error: "unsupported_media_type" });
+  });
+
+  it("is not fooled by a path that merely starts with the evidence prefix", async () => {
+    const app = buildApp();
+    const r = await send(
+      app,
+      "POST",
+      "/api/vendor-portal/evidence-export",
+      "multipart/form-data; boundary=----abc"
+    );
+    expect(r.status).toBe(415);
+  });
+
+  it("still permits application/json on the portal's JSON routes", async () => {
+    const app = buildApp();
+    const r = await send(app, "POST", "/api/vendor-portal/session", "application/json");
+    expect(r.status).not.toBe(415);
+  });
+});
