@@ -1,6 +1,6 @@
 # VA-Q1 — Versioned questionnaire foundation: implementation plan
 
-**Status:** IN PROGRESS — **P1 STAGING VERIFIED 2026-08-28** (#898 @ `64e1a746`, slot 20261059); P2 next · **Governs:** ADR-0013 R1, R3 · **Design:** VA-Q0 §4.1, §4.4, §9, §15
+**Status:** **VA-Q1 COMPLETE 2026-08-28** — P1 #898, P2 #900, P3 #901 STAGING VERIFIED; P4 hardening merged. Every acceptance criterion in §G has a named proof. Q2 (fact registry, S5 domain activation) is the next increment and needs its own plan. · **Governs:** ADR-0013 R1, R3 · **Design:** VA-Q0 §4.1, §4.4, §9, §15
 **Baseline:** `develop` @ `e773b6a8` (2026-08-28) · **Owner directive:** proceed into implementation in small reviewable packages without a further conceptual approval cycle.
 
 ## Objective
@@ -85,7 +85,7 @@ commit → exact-head CI → staging deploy → behavioural check → matrix upd
   premium → 403); assembled-app (every route JSON-only: multipart → 415).
 - **No customer-visible change.** Nothing reads the new tables yet.
 
-### P2 — Version addressing (slot 20261060)
+### P2 — Version addressing (slot 20261060) — **DONE: STAGING VERIFIED 2026-08-28 (#900 @ `c9531cf1`)**
 - Nullable `question_version_id` on scope items, responses, revisions (FK →
   `question_versions`, `ON DELETE RESTRICT`). `question_set_hash TEXT NULL` on
   `vendor_engagements`.
@@ -110,7 +110,7 @@ commit → exact-head CI → staging deploy → behavioural check → matrix upd
   `vendorEngagementResponsesRead`, `vendorEngagementsRls`).
 - **Customer-visible change: none.** Same text, same order, same counts.
 
-### P3 — Bridge backfill + equivalence proof — **AMENDED during P2 (no schema; slot 20261061 released to reserve)**
+### P3 — Bridge backfill + equivalence proof — **AMENDED during P2 (no schema; slot 20261061 released to reserve) — DONE: STAGING VERIFIED 2026-08-28 (#901 @ `7d7d9eb9`)**
 
 > **Amendment (2026-08-28, during P2).** The original P3 stamped a bridge
 > version onto EXISTING issued engagements' scope items. That would record
@@ -142,7 +142,14 @@ commit → exact-head CI → staging deploy → behavioural check → matrix upd
   leaves issued engagements on v1; historical engagement reproducibility —
   responses read against the stamped version text, not current.
 
-### P4 — Hardening and matrix (no schema)
+### P4 — Hardening and matrix (no schema) — **DONE (this PR)**
+
+> **Rollback rehearsal — DONE 2026-08-28 on the harness DB populated by the P2/P3
+> suites** (2 questions, 3 versions, 9 stamped items, 10 stamped engagements):
+> `ROLLBACK-20261059-20261061.sql` exit 0; all three tables and all four
+> columns gone; the verbatim `e773b6a8` portal query still rendered 10 rows on
+> the rolled-back schema; forward re-apply of 20261059 + 20261060 exit 0 and
+> data-free. Code rollback (previous SHA) remains sufficient on its own.
 - Adversarial additions the directive names that P1–P3 do not already cover:
   identifier manipulation (swap a version id for a *different question in the
   same org* on a response write → 409 `version_not_in_scope`); mapping

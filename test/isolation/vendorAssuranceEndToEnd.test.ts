@@ -26,6 +26,7 @@ import { Pool } from "pg";
 
 import { bootstrapTestDb, seedVendor, type TestDbSeed } from "./testDb.js";
 import { buildRoutes } from "../../src/api/routes/index.js";
+import { enforceJsonContentType } from "../../src/api/lib/contentTypeAllowlist.js";
 import { PORTAL_SESSION_COOKIE } from "../../src/api/lib/vendorPortal/portalTokens.js";
 
 let seed: TestDbSeed;
@@ -115,6 +116,12 @@ beforeAll(async () => {
   }
 
   app = express();
+
+  // The strict Content-Type gate, in the position createApp() puts it —
+
+  // the VA-E2E-1 rule, enforced by isolationSuitesUseRealGate.test.ts.
+
+  app.use(enforceJsonContentType);
   app.use(express.json());
   app.use(cookieParser());
   app.use(buildRoutes({ isDev: false, publicApiDisabled: false }));
