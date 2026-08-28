@@ -64,6 +64,7 @@ import {
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
 import { resolveEngagementScope } from "../lib/vendorRisk/scopeResolver.js";
+import { summarizeDomains } from "../lib/vendorRisk/requirementDomain.js";
 import { factsFromInherent, resolveFacts } from "../lib/vendorRisk/factResolver.js";
 import {
   assuranceFor,
@@ -504,6 +505,16 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       [id, organizationId]
     );
 
+    // VA-Q2 P2: the questionnaire grouped by the domain each item was asked
+    // under. Stamped at resolve for scope-rule 1.1.0+; a pre-Q2 engagement has
+    // NULL on every item and reports `domains: null` rather than six zeros.
+    const domainRows = await pg.query<{ domain: string | null }>(
+      `SELECT domain FROM vendor_engagement_scope_items
+        WHERE engagement_id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    const domains = summarizeDomains(domainRows.rows.map((r) => r.domain));
+
     // The engagement view previously said nothing about findings at all — so
     // it could assert "this control passes" while the finding it once
     // promoted stayed open, with the divergence visible nowhere. Derived
@@ -525,6 +536,7 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
         mandatory: Number(scope.rows[0]?.mandatory ?? "0"),
+        domains,
       },
       findings: {
         total: Number(findingsSummary.rows[0]?.total ?? "0"),
@@ -758,8 +770,8 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       await pg.query(
         `INSERT INTO vendor_engagement_scope_items
            (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons,
-            question_version_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+            question_version_id, domain)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
         [
           organizationId,
           id,
@@ -769,6 +781,11 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
           item.source,
           JSON.stringify(item.reasons),
           versionByRequirement.get(item.requirement_id) ?? null,
+          // VA-Q2 P2: the domain the resolver asked this item under. Present
+          // only when the STAMPED corpus is >= 1.1.0 (the resolver sets it
+          // then and only then); a 1.0.0 engagement writes NULL — the stamp
+          // records what was computed, never a domain nobody computed.
+          item.domain ?? null,
         ]
       );
     }
@@ -1776,12 +1793,13 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
       evidence_count: string;
       evidence_confirmed: boolean;
       question_version_id: string | null;
+      domain: string | null;
     }>(
       `SELECT si.requirement_id, r.reference_id,
               COALESCE(qv.prompt, r.title) AS title,
               COALESCE(qv.guidance, r.description) AS description,
               si.question_version_id,
-              si.depth, si.mandatory,
+              si.depth, si.mandatory, si.domain,
               rr.id AS response_id, rr.status, rr.notes, rr.responder_type,
               rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at,
               COUNT(ev.id)::text AS evidence_count,
@@ -1806,7 +1824,7 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
           AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
         GROUP BY si.requirement_id, r.reference_id, qv.prompt, r.title, qv.guidance, r.description,
                  si.question_version_id,
-                 si.depth, si.mandatory,
+                 si.depth, si.mandatory, si.domain,
                  rr.id, rr.status, rr.notes, rr.responder_type,
                  rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at
         ORDER BY si.mandatory DESC, r.reference_id, si.requirement_id`,
@@ -1852,7 +1870,8 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
           description: row.description,
         },
         question_version_id: row.question_version_id,
-        scope: { depth: row.depth, mandatory: row.mandatory },
+        // VA-Q2 P2: null on items resolved under scope-rule 1.0.0.
+        scope: { depth: row.depth, mandatory: row.mandatory, domain: row.domain },
         response:
           row.response_id === null
             ? null
@@ -1891,6 +1910,7 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
         scoped: items.length,
         answered: items.filter((i) => i.response !== null).length,
         mandatory: items.filter((i) => i.scope.mandatory).length,
+        domains: summarizeDomains(items.map((i) => i.scope.domain)),
       },
       items,
     });

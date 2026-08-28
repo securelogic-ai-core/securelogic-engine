@@ -665,3 +665,61 @@ describe("VA-Q2 — the resolver stays pure (ADR-0013 R2)", () => {
     }
   });
 });
+
+// ─── VA-Q2 P2: the domain stamp ─────────────────────────────────────────────
+
+describe("VA-Q2 P2 — every 1.1.0 item is stamped with a domain; 1.0.0 stamps none", () => {
+  const withObligation = base({
+    tier: "tier_2_high",
+    requirements: [...CORPUS, req("obl-1", ["privacy"])],
+    obligationEdges: [{ obligation_id: "o-1", obligation_title: "GDPR", requirement_id: "obl-1" }],
+  });
+
+  it("under the current corpus (1.1.0) every item carries a domain from the closed set", () => {
+    const r = resolveEngagementScope(withObligation);
+    expect(r.scope_rule_version).toBe("1.1.0");
+    expect(r.items.length).toBeGreaterThan(0);
+    for (const item of r.items) {
+      expect(ASSESSMENT_DOMAINS as readonly string[], item.requirement_id).toContain(item.domain);
+    }
+  });
+
+  it("the stamp is the versioned rule: tag → domain, security the floor, compliance iff reached via S3", () => {
+    const r = resolveEngagementScope(withObligation);
+    const byId = new Map(r.items.map((i) => [i.requirement_id, i]));
+    expect(byId.get("core-1")?.domain).toBe("security");
+    expect(byId.get("acl-1")?.domain).toBe("security");
+    expect(byId.get("data-1")?.domain).toBe("privacy");
+    expect(byId.get("resil-1")?.domain).toBe("resilience");
+    // Same tag as privacy-1, but reached through an obligation edge → compliance.
+    expect(byId.get("obl-1")?.domain).toBe("compliance");
+    expect(byId.get("obl-1")?.reasons.some((x) => x.rule_family === "S3")).toBe(true);
+  });
+
+  it("under a 1.0.0 stamp NO item has a domain key at all — the route then writes NULL", () => {
+    const r = resolveEngagementScope({ ...withObligation, scopeRuleVersion: "1.0.0" });
+    expect(r.scope_rule_version).toBe("1.0.0");
+    expect(r.items.length).toBeGreaterThan(0);
+    for (const item of r.items) {
+      expect(Object.hasOwn(item, "domain"), item.requirement_id).toBe(false);
+      expect(item.domain ?? null).toBeNull();
+    }
+  });
+
+  it("a curated-only P2 tag activates its domain through S5 and stamps it", () => {
+    const corpus = [...CORPUS, req("dsr-1", ["data-subject-rights"]), req("mp-1", ["model-provider"])];
+    const facts = resolveFacts([
+      ...factsFromInherent(benign),
+      fact("data.personal_data", true),
+      fact("ai.uses_ai", true),
+    ]);
+    const r = resolveEngagementScope(base({ tier: "tier_4_low", requirements: corpus, facts }));
+    const byId = new Map(r.items.map((i) => [i.requirement_id, i]));
+    expect(byId.get("dsr-1")?.domain).toBe("privacy");
+    expect(byId.get("mp-1")?.domain).toBe("ai");
+    // and the same corpus under 1.0.0 never sees the S5-only items
+    const old = resolveEngagementScope(base({ tier: "tier_4_low", requirements: corpus, facts, scopeRuleVersion: "1.0.0" }));
+    expect(idsOf(old)).not.toContain("dsr-1");
+    expect(idsOf(old)).not.toContain("mp-1");
+  });
+});

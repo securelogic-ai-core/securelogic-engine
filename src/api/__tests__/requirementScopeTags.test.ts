@@ -18,11 +18,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  CURATED_ONLY_SCOPE_TAGS,
   SCOPE_TAG_VOCABULARY,
   areValidScopeTags,
   deriveScopeTags,
   scopeTagCoverage,
 } from "../lib/vendorRisk/requirementScopeTags.js";
+import { DOMAIN_TAGS } from "../lib/vendorRisk/requirementDomain.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const resolverSource = readFileSync(
@@ -30,9 +32,15 @@ const resolverSource = readFileSync(
   "utf8"
 );
 
-/** Every tag literal the resolver's rule tables reference. */
+/**
+ * Every tag literal the resolver's rule tables reference. S5 (VA-Q2) consumes
+ * tags through `DOMAIN_TAGS` in requirementDomain.ts — a domain activation
+ * includes every requirement carrying one of its domain's tags — so that
+ * table is a rule consumer in exactly the sense S1/S2 are.
+ */
 function tagsReferencedByResolver(): string[] {
   const found = new Set<string>();
+  for (const tags of Object.values(DOMAIN_TAGS)) for (const t of tags) found.add(t);
   // `tags: ["access-control", "iam"]` and the TIER_BASELINE_TAGS arrays.
   for (const block of resolverSource.matchAll(/tags:\s*\[([^\]]*)\]/g)) {
     for (const literal of block[1]!.matchAll(/["']([^"']+)["']/g)) {
@@ -171,5 +179,41 @@ describe("scopeTagCoverage", () => {
 
   it("does not divide by zero on an empty corpus", () => {
     expect(scopeTagCoverage([]).curated_pct).toBe(0);
+  });
+});
+
+describe("VA-Q2 P2 — the nine curated-only tags", () => {
+  const NINE = [
+    "vulnerability-management",
+    "secure-development",
+    "data-subject-rights",
+    "cross-border",
+    "lawful-basis",
+    "breach-notification",
+    "training-data",
+    "model-provider",
+    "automated-decision",
+  ];
+
+  it("are exactly the VA-Q0 §5 starred tags, in the vocabulary and accepted by areValidScopeTags", () => {
+    expect([...CURATED_ONLY_SCOPE_TAGS]).toEqual(NINE);
+    for (const t of NINE) expect(SCOPE_TAG_VOCABULARY as readonly string[]).toContain(t);
+    expect(areValidScopeTags(NINE)).toBe(true);
+  });
+
+  it("are NEVER produced by the heuristic — the 20260926 backfill mirror is untouched", () => {
+    // Titles that a naive regex would have matched. The heuristic must still
+    // tag them with the pre-P2 vocabulary only.
+    const titles = [
+      "Vulnerability Management and Secure Development Lifecycle",
+      "Data Subject Rights, Lawful Basis and Cross-border Transfers",
+      "Breach Notification Procedure",
+      "Training Data Provenance and Model Provider Due Diligence",
+      "Automated Decision-making Safeguards",
+    ];
+    for (const title of titles) {
+      const { tags } = deriveScopeTags({ reference_id: "X-1", title });
+      for (const t of tags) expect(NINE, `${title} → ${t}`).not.toContain(t);
+    }
   });
 });
