@@ -660,8 +660,8 @@ staging 2026-08-28.
 | Req | Requirement | Design | Package | Security control | Tests | Staging evidence | Status |
 |---|---|---|---|---|---|---|---|
 | A | Canonical requirement/control library | §1 | (exists) | RLS, premium gate | framework activation, RLS | SOC 2 activation 36 req, 08-28 | **STAGING VERIFIED** |
-| B | Curated vendor question library | §4.1, §5 | Q1 | T-1, T-4 | 1,4,10,12 | P1 #898 @ `64e1a746`, staging §H.2 all legs PASS 2026-08-28 (create → link → publish v1 → identical = 200 same id → v2 with v1 untouched → last-link 409 → 401/415 walls) | **STAGING VERIFIED** (P1: entity, immutable versions, write surface) · DESIGNED (portal renders versions — P2) |
-| C | Many-to-many question↔requirement↔framework/domain | §4.1, §5 | Q1 | publish validation | 12 | P1 #898: `question_requirement_links`, framework-join org check, foreign≡unknown 404, last-link guard; staging 2026-08-28 | **STAGING VERIFIED** (links + lineage) · DESIGNED (coverage query, bridge — P3) |
+| B | Curated vendor question library | §4.1, §5 | Q1 | T-1, T-4 | 1,4,10,12 | P1 #898 @ `64e1a746`, staging §H.2 all legs PASS 2026-08-28 (create → link → publish v1 → identical = 200 same id → v2 with v1 untouched → last-link 409 → 401/415 walls) | **STAGING VERIFIED** — P1 entity/versions/write surface; P2 #900 portal + reviewer render versions; P3 #901 @ `7d7d9eb9` bridge-all live on staging 2026-08-28 (173 requirements, 134 created, Walkthrough `unchanged=39`) |
+| C | Many-to-many question↔requirement↔framework/domain | §4.1, §5 | Q1 | publish validation | 12 | P1 #898: `question_requirement_links`, framework-join org check, foreign≡unknown 404, last-link guard; staging 2026-08-28 | **STAGING VERIFIED** — links + lineage (P1); coverage query + bridge (P3 #901, staging equivalence proof 2026-08-28: 10 engagements, 9 render-equal, 1 pinned-diverged by design, 0 failed, 0 hash drift) |
 | D | Risk-based questionnaire profiles | §4.2, §6.2 | Q7 (defaults in code Q2) | T-16 floors | 13 | tier baselines today | IMPLEMENTED (code constants) → DESIGNED (profiles) |
 | E | Conditional/branching rules | §4.2, §6.4 | Q3 | T-5, T-6 | 8,9 | — | DESIGNED |
 | F | Evidence requirement rules | §10 | Q3 | T-12 | 11 | — | DESIGNED |
@@ -680,8 +680,8 @@ staging 2026-08-28.
 | AI-B | AI never authoritative; fail closed | §11 | (exists) + Q6 | T-8 | 14 | ladder moves only on human confirm, proven 08-28 | **STAGING VERIFIED** (existing) / DESIGNED (extension) |
 | SEC | 22 security requirements | §12–13 | every | T-1–17 | 3–7,11,18 | portal suites behind real middleware | IMPLEMENTED (portal) / DESIGNED (VA-Q) |
 | AI-SEC | 12 AI-security requirements | §11, T-7–9 | Q6 | — | 15–17 | injection line exists; no corpus | DESIGNED |
-| TEST | 20 test classes | §14 | every | — | — | classes 3,4,5,7,10(partial),20 exist | IMPLEMENTED (6/20) / DESIGNED |
-| TRACE | This matrix, maintained | §18 | every | — | — | — | DESIGNED — updated per VA-Q PR from Q1 onward |
+| TEST | 20 test classes | §14 | every | — | — | Q1 adds: 1 unit · 2 integration (real PG, real routes) · 3 assembled-app incl. the `isolationSuitesUseRealGate` lint (found 2 more blind suites on arrival) · 4,5,6 on every new table/route · 7 member-vs-admin through the real JWT bridge · 10 version integrity (edit-after-issue, drift) · 12 mapping (foreign≡unknown, last-link) · 20 one regression per defect (415, TRUNCATE wall, commit-before-response) | IMPLEMENTED (11/20) · DESIGNED (8,9,11,13–19) |
+| TRACE | This matrix, maintained | §18 | every | — | — | updated in #899, #902, and the P4 PR | **IMPLEMENTED** — maintained per VA-Q PR |
 | ADR | ADR-0013 six rulings recorded | this doc | Q0 | — | — | — | **ACCEPTED** (ratified 2026-08-28) |
 | ZAP | ZAP/Burp on stable candidate | §13 Q8 | Q8 | — | — | — | NOT STARTED |
 
