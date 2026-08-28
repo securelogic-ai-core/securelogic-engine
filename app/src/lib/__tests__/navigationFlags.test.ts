@@ -293,7 +293,10 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
     // Assets pointing at the document review queue, while the engagement spine
     // (/vendor-engagements) was nav-orphaned in every IA — so the workflow was
     // reachable only by typing the URL.
-    const group = ws(true, false).find(
+    // VA-NAV-1: the three assurance children are activation-flagged; this
+    // case pins the ACTIVATED shape. The dark shape is pinned in the VA-NAV-1
+    // block below.
+    const group = ws(true, false, { vendor_assurance: true }).find(
       (i): i is Extract<typeof i, { type: "group" }> =>
         i.type === "group" && i.label === "Vendor Assurance",
     );
@@ -570,5 +573,108 @@ describe("NAV-1 — Approvals declaration + activation flag", () => {
     // whose real gate refuses the caller.
     const declared = ROUTE_ACCESS_DECLARATIONS.find((d) => d.prefix === "/approvals");
     expect(declared?.access).toBe("platform");
+  });
+});
+
+describe("VA-NAV-1 — Vendor Assurance group is activation-flagged in BOTH nav models", () => {
+  // Production renders the LEGACY menu (risk_workspace off) and runs the engine's
+  // SECURELOGIC_VENDOR_ASSURANCE_ENABLED false, so before this fix a platform-tier
+  // user saw three destinations whose every engine route 404'd. These cases are
+  // about the MENU only: the page gate (vendor-assurance/__tests__/
+  // activationFlag.render.test.tsx) and the engine gate
+  // (src/api/__tests__/vendorAssuranceFeatureFlag.test.ts) are the authorization
+  // and are proven separately — hiding a nav entry is not a permission check.
+  const VA_HREFS = ["/vendor-assurance", "/vendor-engagements", "/vendor-assurance/queue"];
+  const platformLegacy = (flags?: NavFlags) => filterNav(NAV_ITEMS, true, true, false, flags);
+  const platformWorkspace = (flags?: NavFlags) =>
+    filterNav(WORKSPACE_NAV_ITEMS, true, true, false, { risk_workspace: true, ...flags });
+  const vaGroup = (nav: NavItem[]) =>
+    nav.find(
+      (i): i is Extract<NavItem, { type: "group" }> =>
+        i.type === "group" && i.label === "Vendor Assurance",
+    );
+
+  it("declares the flag on the legacy group and on each assurance child of the workspace group", () => {
+    const legacy = vaGroup(NAV_ITEMS);
+    expect(legacy?.featureFlag).toBe("vendor_assurance");
+    const ws = vaGroup(WORKSPACE_NAV_ITEMS);
+    expect(ws?.featureFlag).toBeUndefined();
+    for (const c of ws?.items ?? []) {
+      expect(c.featureFlag).toBe(c.href === "/vendors" ? undefined : "vendor_assurance");
+    }
+  });
+
+  it("is DARK for a platform-tier user when no flags are passed — the production posture", () => {
+    expect(vaGroup(platformLegacy())).toBeUndefined();
+    for (const h of VA_HREFS) {
+      expect(allHrefs(platformLegacy())).not.toContain(h);
+      expect(allHrefs(platformWorkspace())).not.toContain(h);
+    }
+  });
+
+  it("stays dark when the flag is explicitly false — no permissive fallback", () => {
+    expect(vaGroup(platformLegacy({ vendor_assurance: false }))).toBeUndefined();
+    for (const h of VA_HREFS) {
+      expect(allHrefs(platformWorkspace({ vendor_assurance: false }))).not.toContain(h);
+    }
+  });
+
+  it("renders the whole group for a platform-tier user when the flag is on — legacy model", () => {
+    const g = vaGroup(platformLegacy({ vendor_assurance: true }));
+    expect(g?.items.map((c) => c.href)).toEqual(VA_HREFS);
+  });
+
+  it("renders all three assurance children for a platform-tier user when the flag is on — workspace model", () => {
+    const g = vaGroup(platformWorkspace({ vendor_assurance: true }));
+    expect(g?.items.map((c) => c.href)).toEqual([...VA_HREFS, "/vendors"]);
+  });
+
+  it("does not weaken the platform entitlement gate — the flag only subtracts", () => {
+    const nonPlatformLegacy = filterNav(NAV_ITEMS, false, true, false, { vendor_assurance: true });
+    const nonPlatformWs = filterNav(WORKSPACE_NAV_ITEMS, false, true, false, {
+      risk_workspace: true,
+      vendor_assurance: true,
+    });
+    expect(vaGroup(nonPlatformLegacy)).toBeUndefined();
+    expect(vaGroup(nonPlatformWs)).toBeUndefined();
+  });
+
+  it("no OTHER flag reveals the assurance destinations", () => {
+    const everythingElse: NavFlags = {
+      enterprise_context: true,
+      asset_registry: true,
+      risk_intelligence: true,
+      risk_workspace: true,
+      briefing: true,
+      pen_test: true,
+      risk_acceptance: true,
+    };
+    for (const h of VA_HREFS) {
+      expect(allHrefs(filterNav(NAV_ITEMS, true, true, true, everythingElse))).not.toContain(h);
+      expect(allHrefs(filterNav(WORKSPACE_NAV_ITEMS, true, true, true, everythingElse))).not.toContain(h);
+    }
+  });
+
+  it("keeps the vendor register reachable in the workspace model while assurance is dark (VA-6: not an assurance surface)", () => {
+    // asset_registry hides /vendors under Assets; the Vendor Assurance group is
+    // then its only home. Gating the whole group would have orphaned it.
+    const nav = platformWorkspace({ asset_registry: true, vendor_assurance: false });
+    expect(allHrefs(nav)).toContain("/vendors");
+    expect(vaGroup(nav)?.items.map((c) => c.href)).toEqual(["/vendors"]);
+  });
+
+  it("never mutates the shared arrays when the flag filters children away", () => {
+    const beforeWs = JSON.stringify(WORKSPACE_NAV_ITEMS);
+    const beforeLegacy = JSON.stringify(NAV_ITEMS);
+    platformWorkspace({ vendor_assurance: false });
+    platformLegacy({ vendor_assurance: false });
+    expect(JSON.stringify(WORKSPACE_NAV_ITEMS)).toBe(beforeWs);
+    expect(JSON.stringify(NAV_ITEMS)).toBe(beforeLegacy);
+  });
+
+  it("carries the assurance routes in ROUTE_ACCESS_DECLARATIONS at platform access, unchanged", () => {
+    for (const prefix of ["/vendor-assurance", "/vendor-engagements"]) {
+      expect(ROUTE_ACCESS_DECLARATIONS.find((d) => d.prefix === prefix)?.access).toBe("platform");
+    }
   });
 });

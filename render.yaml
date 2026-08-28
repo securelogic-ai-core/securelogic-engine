@@ -1745,6 +1745,20 @@ services:
       - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
         value: "false"  # production-authorized value; do NOT flip without a GATE-B ruling
 
+      # Vendor Assurance activation (VA-NAV-1) — app half of the engine's
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED (app/src/lib/vendorAssuranceFeatureFlag.ts,
+      # SAME resolver as the engine: "true" = on; anything else = OFF under
+      # NODE_ENV=production, which is what `next start` runs). Controls the
+      # "Vendor Assurance" nav group in BOTH nav models AND notFound()s the six
+      # /vendor-assurance + /vendor-engagements pages. Before this key the app
+      # never read the flag and advertised three destinations whose engine
+      # routes 404. ABSENT reads false on this tier; declared "false" here so the
+      # Blueprint records the intent explicitly. Flip together with the LIVE
+      # engine value (the engine block above declares "true" but the live prod
+      # engine runs false — never infer live state from this file).
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "false"  # production-authorized value; flip only with the live engine key
+
       # ERIP Package 3 (Decision Workspace) — DARK (default off). App half of the
       # two-switch model: renders the Decision Workspace on /findings/:id when on
       # AND the engine returns a context (engine flag on too). RUNTIME (not
@@ -1931,6 +1945,11 @@ services:
       # the production app block intentionally does not receive this var (absent reads
       # false), matching the production engine block; prod enablement is GATE B.
       - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+      # Vendor Assurance activation (VA-NAV-1) — app half of the engine key the
+      # staging engine block already declares "true". Same resolver as the engine;
+      # RUNTIME env (not NEXT_PUBLIC): a restart applies, no rebuild.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
       # ENABLED on STAGING: the scalable Risk Findings queue controls (search /
       # filter / sort toolbar, due-status urgency, server OFFSET pagination) on the
