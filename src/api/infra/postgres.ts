@@ -2,6 +2,7 @@ import { Pool } from "pg";
 
 import { logger } from "./logger.js";
 import { resolvePgSsl } from "./pgSsl.js";
+import { resolvePoolTuning } from "./pgPoolTuning.js";
 import type { PoolClient } from "pg";
 import {
   tenantStorage,
@@ -47,7 +48,27 @@ const ssl = resolvePgSsl();
 // A04-G1 phase 1+ the DATABASE_URL on the 5 flip-set services repoints to the
 // non-owner `app_request` role so RLS policies apply. Internal — callers use
 // the `pg` wrapper below.
-const pool = new Pool({ connectionString: databaseUrl, ssl });
+// R1-1: bounds, not node-postgres' defaults. `connectionTimeoutMillis: 0`
+// (the pg default) makes pool exhaustion an INFINITE HANG — no error, no log,
+// no metric, health checks still green. See pgPoolTuning.ts for the measured
+// connection budget this sizing comes from.
+const appPoolTuning = resolvePoolTuning("app", process.env, (detail) =>
+  logger.warn(
+    { event: "db_pool_tuning_invalid", role: "app", ...detail },
+    "Ignoring invalid pool tuning override — using the default"
+  )
+);
+
+const pool = new Pool({ connectionString: databaseUrl, ssl, ...appPoolTuning });
+
+// A saturated pool must be loud. Without this the only symptom of exhaustion
+// is latency, and the pool is the last place anyone looks.
+pool.on("error", (err) => {
+  logger.error(
+    { event: "db_pool_error", role: "app", err },
+    "Application pool emitted an error on an idle client"
+  );
+});
 
 /**
  * Unwrapped application pool — the documented escape hatch. Performs NO tenant
@@ -68,7 +89,38 @@ export const pgRaw = pool;
  * with no callers it opens no connections.
  */
 const elevatedUrl = process.env.MIGRATION_DATABASE_URL ?? databaseUrl;
-export const pgElevated = new Pool({ connectionString: elevatedUrl, ssl });
+const elevatedPoolTuning = resolvePoolTuning("elevated", process.env, (detail) =>
+  logger.warn(
+    { event: "db_pool_tuning_invalid", role: "elevated", ...detail },
+    "Ignoring invalid pool tuning override — using the default"
+  )
+);
+
+export const pgElevated = new Pool({
+  connectionString: elevatedUrl,
+  ssl,
+  ...elevatedPoolTuning
+});
+
+pgElevated.on("error", (err) => {
+  logger.error(
+    { event: "db_pool_error", role: "elevated", err },
+    "Elevated pool emitted an error on an idle client"
+  );
+});
+
+// One line at startup so the deployed budget is a fact in the logs rather than
+// something to be re-derived from source during an incident.
+logger.info(
+  {
+    event: "db_pool_configured",
+    appPoolMax: appPoolTuning.max,
+    elevatedPoolMax: elevatedPoolTuning.max,
+    connectionTimeoutMillis: appPoolTuning.connectionTimeoutMillis,
+    idleTimeoutMillis: appPoolTuning.idleTimeoutMillis
+  },
+  "Database connection pools configured with explicit bounds"
+);
 
 /**
  * M-1 PR-1 (C-2) — strict-mode observability for the raw-pool fallback.
