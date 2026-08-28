@@ -110,7 +110,21 @@ commit → exact-head CI → staging deploy → behavioural check → matrix upd
   `vendorEngagementResponsesRead`, `vendorEngagementsRls`).
 - **Customer-visible change: none.** Same text, same order, same counts.
 
-### P3 — Bridge backfill (slot 20261061) + equivalence proof
+### P3 — Bridge backfill + equivalence proof — **AMENDED during P2 (no schema; slot 20261061 released to reserve)**
+
+> **Amendment (2026-08-28, during P2).** The original P3 stamped a bridge
+> version onto EXISTING issued engagements' scope items. That would record
+> today's requirement text as "what was asked" for questionnaires issued
+> before P2 — and the text may have changed since. That is a fabricated
+> history, the exact thing ADR-0013 R3 exists to prevent. So P3 does NOT stamp
+> historical issued engagements: they stay `unstamped` in `/integrity`, render
+> through the requirement fallback, and say so. Pre-issue engagements need
+> nothing — their next scope resolution versions them (P2). What P3 still does:
+> bridge every activated requirement eagerly (a TS script, `scripts/va-q1-bridge-all.ts`,
+> idempotent, prod-refusing — not a SQL migration, so the ONE content-hash
+> implementation is reused rather than re-implemented in SQL), ship the
+> coverage query, and run the equivalence proof. Slot 20261061 is therefore
+> unused by Q1 and returns to the reserve.
 - Idempotent SQL: for every `(organization_id, requirement)` without a bridge
   question, insert `questions(question_key='req:'||framework_id||':'||reference_id, origin='securelogic', status='active')`,
   `question_versions v1 (prompt=title, guidance=description, answer_type='attest', evidence_policy='optional', content_hash)`,

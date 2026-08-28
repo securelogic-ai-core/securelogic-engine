@@ -254,6 +254,10 @@ describe("the set of modules that touch requirements.scope_tags stays closed", (
       // vendorAssuranceFeatureFlag (above). The domain it derives is inert
       // content until Q2 gives it a consumer — and that consumer will be the
       // resolver, inside the flag.
+      // VA-Q1 P3: bridgeAll reads scope_tags for the same domain label, and
+      // is reached only through scripts/va-q1-bridge-all.ts (operator) and the
+      // premium coverage route, whose SQL does not read scope_tags at all.
+      "api/lib/questionnaire/bridgeAll.ts",
       "api/lib/questionnaire/bridgeQuestions.ts",
       // The vocabulary + heuristic themselves — no I/O.
       "api/lib/requirementValidation.ts",
