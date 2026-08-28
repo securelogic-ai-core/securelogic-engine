@@ -112,6 +112,11 @@ jobs:
       # named per-GHSA and expiring (.audit-waivers.json). Dev-only advisories
       # are printed, never gating. Proofs: src/api/__tests__/auditGate.test.ts.
       - run: node scripts/ci/auditGate.mjs
+      # SEC-APP-1: the same gate over app/'s PRODUCTION deps. `npm audit` reads the
+      # lockfile, so no app/ install is needed; the waiver file resolves relative
+      # to the script, so one .audit-waivers.json governs both trees.
+      - run: node ../scripts/ci/auditGate.mjs
+        working-directory: app
 
   build:
     name: build
