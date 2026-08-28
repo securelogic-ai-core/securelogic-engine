@@ -89,15 +89,15 @@ describe("question library routes — composition pins (source-level)", () => {
 
   it("every route is premium-gated, tenant-wrapped, and denies contributor seats", () => {
     const routes = src.match(/router\.(get|post|patch|delete)\(/g) ?? [];
-    expect(routes.length).toBe(7);
+    expect(routes.length).toBe(8);
     expect(src).toMatch(/const readChain = \[requireApiKey, attachOrganizationContext, requireEntitlement\("premium"\), denyContributor\(\)\]/);
-    expect((src.match(/asTenant\(/g) ?? []).length).toBe(7);
+    expect((src.match(/asTenant\(/g) ?? []).length).toBe(8);
   });
 
   it("every mutation requires the admin role; reads do not", () => {
     expect(src).toMatch(/const writeChain = \[\.\.\.readChain, requireAdminRole\]/);
     expect((src.match(/\.\.\.writeChain/g) ?? []).length).toBe(5);
-    expect((src.match(/\.\.\.readChain,\n/g) ?? []).length).toBe(2);
+    expect((src.match(/\.\.\.readChain,\n/g) ?? []).length).toBe(3);
   });
 
   it("there is no route that updates or deletes a version (ADR-0013 R3)", () => {

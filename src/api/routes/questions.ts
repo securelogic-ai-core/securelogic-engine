@@ -27,6 +27,7 @@ import { attachOrganizationContext } from "../middleware/attachOrganizationConte
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { requirementQuestionCoverage } from "../lib/questionnaire/bridgeAll.js";
 import {
   QUESTION_DOMAINS,
   QUESTION_KEY_PATTERN,
@@ -102,6 +103,30 @@ router.get(
       res.status(200).json({ count: result.rows.length, questions: result.rows });
     } catch (err) {
       logger.error({ err, organizationId }, "GET /questions failed");
+      res.status(500).json({ error: "internal_error" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/questions/coverage — VA-Q1 P3. For every activated requirement,
+   how many ACTIVE questions evidence it, split bridge vs curated. The
+   summary's curated_pct is the number that says how much of the questionnaire
+   a human has actually written; bridge-only is "still asked as the
+   requirement text". Declared BEFORE /questions/:id so "coverage" is never
+   read as an id.
+   ========================================================= */
+router.get(
+  "/questions/coverage",
+  ...readChain,
+  asTenant(async (req: Request, res: Response) => {
+    const organizationId = orgOf(req);
+    if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+    try {
+      const out = await requirementQuestionCoverage(pg, organizationId);
+      res.status(200).json(out);
+    } catch (err) {
+      logger.error({ err, organizationId }, "GET /questions/coverage failed");
       res.status(500).json({ error: "internal_error" });
     }
   })
