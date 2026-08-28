@@ -64,6 +64,7 @@ import {
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
 import { resolveEngagementScope } from "../lib/vendorRisk/scopeResolver.js";
+import { factsFromInherent, resolveFacts } from "../lib/vendorRisk/factResolver.js";
 import {
   assuranceFor,
   computeControlEffectiveness,
@@ -639,7 +640,8 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
 
   try {
     const eng = await pg.query<Record<string, string | null>>(
-      `SELECT status, assessment_tier, data_sensitivity, data_volume_band, access_level,
+      `SELECT status, assessment_tier, scope_rule_version,
+              data_sensitivity, data_volume_band, access_level,
               operational_dependency, recoverability, business_criticality,
               regulatory_exposure, regulatory_breach_notification,
               ai_involvement, ai_autonomy, hosting_model,
@@ -695,13 +697,11 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       [organizationId]
     );
 
-    const resolution = resolveEngagementScope({
-      tier: row.assessment_tier as never,
-      // The column names differ from the model's field names in two places
-      // (`data_volume_band`, `concentration_snapshot`) because the spine named
-      // them for what they are: a band, and a point-in-time snapshot taken so a
-      // historical assessment stays reproducible.
-      inherent: {
+    // The column names differ from the model's field names in two places
+    // (`data_volume_band`, `concentration_snapshot`) because the spine named
+    // them for what they are: a band, and a point-in-time snapshot taken so a
+    // historical assessment stays reproducible.
+    const inherent = {
         data_sensitivity: row.data_sensitivity,
         data_volume: row.data_volume_band,
         access_level: row.access_level,
@@ -715,7 +715,20 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
         hosting_model: row.hosting_model,
         fourth_party_exposure: row.fourth_party_exposure,
         concentration: row.concentration_snapshot,
-      } as never,
+      } as InherentRiskInput;
+
+    const resolution = resolveEngagementScope({
+      tier: row.assessment_tier as never,
+      inherent,
+      // VA-Q2 P1: the resolver reads ONE fact surface. Until P3 lands the fact
+      // store, that surface is the 13 inherent inputs mirrored as `core.*`
+      // intake facts — so S5 sees exactly what S2 sees, nothing more.
+      facts: resolveFacts(factsFromInherent(inherent)),
+      // The STAMPED rule version is load-bearing (methodologyVersion.ts:
+      // "recompute reads the stamped values"). An engagement stamped 1.0.0
+      // re-resolves under 1.0.0 — S5 never runs for it — so a pre-Q2
+      // questionnaire cannot change under a customer's feet.
+      scopeRuleVersion: typeof row.scope_rule_version === "string" ? row.scope_rule_version : "1.0.0",
       requirements: requirements.rows,
       obligationEdges: edges.rows,
     });

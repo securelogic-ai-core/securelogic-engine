@@ -262,6 +262,9 @@ describe("the set of modules that touch requirements.scope_tags stays closed", (
       // The vocabulary + heuristic themselves — no I/O.
       "api/lib/requirementValidation.ts",
       "api/lib/vendorRisk/methodologyVersion.ts",
+      // VA-Q2 P1: the promoted requirement→domain rule (pure; the reader the
+      // Q1 comment above foresaw). Consumed by the resolver, inside the flag.
+      "api/lib/vendorRisk/requirementDomain.ts",
       "api/lib/vendorRisk/requirementScopeTags.ts",
       // The resolver: pure, and reached only through vendorEngagements.
       "api/lib/vendorRisk/scopeResolver.ts",

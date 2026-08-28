@@ -160,13 +160,16 @@ describe("scope resolution — S2 context triggers", () => {
   });
 
   it("AI oversight requirements need BOTH involvement and consequential autonomy", () => {
-    const involvedOnly = resolveEngagementScope(
-      base({
-        tier: "tier_4_low",
-        inherent: { ...benign, ai_involvement: "embedded", ai_autonomy: "human_in_the_loop" },
-      })
-    );
-    expect(idsOf(involvedOnly)).not.toContain("oversight-1");
+    const involvedOnlyInput: InherentRiskInput = { ...benign, ai_involvement: "embedded", ai_autonomy: "human_in_the_loop" };
+    const involvedOnly = resolveEngagementScope(base({ tier: "tier_4_low", inherent: involvedOnlyInput }));
+    // Under 1.1.0 S5.ai.involvement activates the whole AI domain (including
+    // human-oversight requirements); the S2 threshold is asserted on the RULE.
+    const s2Ids = (r: ReturnType<typeof resolveEngagementScope>) =>
+      r.items.flatMap((i) => i.reasons.filter((x) => x.rule_family === "S2").map((x) => x.rule_id));
+    expect(s2Ids(involvedOnly)).not.toContain("S2.ai_autonomy");
+    expect(
+      idsOf(resolveEngagementScope(base({ tier: "tier_4_low", scopeRuleVersion: "1.0.0", inherent: involvedOnlyInput })))
+    ).not.toContain("oversight-1");
 
     const autonomous = resolveEngagementScope(
       base({
@@ -256,8 +259,18 @@ describe("scope resolution — every reason is recorded", () => {
       })
     );
     const item = r.items.find((i) => i.requirement_id === "acl-1")!;
-    const families = item.reasons.map((x) => x.rule_family);
-    expect(new Set(families)).toEqual(new Set(["S1", "S2", "S3"]));
+    const families = new Set(item.reasons.map((x) => x.rule_family));
+    for (const f of ["S1", "S2", "S3"]) expect(families.has(f as never), f).toBe(true);
+    // and under the 1.0.0 corpus those three are exactly the set
+    const old = resolveEngagementScope(
+      base({
+        tier: "tier_2_high",
+        scopeRuleVersion: "1.0.0",
+        inherent: { ...benign, access_level: "admin" },
+        obligationEdges: [{ obligation_id: "ob-1", obligation_title: "DORA", requirement_id: "acl-1" }],
+      })
+    );
+    expect(new Set(old.items.find((i) => i.requirement_id === "acl-1")!.reasons.map((x) => x.rule_family))).toEqual(new Set(["S1", "S2", "S3"]));
   });
 
   it("every included item carries at least one reason", () => {
@@ -338,6 +351,317 @@ describe("scope resolution — the AI boundary", () => {
     const r = resolveEngagementScope(base({ tier: "tier_1_critical" }));
     for (const item of r.items) {
       expect(item.source).toBe("deterministic");
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VA-Q2 P1 — S5 domain activation, the version gate, and the fact surface
+// ═══════════════════════════════════════════════════════════════════════════
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  DOMAIN_ACTIVATION,
+  scopeVersionRunsS5,
+  type ScopeItem,
+} from "../lib/vendorRisk/scopeResolver.js";
+import { factsFromInherent, resolveFacts } from "../lib/vendorRisk/factResolver.js";
+import { FACT_KEYS, FACT_REGISTRY, type FactRow } from "../lib/vendorRisk/factRegistry.js";
+import { ASSESSMENT_DOMAINS } from "../lib/vendorRisk/requirementDomain.js";
+import { GOLDEN_CASES } from "./fixtures/scopeResolverGoldenCases.js";
+
+const GOLDEN = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./fixtures/scopeResolver-1.0.0.golden.json", import.meta.url)), "utf8")
+) as Record<string, unknown>;
+
+// ─── 1.0.0 golden equivalence ───────────────────────────────────────────────
+
+describe("VA-Q2 — engagements stamped 1.0.0 re-resolve BYTE-IDENTICALLY", () => {
+  it("the golden corpus covers every case name exactly once", () => {
+    expect(Object.keys(GOLDEN).sort()).toEqual(GOLDEN_CASES.map((c) => c.name).sort());
+    expect(GOLDEN_CASES.length).toBe(21);
+  });
+
+  for (const c of GOLDEN_CASES) {
+    it(`golden: ${c.name}`, () => {
+      const r = resolveEngagementScope({ ...c.input, scopeRuleVersion: "1.0.0" });
+      expect(JSON.stringify(r)).toBe(JSON.stringify(GOLDEN[c.name]));
+      // No 1.1.0 artefacts leak into a 1.0.0 resolution.
+      expect(r.scope_rule_version).toBe("1.0.0");
+      for (const item of r.items) {
+        expect("domain" in item).toBe(false);
+        expect(item.reasons.some((x) => x.rule_family === "S5")).toBe(false);
+      }
+    });
+  }
+
+  it("the golden JSON itself was produced under 1.0.0 and carries no S5 or domain", () => {
+    const text = JSON.stringify(GOLDEN);
+    expect(text).not.toContain('"S5"');
+    expect(text).not.toContain('"domain"');
+    expect(text.match(/"scope_rule_version": ?"1\.0\.0"/g)?.length).toBe(21);
+  });
+
+  it("a malformed or pre-semver stamp never runs S5 (fail toward the old corpus)", () => {
+    expect(scopeVersionRunsS5("1.0.0")).toBe(false);
+    expect(scopeVersionRunsS5("0.9.9")).toBe(false);
+    expect(scopeVersionRunsS5("")).toBe(false);
+    expect(scopeVersionRunsS5("garbage")).toBe(false);
+    expect(scopeVersionRunsS5("1.1.0")).toBe(true);
+    expect(scopeVersionRunsS5("1.2.0")).toBe(true);
+    expect(scopeVersionRunsS5("2.0.0")).toBe(true);
+    expect(scopeVersionRunsS5(SCOPE_RULE_VERSION)).toBe(true);
+  });
+
+  it("the current constant is 1.1.0 and a new engagement defaults to it", () => {
+    expect(SCOPE_RULE_VERSION).toBe("1.1.0");
+    expect(resolveEngagementScope(base()).scope_rule_version).toBe("1.1.0");
+  });
+});
+
+// ─── The directive's two worked examples (VA-Q0 §6.3, §17 Q2) ───────────────
+
+const fact = (fact_key: string, value: unknown, source: FactRow["source"] = "intake"): FactRow => ({ fact_key, value, source });
+
+/** A corpus with at least one requirement per domain tag group, plus filler. */
+const DOMAIN_CORPUS: ScopableRequirement[] = [
+  ...CORPUS,
+  req("bcp-1", ["business-continuity"]),
+  req("sub-1", ["subprocessor"]),
+  req("model-1", ["model-risk"]),
+  req("retention-1", ["retention"]),
+  req("enc-1", ["encryption"]),
+];
+
+const s5RuleIds = (r: ReturnType<typeof resolveEngagementScope>) =>
+  new Set(r.items.flatMap((i) => i.reasons.filter((x) => x.rule_family === "S5").map((x) => x.rule_id)));
+const domainsOf = (r: ReturnType<typeof resolveEngagementScope>) => new Set(r.items.map((i) => i.domain));
+
+describe("VA-Q2 — directive example 1: LLM + customer PII", () => {
+  const facts = resolveFacts([
+    ...factsFromInherent(benign),
+    fact("ai.uses_ai", true),
+    fact("ai.third_party_models", true),
+    fact("ai.customer_data_in_prompts", true),
+    fact("data.personal_data", true),
+  ]);
+  const r = resolveEngagementScope(base({ tier: "tier_3_moderate", requirements: DOMAIN_CORPUS, facts }));
+
+  it("activates Security + Privacy + AI + Nth party", () => {
+    expect(domainsOf(r)).toEqual(new Set(["security", "privacy", "ai", "nth_party"]));
+  });
+
+  it("with four DISTINCT S5 rule_ids — one per activating clause, each recorded as a reason", () => {
+    const ids = s5RuleIds(r);
+    expect(ids.has("S5.security.baseline")).toBe(true);
+    expect(ids.has("S5.privacy.personal_data")).toBe(true);
+    expect(ids.has("S5.ai.declared")).toBe(true);
+    expect(ids.has("S5.nth.third_party_models")).toBe(true);
+    expect(ids.size).toBeGreaterThanOrEqual(4);
+    // one per activated domain, at least
+    const byDomain = new Set([...ids].map((id) => id.split(".")[1]));
+    expect(byDomain).toEqual(new Set(["security", "privacy", "ai", "nth"]));
+  });
+
+  it("S5 WIDENED beyond what the 13 inputs alone would ask", () => {
+    const withoutFacts = resolveEngagementScope(base({ tier: "tier_3_moderate", requirements: DOMAIN_CORPUS }));
+    expect(idsOf(withoutFacts)).not.toContain("ai-1");
+    expect(idsOf(withoutFacts)).not.toContain("sub-1");
+    expect(idsOf(r)).toContain("ai-1");
+    expect(idsOf(r)).toContain("model-1");
+    expect(idsOf(r)).toContain("sub-1");
+    expect(idsOf(r)).toContain("privacy-1");
+    expect(idsOf(r)).toContain("retention-1");
+  });
+
+  it("compliance did NOT activate — no obligation edge, no compliance domain", () => {
+    expect(domainsOf(r).has("compliance")).toBe(false);
+  });
+});
+
+describe("VA-Q2 — directive example 2: no access, no personal data, no AI, tier 4", () => {
+  const facts = resolveFacts([
+    ...factsFromInherent({ ...benign, access_level: "none" }),
+    fact("data.personal_data", false),
+    fact("ai.uses_ai", false),
+  ]);
+  const r = resolveEngagementScope(base({ tier: "tier_4_low", requirements: DOMAIN_CORPUS, facts }));
+
+  it("yields Security at attest depth only", () => {
+    expect(r.items.length).toBeGreaterThan(0);
+    expect(domainsOf(r)).toEqual(new Set(["security"]));
+    expect(r.items.every((i) => i.depth === "attest")).toBe(true);
+  });
+
+  it("≤ 15 items, nothing truncated", () => {
+    expect(r.items.length).toBeLessThanOrEqual(15);
+    expect(r.truncated).toBeNull();
+  });
+
+  it("the only S5 rule that fired is the security baseline", () => {
+    expect(s5RuleIds(r)).toEqual(new Set(["S5.security.baseline"]));
+  });
+
+  it("asks exactly what 1.0.0 asked (S5.security never widens the baseline)", () => {
+    const old = resolveEngagementScope(base({ tier: "tier_4_low", requirements: DOMAIN_CORPUS, scopeRuleVersion: "1.0.0" }));
+    expect(idsOf(r)).toEqual(idsOf(old));
+  });
+});
+
+// ─── Determinism over 100 runs ──────────────────────────────────────────────
+
+describe("VA-Q2 — same facts → identical ordered item list across 100 runs", () => {
+  it("100 runs, one byte string", () => {
+    const rows = [
+      ...factsFromInherent({ ...benign, operational_dependency: "high", data_sensitivity: "confidential" }),
+      fact("ai.uses_ai", true, "ai_system_dependency"),
+      fact("ai.third_party_models", true, "vendor_answer"),
+      fact("data.personal_data", true),
+      fact("nth.subprocessors_declared", true, "vendor_answer"),
+    ];
+    const first = JSON.stringify(resolveEngagementScope(base({ tier: "tier_2_high", requirements: DOMAIN_CORPUS, facts: resolveFacts(rows) })));
+    const firstItems = JSON.stringify(JSON.parse(first).items);
+    for (let i = 0; i < 100; i++) {
+      const shuffled = [...rows].sort(() => (i % 2 === 0 ? 1 : -1));
+      const again = JSON.stringify(resolveEngagementScope(base({ tier: "tier_2_high", requirements: DOMAIN_CORPUS, facts: resolveFacts(shuffled) })));
+      expect(again).toBe(first);
+      // and the ORDERED item list is independent of requirement input order too
+      // (`excluded` follows input order by 1.0.0 design — unchanged here)
+      const reversed = resolveEngagementScope(base({ tier: "tier_2_high", requirements: [...DOMAIN_CORPUS].reverse(), facts: resolveFacts(shuffled) }));
+      expect(JSON.stringify(reversed.items)).toBe(firstItems);
+    }
+  });
+});
+
+// ─── S5 invariants ──────────────────────────────────────────────────────────
+
+describe("VA-Q2 — S5 only ever ADDS (ADR-0013 R4)", () => {
+  it("no activation rule has an exclude effect — by shape", () => {
+    for (const rule of DOMAIN_ACTIVATION) {
+      expect(Object.keys(rule).sort()).toEqual(["applies", "depth", "domain", "rationale", "rule_id"]);
+      expect(rule.domain).not.toBe("compliance");
+      expect(ASSESSMENT_DOMAINS).toContain(rule.domain);
+    }
+  });
+
+  it("rule_ids are unique, S5-prefixed, and name their domain", () => {
+    const ids = DOMAIN_ACTIVATION.map((r) => r.rule_id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const r of DOMAIN_ACTIVATION) {
+      expect(r.rule_id.startsWith("S5.")).toBe(true);
+      const seg = r.rule_id.split(".")[1];
+      expect(seg === r.domain || (seg === "nth" && r.domain === "nth_party")).toBe(true);
+    }
+  });
+
+  it("every fact an S5 rule reads is a registered key", () => {
+    // Rules read facts through typed readers, so an unregistered key would be a
+    // compile error; this asserts the keys the table names actually exist.
+    for (const k of ["data.personal_data", "core.data_sensitivity", "policy.privacy_obligations_active", "ai.customer_data_in_prompts", "core.ai_involvement", "ai.uses_ai", "core.operational_dependency", "core.recoverability", "core.business_criticality", "core.fourth_party_exposure", "nth.subprocessors_declared", "ai.third_party_models"]) {
+      expect(FACT_KEYS).toContain(k);
+    }
+  });
+
+  it("1.1.0 is a SUPERSET of 1.0.0 for every golden case — S5 never removes an item", () => {
+    for (const c of GOLDEN_CASES) {
+      const old = new Set(idsOf(resolveEngagementScope({ ...c.input, scopeRuleVersion: "1.0.0" })));
+      const cur = resolveEngagementScope({ ...c.input, scopeRuleVersion: "1.1.0" });
+      // (under the cap the superset must hold; over the cap the drop list is recorded)
+      if (cur.truncated === null) for (const id of old) expect(idsOf(cur), `${c.name} lost ${id}`).toContain(id);
+      for (const item of cur.items) expect(ASSESSMENT_DOMAINS).toContain(item.domain);
+    }
+  });
+
+  it("a vendor answer widens the scope and never narrows it", () => {
+    const intakeOnly = resolveEngagementScope(base({ requirements: DOMAIN_CORPUS, facts: resolveFacts([...factsFromInherent(benign), fact("nth.subprocessors_declared", true)]) }));
+    const vendorSaysNo = resolveEngagementScope(base({ requirements: DOMAIN_CORPUS, facts: resolveFacts([...factsFromInherent(benign), fact("nth.subprocessors_declared", true), fact("nth.subprocessors_declared", false, "vendor_answer")]) }));
+    const vendorSaysYes = resolveEngagementScope(base({ requirements: DOMAIN_CORPUS, facts: resolveFacts([...factsFromInherent(benign), fact("nth.subprocessors_declared", false), fact("nth.subprocessors_declared", true, "vendor_answer")]) }));
+    expect(idsOf(vendorSaysNo)).toEqual(idsOf(intakeOnly));
+    expect(idsOf(vendorSaysYes)).toContain("sub-1");
+    expect(idsOf(vendorSaysYes)).toContain("supply-1");
+  });
+});
+
+describe("VA-Q2 — domains", () => {
+  it("compliance is stamped ONLY on requirements reached via S3", () => {
+    const r = resolveEngagementScope(
+      base({
+        tier: "tier_4_low",
+        requirements: DOMAIN_CORPUS,
+        obligationEdges: [{ obligation_id: "ob-1", obligation_title: "GDPR Art. 28", requirement_id: "privacy-1" }],
+      })
+    );
+    const viaS3 = r.items.find((i) => i.requirement_id === "privacy-1")!;
+    expect(viaS3.domain).toBe("compliance");
+    for (const item of r.items) {
+      const reachedViaS3 = item.reasons.some((x) => x.rule_family === "S3");
+      expect(item.domain === "compliance", item.requirement_id).toBe(reachedViaS3);
+    }
+  });
+
+  it("every 1.1.0 item carries a domain from the closed set; every S5 reason is S5", () => {
+    const r = resolveEngagementScope(base({ tier: "tier_1_critical", requirements: DOMAIN_CORPUS }));
+    for (const item of r.items) {
+      expect(ASSESSMENT_DOMAINS).toContain(item.domain);
+      for (const x of item.reasons) if (x.rule_id.startsWith("S5.")) expect(x.rule_family).toBe("S5");
+    }
+  });
+
+  it("the security rationale is a plain baseline statement (tier 4 stays attest)", () => {
+    const r = resolveEngagementScope(base({ tier: "tier_4_low", requirements: DOMAIN_CORPUS }));
+    expect(r.items.every((i) => i.domain === "security" && i.depth === "attest")).toBe(true);
+  });
+});
+
+// ─── T-13: no fact VALUE ever reaches vendor-visible text ───────────────────
+
+describe("VA-Q2 — S5 rationale never interpolates a fact value (T-13)", () => {
+  it("every rationale is a static string longer than 30 chars", () => {
+    for (const rule of DOMAIN_ACTIVATION) {
+      expect(typeof rule.rationale).toBe("string");
+      expect(rule.rationale.length, rule.rule_id).toBeGreaterThan(30);
+    }
+  });
+
+  it("no rationale contains any vocabulary value of any registered fact", () => {
+    const values = new Set<string>();
+    for (const k of FACT_KEYS) {
+      const s = FACT_REGISTRY[k] as { values?: readonly string[]; ranked?: readonly string[] };
+      for (const v of [...(s.values ?? []), ...(s.ranked ?? [])]) if (v.length > 3 && v.includes("_")) values.add(v);
+    }
+    expect(values.size).toBeGreaterThan(5);
+    for (const rule of DOMAIN_ACTIVATION) for (const v of values) expect(rule.rationale, `${rule.rule_id} leaks ${v}`).not.toContain(v);
+  });
+
+  it("a resolution over distinctive facts carries no fact value in any reason", () => {
+    const r = resolveEngagementScope(
+      base({
+        tier: "tier_1_critical",
+        requirements: DOMAIN_CORPUS,
+        facts: resolveFacts([
+          ...factsFromInherent({ ...benign, concentration: "single_point_of_failure", ai_autonomy: "autonomous_consequential" }),
+          fact("ai.model_providers", ["ZZ-Distinctive-Provider-Ltd"]),
+          fact("data.jurisdictions", ["ZZ"]),
+        ]),
+      })
+    );
+    const text = JSON.stringify(r.items.map((i: ScopeItem) => i.reasons));
+    expect(text).not.toContain("ZZ-Distinctive-Provider-Ltd");
+    expect(text).not.toContain("single_point_of_failure");
+    expect(text).not.toContain("autonomous_consequential");
+  });
+});
+
+// ─── Purity: the resolver imports nothing from infra ────────────────────────
+
+describe("VA-Q2 — the resolver stays pure (ADR-0013 R2)", () => {
+  it("scopeResolver, factRegistry, factResolver and requirementDomain import nothing from infra/ or routes/", () => {
+    for (const f of ["scopeResolver", "factRegistry", "factResolver", "requirementDomain"]) {
+      const src = readFileSync(fileURLToPath(new URL(`../lib/vendorRisk/${f}.ts`, import.meta.url)), "utf8");
+      expect(src, f).not.toMatch(/from "\.\.\/(infra|routes|db)/);
+      expect(src, f).not.toMatch(/\bpg\b\.query|import .*pg\b/);
+      expect(src, f).not.toMatch(/\basync\b/);
     }
   });
 });

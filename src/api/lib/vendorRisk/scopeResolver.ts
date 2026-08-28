@@ -16,7 +16,7 @@
  * accepts them — which is why `source` is on the output type rather than being
  * inferred later.
  *
- * ── Four rule families ──────────────────────────────────────────────────────
+ * ── Five rule families ──────────────────────────────────────────────────────
  *
  *   S1 tier baseline       the assessment tier selects a baseline set by tag
  *   S2 context triggers    a dimension at/above a threshold pulls in a tag group
@@ -26,6 +26,22 @@
  *   S4 assurance offset    requirements already covered by an in-validity,
  *                          unqualified independent report drop to `confirm`
  *                          depth — NEVER removed
+ *   S5 domain activation   (1.1.0, VA-Q2) a DOMAIN — Security, Privacy, AI,
+ *                          Resilience, Nth party — activates from declared
+ *                          FACTS (`factRegistry.ts`), pulling in every
+ *                          requirement of that domain. One `rule_id` per
+ *                          activation clause. S5 ONLY ADDS (ADR-0013 R4): it
+ *                          has no `exclude` effect, by type. Compliance is
+ *                          never an S5 activation — it is the domain of what
+ *                          S3 reaches.
+ *
+ * ── Version gate ────────────────────────────────────────────────────────────
+ *
+ * The engagement's STAMPED `scope_rule_version` selects the corpus. S5 runs
+ * only for engagements stamped >= 1.1.0; under 1.0.0 the output is
+ * byte-identical to VA-6's resolver (golden-tested). That is what makes a
+ * corpus upgrade safe: it applies to engagements created after it, never to
+ * a questionnaire a customer already scoped.
  *
  * A requirement may be included by SEVERAL rules. All of them are recorded:
  * "why is this here" often has more than one true answer, and keeping only the
@@ -39,7 +55,7 @@
  * would read as "we asked everything that applies" when it did not.
  */
 
-import { SCOPE_RULE_VERSION } from "./methodologyVersion.js";
+import { SCOPE_RULE_VERSION, SCOPE_RULE_VERSION_S5 } from "./methodologyVersion.js";
 import type { AssessmentTier } from "./riskBands.js";
 import type {
   AccessLevel,
@@ -48,6 +64,21 @@ import type {
   HostingModel,
   InherentRiskInput,
 } from "./inherentRisk.js";
+import {
+  factAssertedBy,
+  factAtLeast,
+  factBool,
+  factList,
+  factsFromInherent,
+  inherentFromFacts,
+  resolveFacts,
+  type FactSet,
+} from "./factResolver.js";
+import {
+  DOMAIN_TAGS,
+  domainForRequirement,
+  type AssessmentDomain,
+} from "./requirementDomain.js";
 
 /** How deeply a requirement is asked. */
 export const SCOPE_DEPTHS = ["full", "confirm", "attest"] as const;
@@ -89,11 +120,24 @@ export type ScopeResolverInput = {
    * must not silently reduce questionnaire depth (see S4).
    */
   assuranceCoveredRequirementIds?: string[];
+  /**
+   * The ONE fact surface (VA-Q2). Defaults to the 13 inherent inputs mirrored
+   * as `core.*` intake facts. S2 reads its `core.*` view; S5 reads all of it.
+   */
+  facts?: FactSet;
+  /**
+   * The engagement's STAMPED `scope_rule_version`. Selects the rule corpus:
+   * S5 runs only at >= 1.1.0. Defaults to the current constant — a caller
+   * composing a NEW engagement gets the current corpus.
+   */
+  scopeRuleVersion?: string;
 };
+
+export type ScopeRuleFamily = "S1" | "S2" | "S3" | "S4" | "S5";
 
 export type ScopeInclusionReason = {
   rule_id: string;
-  rule_family: "S1" | "S2" | "S3" | "S4";
+  rule_family: ScopeRuleFamily;
   rationale: string;
 };
 
@@ -104,6 +148,11 @@ export type ScopeItem = {
   source: ScopeSource;
   /** EVERY rule that included this requirement, not just the first. */
   reasons: ScopeInclusionReason[];
+  /**
+   * The domain this requirement is asked under (>= 1.1.0 only; absent under
+   * 1.0.0 so pre-Q2 output is byte-identical). `compliance` iff reached via S3.
+   */
+  domain?: AssessmentDomain;
 };
 
 export type ScopeResolution = {
@@ -222,16 +271,189 @@ export const CONTEXT_TRIGGERS: ContextTrigger[] = [
   },
 ];
 
+// ── S5: domain activation (VA-Q0 §6.3, the authoritative table) ─────────────
+
+/**
+ * An activation clause. `rationale` is a STATIC string — it is rendered to the
+ * vendor, so it must never interpolate a fact value (T-13; tested). The
+ * effect is always "include this domain's requirements at `depth`,
+ * mandatory": there is no `exclude` field on this type, which is how
+ * ADR-0013 R4 ("S5 only ever adds") is held at the type level.
+ */
+export type DomainActivationRule = {
+  rule_id: string;
+  domain: Exclude<AssessmentDomain, "compliance">;
+  depth: ScopeDepth;
+  applies: (ctx: { facts: FactSet; tier: AssessmentTier }) => boolean;
+  rationale: string;
+};
+
+const TIER_RANK: Record<AssessmentTier, number> = {
+  tier_1_critical: 1,
+  tier_2_high: 2,
+  tier_3_moderate: 3,
+  tier_4_low: 4,
+};
+
+export const DOMAIN_ACTIVATION: readonly DomainActivationRule[] = [
+  // Security — always. Its baseline is what S1 already asks (the `core` set at
+  // the tier's depth); S5 records the activation as a reason and never widens
+  // beyond it, so a no-access / no-data / no-AI vendor stays at Security attest.
+  {
+    rule_id: "S5.security.baseline",
+    domain: "security",
+    depth: "attest",
+    applies: () => true,
+    rationale: "Security is assessed for every vendor; this is the baseline security question set.",
+  },
+
+  // Privacy
+  {
+    rule_id: "S5.privacy.personal_data",
+    domain: "privacy",
+    depth: "full",
+    applies: ({ facts }) => factBool(facts, "data.personal_data") === true,
+    rationale: "Personal data is declared in scope, so the privacy question set applies.",
+  },
+  {
+    rule_id: "S5.privacy.sensitivity",
+    domain: "privacy",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.data_sensitivity", "confidential"),
+    rationale: "The vendor handles confidential or restricted data, so the privacy question set applies.",
+  },
+  {
+    rule_id: "S5.privacy.obligation",
+    domain: "privacy",
+    depth: "full",
+    applies: ({ facts }) => factList(facts, "policy.privacy_obligations_active").length > 0,
+    rationale: "A privacy obligation (such as GDPR, CCPA or HIPAA) is active for your organisation.",
+  },
+  {
+    rule_id: "S5.privacy.ai_prompts",
+    domain: "privacy",
+    depth: "full",
+    applies: ({ facts }) => factBool(facts, "ai.customer_data_in_prompts") === true,
+    rationale: "Customer data is passed to AI models, so how that data is handled is a privacy question.",
+  },
+
+  // AI
+  {
+    rule_id: "S5.ai.involvement",
+    domain: "ai",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.ai_involvement", "embedded"),
+    rationale: "The service involves AI, so the AI-governance question set applies (NIST AI RMF).",
+  },
+  {
+    rule_id: "S5.ai.declared",
+    domain: "ai",
+    depth: "full",
+    applies: ({ facts }) => factBool(facts, "ai.uses_ai") === true,
+    rationale: "The vendor uses AI or machine learning in the service, so the AI-governance question set applies.",
+  },
+  {
+    rule_id: "S5.ai.dependency",
+    domain: "ai",
+    depth: "full",
+    applies: ({ facts }) =>
+      factBool(facts, "ai.uses_ai") === true && factAssertedBy(facts, "ai.uses_ai", "ai_system_dependency"),
+    rationale: "One of your inventoried AI systems depends on this vendor, so the AI-governance question set applies.",
+  },
+
+  // Resilience
+  {
+    rule_id: "S5.resilience.dependency",
+    domain: "resilience",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.operational_dependency", "high"),
+    rationale: "Your operations depend heavily on this vendor, so continuity and resilience controls apply.",
+  },
+  {
+    rule_id: "S5.resilience.recoverability",
+    domain: "resilience",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.recoverability", "weeks"),
+    rationale: "Recovering from an outage of this vendor would take weeks or has no workaround, so resilience controls apply.",
+  },
+  {
+    rule_id: "S5.resilience.criticality",
+    domain: "resilience",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.business_criticality", "high"),
+    rationale: "This vendor is business-critical, so continuity and resilience controls apply.",
+  },
+  {
+    rule_id: "S5.resilience.tier",
+    domain: "resilience",
+    depth: "full",
+    applies: ({ tier }) => TIER_RANK[tier] <= 2,
+    rationale: "High and critical tier vendors are always assessed for resilience.",
+  },
+
+  // Fourth / Nth party
+  {
+    rule_id: "S5.nth.fourth_party",
+    domain: "nth_party",
+    depth: "full",
+    applies: ({ facts }) => factAtLeast(facts, "core.fourth_party_exposure", "moderate"),
+    rationale: "The vendor relies materially on its own sub-processors, so supply-chain controls apply.",
+  },
+  {
+    rule_id: "S5.nth.subprocessors",
+    domain: "nth_party",
+    depth: "full",
+    applies: ({ facts }) => factBool(facts, "nth.subprocessors_declared") === true,
+    rationale: "Sub-processors are declared, so supply-chain and sub-processor controls apply.",
+  },
+  {
+    rule_id: "S5.nth.third_party_models",
+    domain: "nth_party",
+    depth: "full",
+    applies: ({ facts }) => factBool(facts, "ai.third_party_models") === true,
+    rationale: "The service relies on third-party AI models, so the model provider is a sub-processor in scope.",
+  },
+];
+
+/** Minimal semver compare over MAJOR.MINOR.PATCH. Malformed → treated as 0.0.0 (never S5). */
+function versionAtLeast(version: string, floor: string): boolean {
+  const parse = (v: string): number[] => {
+    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v.trim());
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
+  };
+  const a = parse(version);
+  const b = parse(floor);
+  for (let i = 0; i < 3; i++) {
+    if (a[i]! !== b[i]!) return a[i]! > b[i]!;
+  }
+  return true;
+}
+
+/** Whether the S5 corpus applies for a stamped version. Exported for the route and tests. */
+export function scopeVersionRunsS5(scopeRuleVersion: string): boolean {
+  return versionAtLeast(scopeRuleVersion, SCOPE_RULE_VERSION_S5);
+}
+
 // ── The resolver ────────────────────────────────────────────────────────────
 
-function matchesTags(req: ScopableRequirement, tags: string[]): boolean {
+function matchesTags(req: ScopableRequirement, tags: readonly string[]): boolean {
   if (tags.includes("*")) return true;
   return req.scope_tags.some((t) => tags.includes(t));
 }
 
 export function resolveEngagementScope(input: ScopeResolverInput): ScopeResolution {
-  const { tier, inherent, requirements, obligationEdges } = input;
+  const { tier, requirements, obligationEdges } = input;
   const covered = new Set(input.assuranceCoveredRequirementIds ?? []);
+
+  // The version the STAMP selects, echoed back on the resolution so the audit
+  // record and the response say which corpus actually ran.
+  const scopeRuleVersion = input.scopeRuleVersion ?? SCOPE_RULE_VERSION;
+  const runS5 = scopeVersionRunsS5(scopeRuleVersion);
+
+  // One fact surface. S2's predicates keep their InherentRiskInput shape but
+  // read it THROUGH the facts (identical predicates, VA-Q0 §6.2).
+  const facts: FactSet = input.facts ?? resolveFacts(factsFromInherent(input.inherent));
+  const inherent = inherentFromFacts(facts, input.inherent);
 
   /** requirement_id -> accumulating item */
   const chosen = new Map<string, ScopeItem>();
@@ -314,6 +536,33 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
     );
   }
 
+  // S5 — domain activation (>= 1.1.0 only). ADDS, never excludes.
+  if (runS5) {
+    const ctx = { facts, tier };
+    for (const rule of DOMAIN_ACTIVATION) {
+      if (!rule.applies(ctx)) continue;
+      const tags = DOMAIN_TAGS[rule.domain];
+      for (const req of requirements) {
+        if (!matchesTags(req, tags)) continue;
+        // Security's baseline is S1's `core` set: S5.security adds no item S1
+        // did not already ask, it only records the activation on those items.
+        if (rule.domain === "security" && !chosen.has(req.requirement_id)) continue;
+        include(
+          req,
+          { rule_id: rule.rule_id, rule_family: "S5", rationale: rule.rationale },
+          rule.depth,
+          true
+        );
+      }
+    }
+
+    // Stamp the domain each item is asked under. Compliance iff reached via S3.
+    for (const item of chosen.values()) {
+      const req = byId.get(item.requirement_id)!;
+      item.domain = domainForRequirement(req, item.reasons.some((r) => r.rule_family === "S3"));
+    }
+  }
+
   // S4 — assurance offset. Reduces DEPTH, never removes the requirement: an
   // independent report is evidence, not a substitute for asking.
   for (const item of chosen.values()) {
@@ -360,11 +609,11 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
       requirement_id: r.requirement_id,
       rationale: chosen.has(r.requirement_id)
         ? `Dropped by the ${tier.replace(/_/g, " ")} question cap of ${cap}.`
-        : `No rule in scope-rule-set ${SCOPE_RULE_VERSION} includes this requirement for a ${tier.replace(/_/g, " ")} vendor.`,
+        : `No rule in scope-rule-set ${scopeRuleVersion} includes this requirement for a ${tier.replace(/_/g, " ")} vendor.`,
     }));
 
   return {
-    scope_rule_version: SCOPE_RULE_VERSION,
+    scope_rule_version: scopeRuleVersion,
     tier,
     items,
     excluded,
