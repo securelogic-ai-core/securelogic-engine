@@ -71,6 +71,23 @@ async function openIssuedEngagement(who: typeof asA, fx: Fx, title: string) {
   return { id, token: issued.body.invite_token as string };
 }
 
+/**
+ * The issue route answers from INSIDE its tenant transaction (the response is
+ * written before COMMIT), so a raw SELECT immediately after a 200 can observe
+ * the pre-commit row. Read the stamp the way a client would — through the
+ * integrity route, which opens a fresh transaction — and give the commit a
+ * bounded moment to land.
+ */
+async function stampedHashOf(who: typeof asA, engagementId: string): Promise<string> {
+  for (let i = 0; i < 20; i += 1) {
+    const r = await who("get", `/api/vendor-engagements/${engagementId}/integrity`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    if (typeof r.body.stamped_hash === "string") return r.body.stamped_hash as string;
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  throw new Error(`engagement ${engagementId} never reported a stamped hash`);
+}
+
 async function portalCookie(token: string): Promise<string> {
   const res = await request(app).post("/api/vendor-portal/session").send({ token });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -124,26 +141,21 @@ describe("VA-Q1 P2 · scope is addressed by an immutable version", () => {
 
   it("issue stamps a content-addressed hash that recomputes from the stored items — integrity says match", async () => {
     const { id } = await openIssuedEngagement(asA, fxA, "p2-stamp");
-    const eng = await pool.query<{ question_set_hash: string | null; question_set_hash_at: string | null }>(
-      `SELECT question_set_hash, question_set_hash_at FROM vendor_engagements WHERE id = $1`, [id]
-    );
-    expect(eng.rows[0]!.question_set_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(eng.rows[0]!.question_set_hash_at).toBeTruthy();
+    const stamped = await stampedHashOf(asA, id);
+    expect(stamped).toMatch(/^[0-9a-f]{64}$/);
 
     const r = await asA("get", `/api/vendor-engagements/${id}/integrity`);
     expect(r.status).toBe(200);
     expect(r.body.verdict).toBe("match");
-    expect(r.body.computed_hash).toBe(eng.rows[0]!.question_set_hash);
+    expect(r.body.computed_hash).toBe(stamped);
+    expect(r.body.stamped_at).toBeTruthy();
     expect(r.body.unversioned_items).toBe(0);
   });
 
   it("the same scope → the same hash across two engagements (deterministic addressing)", async () => {
     const a = await openIssuedEngagement(asA, fxA, "p2-det-1");
     const b = await openIssuedEngagement(asA, fxA, "p2-det-2");
-    const rows = await pool.query<{ question_set_hash: string }>(
-      `SELECT question_set_hash FROM vendor_engagements WHERE id = ANY($1::uuid[]) ORDER BY id`, [[a.id, b.id]]
-    );
-    expect(rows.rows[0]!.question_set_hash).toBe(rows.rows[1]!.question_set_hash);
+    expect(await stampedHashOf(asA, a.id)).toBe(await stampedHashOf(asA, b.id));
   });
 });
 
@@ -154,8 +166,7 @@ describe("VA-Q1 P2 · the R3 proof: a library edit after issue changes nothing t
 
   beforeAll(async () => {
     issued = await openIssuedEngagement(asA, fxA, "p2-r3");
-    const eng = await pool.query<{ question_set_hash: string }>(`SELECT question_set_hash FROM vendor_engagements WHERE id = $1`, [issued.id]);
-    stampedHash = eng.rows[0]!.question_set_hash;
+    stampedHash = await stampedHashOf(asA, issued.id);
     const item = await pool.query<{ question_version_id: string }>(`SELECT question_version_id FROM vendor_engagement_scope_items WHERE engagement_id = $1`, [issued.id]);
     v1 = item.rows[0]!.question_version_id;
 
@@ -223,8 +234,7 @@ describe("VA-Q1 P2 · the R3 proof: a library edit after issue changes nothing t
     expect(versions.rows.map((v) => [v.version, v.prompt])).toEqual([[1, "Original title"], [2, "EDITED title after issue"]]);
 
     // Different content → different questionnaire identity.
-    const h = await pool.query<{ question_set_hash: string }>(`SELECT question_set_hash FROM vendor_engagements WHERE id = $1`, [next.id]);
-    expect(h.rows[0]!.question_set_hash).not.toBe(stampedHash);
+    expect(await stampedHashOf(asA, next.id)).not.toBe(stampedHash);
   });
 
   it("an issued questionnaire whose items were tampered with reports drift, loudly", async () => {
@@ -282,7 +292,6 @@ describe("VA-Q1 P2 · verdict vocabulary and tenant boundary", () => {
          FROM vendor_engagement_scope_items si JOIN question_versions qv ON qv.id = si.question_version_id
         WHERE si.engagement_id = $1`, [e.id]
     );
-    const stamped = await pool.query<{ question_set_hash: string }>(`SELECT question_set_hash FROM vendor_engagements WHERE id = $1`, [e.id]);
-    expect(questionSetHash(rows.rows)).toBe(stamped.rows[0]!.question_set_hash);
+    expect(questionSetHash(rows.rows)).toBe(await stampedHashOf(asA, e.id));
   });
 });
