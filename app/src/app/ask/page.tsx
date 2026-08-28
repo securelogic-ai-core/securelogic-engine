@@ -33,11 +33,17 @@ export default async function AskPage() {
   // engine's own flag still gates the endpoint (404) independently.
   const streamingEnabled = process.env.SECURELOGIC_ASK_STREAMING_ENABLED === "true";
 
-  // Voice governance (ASK-C, LC-4). Kill switch defaults ON (live capability);
-  // the tenant setting defaults enabled when absent (engine predating the
-  // column). Engine-side enforcement on the transcribe route is authoritative
-  // regardless of what renders here.
-  const voiceKillSwitchOn = process.env.SECURELOGIC_ASK_VOICE_ENABLED !== "false";
+  // Voice governance (ASK-C, LC-4). Kill switch is OPT-IN as of SEC-VOICE-1 —
+  // only the literal "true" enables, matching the engine's askVoiceEnabled().
+  // It gates transmission of customer audio to a third-party subprocessor
+  // (OpenAI Whisper), so it must not be open merely because nobody set it;
+  // see askVoiceFeatureFlag.ts for the full C-6 reasoning. The tenant setting
+  // still defaults enabled when absent (engine predating the column).
+  //
+  // Kept in lockstep with the engine deliberately: if this rendered the mic
+  // while the engine gate were closed, every press would 404 and the failure
+  // would read as a bug rather than as a governance decision.
+  const voiceKillSwitchOn = process.env.SECURELOGIC_ASK_VOICE_ENABLED === "true";
   const orgSettings = voiceKillSwitchOn ? await getOrgSettings(token) : null;
   const voiceEnabled = voiceKillSwitchOn && orgSettings?.voice_input_enabled !== false;
 
