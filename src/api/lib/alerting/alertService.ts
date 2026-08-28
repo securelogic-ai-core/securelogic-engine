@@ -22,6 +22,7 @@
  */
 import { withTenant } from "../../infra/postgres.js";
 import { logger } from "../../infra/logger.js";
+import { sendViaProvider } from "../../infra/emailTransport.js";
 import { selectAlertRecipients, type AlertRecipient } from "./alertRecipients.js";
 import {
   isSuppressed,
@@ -31,7 +32,6 @@ import {
   getFromAddress,
 } from "./alertPrimitives.js";
 import { renderCriticalBatchEmail } from "./criticalBatchEmail.js";
-import { withEnvironmentTag } from "../../infra/emailEnvironment.js";
 
 export type AlertSeverity = "Critical" | "High";
 export type AlertKind = "critical_finding";
@@ -188,13 +188,18 @@ export function createAlertBatcher(
           if (fresh.length === 0) continue;
 
           const { subject, html } = config.render(recipient.organization_name, fresh);
-          await getResend().emails.send({
+          const sendResult = await sendViaProvider({
+            client: getResend(),
+            purpose: `alert.${config.alertType}`,
+            orgId,
+            correlationId: recipient.user_id,
             from: getFromAddress(),
             to: recipient.email,
             subject,
-            html,
-      tags: withEnvironmentTag(),
+            html
           });
+          // A rejection must not stamp the ledger — throw into the catch below.
+          if (!sendResult.ok) throw new Error(sendResult.errorMessage);
 
           for (const item of fresh) {
             await recordSend(

@@ -10,7 +10,7 @@ import { pgElevated } from "../infra/postgres.js";
 import { rateLimitKeyGenerator } from "../infra/clientIp.js";
 import { logger } from "../infra/logger.js";
 import { ensureRedisConnected } from "../infra/redis.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { sendViaProvider } from "../infra/emailTransport.js";
 
 const router = Router();
 
@@ -166,7 +166,11 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
       const resend = getResend();
       const from = getFromAddress();
 
-      await resend.emails.send({
+      const sendResult = await sendViaProvider({
+        client: resend,
+        purpose: "auth.recovery_link",
+        orgId: null,
+        correlationId: apiKeyId,
         from,
         to: email,
         subject: "SecureLogic — Sign in to your account",
@@ -185,9 +189,11 @@ router.post("/account/recovery/request", requestLimiter, async (req, res) => {
     If you did not request this, you can safely ignore this email.<br>
     This link will expire at ${new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toUTCString()}.
   </p>
-</div>`,
-        tags: withEnvironmentTag(),
+</div>`
       });
+      // The SDK resolves on an API rejection; only the transport's verdict
+      // means "sent". Surface a rejection through the existing catch.
+      if (!sendResult.ok) throw new Error(sendResult.errorMessage);
 
       logger.info(
         { event: "recovery_email_sent", apiKeyId },

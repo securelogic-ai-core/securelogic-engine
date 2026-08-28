@@ -1,5 +1,5 @@
 import { logger } from "../infra/logger.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { sendViaProvider } from "../infra/emailTransport.js";
 import {
   getResend,
   getFromAddress,
@@ -73,13 +73,17 @@ export async function sendCriticalFindingAlert(payload: CriticalFindingAlertPayl
 </html>`;
 
   try {
-    await getResend().emails.send({
+    const sendResult = await sendViaProvider({
+      client: getResend(),
+      purpose: "alert.critical_finding_immediate",
+      orgId: null,
+      correlationId: findingId,
       from: getFromAddress(),
       to: email,
       subject: `[${severity}] New finding: ${findingTitle}`,
-      html,
-      tags: withEnvironmentTag(),
+      html
     });
+    if (!sendResult.ok) throw new Error(sendResult.errorMessage);
     await recordSend(userId, "critical_finding_immediate", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "critical_finding_immediate", userId, findingId }, "Critical finding alert sent");
   } catch (err) {
@@ -169,13 +173,17 @@ export async function sendDailyDigest(payload: DailyDigestPayload): Promise<void
 </html>`;
 
   try {
-    await getResend().emails.send({
+    const sendResult = await sendViaProvider({
+      client: getResend(),
+      purpose: "alert.daily_digest",
+      orgId: null,
+      correlationId: userId,
       from: getFromAddress(),
       to: email,
       subject: `SecureLogic AI — Daily Digest (${newFindings.length} new finding${newFindings.length !== 1 ? "s" : ""})`,
-      html,
-      tags: withEnvironmentTag(),
+      html
     });
+    if (!sendResult.ok) throw new Error(sendResult.errorMessage);
     await recordSend(userId, "daily_digest", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "daily_digest", userId }, "Daily digest sent");
   } catch (err) {
@@ -265,13 +273,17 @@ export async function sendWeeklySummary(payload: WeeklySummaryPayload): Promise<
 </html>`;
 
   try {
-    await getResend().emails.send({
+    const sendResult = await sendViaProvider({
+      client: getResend(),
+      purpose: "alert.weekly_summary",
+      orgId: null,
+      correlationId: userId,
       from: getFromAddress(),
       to: email,
       subject: `SecureLogic AI — Weekly Posture Summary`,
-      html,
-      tags: withEnvironmentTag(),
+      html
     });
+    if (!sendResult.ok) throw new Error(sendResult.errorMessage);
     await recordSend(userId, "weekly_summary", dedupeKey);
     logger.info({ event: "alert_sent", alertType: "weekly_summary", userId }, "Weekly summary sent");
   } catch (err) {

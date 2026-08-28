@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import { resolve } from "path";
 
 /**
@@ -210,10 +210,14 @@ describe("dark mode changes nothing yet", () => {
   });
 });
 
-describe("every known send site carries the environment tag", () => {
-  // A tag applied to nine of ten senders leaves the tenth unattributable, and
-  // its events would be classified `missing` forever. Enumerated explicitly so
-  // a NEW sender added without a tag fails here rather than in production.
+describe("every send site carries the environment tag — via the ONE choke point", () => {
+  // EMAIL-OBS-1 moved the provider call into `infra/emailTransport.ts`. The
+  // tag is applied there, once, so a NEW sender cannot forget it — provided
+  // no sender bypasses the transport. That is the invariant now: exactly one
+  // file in the repo talks to the provider, and every known sender goes
+  // through it. A tag applied to eleven of twelve senders leaves the twelfth
+  // unattributable, and its events would be classified `missing` forever.
+  const TRANSPORT = "src/api/infra/emailTransport.ts";
   const SENDERS = [
     "src/api/infra/email.ts",
     "src/api/lib/alertEmailService.ts",
@@ -223,25 +227,46 @@ describe("every known send site carries the environment tag", () => {
     "src/api/lib/briefEmailSender.ts",
     "src/api/routes/accountRecovery.ts",
     "src/api/routes/customerAuth.ts",
-    "src/api/routes/teamInvites.ts"
+    "src/api/routes/teamInvites.ts",
+    "services/intelligence-worker/src/delivery/sendNewsletter.ts"
   ];
+  const read = (f: string) => readFileSync(resolve(process.cwd(), f), "utf8");
+  // Assert on CODE, not prose: header comments legitimately explain what the
+  // SDK's `emails.send()` used to do.
+  const code = (src: string) =>
+    src.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*") && !l.trim().startsWith("/*")).join("\n");
 
-  it.each(SENDERS)("%s tags every send", (file) => {
-    const src = readFileSync(resolve(process.cwd(), file), "utf8");
-    // Count real send calls: SDK `emails.send(` plus the raw REST POST.
-    const sdk = (src.match(/emails\.send\(\{/g) ?? []).length;
-    const rest = (src.match(/RESEND_API_URL, \{/g) ?? []).length;
-    const sends = sdk + rest;
-    const tagged = (src.match(/withEnvironmentTag\(\)/g) ?? []).length;
-    expect(sends).toBeGreaterThan(0);
-    expect(tagged).toBe(sends);
+  it("the transport tags the provider payload", () => {
+    const src = code(read(TRANSPORT));
+    expect((src.match(/emails\.send\(/g) ?? []).length).toBe(1);
+    expect(src).toContain("tags: withEnvironmentTag(args.tags)");
   });
 
-  it("no sender was missed — the repo has no untagged Resend send", () => {
-    const all = SENDERS.map((f) => readFileSync(resolve(process.cwd(), f), "utf8")).join("\n");
-    const sends = (all.match(/emails\.send\(\{/g) ?? []).length + (all.match(/RESEND_API_URL, \{/g) ?? []).length;
-    const tagged = (all.match(/withEnvironmentTag\(\)/g) ?? []).length;
-    expect(tagged).toBe(sends);
-    expect(sends).toBe(11);
+  it.each(SENDERS)("%s sends only through the transport", (file) => {
+    const src = code(read(file));
+    expect(src).not.toMatch(/emails\.send\(/);
+    expect(src).not.toContain("api.resend.com/emails");
+    expect(src).toMatch(/from "[^"]*\/emailTransport\.js"/);
+    expect((src.match(/sendViaProvider\(\{/g) ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("no sender was missed — the transport is the only provider caller in the repo", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === "_frozen_prod" || name.startsWith(".")) continue;
+        const full = resolve(dir, name);
+        if (statSync(full).isDirectory()) { walk(full); continue; }
+        if (!/\.ts$/.test(name) || /\.test\.ts$/.test(name)) continue;
+        const src = code(readFileSync(full, "utf8"));
+        if (/emails\.send\(/.test(src) || src.includes("api.resend.com/emails")) hits.push(full);
+      }
+    };
+    walk(resolve(process.cwd(), "src"));
+    walk(resolve(process.cwd(), "services"));
+    expect(hits.map((h) => h.slice(process.cwd().length + 1))).toEqual([TRANSPORT]);
+
+    const calls = SENDERS.reduce((n, f) => n + (read(f).match(/sendViaProvider\(\{/g) ?? []).length, 0);
+    expect(calls).toBe(12);
   });
 });

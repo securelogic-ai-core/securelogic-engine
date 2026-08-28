@@ -30,7 +30,7 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 import { recordAllCurrentConsents } from "../lib/legalConsent.js";
 import { enforceSeatLimit, enforceSeatLimitForClass, type SeatClass } from "../lib/seatLimit.js";
 import { seatModelEnabled } from "../middleware/requireSeat.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { sendViaProvider, type ResendLike } from "../infra/emailTransport.js";
 
 const router = Router();
 
@@ -144,6 +144,9 @@ async function sendInviteEmail(params: {
   orgName: string;
   role: string;
   inviteUrl: string;
+  /** Observability only — never rendered into the mail. */
+  orgId?: string | null;
+  inviteId?: string | null;
 }): Promise<void> {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key) {
@@ -151,13 +154,20 @@ async function sendInviteEmail(params: {
     return;
   }
   const resend = new Resend(key);
-  await resend.emails.send({
+  // EMAIL-OBS-1: through the shared choke point; a provider rejection now
+  // THROWS into the caller's existing error handling instead of resolving as
+  // if the invitation had gone out.
+  const res = await sendViaProvider({
+    client: resend as unknown as ResendLike,
+    purpose: "team.invite",
+    orgId: params.orgId ?? null,
+    correlationId: params.inviteId ?? null,
     from: getFromAddress(),
-    to: [params.to],
+    to: params.to,
     subject: `${params.inviterName} invited you to ${params.orgName} on SecureLogic AI`,
-    html: inviteEmailHtml(params),
-    tags: withEnvironmentTag()
+    html: inviteEmailHtml(params)
   });
+  if (!res.ok) throw new Error(`invite_email_${res.outcome}: ${res.errorMessage}`);
 }
 
 /* =========================================================
@@ -272,7 +282,7 @@ router.post(
 
       const inviteUrl = `${getAppBaseUrl()}/accept-invite?token=${token}`;
 
-      sendInviteEmail({ to: email, inviterName, orgName, role, inviteUrl }).catch((err) => {
+      sendInviteEmail({ to: email, inviterName, orgName, role, inviteUrl, orgId }).catch((err) => {
         logger.warn({ event: "invite_email_failed", err }, "Invite email failed (non-fatal)");
       });
 
