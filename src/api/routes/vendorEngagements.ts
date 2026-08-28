@@ -35,6 +35,11 @@ import { Router, type Request, type Response } from "express";
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  ensureBridgeQuestions,
+  loadQuestionSetItems,
+  questionSetHash,
+} from "../lib/questionnaire/bridgeQuestions.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -664,9 +669,10 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       framework_id: string;
       reference_id: string;
       title: string;
+      description: string | null;
       scope_tags: string[];
     }>(
-      `SELECT r.id AS requirement_id, r.framework_id, r.reference_id, r.title,
+      `SELECT r.id AS requirement_id, r.framework_id, r.reference_id, r.title, r.description,
               COALESCE(r.scope_tags, '{}') AS scope_tags
          FROM requirements r
          JOIN frameworks f ON f.id = r.framework_id
@@ -721,11 +727,26 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       `DELETE FROM vendor_engagement_scope_items WHERE engagement_id = $1 AND organization_id = $2`,
       [id, organizationId]
     );
+
+    // VA-Q1 P2 (ADR-0013 R1/R3): every scope item is addressed by an IMMUTABLE
+    // question version. Until the curated library covers a requirement, the
+    // version is the requirement-as-question bridge — same text the vendor saw
+    // before P2, now pinned so a later requirement edit cannot move under an
+    // issued questionnaire. Ensured here, at composition, because requirement
+    // inserts happen on three separate paths and hooking them cannot be
+    // guaranteed complete.
+    const byId = new Map(requirements.rows.map((r) => [r.requirement_id, r]));
+    const chosen = resolution.items
+      .map((i) => byId.get(i.requirement_id))
+      .filter((r): r is NonNullable<typeof r> => r !== undefined);
+    const versionByRequirement = await ensureBridgeQuestions(pg, organizationId, chosen);
+
     for (const item of resolution.items) {
       await pg.query(
         `INSERT INTO vendor_engagement_scope_items
-           (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+           (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons,
+            question_version_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
         [
           organizationId,
           id,
@@ -734,6 +755,7 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
           item.mandatory,
           item.source,
           JSON.stringify(item.reasons),
+          versionByRequirement.get(item.requirement_id) ?? null,
         ]
       );
     }
@@ -857,11 +879,19 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
     );
 
+    // VA-Q1 P2: the content-addressed identity of what is being sent, stamped
+    // at the one moment scope freezes and never rewritten (ADR-0013 R3).
+    // `GET /vendor-engagements/:id/integrity` recomputes and compares.
+    const set = await loadQuestionSetItems(pg, organizationId, id);
+    const setHash = set.unversioned === 0 ? questionSetHash(set.items) : null;
+
     await pg.query(
       `UPDATE vendor_engagements
-          SET status = 'issued', issued_at = NOW(), updated_at = NOW()
+          SET status = 'issued', issued_at = NOW(), updated_at = NOW(),
+              question_set_hash = COALESCE($4, question_set_hash),
+              question_set_hash_at = CASE WHEN $4 IS NOT NULL THEN NOW() ELSE question_set_hash_at END
         WHERE id = $1 AND organization_id = $2 AND status = $3`,
-      [id, organizationId, from]
+      [id, organizationId, from, setHash]
     );
 
     writeAuditEvent({
@@ -1732,8 +1762,12 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
       updated_at: string | null;
       evidence_count: string;
       evidence_confirmed: boolean;
+      question_version_id: string | null;
     }>(
-      `SELECT si.requirement_id, r.reference_id, r.title, r.description,
+      `SELECT si.requirement_id, r.reference_id,
+              COALESCE(qv.prompt, r.title) AS title,
+              COALESCE(qv.guidance, r.description) AS description,
+              si.question_version_id,
               si.depth, si.mandatory,
               rr.id AS response_id, rr.status, rr.notes, rr.responder_type,
               rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at,
@@ -1741,6 +1775,11 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
               COALESCE(bool_or(ev.reviewed_at IS NOT NULL), FALSE) AS evidence_confirmed
          FROM vendor_engagement_scope_items si
          JOIN requirements r ON r.id = si.requirement_id
+         -- VA-Q1 P2: the reviewer reads the SAME immutable text the vendor was
+         -- asked. Pre-P2 rows have no version and fall back to the requirement.
+         LEFT JOIN question_versions qv
+                ON qv.id = si.question_version_id
+               AND qv.organization_id = si.organization_id
          LEFT JOIN requirement_responses rr
                 ON rr.requirement_id  = si.requirement_id
                AND rr.engagement_id   = si.engagement_id
@@ -1752,7 +1791,8 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
                AND ev.detached_at IS NULL
         WHERE si.engagement_id = $1 AND si.organization_id = $2
           AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
-        GROUP BY si.requirement_id, r.reference_id, r.title, r.description,
+        GROUP BY si.requirement_id, r.reference_id, qv.prompt, r.title, qv.guidance, r.description,
+                 si.question_version_id,
                  si.depth, si.mandatory,
                  rr.id, rr.status, rr.notes, rr.responder_type,
                  rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at
@@ -1798,6 +1838,7 @@ export async function listEngagementResponses(req: Request, res: Response): Prom
           title: row.title,
           description: row.description,
         },
+        question_version_id: row.question_version_id,
         scope: { depth: row.depth, mandatory: row.mandatory },
         response:
           row.response_id === null
@@ -2059,6 +2100,7 @@ router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRis
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
 router.get("/vendor-engagements/:id/responses", ...chain, asTenant(listEngagementResponses));
+router.get("/vendor-engagements/:id/integrity", ...chain, asTenant(checkQuestionnaireIntegrity));
 router.post(
   "/vendor-engagements/:id/evidence/:evidenceId/review",
   ...chain,
@@ -2082,5 +2124,66 @@ router.post("/vendor-engagements/:id/issue", ...chain, async (req: Request, res:
   }
   await withTenant(organizationId, () => issueEngagement(req, res));
 });
+
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/integrity — VA-Q1 P2.
+
+   Recomputes the content-addressed identity of the questionnaire from the
+   stored scope items and compares it with the hash stamped at issue.
+
+     match      what the vendor was asked is exactly what was issued
+     drift      the stored items no longer hash to the stamp — an incident,
+                not a warning: something mutated an issued questionnaire
+     unstamped  issued before P2, or has items without a version (pre-P2
+                rows); nothing to compare against
+     unissued   scope not frozen yet; the hash is not defined
+   ========================================================= */
+export async function checkQuestionnaireIntegrity(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  try {
+    const eng = await pg.query<{ status: string; issued_at: string | null; question_set_hash: string | null; question_set_hash_at: string | null }>(
+      `SELECT status, issued_at, question_set_hash, question_set_hash_at
+         FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const row = eng.rows[0]!;
+    const set = await loadQuestionSetItems(pg, organizationId, id);
+    const computed = set.unversioned === 0 && set.items.length > 0 ? questionSetHash(set.items) : null;
+
+    let verdict: "match" | "drift" | "unstamped" | "unissued";
+    if (!row.issued_at) verdict = "unissued";
+    else if (!row.question_set_hash || computed === null) verdict = "unstamped";
+    else verdict = computed === row.question_set_hash ? "match" : "drift";
+
+    if (verdict === "drift") {
+      logger.error(
+        { event: "questionnaire_integrity_drift", organizationId, engagementId: id, stamped: row.question_set_hash, computed },
+        "Issued questionnaire no longer hashes to its stamp"
+      );
+    }
+    res.status(200).json({
+      engagement_id: id,
+      verdict,
+      stamped_hash: row.question_set_hash,
+      stamped_at: row.question_set_hash_at,
+      computed_hash: computed,
+      items: set.items.length,
+      unversioned_items: set.unversioned,
+    });
+  } catch (err) {
+    logger.error({ err, organizationId, engagementId: id }, "GET /vendor-engagements/:id/integrity failed");
+    res.status(500).json({ error: "internal_error" });
+  }
+}
 
 export default router;

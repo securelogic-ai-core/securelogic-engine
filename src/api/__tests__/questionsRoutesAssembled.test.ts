@@ -69,6 +69,14 @@ describe("question library routes — assembled app (VA-Q1 P1)", () => {
     expect(g.status).toBe(401);
   });
 
+  it("the questionnaire integrity route (P2) is authenticated and JSON-only", async () => {
+    const app = buildApp();
+    const r = await send(app, "GET", `/api/vendor-engagements/${QID}/integrity`, {});
+    expect(r.status).toBe(401);
+    const p = await send(app, "GET", `/api/vendor-engagements/${QID}/integrity`, { Cookie: "sl_vendor_portal=" + "a".repeat(64) });
+    expect(p.status).toBe(401);
+  });
+
   it("a vendor-portal session cookie is NOT a credential for the question library", async () => {
     const app = buildApp();
     const r = await send(app, "GET", "/api/questions", { Cookie: "sl_vendor_portal=" + "a".repeat(64) });
