@@ -1,6 +1,6 @@
 # VA-Q1 — Versioned questionnaire foundation: implementation plan
 
-**Status:** PLANNED (no code yet) · **Governs:** ADR-0013 R1, R3 · **Design:** VA-Q0 §4.1, §4.4, §9, §15
+**Status:** IN PROGRESS — **P1 STAGING VERIFIED 2026-08-28** (#898 @ `64e1a746`, slot 20261059); P2 next · **Governs:** ADR-0013 R1, R3 · **Design:** VA-Q0 §4.1, §4.4, §9, §15
 **Baseline:** `develop` @ `e773b6a8` (2026-08-28) · **Owner directive:** proceed into implementation in small reviewable packages without a further conceptual approval cycle.
 
 ## Objective
@@ -62,7 +62,7 @@ Each package = one PR, small enough to review in one sitting, merged through
 the protected process (trial merge → affected tests → fresh CI → true merge
 commit → exact-head CI → staging deploy → behavioural check → matrix update).
 
-### P1 — Content primitives (slot 20261059)
+### P1 — Content primitives (slot 20261059) — **DONE: STAGING VERIFIED 2026-08-28**
 - Tables per VA-Q0 §4.1. `question_versions` gets a `BEFORE UPDATE OR DELETE`
   trigger that raises (`question_versions_immutable`). `content_hash` = sha256
   over canonical JSON `{prompt, guidance, answer_type, options, evidence_policy}`

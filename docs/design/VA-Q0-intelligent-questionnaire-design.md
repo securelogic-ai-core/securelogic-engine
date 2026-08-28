@@ -660,12 +660,12 @@ staging 2026-08-28.
 | Req | Requirement | Design | Package | Security control | Tests | Staging evidence | Status |
 |---|---|---|---|---|---|---|---|
 | A | Canonical requirement/control library | §1 | (exists) | RLS, premium gate | framework activation, RLS | SOC 2 activation 36 req, 08-28 | **STAGING VERIFIED** |
-| B | Curated vendor question library | §4.1, §5 | Q1 | T-1, T-4 | 1,4,10,12 | — | DESIGNED |
-| C | Many-to-many question↔requirement↔framework/domain | §4.1, §5 | Q1 | publish validation | 12 | — | DESIGNED |
+| B | Curated vendor question library | §4.1, §5 | Q1 | T-1, T-4 | 1,4,10,12 | P1 #898 @ `64e1a746`, staging §H.2 all legs PASS 2026-08-28 (create → link → publish v1 → identical = 200 same id → v2 with v1 untouched → last-link 409 → 401/415 walls) | **STAGING VERIFIED** (P1: entity, immutable versions, write surface) · DESIGNED (portal renders versions — P2) |
+| C | Many-to-many question↔requirement↔framework/domain | §4.1, §5 | Q1 | publish validation | 12 | P1 #898: `question_requirement_links`, framework-join org check, foreign≡unknown 404, last-link guard; staging 2026-08-28 | **STAGING VERIFIED** (links + lineage) · DESIGNED (coverage query, bridge — P3) |
 | D | Risk-based questionnaire profiles | §4.2, §6.2 | Q7 (defaults in code Q2) | T-16 floors | 13 | tier baselines today | IMPLEMENTED (code constants) → DESIGNED (profiles) |
 | E | Conditional/branching rules | §4.2, §6.4 | Q3 | T-5, T-6 | 8,9 | — | DESIGNED |
 | F | Evidence requirement rules | §10 | Q3 | T-12 | 11 | — | DESIGNED |
-| G | Issued-assessment snapshot preserves what was asked and why | §4.4, §9 | Q1 (text) + Q3 (snapshot) | T-4 | 10 | reasons[] per item today | IMPLEMENTED (ids+reasons) → DESIGNED (text+hash) |
+| G | Issued-assessment snapshot preserves what was asked and why | §4.4, §9 | Q1 (text) + Q3 (snapshot) | T-4 | 10 | reasons[] per item today; immutable `question_versions` STAGING VERIFIED 2026-08-28 (P1) | IMPLEMENTED (ids+reasons) · **TESTED** (immutable content rows) → DESIGNED (version addressing + hash — P2) |
 | H | Customer-configurable policy, safe defaults | §4.2, §15 flags | Q7 | T-16 | 1 | — | DESIGNED |
 | I | Deterministic scoping is authoritative | §3, §6 | (exists) + Q2/Q3 | — | 13 | S1–S4 with rule_ids live | **STAGING VERIFIED** (S1–S4) / DESIGNED (S5–S6, E1) |
 | J | AI as governed analysis layer, not decision-maker | §11 | (exists for evidence) + Q6 | T-7,8,9 | 14–17 | `analysis_coverage` deterministic→full, 08-28 | **STAGING VERIFIED** (evidence_support) / DESIGNED (5 types) |
