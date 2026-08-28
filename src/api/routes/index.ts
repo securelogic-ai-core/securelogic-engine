@@ -61,6 +61,7 @@ import frameworksRouter from "./frameworks.js";
 import frameworkReadinessRouter from "./frameworkReadiness.js";
 import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
+import questionsRouter from "./questions.js";
 import controlsRouter from "./controls.js";
 import controlsExportRouter from "./controlsExport.js";
 import controlMappingsRouter from "./controlMappings.js";
@@ -518,6 +519,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
+  // VA-Q1: the curated question library (ADR-0013 R1). Internal, premium, JSON-only.
+  router.use("/api", questionsRouter);
   // Export routers MUST mount before their register routers: GET /:id would
   // otherwise capture the literal /export.csv path (the findingsExport trap).
   router.use("/api", controlsExportRouter);
