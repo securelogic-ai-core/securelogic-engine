@@ -10,7 +10,7 @@ import { writeAuditEvent } from "../lib/auditLog.js";
 // ledger empty for all time. Record the resolved caller instead — same
 // trusted mechanism (CF-Connecting-IP) the enforcing admin controls key on.
 import { resolveClientIp } from "../infra/clientIp.js";
-import { verifyJwt, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
+import { verifyJwtDetailed, SESSION_BLOCKED_STATUSES } from "../lib/jwt.js";
 
 declare global {
   namespace Express {
@@ -65,19 +65,39 @@ export async function requireApiKey(
     // downstream middleware (attachOrganizationContext, requireEntitlement, …)
     // works without modification.
     if (presentedKey.includes(".")) {
-      const payload = verifyJwt(presentedKey);
+      const verified = verifyJwtDetailed(presentedKey);
 
-      if (!payload) {
+      if (!verified.ok) {
+        // SEC-TOKEN-1: a validly-signed session minted before the purpose
+        // claim existed → `session_invalidated`, which the app tier already
+        // maps to a forced re-login. A token WE signed for another purpose
+        // (MFA challenge, …) presented as a session is never legitimate and
+        // gets its own audit event; everything else is the plain invalid_jwt.
+        if (verified.reason === "legacy_untyped") {
+          writeAuditEvent({
+            actorUserId: null,
+            eventType: "auth.session_legacy_untyped",
+            resourceType: "user",
+            payload: { route: req.originalUrl, method: req.method },
+            ipAddress: resolveClientIp(req).ip
+          });
+          res.status(401).json({
+            error: "session_invalidated",
+            detail: "This session predates a security update. Please sign in again."
+          });
+          return;
+        }
         writeAuditEvent({
           actorUserId: null,
-          eventType: "auth.invalid_jwt",
+          eventType: verified.reason === "wrong_type" ? "auth.token_type_rejected" : "auth.invalid_jwt",
           resourceType: "user",
-          payload: { route: req.originalUrl, method: req.method },
+          payload: { route: req.originalUrl, method: req.method, reason: verified.reason },
           ipAddress: resolveClientIp(req).ip
         });
         res.status(401).json({ error: "invalid_token" });
         return;
       }
+      const payload = verified.payload;
 
       // SEC-JWT-EPOCH: mirrors requireAuth. A session token MUST carry the
       // epoch it was minted under; absence is invalid session state, not a

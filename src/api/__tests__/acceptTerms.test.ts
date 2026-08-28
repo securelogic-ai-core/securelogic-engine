@@ -35,7 +35,9 @@ vi.mock("../infra/postgres.js", () => ({
   pgElevated: { query: h.elevatedQuery, connect: vi.fn() },
 }));
 vi.mock("../lib/jwt.js", () => ({
-  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", se: 0, iat: 0, exp: 9_999_999_999 })),
+  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", se: 0, type: "session", iat: 0, exp: 9_999_999_999 })),
+  // SEC-TOKEN-1: requireAuth reads the structured verifier; derive it from the same stub.
+  verifyJwtDetailed: vi.fn(() => ({ ok: true, payload: { sub: USER, org: ORG, role: "admin", se: 0, type: "session", iat: 0, exp: 9_999_999_999 } })),
   signJwt: vi.fn(() => "signed.jwt.token"),
 }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));

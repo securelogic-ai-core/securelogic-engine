@@ -9,7 +9,7 @@
  */
 
 import type { Request, Response, NextFunction } from "express";
-import { verifyJwt, SESSION_BLOCKED_STATUSES, type JwtPayload } from "../lib/jwt.js";
+import { verifyJwtDetailed, SESSION_BLOCKED_STATUSES, type JwtPayload } from "../lib/jwt.js";
 import { pg } from "../infra/postgres.js";
 
 declare global {
@@ -32,13 +32,27 @@ export async function requireAuth(
     return;
   }
 
-  const token   = header.slice(7).trim();
-  const payload = verifyJwt(token);
+  const token    = header.slice(7).trim();
+  const verified = verifyJwtDetailed(token);
 
-  if (!payload) {
+  if (!verified.ok) {
+    // SEC-TOKEN-1: a validly-signed session minted before the purpose claim
+    // existed is answered with `session_invalidated` — a code the app tier's
+    // session probe already treats as "sign in again" — so the user is sent
+    // to login rather than left holding a session every data call rejects.
+    // Everything else (bad signature, expired, another purpose presented as
+    // a session) stays the opaque invalid-token 401.
+    if (verified.reason === "legacy_untyped") {
+      res.status(401).json({
+        error: "session_invalidated",
+        detail: "This session predates a security update. Please sign in again."
+      });
+      return;
+    }
     res.status(401).json({ error: "invalid_or_expired_token" });
     return;
   }
+  const payload = verified.payload;
 
   // SEC-JWT-EPOCH: a session token MUST carry the epoch it was minted under.
   // Absence is invalid session state, NOT a compatibility fallback — tokens

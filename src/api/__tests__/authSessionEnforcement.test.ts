@@ -37,7 +37,14 @@ vi.mock("../lib/auditLog.js", () => ({
 }));
 vi.mock("../lib/jwt.js", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, verifyJwt: () => jwtPayload };
+  // SEC-TOKEN-1: both middlewares read the structured verifier. The stub
+  // payload is a SESSION by construction; the type check itself is covered by
+  // jwtTokenType.test.ts against the real module.
+  return {
+    ...actual,
+    verifyJwt: () => jwtPayload,
+    verifyJwtDetailed: () => (jwtPayload ? { ok: true, payload: jwtPayload } : { ok: false, reason: "bad_signature" }),
+  };
 });
 
 import { requireApiKey } from "../middleware/requireApiKey.js";

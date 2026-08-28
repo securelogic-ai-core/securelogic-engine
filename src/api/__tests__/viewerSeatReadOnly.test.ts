@@ -18,7 +18,12 @@ const verifyJwtMock = vi.fn();
 vi.mock("../infra/postgres.js", () => ({ pg: { query: (...a: unknown[]) => queryMock(...a) } }));
 vi.mock("../infra/logger.js", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
-vi.mock("../lib/jwt.js", () => ({ verifyJwt: (...a: unknown[]) => verifyJwtMock(...a), SESSION_BLOCKED_STATUSES: new Set() }));
+vi.mock("../lib/jwt.js", () => ({
+  verifyJwt: (...a: unknown[]) => verifyJwtMock(...a),
+  // SEC-TOKEN-1: the bridge reads the structured verifier; derive it from the same stub.
+  verifyJwtDetailed: (...a: unknown[]) => { const p = verifyJwtMock(...a); return p ? { ok: true, payload: p } : { ok: false, reason: "bad_signature" }; },
+  SESSION_BLOCKED_STATUSES: new Set(),
+}));
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 
