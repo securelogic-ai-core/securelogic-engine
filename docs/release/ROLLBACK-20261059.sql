@@ -10,7 +10,8 @@
 -- the schema may stay.
 
 DROP TRIGGER IF EXISTS trg_question_versions_immutable ON question_versions;
-DROP FUNCTION IF EXISTS question_versions_immutable();
+DROP TRIGGER IF EXISTS trg_question_versions_no_truncate ON question_versions;
+-- worm_guard_mutation is the platform's shared guard (20261018); never dropped here.
 DROP TABLE IF EXISTS question_requirement_links;
 DROP TABLE IF EXISTS question_versions;
 DROP TABLE IF EXISTS questions;

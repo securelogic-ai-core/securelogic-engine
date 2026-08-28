@@ -90,18 +90,22 @@ CREATE INDEX IF NOT EXISTS idx_question_versions_org ON question_versions (organ
 -- IMMUTABLE. The one rule ADR-0013 R3 rests on. Deletion is refused too: a
 -- version an issued snapshot points at must outlive the library edit that
 -- superseded it. Retiring a question is a status change on `questions`.
-CREATE OR REPLACE FUNCTION question_versions_immutable()
-RETURNS TRIGGER AS $$
-BEGIN
-  RAISE EXCEPTION 'question_versions: rows are immutable — publish a new version instead (ADR-0013 R3)'
-    USING ERRCODE = 'restrict_violation';
-END;
-$$ LANGUAGE plpgsql;
-
+--
+-- Enforced by the platform's ONE append-only guard (worm_guard_mutation,
+-- 20261018), not a private copy — wormGuardConsolidation.test.ts fails the
+-- build on any table that brings its own. That guard also carries the single
+-- sanctioned escape hatch: a certified, org-scoped erasure (ADR-0005), which is
+-- exactly the "immutable within the tenant's lifetime" semantics VA-Q0 T-14
+-- documents. UPDATE is refused as well as DELETE — content-addressed rows
+-- cannot be edited in place.
 DROP TRIGGER IF EXISTS trg_question_versions_immutable ON question_versions;
 CREATE TRIGGER trg_question_versions_immutable
   BEFORE UPDATE OR DELETE ON question_versions
-  FOR EACH ROW EXECUTE FUNCTION question_versions_immutable();
+  FOR EACH ROW EXECUTE FUNCTION worm_guard_mutation('immutable (ADR-0013 R3)', 'is not permitted', ' — publish a new version instead');
+DROP TRIGGER IF EXISTS trg_question_versions_no_truncate ON question_versions;
+CREATE TRIGGER trg_question_versions_no_truncate
+  BEFORE TRUNCATE ON question_versions
+  FOR EACH STATEMENT EXECUTE FUNCTION worm_guard_mutation('immutable (ADR-0013 R3)', 'is not permitted', ' — publish a new version instead');
 
 CREATE TABLE IF NOT EXISTS question_requirement_links (
   id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

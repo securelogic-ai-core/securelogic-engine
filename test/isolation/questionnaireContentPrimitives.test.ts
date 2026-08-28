@@ -197,11 +197,15 @@ describe("VA-Q1 P1 · the database refuses mutation of a published version", () 
     ).rejects.toMatchObject({ code: "42501" });
   });
 
-  it("even the OWNER cannot UPDATE or DELETE a version — the trigger is the second wall", async () => {
+  it("even the OWNER cannot UPDATE, DELETE or TRUNCATE a version — the shared WORM guard is the second wall", async () => {
+    const expected = (op: string) =>
+      `question_versions is immutable (ADR-0013 R3): ${op} is not permitted — publish a new version instead`;
     await expect(pool.query(`UPDATE question_versions SET prompt = 'x' WHERE id = $1`, [versionId]))
-      .rejects.toMatchObject({ code: "23001" });
+      .rejects.toMatchObject({ message: expected("UPDATE") });
     await expect(pool.query(`DELETE FROM question_versions WHERE id = $1`, [versionId]))
-      .rejects.toMatchObject({ code: "23001" });
+      .rejects.toMatchObject({ message: expected("DELETE") });
+    await expect(pool.query(`TRUNCATE question_versions`))
+      .rejects.toMatchObject({ message: expected("TRUNCATE") });
     const still = await pool.query(`SELECT prompt FROM question_versions WHERE id = $1`, [versionId]);
     expect(still.rows[0]!.prompt).toBe(CONTENT.prompt);
   });
