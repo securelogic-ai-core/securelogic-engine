@@ -665,7 +665,7 @@ staging 2026-08-28.
 | D | Risk-based questionnaire profiles | §4.2, §6.2 | Q7 (defaults in code Q2) | T-16 floors | 13 | tier baselines today | IMPLEMENTED (code constants) → DESIGNED (profiles) |
 | E | Conditional/branching rules | §4.2, §6.4 | Q3 | T-5, T-6 | 8,9 | — | DESIGNED |
 | F | Evidence requirement rules | §10 | Q3 | T-12 | 11 | — | DESIGNED |
-| G | Issued-assessment snapshot preserves what was asked and why | §4.4, §9 | Q1 (text) + Q3 (snapshot) | T-4 | 10 | reasons[] per item today; immutable `question_versions` STAGING VERIFIED 2026-08-28 (P1) | IMPLEMENTED (ids+reasons) · **TESTED** (immutable content rows) → DESIGNED (version addressing + hash — P2) |
+| G | Issued-assessment snapshot preserves what was asked and why | §4.4, §9 | Q1 (text) + Q3 (snapshot) | T-4 | 10 | P2 #900 @ `c9531cf1`, staging §H.3 2026-08-28: pre-P2 engagement → `unstamped` and still renders; new engagement 39/39 versioned → issue → `match`; **requirement edited AFTER issue → portal unchanged, reviewer unchanged, stamp unchanged, integrity `match`; next engagement sees the edit** | **STAGING VERIFIED** (version addressing, content-addressed stamp, integrity) · DESIGNED (`questionnaire_snapshots` table + follow-up append — Q3) |
 | H | Customer-configurable policy, safe defaults | §4.2, §15 flags | Q7 | T-16 | 1 | — | DESIGNED |
 | I | Deterministic scoping is authoritative | §3, §6 | (exists) + Q2/Q3 | — | 13 | S1–S4 with rule_ids live | **STAGING VERIFIED** (S1–S4) / DESIGNED (S5–S6, E1) |
 | J | AI as governed analysis layer, not decision-maker | §11 | (exists for evidence) + Q6 | T-7,8,9 | 14–17 | `analysis_coverage` deterministic→full, 08-28 | **STAGING VERIFIED** (evidence_support) / DESIGNED (5 types) |
