@@ -7898,6 +7898,65 @@ export async function recordVendorEngagementDecision(
   }
 }
 
+/** VA-R1 (2026-08-23): the reviewer's per-question view of the questionnaire.
+ *  Pre-issue this is "what will be sent" (every response is null); post-submit
+ *  it is the review surface. The engine computes everything — never derive
+ *  answered/complete locally. */
+export type VendorEngagementResponseItem = {
+  requirement: {
+    id: string;
+    reference: string;
+    title: string;
+    description: string | null;
+  };
+  scope: { depth: string; mandatory: boolean };
+  response: {
+    status: string | null;
+    notes: string | null;
+    responder_type: string | null;
+    answered_via_invite_id: string | null;
+    assessed_by_user_id: string | null;
+    assessed_at: string | null;
+    updated_at: string | null;
+  } | null;
+  evidence: { count: number; confirmed: boolean };
+  revisions: {
+    total: number;
+    truncated: boolean;
+    entries: Array<{
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>;
+  };
+};
+
+export type VendorEngagementResponses = {
+  engagement_id: string;
+  engagement_status: string;
+  counts: { scoped: number; answered: number; mandatory: number };
+  items: VendorEngagementResponseItem[];
+};
+
+export async function getVendorEngagementResponses(
+  token: string,
+  id: string
+): Promise<VendorEngagementResponses | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/responses`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorEngagementResponses>;
+  } catch {
+    return null;
+  }
+}
+
 export async function listVendorEngagementEvidence(
   token: string,
   id: string
@@ -7952,6 +8011,27 @@ export type VendorEngagementPromotionResult = {
     title: string;
     severity_rationale: string;
   }>;
+  /** Supersede-on-pass ruling (2026-08-22, cross-engagement 2026-08-23):
+   *  open findings — from ANY engagement of this vendor — whose controls now
+   *  report pass/not_applicable in THIS engagement. Named, never auto-closed.
+   *  `source_engagement_id` may name an EARLIER engagement than the one
+   *  promoted against; the engine computes this — never recompute here. */
+  superseded_by_source: Array<{
+    finding_id: string;
+    reference: string;
+    requirement_id: string;
+    /** Optional during rolling deploy — older engine payloads omit it. */
+    source_engagement_id?: string;
+    current_response: "pass" | "not_applicable";
+    as_of: string;
+  }>;
+  /** Findings whose equivalence to a current response CANNOT be established
+   *  deterministically (requirement_id is NULL). Surfaced, never guessed.
+   *  Optional during rolling deploy. */
+  supersede_equivalence_undetermined?: {
+    count: number;
+    finding_ids: string[];
+  };
 };
 
 export async function promoteVendorEngagementFindings(
@@ -8222,7 +8302,40 @@ export async function getFindingOccurrences(
 export interface FindingVendorProvenance {
   finding_id: string;
   source_type: string;
-  source: "vendor_assurance_cuec" | "vendor_assessment" | "not_applicable";
+  source:
+    | "vendor_assurance_cuec"
+    | "vendor_assessment"
+    | "vendor_engagement"
+    | "not_applicable";
+  /** VA-10: set only for source === "vendor_engagement"; null there means a
+   *  dangling source_id (convention arm) — reported honestly, not 404'd. */
+  engagement_provenance?: {
+    vendor: { id: string; name: string };
+    engagement: {
+      id: string;
+      title: string | null;
+      engagement_type: string;
+      status: string;
+      decision: string | null;
+      decided_at: string | null;
+      submitted_at: string | null;
+      methodology_version: string;
+    };
+    requirement: {
+      id: string;
+      reference: string | null;
+      title: string | null;
+    } | null;
+    /** Promotion-time snapshot, stamped with the methodology version. */
+    severity_rationale: string | null;
+    /** Today's source assertion — labeled CURRENT in the UI. Per the
+     *  supersede-on-pass ruling a pass here never closes the finding. */
+    current_response: {
+      status: string;
+      as_of: string | null;
+      responder_type: string | null;
+    } | null;
+  } | null;
   provenance: {
     vendor: { id: string; name: string };
     document: {

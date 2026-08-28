@@ -167,7 +167,7 @@ describe("vendor-assurance provenance stays inside its tenant", () => {
     }
   });
 
-  it("the document->vendor join cannot cross tenants either", async () => {
+  it("the document->vendor join cannot cross tenants either (CUEC arm)", async () => {
     // Strip the org predicate from the outer WHERE but keep the join predicates:
     // RLS alone must still confine the result to the caller's tenant.
     const rows = await asOrg(seed.orgB.id, async (c) =>
@@ -183,5 +183,140 @@ describe("vendor-assurance provenance stays inside its tenant", () => {
       ).rows,
     );
     for (const r of rows) expect(r.vendor_name).toBe("orgB vendor");
+  });
+});
+
+/* =========================================================
+   VA-10 — the engagement arm of the same endpoint.
+
+   Unlike the CUEC arm (FK-backed via promoted_finding_id), this arm resolves
+   by the source_id CONVENTION with the source_type filter load-bearing. The
+   suite proves: the resolution works inside a tenant; the convention's honest
+   failure mode (dangling source_id) returns nothing rather than someone
+   else's engagement; and no combination of borrowed ids crosses a tenant.
+   ========================================================= */
+
+const ENGAGEMENT_PROVENANCE_SQL = `
+  SELECT e.id AS engagement_id, v.name AS vendor_name,
+         r.reference_id AS requirement_reference,
+         rr.status AS current_response
+    FROM findings f
+    JOIN vendor_engagements e
+      ON e.id::text = f.source_id::text
+     AND e.organization_id = f.organization_id
+    JOIN vendors v
+      ON v.id = e.vendor_id
+     AND v.organization_id = e.organization_id
+    LEFT JOIN requirements r
+      ON r.id = f.requirement_id
+    LEFT JOIN requirement_responses rr
+      ON rr.organization_id = f.organization_id
+     AND rr.engagement_id   = e.id
+     AND rr.requirement_id  = f.requirement_id
+   WHERE f.id = $1
+     AND f.organization_id = $2
+     AND f.source_type = 'vendor_engagement'
+   LIMIT 1`;
+
+describe("vendor-engagement provenance stays inside its tenant (VA-10)", () => {
+  let engFindingA: string;
+  let engFindingB: string;
+  let engagementA: string;
+
+  async function seedEngagementChain(
+    orgId: string,
+    label: string,
+  ): Promise<{ findingId: string; engagementId: string }> {
+    const vendor = await pool.query<{ id: string }>(
+      `INSERT INTO vendors (organization_id, name) VALUES ($1, $2) RETURNING id`,
+      [orgId, `${label} eng vendor`],
+    );
+    const framework = await pool.query<{ id: string }>(
+      `INSERT INTO frameworks (organization_id, name, version)
+       VALUES ($1, $2, '1.0') RETURNING id`,
+      [orgId, `${label} provenance framework`],
+    );
+    const requirement = await pool.query<{ id: string }>(
+      `INSERT INTO requirements (framework_id, reference_id, title)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [framework.rows[0]!.id, `${label}-PROV-1`, `${label} control`],
+    );
+    const eng = await pool.query<{ id: string }>(
+      `INSERT INTO vendor_engagements
+         (organization_id, vendor_id, engagement_type, status,
+          methodology_version, scope_rule_version, inherent_rating)
+       VALUES ($1, $2, 'initial', 'in_review', '1.0.0', '1.0.0', 'Moderate')
+       RETURNING id`,
+      [orgId, vendor.rows[0]!.id],
+    );
+    await pool.query(
+      `INSERT INTO requirement_responses
+         (organization_id, requirement_id, assessment_type, subject_id,
+          engagement_id, status, assessed_at)
+       VALUES ($1, $2, 'vendor', $3, $3, 'fail', NOW())`,
+      [orgId, requirement.rows[0]!.id, eng.rows[0]!.id],
+    );
+    const finding = await pool.query<{ id: string }>(
+      `INSERT INTO findings
+         (organization_id, title, severity, description, status,
+          source_type, source_id, requirement_id)
+       VALUES ($1, $2, 'High', 'engagement provenance harness finding', 'open',
+               'vendor_engagement', $3, $4)
+       RETURNING id`,
+      [orgId, `${label} engagement finding`, eng.rows[0]!.id, requirement.rows[0]!.id],
+    );
+    return { findingId: finding.rows[0]!.id, engagementId: eng.rows[0]!.id };
+  }
+
+  beforeAll(async () => {
+    const a = await seedEngagementChain(seed.orgA.id, "orgA");
+    const b = await seedEngagementChain(seed.orgB.id, "orgB");
+    engFindingA = a.findingId;
+    engagementA = a.engagementId;
+    engFindingB = b.findingId;
+  });
+
+  it("org A reads its own engagement provenance, current response included", async () => {
+    const rows = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(ENGAGEMENT_PROVENANCE_SQL, [engFindingA, seed.orgA.id])).rows,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].engagement_id).toBe(engagementA);
+    expect(rows[0].vendor_name).toBe("orgA eng vendor");
+    expect(rows[0].requirement_reference).toBe("orgA-PROV-1");
+    expect(rows[0].current_response).toBe("fail");
+  });
+
+  it("org A asking for org B's engagement finding gets NOTHING", async () => {
+    const rows = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(ENGAGEMENT_PROVENANCE_SQL, [engFindingB, seed.orgA.id])).rows,
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("org B cannot read org A's engagement provenance even naming org A's ids", async () => {
+    const rows = await asOrg(seed.orgB.id, async (c) =>
+      (await c.query(ENGAGEMENT_PROVENANCE_SQL, [engFindingA, seed.orgA.id])).rows,
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it("a dangling source_id resolves to NOTHING — never someone else's engagement", async () => {
+    // The convention arm's failure mode: a vendor_engagement finding whose
+    // source_id matches no engagement in ITS org. The org predicate on the
+    // join — not luck — is what keeps an identical id in another org out.
+    const orphan = await pool.query<{ id: string }>(
+      `INSERT INTO findings
+         (organization_id, title, severity, description, status,
+          source_type, source_id)
+       VALUES ($1, 'orphan engagement finding', 'Low', 'dangling source_id',
+               'open', 'vendor_engagement', gen_random_uuid())
+       RETURNING id`,
+      [seed.orgA.id],
+    );
+    const rows = await asOrg(seed.orgA.id, async (c) =>
+      (await c.query(ENGAGEMENT_PROVENANCE_SQL, [orphan.rows[0]!.id, seed.orgA.id])).rows,
+    );
+    expect(rows).toHaveLength(0);
   });
 });

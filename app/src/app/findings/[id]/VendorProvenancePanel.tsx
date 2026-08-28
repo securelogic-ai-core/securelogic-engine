@@ -19,11 +19,19 @@
  * instead would quietly rewrite history, which is the exact thing the snapshot
  * exists to prevent.
  *
- * RENDERED ONLY FOR CUEC-PROMOTED FINDINGS. The endpoint distinguishes
- * "vendor_assessment" and "not_applicable" as real answers rather than errors,
- * but a panel headed "Vendor Assurance provenance" saying "not applicable" on
- * every unrelated finding is noise, not honesty. Absence is reported by the API;
- * the UI simply declines to occupy space it cannot fill.
+ * RENDERED ONLY FOR FINDINGS WITH A VENDOR SPINE BEHIND THEM. The endpoint
+ * distinguishes "vendor_assessment" and "not_applicable" as real answers rather
+ * than errors, but a panel headed "Vendor Assurance provenance" saying "not
+ * applicable" on every unrelated finding is noise, not honesty. Absence is
+ * reported by the API; the UI simply declines to occupy space it cannot fill.
+ *
+ * VA-10 — THE ENGAGEMENT ARM. An engagement-promoted finding renders the other
+ * return journey: vendor -> engagement -> requirement, the promotion-time
+ * severity basis (snapshot, stamped with the methodology version), and the
+ * CURRENT source response, labeled as current. Per the supersede-on-pass
+ * ruling (2026-08-22), a control that now reports pass/not_applicable never
+ * closes the finding — this panel is one of the places that divergence is
+ * NAMED for the human who decides.
  *
  * Server component on purpose: no state, no handlers, nothing to hydrate. The
  * sibling AffectedAssetsPanel carries "use client" with zero interactive hooks —
@@ -78,12 +86,190 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 4,
 };
 
+const ENGAGEMENT_TYPE_LABEL: Record<string, string> = {
+  initial: "Initial assessment",
+  periodic: "Periodic reassessment",
+  triggered: "Triggered reassessment",
+  targeted: "Targeted assessment",
+};
+
+const RESPONSE_LABEL: Record<string, string> = {
+  pass: "Pass",
+  fail: "Fail",
+  partial: "Partial",
+  not_applicable: "Not applicable",
+  not_assessed: "Not assessed",
+};
+
+const RESPONSE_COLOR: Record<string, string> = {
+  pass: "#86efac",
+  fail: "#fca5a5",
+  partial: "#fcd34d",
+  not_applicable: "#94a3b8",
+  not_assessed: "#94a3b8",
+};
+
+function EngagementProvenance({
+  data,
+}: {
+  data: NonNullable<FindingVendorProvenance["engagement_provenance"]>;
+}) {
+  const { vendor, engagement, requirement, severity_rationale, current_response } =
+    data;
+  const decidedAt = engagement.decided_at
+    ? new Date(engagement.decided_at).toLocaleDateString()
+    : null;
+  const responseAsOf = current_response?.as_of
+    ? new Date(current_response.as_of).toLocaleDateString()
+    : null;
+  // The supersede-on-pass ruling: name the divergence where the human decides.
+  const sourceNoLongerAsserts =
+    current_response != null &&
+    (current_response.status === "pass" ||
+      current_response.status === "not_applicable");
+
+  return (
+    <section
+      style={{
+        border: "1px solid #1e293b",
+        borderRadius: 10,
+        padding: 16,
+        marginBottom: 16,
+        background: "#0b1220",
+      }}
+    >
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 4px" }}>
+        Where this came from
+      </h2>
+      <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 14px" }}>
+        This finding was promoted from a control gap in a vendor engagement
+        questionnaire.
+      </p>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <div>
+          <div style={labelStyle}>Vendor</div>
+          <Link href={`/vendors/${vendor.id}`} style={{ color: "#93c5fd" }}>
+            {vendor.name}
+          </Link>
+        </div>
+        <div>
+          <div style={labelStyle}>Engagement</div>
+          <Link
+            href={`/vendor-engagements/${engagement.id}`}
+            style={{ color: "#93c5fd" }}
+          >
+            {engagement.title ??
+              ENGAGEMENT_TYPE_LABEL[engagement.engagement_type] ??
+              engagement.engagement_type}
+          </Link>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+            {engagement.status.replace(/_/g, " ")}
+            {engagement.decision
+              ? ` · ${engagement.decision.replace(/_/g, " ")}${
+                  decidedAt ? ` (${decidedAt})` : ""
+                }`
+              : ""}
+          </div>
+        </div>
+        <div>
+          <div style={labelStyle}>Requirement</div>
+          {requirement ? (
+            <>
+              <span style={{ color: "#e2e8f0", fontWeight: 600 }}>
+                {requirement.reference ?? "unreferenced"}
+              </span>
+              {requirement.title ? (
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                  {requirement.title}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>
+              not recorded
+            </span>
+          )}
+        </div>
+      </div>
+
+      {severity_rationale ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={labelStyle}>Severity basis at promotion</div>
+          <div style={{ fontSize: 13, color: "#e2e8f0" }}>
+            {severity_rationale}
+          </div>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+            Stamped when the finding was promoted (methodology{" "}
+            {engagement.methodology_version}). The source may have moved on;
+            this has not.
+          </div>
+        </div>
+      ) : null}
+
+      <div>
+        <div style={labelStyle}>Current source response</div>
+        {current_response ? (
+          <>
+            <span
+              style={{
+                color: RESPONSE_COLOR[current_response.status] ?? "#e2e8f0",
+                fontWeight: 600,
+              }}
+            >
+              {RESPONSE_LABEL[current_response.status] ??
+                current_response.status}
+            </span>
+            <span style={{ fontSize: 11, color: "#64748b" }}>
+              {responseAsOf ? ` · as of ${responseAsOf}` : ""}
+              {current_response.responder_type
+                ? ` · by ${current_response.responder_type}`
+                : ""}
+            </span>
+            {sourceNoLongerAsserts ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#fcd34d",
+                  marginTop: 6,
+                  padding: "6px 10px",
+                  borderLeft: "3px solid #b45309",
+                  background: "#1c1408",
+                }}
+              >
+                The source no longer asserts this gap. That does not close the
+                finding — closure remains a human decision through the normal
+                gate.
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <span style={{ fontSize: 12, color: "#94a3b8" }}>
+            No current response recorded for this control.
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function VendorProvenancePanel({
   data,
 }: {
   data: FindingVendorProvenance | null;
 }) {
-  if (!data || data.source !== "vendor_assurance_cuec" || !data.provenance) {
+  if (!data) return null;
+  if (data.source === "vendor_engagement" && data.engagement_provenance) {
+    return <EngagementProvenance data={data.engagement_provenance} />;
+  }
+  if (data.source !== "vendor_assurance_cuec" || !data.provenance) {
     return null;
   }
 

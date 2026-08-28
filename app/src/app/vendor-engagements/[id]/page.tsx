@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { isPlatformEntitled } from "@/lib/entitlements";
 import {
   getVendorEngagement,
+  getVendorEngagementResponses,
   listVendorEngagementEvidence,
   listVendorEngagementComments,
   type VendorEngagementDetail,
@@ -21,6 +22,7 @@ import {
 } from "@/lib/vendorEngagements";
 import EngagementActionPanel from "@/components/vendorEngagements/EngagementActionPanel";
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
+import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
 
 /**
@@ -95,14 +97,20 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp]: [
-    { engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null,
-    { evidence: VendorEngagementEvidenceRow[]; count: number } | null,
-    { comments: VendorEngagementComment[]; count: number } | null,
-  ] = await Promise.all([
-    getVendorEngagement(token, id),
-    listVendorEngagementEvidence(token, id),
-    listVendorEngagementComments(token, id),
+  const [detail, evidenceResp, commentsResp, responsesResp] = await Promise.all([
+    getVendorEngagement(token, id) as Promise<{
+      engagement: VendorEngagementDetail;
+      questionnaire: VendorEngagementQuestionnaire;
+    } | null>,
+    listVendorEngagementEvidence(token, id) as Promise<{
+      evidence: VendorEngagementEvidenceRow[];
+      count: number;
+    } | null>,
+    listVendorEngagementComments(token, id) as Promise<{
+      comments: VendorEngagementComment[];
+      count: number;
+    } | null>,
+    getVendorEngagementResponses(token, id),
   ]);
 
   if (!detail) {
@@ -313,6 +321,8 @@ export default async function VendorEngagementPage({
           state={state}
           inherentRating={e.inherent_rating}
         />
+
+        <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />
 
         <EvidenceSection engagementId={e.id} evidence={evidence} />
 
