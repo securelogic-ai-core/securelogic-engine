@@ -66,7 +66,7 @@ export type SendEmailArgs = {
 
 export type SendEmailResult =
   | { ok: true; id: string | null }
-  | { ok: false; reason: "unavailable" | "suppressed" | "failed"; detail?: string };
+  | { ok: false; reason: "unavailable" | "suppressed" | "failed" | "blocked_test_env"; detail?: string };
 
 const DEFAULT_PURPOSE = "transactional";
 
@@ -103,6 +103,9 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
   });
 
   if (res.ok) return { ok: true, id: res.providerMessageId };
+  if (res.outcome === "blocked_test_env") {
+    return { ok: false, reason: "blocked_test_env", detail: res.errorMessage };
+  }
   if (res.outcome === "skipped_unconfigured") {
     return { ok: false, reason: "unavailable", detail: res.errorMessage };
   }

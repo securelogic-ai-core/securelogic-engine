@@ -10,7 +10,10 @@
  *      keyed hash describe the recipient;
  *   3. the provider message id is persisted to `email_sends` so webhook events
  *      can be joined back; a bookkeeping failure never changes the verdict;
- *   4. skips (`logEmailSkipped`) complete the outcome series without a send.
+ *   4. skips (`logEmailSkipped`) complete the outcome series without a send;
+ *   5. TEST-RUNNER GUARD — under vitest the provider is never called unless
+ *      `SECURELOGIC_EMAIL_ALLOW_TEST_SEND=true`; the block line carries the
+ *      purpose only.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -38,7 +41,9 @@ import {
   logEmailSkipped,
   recipientDomain,
   recipientHash,
-  sanitizeProviderText
+  sanitizeProviderText,
+  isTestRunnerSendBlocked,
+  EMAIL_ALLOW_TEST_SEND_ENV
 } from "../infra/emailTransport.js";
 
 const TO = "alice.customer@acme-corp.example";
@@ -77,6 +82,9 @@ beforeEach(() => {
   process.env.RESEND_API_KEY = "re_test";
   process.env.APP_ENV = "staging";
   process.env.RESEND_WEBHOOK_SECRET = "whsec_test_key";
+  // The suite runs UNDER vitest, so the guard is live: opt out explicitly here
+  // and re-enable it in the guard's own describe below.
+  process.env[EMAIL_ALLOW_TEST_SEND_ENV] = "true";
 });
 afterEach(() => {
   process.env = { ...ORIGINAL };
@@ -241,5 +249,52 @@ describe("recipient description", () => {
     expect(sanitizeProviderText(`bad: ${TO} and bob@x.io`)).toBe("bad: [email] and [email]");
     expect(sanitizeProviderText("x".repeat(500))).toHaveLength(200);
     expect(sanitizeProviderText(undefined)).toBe("");
+  });
+});
+
+describe("TEST-RUNNER GUARD — a test process never reaches the live provider", () => {
+  beforeEach(() => {
+    delete process.env[EMAIL_ALLOW_TEST_SEND_ENV];
+  });
+
+  it("is armed under vitest and disarmed only by the literal opt-out", () => {
+    expect(isTestRunnerSendBlocked({ VITEST: "true" })).toBe(true);
+    expect(isTestRunnerSendBlocked({ NODE_ENV: "test" })).toBe(true);
+    expect(isTestRunnerSendBlocked({ NODE_ENV: "production" })).toBe(false);
+    expect(isTestRunnerSendBlocked({})).toBe(false);
+    expect(isTestRunnerSendBlocked({ VITEST: "true", [EMAIL_ALLOW_TEST_SEND_ENV]: "true" })).toBe(false);
+    expect(isTestRunnerSendBlocked({ VITEST: "true", [EMAIL_ALLOW_TEST_SEND_ENV]: "1" })).toBe(true);
+    expect(isTestRunnerSendBlocked({ VITEST: "true", [EMAIL_ALLOW_TEST_SEND_ENV]: "TRUE" })).toBe(true);
+    // This very process IS a vitest worker.
+    expect(process.env.VITEST).toBeTruthy();
+    expect(isTestRunnerSendBlocked()).toBe(true);
+  });
+
+  it("blocks the send: no provider call, no persistence, a purpose-only block line, not-sent verdict", async () => {
+    const injected = { emails: { send: vi.fn(async () => ({ data: { id: "leak" }, error: null })) } };
+    const r = await sendViaProvider({ client: injected, purpose: "auth.password_reset", orgId: ORG, to: TO, from: "x@securelogicai.com", subject: SUBJECT, html: HTML });
+
+    expect(r).toMatchObject({ ok: false, outcome: "blocked_test_env", providerMessageId: null });
+    expect(injected.emails.send).not.toHaveBeenCalled();
+    expect(h.send).not.toHaveBeenCalled();
+    expect(h.elevatedQuery).not.toHaveBeenCalled();
+    expect(linesFor("email_send_attempt")).toHaveLength(0);
+    expect(linesFor("email_send_result")).toHaveLength(0);
+
+    const block = linesFor("email_send_blocked_test_env");
+    expect(block).toHaveLength(1);
+    expect(block[0]).toMatchObject({ purpose: "auth.password_reset", orgId: ORG, optOut: EMAIL_ALLOW_TEST_SEND_ENV });
+    // Not even the domain on this line.
+    expect(block[0]).not.toHaveProperty("recipientDomain");
+    expect(block[0]).not.toHaveProperty("recipientHash");
+    assertPrivate(allLines());
+  });
+
+  it("the opt-out is honoured for a deliberate live test", async () => {
+    process.env[EMAIL_ALLOW_TEST_SEND_ENV] = "true";
+    h.send.mockResolvedValueOnce({ data: { id: "m" }, error: null });
+    const r = await sendViaProvider({ purpose: "x", to: TO, from: "x@securelogicai.com", subject: SUBJECT, html: HTML });
+    expect(r).toMatchObject({ ok: true, outcome: "accepted" });
+    expect(h.send).toHaveBeenCalledTimes(1);
   });
 });

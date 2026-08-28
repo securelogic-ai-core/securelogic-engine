@@ -66,7 +66,15 @@ export type EmailSendOutcome =
   /** No provider credential configured on this service. */
   | "skipped_unconfigured"
   /** Transport-level failure (SDK threw, network, timeout). */
-  | "error";
+  | "error"
+  /**
+   * Refused because the process is a TEST RUNNER. The Resend account holds 51
+   * real password-reset emails to `*@tokens.test` addresses (since 2026-08-17,
+   * all bounced, tagged `environment=unknown`) — isolation tests that exercise
+   * the live auth routes reach the live provider whenever a developer's shell
+   * carries RESEND_API_KEY. See `isTestRunnerSendBlocked()`.
+   */
+  | "blocked_test_env";
 
 /** The identity of a send: why it exists and what it belongs to. */
 export type EmailSendContext = {
@@ -121,7 +129,7 @@ export type ProviderSendResult =
     }
   | {
       ok: false;
-      outcome: "provider_rejected" | "error" | "skipped_unconfigured";
+      outcome: "provider_rejected" | "error" | "skipped_unconfigured" | "blocked_test_env";
       sendId: string;
       providerMessageId: null;
       errorName: string | null;
@@ -244,6 +252,29 @@ async function persistSend(rec: SendRecord): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Test-runner guard
+// ---------------------------------------------------------------------------
+
+/** Set to exactly "true" to let a test process reach the live provider. */
+export const EMAIL_ALLOW_TEST_SEND_ENV = "SECURELOGIC_EMAIL_ALLOW_TEST_SEND";
+
+/**
+ * Is this process a test runner that must NOT reach the provider?
+ *
+ * A vitest worker sets `VITEST`; a conventional test harness sets
+ * `NODE_ENV=test`. Either means "no real mail leaves this process" unless the
+ * operator opts out explicitly with `SECURELOGIC_EMAIL_ALLOW_TEST_SEND=true`
+ * for a deliberate live test. Unit tests that drive a MOCKED provider set the
+ * opt-out in their own `beforeEach` — per file, greppable — so the isolation
+ * suite, which exercises the real auth routes, stays blocked by default.
+ */
+export function isTestRunnerSendBlocked(env: NodeJS.ProcessEnv = process.env): boolean {
+  const isTestRunner = Boolean(env.VITEST) || env.NODE_ENV === "test";
+  if (!isTestRunner) return false;
+  return env[EMAIL_ALLOW_TEST_SEND_ENV]?.trim() !== "true";
+}
+
+// ---------------------------------------------------------------------------
 // The choke point
 // ---------------------------------------------------------------------------
 
@@ -280,6 +311,33 @@ export async function sendViaProvider(args: ProviderSendArgs): Promise<ProviderS
   const to = args.to.trim();
   const ctx: EmailSendContext = { purpose: args.purpose, orgId: args.orgId ?? null, correlationId: args.correlationId ?? null };
   const base = baseFields(sendId, ctx, to);
+
+  if (isTestRunnerSendBlocked()) {
+    // Purpose / org / correlation only — deliberately not even the domain: a
+    // test fixture address is exactly the kind of value that would sit in a
+    // developer's terminal scrollback.
+    logger.warn(
+      {
+        event: "email_send_blocked_test_env",
+        sendId,
+        provider: EMAIL_PROVIDER,
+        purpose: ctx.purpose,
+        orgId: ctx.orgId ?? null,
+        correlationId: ctx.correlationId ?? null,
+        optOut: EMAIL_ALLOW_TEST_SEND_ENV
+      },
+      "Email NOT sent — test runner detected; set SECURELOGIC_EMAIL_ALLOW_TEST_SEND=true for a deliberate live test"
+    );
+    return {
+      ok: false,
+      outcome: "blocked_test_env",
+      sendId,
+      providerMessageId: null,
+      errorName: null,
+      errorMessage: "blocked: test runner",
+      statusCode: null
+    };
+  }
 
   const client = args.client ?? buildClient();
   if (!client) {

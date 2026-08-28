@@ -76,6 +76,8 @@ describe("sendBrief — idempotency guard", () => {
     sendMock.mockReset().mockResolvedValue({ data: { id: "msg-1" }, error: null });
     process.env["RESEND_API_KEY"] = "test-key";
     process.env["BRIEF_FROM_EMAIL"] = "SecureLogic AI <briefs@securelogicai.com>";
+    // Mocked provider — opt out of the transport's test-runner guard.
+    process.env["SECURELOGIC_EMAIL_ALLOW_TEST_SEND"] = "true";
 
     // Bundle read order in sendBrief: brief, items, org, subscribers,
     // suppressions, already-sent; then the post-loop audit INSERT.
@@ -92,6 +94,7 @@ describe("sendBrief — idempotency guard", () => {
   afterEach(() => {
     delete process.env["RESEND_API_KEY"];
     delete process.env["BRIEF_FROM_EMAIL"];
+    delete process.env["SECURELOGIC_EMAIL_ALLOW_TEST_SEND"];
   });
 
   it("skips the already-sent subscriber and delivers only to the new one", async () => {

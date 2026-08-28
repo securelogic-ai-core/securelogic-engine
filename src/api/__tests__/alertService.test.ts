@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// EMAIL-OBS-1: this suite drives a MOCKED provider. The shared transport
+// refuses to send from a test runner unless this opt-out is set explicitly
+// (see emailTransport.isTestRunnerSendBlocked) — per file, greppable.
+process.env.SECURELOGIC_EMAIL_ALLOW_TEST_SEND = "true";
+
 // Hoisted mock handles so the vi.mock factories can reference them.
 const h = vi.hoisted(() => ({
   send: vi.fn(),
