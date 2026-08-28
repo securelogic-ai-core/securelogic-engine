@@ -8,7 +8,7 @@ import {
   setEntitlementInRedis,
   type EntitlementRecord
 } from "../infra/entitlementStore.js";
-import { claimWebhookEvent } from "./webhookIdempotency.js";
+import { claimWebhookEvent, releaseWebhookEventClaim } from "./webhookIdempotency.js";
 import { applyBriefToPlatformCredit } from "../lib/briefPlatformCredit.js";
 import { sendEmail } from "../infra/email.js";
 import { graceEnabled } from "../lib/graceWindow.js";
@@ -1377,8 +1377,16 @@ export async function stripeWebhook(
   req: Request,
   res: Response
 ): Promise<void> {
-  // Always return 200 — Stripe retries on non-200 and can DDoS the server.
+  // 200 means "this event is settled — do not resend it". Every non-failure
+  // outcome (processed, ignored, replay, superseded, stale) answers 200 via
+  // respond(). A handler FAILURE must NOT answer 200 (see the outer catch):
+  // Stripe only retries on non-2xx, and a 200 on a throw is how billing state
+  // silently desyncs (BILL-WH-1).
   const respond = (body: object) => res.status(200).json(body);
+
+  // Set once the idempotency claim for this event has been taken and not yet
+  // settled, so the outer catch knows whether there is a claim to release.
+  let claimedEventId: string | null = null;
 
   try {
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
@@ -1440,6 +1448,15 @@ export async function stripeWebhook(
     // on claim INSERT failure: return 500 so Stripe retries — silently
     // re-processing during a Postgres-unhealthy window is worse than letting
     // the provider's retry mechanism handle it.
+    //
+    // INVARIANT (BILL-WH-1): a row in webhook_events_processed means "this
+    // event's handler COMPLETED" (successfully, or by a deliberate non-failure
+    // outcome such as ignored/superseded/stale). The row is inserted BEFORE
+    // processing purely as an in-flight guard, so a concurrent duplicate
+    // delivery of the same event.id cannot run the handler twice. If the
+    // handler throws, the outer catch releases the claim and answers 5xx so
+    // that (1) Stripe retries and (2) the retry — or a manual replay — is
+    // re-processed instead of short-circuiting as idempotent_replay.
     try {
       const { firstSeen } = await claimWebhookEvent("stripe", event.id, eventType);
       if (!firstSeen) {
@@ -1467,6 +1484,7 @@ export async function stripeWebhook(
       res.status(500).json({ error: "idempotency_check_failed" });
       return;
     }
+    claimedEventId = event.id;
 
     // Handle payment failure first — separate action from grant/revoke flow
     if (PAYMENT_FAILED_EVENTS.has(eventType)) {
@@ -1763,10 +1781,37 @@ export async function stripeWebhook(
 
     respond({ received: true, updated: true });
   } catch (err) {
+    // FAIL CLOSED (BILL-WH-1). The handler did not complete, so the event is
+    // NOT processed: release the in-flight claim so the retry re-processes,
+    // then answer 500 so Stripe actually retries. Answering 200 here used to
+    // leave the event claimed AND un-retried — the billing state desynced
+    // silently and a manual replay short-circuited as idempotent_replay.
+    let claimReleased: boolean | null = null;
+    if (claimedEventId !== null) {
+      try {
+        await releaseWebhookEventClaim("stripe", claimedEventId);
+        claimReleased = true;
+      } catch (releaseErr) {
+        claimReleased = false;
+        logger.error(
+          {
+            event: "stripe_webhook_claim_release_failed",
+            stripeEventId: claimedEventId,
+            err: releaseErr
+          },
+          "stripeWebhook: could not release idempotency claim after failure — the retry WILL short-circuit; operator must DELETE the webhook_events_processed row"
+        );
+      }
+    }
     logger.error(
-      { event: "stripe_webhook_failed", err },
-      "stripeWebhook: unhandled error (fail-open)"
+      {
+        event: "stripe_webhook_failed",
+        stripeEventId: claimedEventId,
+        claimReleased,
+        err
+      },
+      "stripeWebhook: unhandled error — failing closed, Stripe will retry"
     );
-    respond({ received: true, updated: false });
+    res.status(500).json({ error: "webhook_processing_failed" });
   }
 }
