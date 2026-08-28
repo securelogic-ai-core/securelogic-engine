@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { pgElevated } from "../infra/postgres.js"
+import { pgElevated, pgPoolStats } from "../infra/postgres.js"
 import { logger } from "../infra/logger.js"
 
 const router = Router()
@@ -138,6 +138,10 @@ router.get("/ops/health", async (_req, res) => {
         suppressedPayingCount,
         failedWorkerRunsLast24h,
         staleRunningWorkers,
+        // R1-1: pool occupancy per role (counters only, no DB round-trip).
+        // `waiting > 0` on any pool is saturation — the state that used to
+        // be an invisible hang. Read this before blaming the database.
+        dbPools: pgPoolStats(),
         latestIssue: latestIssueResult.rows[0] ?? null,
         latestProviderEvent: latestProviderEventResult.rows[0] ?? null,
         checkedAt: new Date().toISOString()

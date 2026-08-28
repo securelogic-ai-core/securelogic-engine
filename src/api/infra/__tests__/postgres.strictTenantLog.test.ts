@@ -22,9 +22,14 @@ vi.mock("pg", () => ({
   Pool: class {
     query = poolQuery;
     connect = poolConnect;
+    // R1-1 attaches `error` + `acquire` listeners and reads occupancy counters.
+    on = vi.fn();
+    totalCount = 0;
+    idleCount = 0;
+    waitingCount = 0;
   }
 }));
-vi.mock("../logger.js", () => ({ logger: { warn } }));
+vi.mock("../logger.js", () => ({ logger: { warn, info: vi.fn(), error: vi.fn() } }));
 
 type PostgresModule = { pg: Pool };
 

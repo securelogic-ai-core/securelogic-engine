@@ -124,11 +124,13 @@ describe("R1-1 — overrides are honoured and reported", () => {
       DATABASE_POOL_MAX: "20",
       DATABASE_CONNECTION_TIMEOUT_MS: "5000",
       DATABASE_IDLE_TIMEOUT_MS: "60000",
+      DATABASE_STATEMENT_TIMEOUT_MS: "45000",
     });
     expect(t).toEqual({
       max: 20,
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 60000,
+      statementTimeoutMillis: 45000,
     });
   });
 

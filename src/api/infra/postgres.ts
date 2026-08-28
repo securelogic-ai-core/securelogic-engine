@@ -2,7 +2,7 @@ import { Pool } from "pg";
 
 import { logger } from "./logger.js";
 import { resolvePgSsl } from "./pgSsl.js";
-import { resolvePoolTuning } from "./pgPoolTuning.js";
+import { resolvePoolTuning, toPoolOptions, type PoolTuning } from "./pgPoolTuning.js";
 import type { PoolClient } from "pg";
 import {
   tenantStorage,
@@ -44,6 +44,75 @@ if (!databaseUrl) {
 // hatch) live in ./pgSsl.ts, shared with the standalone script pools.
 const ssl = resolvePgSsl();
 
+type PoolRole = "app" | "elevated";
+
+export interface PgPoolStats {
+  max: number;
+  /** Clients currently open (idle + checked out). */
+  total: number;
+  idle: number;
+  /** Callers queued for a client — any value > 0 is saturation. */
+  waiting: number;
+}
+
+const poolRegistry = new Map<PoolRole, { pool: Pool; tuning: PoolTuning }>();
+
+/** Minimum gap between two `db_pool_saturated` warnings for one pool. */
+const SATURATION_WARN_INTERVAL_MS = 30_000;
+
+/**
+ * R1-1 observability for one pool:
+ *
+ *  - `error`: an idle client's connection error is emitted on the pool; with
+ *    NO listener node treats it as an unhandled 'error' event and the process
+ *    crashes. A saturated or flapping pool must be loud, not fatal.
+ *  - saturation: `acquire` fires each time a caller gets a client. If other
+ *    callers are still queued at that moment (`waitingCount > 0`) the pool
+ *    is oversubscribed — the state that, before R1-1, was an invisible hang.
+ *    Logged at WARN, rate-limited per pool so a sustained burst is one line
+ *    every 30 s rather than one per checkout.
+ */
+function attachPoolObservability(target: Pool, role: PoolRole, tuning: PoolTuning): void {
+  poolRegistry.set(role, { pool: target, tuning });
+  target.on("error", (err) => {
+    logger.error(
+      { event: "db_pool_error", role, err },
+      `${role} pool emitted an error on an idle client`
+    );
+  });
+  let lastSaturationWarnAt = 0;
+  target.on("acquire", () => {
+    if (target.waitingCount <= 0) return;
+    const now = Date.now();
+    if (now - lastSaturationWarnAt < SATURATION_WARN_INTERVAL_MS) return;
+    lastSaturationWarnAt = now;
+    logger.warn(
+      { event: "db_pool_saturated", role, ...pgPoolStatsFor(role) },
+      `${role} pool is saturated: callers are queued for a client`
+    );
+  });
+}
+
+function pgPoolStatsFor(role: PoolRole): PgPoolStats {
+  const entry = poolRegistry.get(role);
+  if (!entry) return { max: 0, total: 0, idle: 0, waiting: 0 };
+  return {
+    max: entry.tuning.max,
+    total: entry.pool.totalCount,
+    idle: entry.pool.idleCount,
+    waiting: entry.pool.waitingCount
+  };
+}
+
+/**
+ * Point-in-time occupancy of both pools, for the ops health surface. Reads
+ * counters only — never touches the database, so it stays truthful while the
+ * database is the thing that is stuck.
+ */
+export function pgPoolStats(): Record<PoolRole, PgPoolStats> {
+  return { app: pgPoolStatsFor("app"), elevated: pgPoolStatsFor("elevated") };
+}
+
 // The application connection pool. Today connects as the DB owner; under
 // A04-G1 phase 1+ the DATABASE_URL on the 5 flip-set services repoints to the
 // non-owner `app_request` role so RLS policies apply. Internal — callers use
@@ -59,16 +128,8 @@ const appPoolTuning = resolvePoolTuning("app", process.env, (detail) =>
   )
 );
 
-const pool = new Pool({ connectionString: databaseUrl, ssl, ...appPoolTuning });
-
-// A saturated pool must be loud. Without this the only symptom of exhaustion
-// is latency, and the pool is the last place anyone looks.
-pool.on("error", (err) => {
-  logger.error(
-    { event: "db_pool_error", role: "app", err },
-    "Application pool emitted an error on an idle client"
-  );
-});
+const pool = new Pool({ connectionString: databaseUrl, ssl, ...toPoolOptions(appPoolTuning) });
+attachPoolObservability(pool, "app", appPoolTuning);
 
 /**
  * Unwrapped application pool — the documented escape hatch. Performs NO tenant
@@ -99,15 +160,9 @@ const elevatedPoolTuning = resolvePoolTuning("elevated", process.env, (detail) =
 export const pgElevated = new Pool({
   connectionString: elevatedUrl,
   ssl,
-  ...elevatedPoolTuning
+  ...toPoolOptions(elevatedPoolTuning)
 });
-
-pgElevated.on("error", (err) => {
-  logger.error(
-    { event: "db_pool_error", role: "elevated", err },
-    "Elevated pool emitted an error on an idle client"
-  );
-});
+attachPoolObservability(pgElevated, "elevated", elevatedPoolTuning);
 
 // One line at startup so the deployed budget is a fact in the logs rather than
 // something to be re-derived from source during an incident.
@@ -117,7 +172,9 @@ logger.info(
     appPoolMax: appPoolTuning.max,
     elevatedPoolMax: elevatedPoolTuning.max,
     connectionTimeoutMillis: appPoolTuning.connectionTimeoutMillis,
-    idleTimeoutMillis: appPoolTuning.idleTimeoutMillis
+    idleTimeoutMillis: appPoolTuning.idleTimeoutMillis,
+    appStatementTimeoutMillis: appPoolTuning.statementTimeoutMillis,
+    elevatedStatementTimeoutMillis: elevatedPoolTuning.statementTimeoutMillis
   },
   "Database connection pools configured with explicit bounds"
 );

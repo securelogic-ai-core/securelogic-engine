@@ -46,6 +46,21 @@
  * and it is lazy — with no callers it opens nothing. The application pool
  * carries request concurrency and gets the larger share.
  *
+ * A Render zero-downtime deploy briefly runs the old and new instance of a
+ * service side by side, so the worst transient is one extra service's share:
+ * 60 + 12 = 72, still inside the budget. At pg's defaults the same transient
+ * is 120 > 100 — `FATAL: too many connections` for whichever process connects
+ * last, which is the fresh deploy.
+ *
+ * Knobs (all optional, all validated, invalid → default + warning):
+ *
+ *   DATABASE_POOL_MAX                       app pool size            (8)
+ *   DATABASE_ELEVATED_POOL_MAX              elevated pool size       (4)
+ *   DATABASE_CONNECTION_TIMEOUT_MS          wait for a free client   (10000)
+ *   DATABASE_IDLE_TIMEOUT_MS                idle client reclaim      (30000)
+ *   DATABASE_STATEMENT_TIMEOUT_MS           app statement_timeout    (30000; 0 = off)
+ *   DATABASE_ELEVATED_STATEMENT_TIMEOUT_MS  elevated statement_timeout (120000; 0 = off)
+ *
  * Every value is env-overridable because the right number is a property of the
  * deployment, not of the code: a larger DB plan, a second engine instance, or
  * a sixth worker all move it. Overrides are validated and fall back to the
@@ -63,6 +78,14 @@ export interface PoolTuning {
   connectionTimeoutMillis: number;
   /** How long an unused client stays open before being released. */
   idleTimeoutMillis: number;
+  /**
+   * Server-side `statement_timeout` (ms) sent as a STARTUP parameter on every
+   * client this pool opens. 0 = not sent (server default). A statement that
+   * outlives its caller is the other way a scarce client gets pinned; a
+   * job that legitimately needs longer sets `SET LOCAL statement_timeout`
+   * inside its own transaction, which overrides the session value.
+   */
+  statementTimeoutMillis: number;
 }
 
 /** Application (request-path) pool. Carries request concurrency. */
@@ -76,12 +99,29 @@ export const DEFAULT_ELEVATED_POOL_MAX = 4;
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
 /** 30s. Releases idle clients back to the database between traffic bursts. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
+/**
+ * 30s on the application pool — the same figure as the global HTTP request
+ * budget (requestTimeoutBudget.test.ts): a statement still running after its
+ * request has been 504'd is pure waste holding a client.
+ */
+export const DEFAULT_APP_STATEMENT_TIMEOUT_MS = 30_000;
+/**
+ * 120s on the elevated pool. Its callers (ingestion, erasure, the ops health
+ * aggregate, operator surfaces) legitimately run longer than a request does,
+ * so it is looser — but still bounded, because an elevated client stuck on a
+ * runaway statement is the one the workers cannot get back.
+ */
+export const DEFAULT_ELEVATED_STATEMENT_TIMEOUT_MS = 120_000;
 
 /** Guard rails. A value outside these is a mistake, not a tuning choice. */
 const LIMITS = {
   max: { min: 1, max: 100 },
   connectionTimeoutMillis: { min: 250, max: 120_000 },
   idleTimeoutMillis: { min: 1_000, max: 600_000 },
+  // 0 is LEGAL here and means "do not send the parameter": a statement
+  // timeout is a bound on work, not on waiting, so disabling it is a tuning
+  // choice (a bulk backfill) rather than the original defect re-spelled.
+  statementTimeoutMillis: { min: 0, max: 3_600_000 },
 } as const;
 
 /**
@@ -131,6 +171,14 @@ export function resolvePoolTuning(
     role === "app" ? "DATABASE_POOL_MAX" : "DATABASE_ELEVATED_POOL_MAX";
   const maxDefault =
     role === "app" ? DEFAULT_APP_POOL_MAX : DEFAULT_ELEVATED_POOL_MAX;
+  const statementKey =
+    role === "app"
+      ? "DATABASE_STATEMENT_TIMEOUT_MS"
+      : "DATABASE_ELEVATED_STATEMENT_TIMEOUT_MS";
+  const statementDefault =
+    role === "app"
+      ? DEFAULT_APP_STATEMENT_TIMEOUT_MS
+      : DEFAULT_ELEVATED_STATEMENT_TIMEOUT_MS;
 
   return {
     max: readPoolOverride(env, maxKey, maxDefault, LIMITS.max, onInvalid),
@@ -148,5 +196,33 @@ export function resolvePoolTuning(
       LIMITS.idleTimeoutMillis,
       onInvalid
     ),
+    statementTimeoutMillis: readPoolOverride(
+      env,
+      statementKey,
+      statementDefault,
+      LIMITS.statementTimeoutMillis,
+      onInvalid
+    ),
+  };
+}
+
+/**
+ * The exact option object spread into the Pool constructor. Every pool
+ * construction in this repository goes through here (pgPoolConstructionGuard.test.ts enforces
+ * it), so a pool cannot be opened without its bounds. `statement_timeout` is
+ * node-postgres' own option name; `false` means "do not send the startup
+ * parameter", which is what 0 resolves to.
+ */
+export function toPoolOptions(t: PoolTuning): {
+  max: number;
+  connectionTimeoutMillis: number;
+  idleTimeoutMillis: number;
+  statement_timeout: number | false;
+} {
+  return {
+    max: t.max,
+    connectionTimeoutMillis: t.connectionTimeoutMillis,
+    idleTimeoutMillis: t.idleTimeoutMillis,
+    statement_timeout: t.statementTimeoutMillis === 0 ? false : t.statementTimeoutMillis,
   };
 }
