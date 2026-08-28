@@ -332,11 +332,19 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
         // Only ASKABLE items: deterministic ones, plus AI-suggested ones a human
         // accepted. An unaccepted suggestion must never reach a vendor — that is
         // the ratified AI boundary.
-        `SELECT si.requirement_id, r.reference_id, r.title, r.description,
+        `SELECT si.requirement_id, r.reference_id,
+                COALESCE(qv.prompt, r.title) AS title,
+                COALESCE(qv.guidance, r.description) AS description,
                 si.depth, si.mandatory, si.reasons,
                 rr.status, rr.notes
            FROM vendor_engagement_scope_items si
            JOIN requirements r ON r.id = si.requirement_id
+           -- VA-Q1 P2 (ADR-0013 R3): the vendor reads the IMMUTABLE version the
+           -- scope item was frozen against, so a later requirement edit cannot
+           -- change the question mid-assessment. Pre-P2 rows fall back.
+           LEFT JOIN question_versions qv
+                  ON qv.id = si.question_version_id
+                 AND qv.organization_id = si.organization_id
            LEFT JOIN requirement_responses rr
                   ON rr.requirement_id = si.requirement_id
                  AND rr.engagement_id  = si.engagement_id
@@ -419,14 +427,17 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
       // The requirement must be IN THIS ENGAGEMENT'S FROZEN SCOPE. A vendor
       // cannot answer a question they were not asked, and cannot reach another
       // engagement's requirement by id.
-      const inScope = await pg.query(
-        `SELECT 1 FROM vendor_engagement_scope_items
+      const inScope = await pg.query<{ question_version_id: string | null }>(
+        `SELECT question_version_id FROM vendor_engagement_scope_items
           WHERE engagement_id = $1 AND organization_id = $2 AND requirement_id = $3
             AND (source = 'deterministic' OR accepted_at IS NOT NULL)
           LIMIT 1`,
         [ctx.engagementId, ctx.organizationId, requirementId]
       );
       if ((inScope.rowCount ?? 0) === 0) return { code: 404 as const };
+      // VA-Q1 P2: the answer records WHICH content it answered. Taken from the
+      // frozen scope item, never from the caller.
+      const questionVersionId = inScope.rows[0]!.question_version_id;
 
       // subject_id is the ENGAGEMENT'S vendor, resolved server-side.
       const vendor = await pg.query<{ vendor_id: string }>(
@@ -438,27 +449,29 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
       const saved = await pg.query<{ id: string }>(
         `INSERT INTO requirement_responses
            (organization_id, requirement_id, assessment_type, subject_id, engagement_id,
-            responder_type, answered_via_invite_id, status, notes, assessed_at)
-         VALUES ($1, $2, 'vendor', $3, $4, 'vendor', $5, $6, $7, NOW())
+            responder_type, answered_via_invite_id, status, notes, assessed_at, question_version_id)
+         VALUES ($1, $2, 'vendor', $3, $4, 'vendor', $5, $6, $7, NOW(), $8)
          ON CONFLICT (organization_id, requirement_id, assessment_type, subject_id,
                       COALESCE(engagement_id, '00000000-0000-0000-0000-000000000000'::uuid))
          DO UPDATE SET status = EXCLUDED.status,
                        notes = EXCLUDED.notes,
                        responder_type = EXCLUDED.responder_type,
                        answered_via_invite_id = EXCLUDED.answered_via_invite_id,
+                       question_version_id = COALESCE(EXCLUDED.question_version_id, requirement_responses.question_version_id),
                        assessed_at = NOW(),
                        updated_at = NOW()
          RETURNING id`,
-        [ctx.organizationId, requirementId, vendorId, ctx.engagementId, ctx.inviteId, status, notes]
+        [ctx.organizationId, requirementId, vendorId, ctx.engagementId, ctx.inviteId, status, notes, questionVersionId]
       );
 
       // Append-only history. The upsert above cannot answer "what did they say
       // before they changed it"; this can.
       await pg.query(
         `INSERT INTO requirement_response_revisions
-           (organization_id, response_id, status, notes, responder_type, answered_via_invite_id)
-         VALUES ($1, $2, $3, $4, 'vendor', $5)`,
-        [ctx.organizationId, saved.rows[0]!.id, status, notes, ctx.inviteId]
+           (organization_id, response_id, status, notes, responder_type, answered_via_invite_id,
+            question_version_id)
+         VALUES ($1, $2, $3, $4, 'vendor', $5, $6)`,
+        [ctx.organizationId, saved.rows[0]!.id, status, notes, ctx.inviteId, questionVersionId]
       );
 
       // Answering during a clarification is what reopens the engagement —

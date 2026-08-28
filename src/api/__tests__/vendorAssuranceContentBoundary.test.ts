@@ -248,6 +248,13 @@ describe("the set of modules that touch requirements.scope_tags stays closed", (
       .sort();
 
     expect(touching).toEqual([
+      // VA-Q1 P2 (ADR-0013). A READER that labels a bridge question's domain
+      // from the requirement's tags (domainForScopeTags — VA-Q0 §5). It scopes
+      // nothing and is reached only through resolveScope, which sits behind
+      // vendorAssuranceFeatureFlag (above). The domain it derives is inert
+      // content until Q2 gives it a consumer — and that consumer will be the
+      // resolver, inside the flag.
+      "api/lib/questionnaire/bridgeQuestions.ts",
       // The vocabulary + heuristic themselves — no I/O.
       "api/lib/requirementValidation.ts",
       "api/lib/vendorRisk/methodologyVersion.ts",

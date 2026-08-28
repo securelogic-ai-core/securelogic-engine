@@ -236,3 +236,27 @@ export function bridgeQuestionKey(frameworkId: string, referenceId: string): str
   const ref = referenceId.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return `req:${frameworkId}:${ref || "x"}`.slice(0, 200);
 }
+
+/**
+ * VA-Q0 §5 — the requirement→domain bridge, derived from the shipped scope
+ * tags. Precedence when a requirement carries tags from several domains: the
+ * most specific non-security domain wins (a "privacy + access-control"
+ * requirement is a privacy question), and `security` is the floor — an
+ * untagged or core-only requirement is a security question. Q2 promotes this
+ * to a first-class, versioned rule; until then it exists so bridge questions
+ * carry an honest domain rather than a placeholder.
+ */
+const TAG_DOMAIN: Record<string, QuestionDomain> = {
+  privacy: "privacy", "data-protection": "privacy", retention: "privacy",
+  "ai-governance": "ai", "model-risk": "ai", explainability: "ai", "human-oversight": "ai",
+  resilience: "resilience", "business-continuity": "resilience",
+  "supply-chain": "nth_party", subprocessor: "nth_party",
+};
+const DOMAIN_PRECEDENCE: QuestionDomain[] = ["ai", "privacy", "nth_party", "resilience"];
+
+export function domainForScopeTags(tags: readonly string[]): QuestionDomain {
+  const found = new Set<QuestionDomain>();
+  for (const t of tags) { const d = TAG_DOMAIN[t]; if (d) found.add(d); }
+  for (const d of DOMAIN_PRECEDENCE) if (found.has(d)) return d;
+  return "security";
+}
