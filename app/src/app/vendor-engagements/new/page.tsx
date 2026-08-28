@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
+import { vendorAssuranceEnabled } from "@/lib/vendorAssuranceFeatureFlag";
 import { isPlatformEntitled } from "@/lib/entitlements";
 import { getVendors } from "@/lib/api";
 import CreateEngagementForm from "@/components/vendorEngagements/CreateEngagementForm";
@@ -17,6 +18,11 @@ export default async function NewVendorEngagementPage({
 }: {
   searchParams?: Promise<Record<string, string | undefined>>;
 }) {
+  // VA-NAV-1 activation gate — precedes session and entitlement on purpose:
+  // a disabled capability answers notFound() to everyone, never the
+  // entitlement redirect, so a probe cannot tell "off" from "not yours".
+  // Same key and resolver as the engine, which 404s the API independently.
+  if (!vendorAssuranceEnabled()) notFound();
   const session = await getSession();
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");

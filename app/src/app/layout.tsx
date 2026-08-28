@@ -5,6 +5,7 @@ import { getSession } from "@/lib/session";
 import { getIdleSeconds } from "@/lib/sessionPolicy";
 import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 import { riskAcceptanceEnabled } from "@/lib/riskAcceptanceFeatureFlag";
+import { vendorAssuranceEnabled } from "@/lib/vendorAssuranceFeatureFlag";
 import { getConsentStatus } from "@/lib/api";
 import IdleLogout from "@/components/IdleLogout";
 import ConsentInterstitial from "@/components/ConsentInterstitial";
@@ -71,6 +72,11 @@ export default async function RootLayout({
     // for the "Approvals" entry in both nav models. Same key the engine reads, so
     // the nav never advertises Approvals while /api/risk-acceptances 404s.
     risk_acceptance: riskAcceptanceEnabled(),
+    // Vendor Assurance capability (VA-NAV-1) — ACTIVATION for the "Vendor
+    // Assurance" group in both nav models. Same key the engine reads (and the
+    // same resolver, including its non-production default), so the nav never
+    // advertises the engagement spine while its engine routes 404.
+    vendor_assurance: vendorAssuranceEnabled(),
   };
 
   return (
