@@ -34,7 +34,16 @@ const TIER_D_ALLOWLIST: Record<string, string> = {
   feed_health: "pipeline telemetry, elevated-only",
   sources: "source catalog, pipeline-maintained, elevated-only",
   intelligence_event_timeline: "event-workflow internals, elevated-only",
-  intelligence_event_workflow_triggers: "event-workflow internals, elevated-only"
+  intelligence_event_workflow_triggers: "event-workflow internals, elevated-only",
+  // EMAIL-OBS-1 (20261061_email_sends_observability.sql): the outbound-send
+  // ledger that joins provider webhook events back to purpose/org/correlation.
+  // Same class as email_provider_events — platform-level, no organization_id
+  // (informational column only, no FK), written solely through pgElevated by
+  // the email transport and read by the webhook. No app_request grant on
+  // purpose: a grant here would be a privilege change smuggled into
+  // observability; if a customer-path reader is ever wanted it needs its own
+  // reviewed decision.
+  email_sends: "outbound-send ledger for webhook correlation, elevated-only (EMAIL-OBS-1)"
 };
 
 let pool: Pool;
