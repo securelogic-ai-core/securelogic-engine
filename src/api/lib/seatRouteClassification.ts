@@ -40,6 +40,11 @@ export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
 /** Class A deny-all for Contributors. */
 export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "aiGovernanceAssessments.ts",
+  // VA-Q1. The curated question library is governance content: what an org
+  // asks its vendors, and which requirements that evidences. Deny-all for
+  // contributors — there is no "my questions" scope to grant, and a
+  // contributor reading the library learns the org's assessment policy.
+  "questions.ts",
   // SL-RISK-LINK. Deny-all, not read-scoped: deciding that a finding belongs on
   // the Risk Register is a governance act, and the reverse read
   // (/risks/:id/findings) is a cross-tenant-shaped roll-up with no trustworthy

@@ -184,6 +184,10 @@ export const TABLE_CLASSIFICATION: Record<string, TableClassification> = {
   vendor_assurance_extraction_spans: { category: "D", piiRisk: "low", rlsStatus: "enabled" },
   frameworks: { category: "D", piiRisk: "low", rlsStatus: "pending" },
   requirements: { category: "D", piiRisk: "low", rlsStatus: "pending" },
+  // VA-Q1 (ADR-0013 R1/R3): the curated vendor question library.
+  questions: { category: "D", userRefColumns: ["created_by_user_id"], piiRisk: "low", rlsStatus: "enabled", specialHandling: "Identity of a vendor-facing question; content lives in question_versions. Mutable in status only. question_key is stable and referenced by policy rules, so it is never renamed — retire and create." },
+  question_versions: { category: "D", userRefColumns: ["published_by_user_id"], piiRisk: "none", rlsStatus: "enabled", specialHandling: "IMMUTABLE content (BEFORE UPDATE OR DELETE trigger raises; app_request holds no UPDATE/DELETE grant). An issued questionnaire snapshot is addressed by these rows, so they must outlive the library edit that superseded them. Holds no PII: prompt/guidance are authored by the org or SecureLogic, never by a vendor." },
+  question_requirement_links: { category: "D", userRefColumns: ["created_by_user_id"], piiRisk: "none", rlsStatus: "enabled", specialHandling: "Many-to-many lineage from a question to the canonical requirement library. Requirements carry no organization_id, so the org check on a link is a framework join in code, asserted by the isolation suite." },
   policies: { category: "D", piiRisk: "medium", rlsStatus: "pending" },
   policy_control_links: { category: "D", piiRisk: "none", rlsStatus: "pending" },
   control_mappings: { category: "D", piiRisk: "none", rlsStatus: "pending" },
