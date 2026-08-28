@@ -26,6 +26,17 @@ export interface JwtPayload {
    * immediate 401 (see requireAuth.ts / requireApiKey.ts). Never default it.
    */
   se?: number;
+  /**
+   * Token-type discriminator (SEC-TOKEN-1, issue #821).
+   *
+   * OPTIONAL on the type for exactly one reason: session tokens minted before
+   * this shipped carry no `type` claim and stay valid for up to their 7-day
+   * lifetime. `verifyJwt` therefore accepts absent-or-"session" and rejects
+   * every other value, which is what closes the MFA-challenge crossover
+   * without invalidating live sessions. Once the pre-fix window has elapsed
+   * this becomes required — see the note on verifyJwt.
+   */
+  type?: "session";
   /** Issued-at (Unix seconds) */
   iat: number;
   /** Expiry (Unix seconds) */
@@ -74,7 +85,18 @@ export function signJwt(
   const now  = Math.floor(Date.now() / 1000);
   const body = b64url(
     Buffer.from(
-      JSON.stringify({ sub, org, role, se: sessionEpoch, iat: now, exp: now + EXPIRY_SECONDS }),
+      JSON.stringify({
+        sub,
+        org,
+        role,
+        se: sessionEpoch,
+        // SEC-TOKEN-1: every session token states what it is. verifyJwt
+        // accepts only this value (or its absence, for pre-fix tokens);
+        // signMfaChallenge mints "mfa_challenge" and is now rejected.
+        type: "session",
+        iat: now,
+        exp: now + EXPIRY_SECONDS
+      }),
       "utf8"
     )
   );
@@ -151,8 +173,42 @@ export const SESSION_BLOCKED_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Verify a JWT and return its payload, or null if invalid/expired.
+ * Verify a SESSION JWT and return its payload, or null if invalid/expired.
  * Returns null (never throws) on any validation failure.
+ *
+ * SEC-TOKEN-1 — THE TOKEN-TYPE INVARIANT (issue #821)
+ * ---------------------------------------------------
+ * Every token this service mints is signed with the SAME key. A valid
+ * signature therefore proves origin, NOT purpose. Before this guard,
+ * `verifyJwt` asserted only "signed by us and not expired", which made an
+ * `mfa_challenge` token — minted by signMfaChallenge for a user who has NOT
+ * yet passed the second factor — a structurally valid session payload. The
+ * `role` backfill below then handed it `admin`.
+ *
+ * WHY THE GUARD LIVES HERE AND NOT IN THE CALLERS
+ * -----------------------------------------------
+ * It was previously argued that the missing-`se` rejection in requireAuth and
+ * requireApiKey already blocked the crossover, because signMfaChallenge mints
+ * no `se`. That is true of those two callers and is NOT true of the set:
+ * `requireConsent.ts:49` also calls verifyJwt and consumes `payload.sub` as an
+ * authenticated identity with no epoch check and no type check. A defence that
+ * has to be re-implemented correctly in every present and future caller is not
+ * a defence — one caller already lacks it. The invariant belongs to the
+ * verifier, which is the single place that can state it once.
+ *
+ * WHY ABSENCE IS ACCEPTED (AND FOR HOW LONG)
+ * ------------------------------------------
+ * Session tokens minted before this shipped carry no `type` claim and remain
+ * valid for up to EXPIRY_SECONDS (7 days). Rejecting absence would have logged
+ * out every live session, so the rule is "absent, or exactly 'session'" —
+ * which rejects `mfa_challenge` (the actual defect) with zero session
+ * breakage. This is deliberately the WEAKER of the two available rules and
+ * should be tightened to require `type === "session"` once 7 days have passed
+ * since deployment; the regression suite carries a test that documents the
+ * pre-fix acceptance so tightening it is a one-line, one-test change.
+ *
+ * Note the ordering: the type check runs BEFORE the role backfill, so a
+ * foreign token can never be handed a default role on its way to rejection.
  */
 export function verifyJwt(token: string): JwtPayload | null {
   try {
@@ -183,7 +239,15 @@ export function verifyJwt(token: string): JwtPayload | null {
     if (typeof payload.exp !== "number") return null;
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
 
-    // Backfill role for tokens issued before Sprint 7
+    // SEC-TOKEN-1: a signature proves origin, not purpose. Accept only a token
+    // that says it is a session (or says nothing, for the pre-fix window) and
+    // reject every other minted type — today that is `mfa_challenge`, and any
+    // type added later is rejected by default rather than by remembering to.
+    const claimedType = (payload as { type?: unknown }).type;
+    if (claimedType !== undefined && claimedType !== "session") return null;
+
+    // Backfill role for tokens issued before Sprint 7. Runs AFTER the type
+    // guard so a foreign token is never granted 'admin' en route to rejection.
     if (!payload.role) payload.role = "admin";
 
     return payload;
