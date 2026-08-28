@@ -1,7 +1,10 @@
 /**
  * findingVendorProvenance.ts — GET /api/findings/:id/vendor-provenance
  *
- * T1-B. The return path of the Vendor Assurance chain.
+ * T1-B (document/CUEC arm) + VA-10 (engagement arm). The return path of the
+ * Vendor Assurance chain — both spines of it, per ADR-0010 Option 4:
+ * convergence at the Finding means the Finding must be able to point back at
+ * whichever spine produced it.
  *
  * WHY THIS EXISTS
  * ---------------
@@ -110,6 +113,26 @@ const GUARDS = [
   denyContributor(),
 ] as const;
 
+type EngagementProvenanceRow = {
+  engagement_id: string;
+  engagement_title: string | null;
+  engagement_type: string;
+  engagement_status: string;
+  decision: string | null;
+  decided_at: string | null;
+  submitted_at: string | null;
+  methodology_version: string;
+  vendor_id: string;
+  vendor_name: string;
+  requirement_id: string | null;
+  requirement_reference: string | null;
+  requirement_title: string | null;
+  severity_rationale: string | null;
+  current_response: string | null;
+  response_as_of: string | null;
+  responder_type: string | null;
+};
+
 type ProvenanceRow = {
   cuec_id: string;
   ordinal: number;
@@ -163,6 +186,115 @@ router.get(
       return;
     }
     const sourceType = finding.rows[0]!.source_type;
+
+    /* ---------------------------------------------------------
+       VA-10 — the engagement arm.
+
+       `source_type='vendor_engagement'` obeys the platform source_id
+       convention exactly (one writer, one target table, ratified by the
+       20260928 schema decision), so HERE — unlike the vendor_review branch
+       below — joining source_id IS the correct resolution, with the
+       source_type filter load-bearing exactly as it is in
+       vendorFindingLinkage.ts arm 4. The arm is convention-backed, not
+       FK-backed: a dangling source_id legitimately resolves to nothing, and
+       the response says so rather than 404-ing.
+
+       The current requirement_responses row is included DELIBERATELY and
+       labeled as current: per the supersede-on-pass ruling (2026-08-22), a
+       control that now reports pass/not_applicable never closes the finding
+       — but the divergence must be NAMED everywhere a human looks, and the
+       finding detail page is exactly such a place. severity_rationale is the
+       promotion-time snapshot; the response row is today's source assertion.
+       The panel labels which is which.
+       --------------------------------------------------------- */
+    if (sourceType === "vendor_engagement") {
+      const eng = await pg.query<EngagementProvenanceRow>(
+        `SELECT e.id                    AS engagement_id,
+                e.title                 AS engagement_title,
+                e.engagement_type       AS engagement_type,
+                e.status                AS engagement_status,
+                e.decision              AS decision,
+                e.decided_at            AS decided_at,
+                e.submitted_at          AS submitted_at,
+                e.methodology_version   AS methodology_version,
+                v.id                    AS vendor_id,
+                v.name                  AS vendor_name,
+                r.id                    AS requirement_id,
+                r.reference_id          AS requirement_reference,
+                r.title                 AS requirement_title,
+                f.severity_rationale    AS severity_rationale,
+                rr.status               AS current_response,
+                rr.assessed_at          AS response_as_of,
+                rr.responder_type       AS responder_type
+           FROM findings f
+           JOIN vendor_engagements e
+             ON e.id::text = f.source_id::text
+            AND e.organization_id = f.organization_id
+           JOIN vendors v
+             ON v.id = e.vendor_id
+            AND v.organization_id = e.organization_id
+           LEFT JOIN requirements r
+             ON r.id = f.requirement_id
+           LEFT JOIN requirement_responses rr
+             ON rr.organization_id = f.organization_id
+            AND rr.engagement_id   = e.id
+            AND rr.requirement_id  = f.requirement_id
+          WHERE f.id = $1
+            AND f.organization_id = $2
+            AND f.source_type = 'vendor_engagement'
+          LIMIT 1`,
+        [findingId, organizationId]
+      );
+
+      if ((eng.rowCount ?? 0) === 0) {
+        // Dangling source_id — the convention arm's honest failure mode.
+        res.json({
+          finding_id: findingId,
+          source_type: sourceType,
+          source: "vendor_engagement",
+          provenance: null,
+          engagement_provenance: null,
+        });
+        return;
+      }
+
+      const e = eng.rows[0]!;
+      res.json({
+        finding_id: findingId,
+        source_type: sourceType,
+        source: "vendor_engagement",
+        provenance: null,
+        engagement_provenance: {
+          vendor: { id: e.vendor_id, name: e.vendor_name },
+          engagement: {
+            id: e.engagement_id,
+            title: e.engagement_title,
+            engagement_type: e.engagement_type,
+            status: e.engagement_status,
+            decision: e.decision,
+            decided_at: e.decided_at,
+            submitted_at: e.submitted_at,
+            methodology_version: e.methodology_version,
+          },
+          requirement: e.requirement_id
+            ? {
+                id: e.requirement_id,
+                reference: e.requirement_reference,
+                title: e.requirement_title,
+              }
+            : null,
+          severity_rationale: e.severity_rationale,
+          current_response: e.current_response
+            ? {
+                status: e.current_response,
+                as_of: e.response_as_of,
+                responder_type: e.responder_type,
+              }
+            : null,
+        },
+      });
+      return;
+    }
 
     // Not a vendor-sourced finding at all: say so plainly. The panel renders
     // nothing rather than an empty box.

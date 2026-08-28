@@ -35,6 +35,7 @@ import { opsBucket, bucketListParams, opsCounts, globalSummary, decodeCursor, pa
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
   vendor_review:        "Vendor Assessment",
+  vendor_engagement:    "Vendor Engagement",
   control_test:         "Control Test",
   obligation_review:    "Obligation Review",
   ai_review:            "AI Review",
@@ -53,14 +54,16 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
 // else and nothing else in the product named them. A capability nobody can find
 // is not a capability.
 //
-// Deliberately NOT added: `vendor_engagement`. The engagement→findings path
-// exists in code but has never produced a finding, and surfacing a filter for a
-// workflow that does not yet complete would make Vendor Assurance look finished
-// through reporting. It belongs to the Vendor Assurance completion package.
+// `vendor_engagement` was deliberately withheld while the engagement→findings
+// workflow did not complete. VA-10 is the completion: promotion (#864 schema),
+// vendor-page linkage (VA-4), supersede-on-pass visibility, and Finding→
+// engagement back-navigation all ship in the same held train as this filter,
+// so the pill cannot reach a customer before the workflow it names does.
 const SOURCE_TYPE_VALUES: Array<{ label: string; value: string }> = [
   { label: "Vulnerability",       value: "vulnerability" },
   { label: "Penetration Test",    value: "pen_test" },
   { label: "Vendor Assessment",   value: "vendor_review" },
+  { label: "Vendor Engagement",   value: "vendor_engagement" },
   { label: "Control Test",        value: "control_test" },
   { label: "Obligation Review",   value: "obligation_review" },
   { label: "AI Review",           value: "ai_review" },
