@@ -1,6 +1,6 @@
-import { Resend } from "resend";
 import { pgElevated } from "../../../../src/api/infra/postgres.js";
 import { logger } from "../../../../src/api/infra/logger.js";
+import { recipientDomain, sendViaProvider } from "../../../../src/api/infra/emailTransport.js";
 import { markIssueSent } from "../storage/postgresIssueStore.js";
 import { generateUnsubscribeToken } from "../../../../src/api/infra/unsubscribeToken.js";
 
@@ -44,10 +44,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getResend(): Resend {
+/** Purpose key carried on every newsletter send's observability lines. */
+export const NEWSLETTER_EMAIL_PURPOSE = "newsletter.issue";
+
+function assertProviderConfigured(): void {
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key) throw new Error("RESEND_API_KEY is not set");
-  return new Resend(key);
 }
 
 function getSenderAddress(): string {
@@ -86,15 +88,18 @@ async function fetchQueuedDeliveries(issueId: string): Promise<QueuedDelivery[]>
   return result.rows;
 }
 
-async function markDeliverySent(deliveryId: string): Promise<void> {
+async function markDeliverySent(deliveryId: string, providerMessageId: string | null): Promise<void> {
+  // `provider_message_id` has existed on this table since 001 and was never
+  // written; it is the per-delivery join to the provider's webhook events.
   await pgElevated.query(
     `
     UPDATE newsletter_deliveries
-    SET status   = 'sent',
-        sent_at  = NOW()
+    SET status              = 'sent',
+        sent_at             = NOW(),
+        provider_message_id = COALESCE($2, provider_message_id)
     WHERE id = $1
     `,
-    [deliveryId]
+    [deliveryId, providerMessageId]
   );
 }
 
@@ -200,11 +205,10 @@ export async function sendNewsletter(issueId: string): Promise<SendNewsletterRes
     `Sending newsletter to ${deliveries.length} queued recipient(s)`
   );
 
-  let resend: Resend;
   let from: string;
 
   try {
-    resend = getResend();
+    assertProviderConfigured();
     from = getSenderAddress();
   } catch (err) {
     logger.error({ event: "newsletter_send_misconfigured", err }, "sendNewsletter: missing env vars — aborting");
@@ -225,26 +229,39 @@ export async function sendNewsletter(issueId: string): Promise<SendNewsletterRes
         ? injectFooterLinks(issue.content_html, issueId, unsubscribeUrl)
         : issue.content_html;
 
-      await resend.emails.send({
-        from,
+      // EMAIL-OBS-1: through the shared choke point. A provider REJECTION is
+      // a failed delivery (retried next run), not a sent one — before this the
+      // SDK's resolved `{ error }` was never read and the row was marked sent.
+      const res = await sendViaProvider({
+        purpose: NEWSLETTER_EMAIL_PURPOSE,
+        orgId: null,
+        correlationId: issueId,
         to: delivery.subscriber_email,
+        from,
         subject: issue.title,
         html
       });
+      if (!res.ok) throw new Error(res.errorMessage);
 
-      await markDeliverySent(delivery.id);
+      await markDeliverySent(delivery.id, res.providerMessageId);
       result.sent++;
 
       logger.info(
-        { event: "email_sent", deliveryId: delivery.id, email: delivery.subscriber_email, issueId },
-        "Email sent"
+        {
+          event: "email_sent",
+          deliveryId: delivery.id,
+          recipientDomain: recipientDomain(delivery.subscriber_email),
+          providerMessageId: res.providerMessageId,
+          issueId
+        },
+        "Email accepted by provider"
       );
     } catch (err) {
       await markDeliveryFailed(delivery.id);
       result.failed++;
 
       logger.error(
-        { event: "email_send_failed", deliveryId: delivery.id, email: delivery.subscriber_email, issueId, err },
+        { event: "email_send_failed", deliveryId: delivery.id, recipientDomain: recipientDomain(delivery.subscriber_email), issueId, err },
         "Email send failed"
       );
     }

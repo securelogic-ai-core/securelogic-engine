@@ -1382,8 +1382,16 @@ async function runOrgPipeline(
         event: "scheduler_brief_sent",
         orgId,
         briefId,
+        // EMAIL-OBS-1 / F-3: every SendBriefResult counter, so a zero-send run
+        // explains itself on this line instead of reading as all-zeros while
+        // the truth (suppressed / filtered) lives in a different event.
+        attempted: sendResult.sent + sendResult.failed,
+        accepted: sendResult.sent,
+        rejected: sendResult.failed,
         sent: sendResult.sent,
         failed: sendResult.failed,
+        suppressed: sendResult.suppressed,
+        skipped_filtered: sendResult.skipped_filtered,
         skipped: sendResult.skipped,
         already_sent: sendResult.already_sent
       },

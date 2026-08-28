@@ -12,8 +12,50 @@ import {
   currentEmailEnvironment
 } from "../infra/emailEnvironment.js";
 import { isSuppressionEvent } from "../lib/emailEventTypes.js";
+import { describeRecipient, EMAIL_PROVIDER, sanitizeProviderText } from "../infra/emailTransport.js";
 
 const router = Router();
+
+/**
+ * The provider's message id on an inbound event. Resend puts it at
+ * `data.email_id`; the historic alias `data.id` is accepted for older shapes.
+ */
+export function readProviderMessageId(payload: unknown): string | null {
+  const data = (payload as { data?: { email_id?: unknown; id?: unknown } } | null)?.data;
+  const raw = data?.email_id ?? data?.id;
+  const id = typeof raw === "string" ? raw.trim() : "";
+  return id || null;
+}
+
+/**
+ * The failure detail a delayed / bounced event carries, with any address
+ * redacted. Resend's bounce shape is `data.bounce = { type, subType, message }`.
+ */
+export function readEventReason(payload: unknown): {
+  bounceType: string | null;
+  bounceSubType: string | null;
+  reason: string | null;
+} {
+  const data = (payload as { data?: Record<string, unknown> } | null)?.data ?? {};
+  const bounce = (data.bounce ?? null) as { type?: unknown; subType?: unknown; message?: unknown } | null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? sanitizeProviderText(v) : null);
+  return {
+    bounceType: str(bounce?.type),
+    bounceSubType: str(bounce?.subType),
+    reason: str(bounce?.message) ?? str(data.reason)
+  };
+}
+
+type SendJoin = { id: string; purpose: string; organization_id: string | null; correlation_id: string | null; created_at: string };
+
+/** Which lifecycle events describe a delivery problem — logged at warn. */
+const PROBLEM_EVENTS = new Set([
+  "email.bounced",
+  "email.complained",
+  "email.delivery_delayed",
+  "email.failed",
+  "email.suppressed"
+]);
 
 function normalizeEmail(value: unknown): string | null {
   const email = String(value ?? "").trim().toLowerCase();
@@ -119,6 +161,58 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
       );
     }
 
+    /* ─────────────────────────────────────────────────────────────────────
+       EMAIL-OBS-1 — correlate the event back to the send that caused it.
+       ─────────────────────────────────────────────────────────────────────
+       The provider echoes its message id (`data.email_id`); the transport
+       recorded that id in `email_sends` when the send was accepted. Joining
+       here is what turns "a bounce happened" into "Brief <id> for org <id>
+       bounced at <domain>". The join is read-only and best-effort: a lookup
+       failure is logged and the event is processed exactly as before. The
+       log line carries domain + keyed hash, never the address.
+       ───────────────────────────────────────────────────────────────────── */
+    const providerMessageId = readProviderMessageId(payload);
+    let join: SendJoin | null = null;
+    let joinError: string | null = null;
+    if (providerMessageId) {
+      try {
+        const r = await client.query<SendJoin>(
+          `SELECT id, purpose, organization_id, correlation_id, created_at
+             FROM email_sends
+            WHERE provider = $1 AND provider_message_id = $2
+            LIMIT 1`,
+          [EMAIL_PROVIDER, providerMessageId]
+        );
+        join = r.rows[0] ?? null;
+      } catch (err) {
+        joinError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    const reasonFields = readEventReason(payload);
+    const providerEventLine = {
+      event: "email_provider_event",
+      provider: EMAIL_PROVIDER,
+      eventType,
+      providerEventId,
+      providerMessageId,
+      unmatched: join === null,
+      ...(joinError ? { joinError: sanitizeProviderText(joinError) } : {}),
+      sendId: join?.id ?? null,
+      purpose: join?.purpose ?? null,
+      orgId: join?.organization_id ?? null,
+      correlationId: join?.correlation_id ?? null,
+      sentAt: join?.created_at ?? null,
+      environmentClassification: environmentMatch,
+      ...describeRecipient(email ?? ""),
+      ...reasonFields
+    };
+    if (PROBLEM_EVENTS.has(eventType)) {
+      logger.warn(providerEventLine, "Email provider reported a delivery problem");
+    } else {
+      logger.info(providerEventLine, "Email provider event received");
+    }
+
     await client.query("BEGIN");
 
     let inserted = false;
@@ -131,9 +225,10 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
           provider_event_id,
           event_type,
           email,
-          payload
+          payload,
+          provider_message_id
         )
-        VALUES ($1, $2, $3, $4, $5::jsonb)
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
         RETURNING id
         `,
         [
@@ -141,7 +236,8 @@ router.post("/webhooks/email/resend", async (req: Request, res: Response) => {
           providerEventId,
           eventType,
           email,
-          JSON.stringify(payload)
+          JSON.stringify(payload),
+          providerMessageId
         ]
       );
 

@@ -30,6 +30,7 @@
  */
 import { pgElevated, withTenant, pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { sendViaProvider } from "../infra/emailTransport.js";
 import {
   getResend,
   getFromAddress,
@@ -40,7 +41,6 @@ import {
   recordSend,
 } from "./alerting/alertPrimitives.js";
 import { sqlFindingActive, sqlActionActive } from "./metricDefinitions.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
 
 const ALERT_TYPE = "sla_breach_daily";
 /** Cap per email — a mass-breach day must not produce a 400-row email. */
@@ -156,13 +156,18 @@ export async function runDailySlaBreachSweep(): Promise<SlaBreachSweepSummary> {
           const overflow = fresh.length - shown.length;
 
           try {
-            await getResend().emails.send({
+            const sendResult = await sendViaProvider({
+              client: getResend(),
+              purpose: "alert.sla_breach_daily",
+              orgId: org.id,
+              correlationId: ownerId,
               from: getFromAddress(),
               to: row.email,
               subject: `SLA breached: ${fresh.length} item${fresh.length !== 1 ? "s" : ""} you own went overdue`,
-              html: renderSlaBreachEmail(org.name, shown, overflow),
-              tags: withEnvironmentTag(),
+              html: renderSlaBreachEmail(org.name, shown, overflow)
             });
+            // A rejection must not stamp the ledger — throw into the catch below.
+            if (!sendResult.ok) throw new Error(sendResult.errorMessage);
             for (const item of shown) {
               await recordSend(ownerId, ALERT_TYPE, `${item.kind}:${item.id}:${item.due_date}`);
             }

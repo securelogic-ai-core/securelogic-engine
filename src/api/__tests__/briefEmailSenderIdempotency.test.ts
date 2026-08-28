@@ -1,8 +1,8 @@
 /**
  * briefEmailSenderIdempotency.test.ts — sendBrief must never double-deliver.
  *
- * Drives the real sendBrief() with a mocked postgres and a stubbed Resend HTTP
- * call. Verifies that a subscriber who already has a 'sent' row for the brief is
+ * Drives the real sendBrief() with a mocked postgres and a stubbed Resend SDK
+ * client. Verifies that a subscriber who already has a 'sent' row for the brief is
  * skipped (idempotency guard) while a not-yet-sent subscriber is delivered to.
  * This is the guarantee behind "weekly cron + manual/catch-up run never send
  * the same brief twice".
@@ -10,8 +10,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// EMAIL-OBS-1: the Brief sender goes through the shared transport (Resend
+// SDK) instead of a raw fetch, so the provider is stubbed at the SDK boundary.
+const sendMock = vi.hoisted(() => vi.fn());
+vi.mock("resend", () => ({ Resend: class { emails = { send: sendMock }; } }));
+
 vi.mock("../infra/postgres.js", () => ({
   pg: { query: vi.fn(), connect: vi.fn() },
+  pgElevated: { query: vi.fn(async () => ({ rows: [] })) },
   withTenant: (_orgId: string, fn: () => Promise<unknown>) => fn(),
   requireTenantContext: vi.fn()
 }));
@@ -65,19 +71,11 @@ function sub(id: string, email: string) {
 }
 
 describe("sendBrief — idempotency guard", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
     pgQuery.mockReset();
+    sendMock.mockReset().mockResolvedValue({ data: { id: "msg-1" }, error: null });
     process.env["RESEND_API_KEY"] = "test-key";
     process.env["BRIEF_FROM_EMAIL"] = "SecureLogic AI <briefs@securelogicai.com>";
-
-    fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      text: async () => ""
-    }));
-    vi.stubGlobal("fetch", fetchMock);
 
     // Bundle read order in sendBrief: brief, items, org, subscribers,
     // suppressions, already-sent; then the post-loop audit INSERT.
@@ -92,7 +90,6 @@ describe("sendBrief — idempotency guard", () => {
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     delete process.env["RESEND_API_KEY"];
     delete process.env["BRIEF_FROM_EMAIL"];
   });
@@ -105,9 +102,9 @@ describe("sendBrief — idempotency guard", () => {
     expect(result.failed).toBe(0);
 
     // Exactly one outbound email — to the not-yet-sent subscriber.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body);
-    expect(body.to).toEqual(["new@acme.test"]);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const body = sendMock.mock.calls[0]![0] as { to: string; from: string };
+    expect(body.to).toBe("new@acme.test");
     expect(body.from).toContain("securelogicai.com");
   });
 
