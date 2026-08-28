@@ -55,12 +55,13 @@ describe("the findings filter surfaces the domains we ship", () => {
 });
 
 describe("workflows that are not complete are not surfaced", () => {
-  it("does NOT offer vendor_engagement", () => {
-    // The engagement→findings path exists in code and has never produced a
-    // finding. A filter pill for it would make Vendor Assurance look finished
-    // through reporting. It belongs to the Vendor Assurance completion package,
-    // and this assertion should be DELETED by that package — not by anyone else.
-    expect(filterValues()).not.toContain("vendor_engagement");
+  it("offers vendor_engagement now that the workflow completes (VA-10)", () => {
+    // The inverse assertion lived here while the engagement→findings path was
+    // incomplete, with the instruction that only the Vendor Assurance
+    // completion package may delete it. VA-10 is that package: promotion,
+    // vendor-page linkage, supersede-on-pass visibility, and Finding→
+    // engagement back-navigation all ride the same held train as this pill.
+    expect(filterValues()).toContain("vendor_engagement");
   });
 
   it("does NOT offer engine-written provenance types", () => {

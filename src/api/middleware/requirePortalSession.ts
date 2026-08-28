@@ -70,6 +70,7 @@ type SessionRow = {
   idle_expires_at: string;
   absolute_expires_at: string;
   revoked_at: string | null;
+  invite_revoked_at: string | null;
   request_count: number;
   window_started_at: string;
   created_user_agent_sha256: string | null;
@@ -104,12 +105,26 @@ export async function requirePortalSession(
 
     // Elevated channel: this lookup PRECEDES org context — it is what
     // establishes it. The unique hash index resolves at most one row.
+    // The invite is joined (PK lookup) rather than trusted to have been swept
+    // by the revoke route. VA-L1's revoke kills the invite and then its live
+    // sessions, which leaves one window: an exchange that read the invite
+    // BEFORE the revocation committed can insert its session AFTER the sweep
+    // ran, producing a live session for a dead invite. Re-reading the invite
+    // here closes that window for every request, and makes invite revocation
+    // authoritative for any future code path that mints a session.
+    //
+    // Invite EXPIRY is deliberately NOT enforced here: a session is bounded by
+    // its own idle and absolute windows, and evicting a vendor mid-answer
+    // because the weeks-long invite aged out would destroy work without making
+    // anything safer. Revocation is a decision; expiry is a clock.
     const result = await pgElevated.query<SessionRow>(
-      `SELECT id, invite_id, organization_id, engagement_id,
-              idle_expires_at, absolute_expires_at, revoked_at,
-              request_count, window_started_at, created_user_agent_sha256
-         FROM vendor_portal_sessions
-        WHERE session_token_hash = $1
+      `SELECT s.id, s.invite_id, s.organization_id, s.engagement_id,
+              s.idle_expires_at, s.absolute_expires_at, s.revoked_at,
+              i.revoked_at AS invite_revoked_at,
+              s.request_count, s.window_started_at, s.created_user_agent_sha256
+         FROM vendor_portal_sessions s
+         JOIN vendor_engagement_invites i ON i.id = s.invite_id
+        WHERE s.session_token_hash = $1
         LIMIT 1`,
       [tokenHash]
     );
@@ -120,7 +135,9 @@ export async function requirePortalSession(
         ? {
             idleExpiresAt: session.idle_expires_at,
             absoluteExpiresAt: session.absolute_expires_at,
-            revokedAt: session.revoked_at,
+            // Either kills the session. Revoking the invite revokes everything
+            // minted from it — that is the ruling, not a convenience.
+            revokedAt: session.revoked_at ?? session.invite_revoked_at ?? null,
           }
         : null
     );
