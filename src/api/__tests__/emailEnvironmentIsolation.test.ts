@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, statSync } from "fs";
 import { resolve } from "path";
 
 /**
@@ -251,7 +251,6 @@ describe("every send site carries the environment tag — via the ONE choke poin
   });
 
   it("no sender was missed — the transport is the only provider caller in the repo", () => {
-    const { readdirSync, statSync } = require("fs") as typeof import("fs");
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
