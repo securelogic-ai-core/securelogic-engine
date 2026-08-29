@@ -75,6 +75,10 @@ import {
   sqlVendorNeverAssessed
 } from "../lib/metricDefinitions.js";
 import { recomputeAndPersistVendorRiskScore } from "../lib/vendorRiskScoreRecompute.js";
+import {
+  readVendorRiskTrend,
+  sqlVendorActiveFindingEdges,
+} from "../lib/vendorRiskHistoryStore.js";
 
 const router = Router();
 
@@ -858,6 +862,183 @@ router.get(
       res.status(500).json({ error: "vendors_export_failed" });
     }
   }
+);
+
+/* =========================================================
+   GET /api/vendors/reporting-rollups
+   VA-7: org-wide vendor reporting facts. Registered BEFORE
+   /vendors/:id so the literal path is not captured as an id.
+
+   Every metric here is computable truthfully from existing
+   columns — no invented policy thresholds:
+     - assessment_aging: vendors bucketed by days since their
+       last assessment ACTIVITY (latest legacy
+       vendor_assessments.performed_at, or engagement
+       created_at — the canonical existence-based "assessed"
+       definition in metricDefinitions.ts). Buckets are facts
+       (<90 / 90-365 / >365 / never), not an "overdue" verdict:
+       no vendor-assessment cadence policy exists to judge one.
+     - overdue_remediation: per-vendor counts of Active linked
+       findings past their own due_date (the finding's real SLA
+       column), over all three vendor→finding edges.
+     - engagement_reviews_overdue: monitoring engagements whose
+       next_review_due has passed.
+   ========================================================= */
+
+router.get(
+  "/vendors/reporting-rollups",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  denyContributor(),
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      // Days-since-last-assessment-activity buckets over non-archived vendors.
+      // GREATEST skips NULLs in Postgres, so a vendor with only one kind of
+      // activity still dates correctly; both legs NULL = never assessed.
+      // Buckets are mutually exclusive and exhaustive: never / <90 / 90-365 /
+      // >365 (days_since = CURRENT_DATE - last activity date).
+      const agingResult = await pg.query<{
+        never_assessed: number;
+        under_90_days: number;
+        days_90_to_365: number;
+        over_365_days: number;
+      }>(
+        `SELECT
+           count(*) FILTER (WHERE last_activity_on IS NULL)::int AS never_assessed,
+           count(*) FILTER (WHERE last_activity_on >  CURRENT_DATE - 90)::int AS under_90_days,
+           count(*) FILTER (WHERE last_activity_on <= CURRENT_DATE - 90
+                              AND last_activity_on >  CURRENT_DATE - 365)::int AS days_90_to_365,
+           count(*) FILTER (WHERE last_activity_on <= CURRENT_DATE - 365)::int AS over_365_days
+         FROM (
+           SELECT GREATEST(
+                    (SELECT max(va.performed_at)
+                       FROM vendor_assessments va
+                      WHERE va.vendor_id = v.id AND va.organization_id = v.organization_id),
+                    (SELECT max(ve.created_at)::date
+                       FROM vendor_engagements ve
+                      WHERE ve.vendor_id = v.id AND ve.organization_id = v.organization_id)
+                  ) AS last_activity_on
+             FROM vendors v
+            WHERE v.organization_id = $1
+              AND v.status <> 'archived'
+         ) aging`,
+        [organizationId]
+      );
+
+      // Vendors with Active linked findings past their due_date, worst first.
+      // Findings with NO due_date are excluded, not treated as overdue — an
+      // unset SLA is not a missed one.
+      const overdueResult = await pg.query<{
+        vendor_id: string;
+        vendor_name: string;
+        overdue_findings_count: number;
+      }>(
+        `SELECT v.id AS vendor_id, v.name AS vendor_name, o.n AS overdue_findings_count
+           FROM vendors v
+           JOIN LATERAL (
+             SELECT count(*)::int AS n
+               FROM (${sqlVendorActiveFindingEdges("v.id", "v.organization_id", "f.id, f.due_date")}) u
+              WHERE u.due_date IS NOT NULL
+                AND u.due_date < CURRENT_DATE
+           ) o ON o.n > 0
+          WHERE v.organization_id = $1
+            AND v.status <> 'archived'
+          ORDER BY o.n DESC, v.name ASC`,
+        [organizationId]
+      );
+
+      const reviewOverdueResult = await pg.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+           FROM vendor_engagements
+          WHERE organization_id = $1
+            AND status = 'monitoring'
+            AND next_review_due IS NOT NULL
+            AND next_review_due < CURRENT_DATE`,
+        [organizationId]
+      );
+
+      res.status(200).json({
+        assessment_aging: agingResult.rows[0],
+        overdue_remediation: overdueResult.rows,
+        engagement_reviews_overdue: reviewOverdueResult.rows[0]?.n ?? 0,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.error(
+        { event: "vendor_reporting_rollups_failed", err },
+        "GET /api/vendors/reporting-rollups failed"
+      );
+      res.status(500).json({ error: "vendor_reporting_rollups_failed" });
+    }
+  })
+);
+
+/* =========================================================
+   GET /api/vendors/:id/risk-trend
+   VA-7: the vendor's daily risk series from
+   vendor_risk_snapshots. An empty series means no snapshots
+   exist yet (the substrate accumulates forward only) — it is
+   returned as [] and never padded with zeros. Score polarity
+   per point: `score` HIGHER = BETTER (legacy),
+   `residual_score` HIGHER = WORSE (risk-register) — see the
+   20261045 migration header.
+   ========================================================= */
+
+router.get(
+  "/vendors/:id/risk-trend",
+  requireApiKey,
+  attachOrganizationContext,
+  requirePremiumOrCorePlatform,
+  denyContributor(),
+  asTenant(async (req, res) => {
+    try {
+      const organizationContext = (req as any).organizationContext ?? null;
+      const organizationId = organizationContext?.organizationId ?? null;
+      if (!organizationId) {
+        res.status(403).json({ error: "organization_context_missing" });
+        return;
+      }
+
+      const vendorId = String(req.params.id ?? "").trim();
+      if (!vendorId) {
+        res.status(400).json({ error: "vendor_id_required" });
+        return;
+      }
+
+      // ?days= trailing window (default 90). Bounded to two years — the cap
+      // exists so a bad param cannot turn a trend read into a table scan.
+      const rawDays = req.query.days === undefined ? NaN : Number(req.query.days);
+      const days = Number.isFinite(rawDays)
+        ? Math.max(1, Math.min(730, Math.trunc(rawDays)))
+        : 90;
+
+      const vendorResult = await pg.query(
+        `SELECT id FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, organizationId]
+      );
+      if ((vendorResult.rowCount ?? 0) === 0) {
+        res.status(404).json({ error: "vendor_not_found" });
+        return;
+      }
+
+      const series = await readVendorRiskTrend(organizationId, vendorId, days);
+      res.status(200).json({ vendor_id: vendorId, days, series });
+    } catch (err) {
+      logger.error(
+        { event: "vendor_risk_trend_failed", err },
+        "GET /api/vendors/:id/risk-trend failed"
+      );
+      res.status(500).json({ error: "vendor_risk_trend_failed" });
+    }
+  })
 );
 
 /* =========================================================
