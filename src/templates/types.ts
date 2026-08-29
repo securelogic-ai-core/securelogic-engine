@@ -18,7 +18,12 @@
  *
  *   TemplateObligation.regulation_name → obligations.title (column is
  *                                        called `title`, dedup is on
- *                                        (organization_id, title))
+ *                                        (organization_id, title)) AND
+ *                                        obligations.source_regulation (the
+ *                                        column the signal→obligation matcher
+ *                                        keys regulation-family identity off —
+ *                                        see signalTargetMatching.ts). The same
+ *                                        clean family-style string feeds both.
  *   TemplateObligation.jurisdiction    → obligations.jurisdiction
  *   TemplateObligation.priority        → obligations.priority (CHECK enum)
  *   TemplateObligation.description     → obligations.description
