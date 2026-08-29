@@ -873,6 +873,42 @@ by #926 (applicability survives) plus the S4/assurance work (assurance
 survives), not by a change to `FLOOR_RULE_IDS`. **No broad S3 change is forced
 into P4**: P4 does not violate its own acceptance criteria without it.
 
+### Ruling 1a — #925 RESOLVED for compliance, 2026-08-29: compliance is non-truncatable
+
+Ruled after the S4 predicate validation returned **DEAD** (see below), which is
+what made the decision possible: the only mechanism that could legitimise
+"applicable + activated + zero questions" does not work on any current corpus,
+so every observed instance of that state is a coverage defect rather than an
+assurance success.
+
+**Implemented as a SEPARATE protection class, not as a `FLOOR_RULE_IDS` entry**,
+which is what keeps both rulings intact:
+
+| | Promise | Releasable by evidence? |
+|---|---|---|
+| `FLOOR_RULE_IDS` | What SecureLogic asks because of the TIER | **Never** |
+| `COMPLIANCE_RULE_IDS` | What an active obligation requires | **Yes, eventually** — governed assurance may satisfy the obligation without a question |
+
+Folding S3 into the floor would collapse that distinction permanently and put
+the assurance path out of reach: a question that can never be released is not
+"covered by evidence", it is just always asked. Until S4 exists there is no
+assurance to release it with, so the protection is absolute **in effect** — but
+for a stated reason that expires, not by definition.
+
+`composition` gains `compliance_protected`, so the arithmetic stays legible:
+`mandatory + compliance_protected + discretionary = total`, and
+`mandatory_overage` now measures how far the whole PROTECTED set exceeds the
+nominal target.
+
+**1.0.0 is unchanged**, as with #922 — the frozen goldens govern, and S3 items
+there remain truncatable. Recorded, not hidden.
+
+**Still open in #925:** the non-security S5 domains (privacy, AI, nth-party,
+resilience). Measured on staging: privacy 17/17, ai 16/16, nth_party 2/2 all
+applicable and unasked. They are NOT given a question floor — per the standing
+ruling, their legitimacy depends on S4 answering whether governed assurance
+covers them.
+
 ### Ruling 3 — #926 gets slot 20261065
 
 Reserved above. Not implemented in P4.
@@ -948,6 +984,50 @@ comparison), and the live run found **zero** Q2 leaks — no `composition`, no
 
 **VA-Q2 P4 is STAGING VERIFIED. VA-Q2 (P1, P2, P3, P3.1, #922, P4) is fully
 STAGING VERIFIED.**
+
+## H.3 S4 predicate validation — 2026-08-29, READ-ONLY, RESULT: **DEAD**
+
+Run against staging (`job-da9hs7ijnfac73dub8gg`, `job-da9hpkcs...` follow-up).
+No staging data was modified. This is the evidence the #925 ruling rests on.
+
+| Measure | Value |
+|---|---|
+| Requirements (all orgs) | 197 |
+| VA documents | 57 — `extraction_failed` 52, `extracted` 3, `approved` 2 |
+| Documents `finalized` | **0** |
+| Extractions | 5 (period, opinion, exceptions, CUECs all present) |
+| **Human review decisions** | **0** |
+| Field overrides | 0 |
+| CUEC→control mappings | `accepted/auto` 3, `suggested/auto` 7 |
+| `control_mappings` | 3 rows / 3 controls / 3 requirements |
+| **Controls in BOTH sets** | **0 — disjoint** |
+| **Full chain doc→CUEC→control→requirement** | **0**, and 0 even ignoring every status filter |
+| Evidence with a requirement link | **1** of 17 |
+| `evidence_analysis` | 2 rows, both `unreadable` |
+
+**Four independent failures, any one of which is fatal:**
+
+1. **The chain is structurally empty.** The controls CUECs map to and the
+   controls mapped to requirements are disjoint sets. Nothing reachable from a
+   SOC 2 document reaches a requirement.
+2. **Nobody has accepted anything** — `review_decisions` and `field_overrides`
+   are both empty corpus-wide, so the "approved, not raw extraction" clause has
+   zero satisfying rows.
+3. **The plan's clause 1 was wrong**: it gates on `finalized`, and the real
+   vocabulary also carries `approved` / `manual_review_requested` / `rejected`.
+   Zero documents are `finalized`.
+4. **The opinion trap is real.** All five extractions read *"Unqualified
+   opinion, except for the specific deviations and exception described in
+   Section IV"* — a `LIKE '%Unqualified%'` test returns TRUE on a qualified
+   opinion. The field is `{value, status:"extracted", confidence}`: model
+   output, never human-accepted. Separately, the structured `exceptions` array
+   is **empty in all five** while the opinion text cites exceptions, so
+   contradiction detection would see nothing.
+
+**Three answers owed before S4 is attemptable:** the validity-window rule
+(period end is 2025-12-31 and no rule is defined), the auditor-opinion
+vocabulary (free text cannot be the gate), and who populates `control_mappings`
+for CUEC-reachable controls — the third decides whether S4 is dead or dormant.
 
 ## I. Blocking issues
 

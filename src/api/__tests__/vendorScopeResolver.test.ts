@@ -330,6 +330,7 @@ describe("scope resolution — no silent truncation", () => {
     expect(r.composition).toEqual({
       nominal_target: 15,
       mandatory: 40,
+      compliance_protected: 0,
       discretionary: 0,
       total: 40,
       mandatory_overage: 25,
@@ -369,6 +370,7 @@ describe("scope resolution — no silent truncation", () => {
     expect(a.composition).toEqual({
       nominal_target: 15,
       mandatory: 10,
+      compliance_protected: 0,
       discretionary: 5,
       total: 15,
       mandatory_overage: 0,
@@ -657,6 +659,81 @@ const DOMAIN_CORPUS: ScopableRequirement[] = [
 const s5RuleIds = (r: ReturnType<typeof resolveEngagementScope>) =>
   new Set(r.items.flatMap((i) => i.reasons.filter((x) => x.rule_family === "S5").map((x) => x.rule_id)));
 const domainsOf = (r: ReturnType<typeof resolveEngagementScope>) => new Set(r.items.map((i) => i.domain));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #925 — an applicable regulatory obligation is not truncatable
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("#925 — compliance is protected from the nominal target", () => {
+  /** Floor fills the target on its own, so nothing discretionary can survive. */
+  const CROWDED: ScopableRequirement[] = [
+    ...Array.from({ length: 20 }, (_, i) => req(`core-${i}`, ["core"])),
+    ...Array.from({ length: 20 }, (_, i) => req(`privacy-${i}`, ["privacy"])),
+    req("reg-1", ["data-protection"]),
+  ];
+
+  const withObligation = (edges: Array<{ requirement_id: string; obligation_id: string; obligation_title: string }>) =>
+    resolveEngagementScope(
+      base({
+        tier: "tier_4_low",
+        requirements: CROWDED,
+        obligationEdges: edges,
+        facts: resolveFacts([...factsFromInherent(benign), fact("data.personal_data", true)]),
+      })
+    );
+
+  const EDGE = [{ requirement_id: "reg-1", obligation_id: "ob-1", obligation_title: "GDPR Art 28" }];
+
+  it("an obligation-reached requirement SURVIVES a target the floor already exceeds", () => {
+    const r = withObligation(EDGE);
+    // The floor alone is 20 against a target of 15, so the discretionary budget
+    // is zero — and before this ruling the obligation went with the rest.
+    expect(r.composition!.mandatory).toBe(20);
+    expect(r.composition!.discretionary).toBe(0);
+    expect(r.composition!.compliance_protected).toBe(1);
+    expect(idsOf(r)).toContain("reg-1");
+  });
+
+  it("it is never named in dropped_requirement_ids", () => {
+    const r = withObligation(EDGE);
+    expect(r.truncated?.dropped_requirement_ids ?? []).not.toContain("reg-1");
+  });
+
+  it("the overage covers BOTH protected classes", () => {
+    const r = withObligation(EDGE);
+    // 20 floor + 1 compliance = 21 protected against a target of 15.
+    expect(r.composition!.total).toBe(21);
+    expect(r.composition!.mandatory_overage).toBe(6);
+  });
+
+  it("compliance is a SEPARATE class from the floor, not folded into it", () => {
+    const r = withObligation(EDGE);
+    // If S3 had simply been added to FLOOR_RULE_IDS these would be one number,
+    // and the future assurance release would have nowhere to apply.
+    expect(r.composition!.mandatory).toBe(20);
+    expect(r.composition!.compliance_protected).toBe(1);
+    const item = r.items.find((i) => i.requirement_id === "reg-1")!;
+    expect(item.reasons.some((x) => x.rule_id === "S3.obligation")).toBe(true);
+    expect(item.reasons.some((x) => FLOOR_IDS.has(x.rule_id))).toBe(false);
+  });
+
+  it("with no obligation the same requirement IS truncated — the protection is doing the work", () => {
+    const r = withObligation([]);
+    expect(idsOf(r)).not.toContain("reg-1");
+    expect(r.composition!.compliance_protected).toBe(0);
+  });
+
+  it("compliance protection does not exist under 1.0.0, which stays frozen", () => {
+    const r = resolveEngagementScope({
+      ...base({ tier: "tier_4_low", requirements: CROWDED, obligationEdges: EDGE }),
+      scopeRuleVersion: "1.0.0",
+    });
+    expect("composition" in r).toBe(false);
+    expect(r.items).toHaveLength(15);
+  });
+});
+
+const FLOOR_IDS = new Set(["S1.baseline", "S5.security.baseline"]);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // VA-Q2 P4 — S2 triggers that read NON-CORE facts

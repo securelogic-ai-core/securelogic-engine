@@ -229,8 +229,12 @@ async function main() {
       { security_baseline_items: r.securityBaselineItems, security_domain_items: r.domains?.security });
 
     check(`T4-ORDER:${label}`, "the floor was satisfied before any discretionary item",
+      // #925 added a SECOND protected class, so the identity is now three-term.
+      // `compliance_protected` is 0 on these fixtures (no active obligation),
+      // but the assertion must not silently assume that.
       r.composition !== null && r.composition.mandatory === r.floorItems &&
-      r.composition.mandatory + r.composition.discretionary === r.composition.total,
+      r.composition.mandatory + (r.composition.compliance_protected ?? 0) +
+        r.composition.discretionary === r.composition.total,
       { composition: r.composition, floor_items_in_db: r.floorItems });
 
     check(`T4-OBS:${label}`, "nominal target, mandatory, discretionary, total, overage and truncation are all observable",

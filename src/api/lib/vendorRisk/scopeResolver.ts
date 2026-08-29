@@ -204,11 +204,21 @@ export type ScopeResolution = {
     nominal_target: number;
     /** Items on the SecureLogic assessment floor. Never truncated. */
     mandatory: number;
-    /** Risk-triggered items kept after the floor took its room. */
+    /**
+     * Items reached through an ACTIVE regulatory obligation (#925). Also never
+     * truncated, but a SEPARATE class from the floor: governed assurance may
+     * eventually satisfy an obligation without a question, which is a release
+     * the floor can never have.
+     */
+    compliance_protected: number;
+    /** Risk-triggered items kept after the protected classes took their room. */
     discretionary: number;
-    /** `mandatory + discretionary` — what the vendor is actually asked. */
+    /** `mandatory + compliance_protected + discretionary` — what is asked. */
     total: number;
-    /** How far the floor alone exceeds the nominal target. 0 when it fits. */
+    /**
+     * How far the PROTECTED set (floor + compliance) exceeds the nominal
+     * target. 0 when it fits.
+     */
     mandatory_overage: number;
   };
 };
@@ -278,6 +288,49 @@ function triggerFactBasis(facts: FactSet, ruleId: string): Record<string, unknow
 /** Is this item on the assessment floor? */
 function isFloorItem(item: ScopeItem): boolean {
   return item.reasons.some((r) => FLOOR_RULE_IDS.has(r.rule_id));
+}
+
+/**
+ * Compliance protection — the #925 ruling, 2026-08-29.
+ *
+ * A requirement reached through an ACTIVE regulatory obligation may not be
+ * removed by a questionnaire size target. Measured on staging before the
+ * ruling: one applicable obligation, one dropped question, and — before #926 —
+ * no record that it had ever applied.
+ *
+ * ── Why this is NOT an entry in FLOOR_RULE_IDS ──────────────────────────────
+ *
+ * The owner ruling of 2026-08-29 says, in as many words: do not simply put every
+ * S3 question into the floor. The two are different promises.
+ *
+ *   FLOOR      — what SecureLogic asks because of the TIER. Unconditional. No
+ *                evidence releases it; a floor question is asked regardless.
+ *   COMPLIANCE — what an obligation requires. The ASSURANCE is unconditional;
+ *                the QUESTION is not. Approved, current, governed evidence may
+ *                eventually satisfy the obligation without asking anything, and
+ *                that is the target model.
+ *
+ * Folding S3 into the floor would collapse that distinction permanently and put
+ * the future assurance path out of reach — a question that can never be released
+ * is not "covered by evidence", it is just always asked. A separate protection
+ * class is what leaves room for S4 to release it later:
+ *
+ *   APPLICABILITY -> AVAILABLE GOVERNED ASSURANCE -> ASSURANCE GAP ->
+ *   QUESTION / EVIDENCE COMPOSITION
+ *
+ * Until S4 exists there is no assurance to release it with, so today the
+ * protection is absolute in effect — but absolute for a stated reason that will
+ * expire, not by definition.
+ */
+const COMPLIANCE_RULE_IDS: ReadonlySet<string> = new Set(["S3.obligation"]);
+
+/**
+ * Keyed on the RULE, matching `isFloorItem`, rather than on the stamped
+ * `domain`: the rule is what made it applicable, and it is present whether or
+ * not domain stamping ran (it does not, under 1.0.0).
+ */
+function isComplianceItem(item: ScopeItem): boolean {
+  return item.reasons.some((r) => COMPLIANCE_RULE_IDS.has(r.rule_id));
 }
 
 /**
@@ -847,8 +900,12 @@ function resolveInternal(
     // Discretionary items then take whatever room is left, dropped in a
     // deterministic order with the overflow recorded.
     const floor = items.filter(isFloorItem);
-    const discretionary = items.filter((i) => !isFloorItem(i));
-    const budget = Math.max(0, cap - floor.length);
+    // #925: compliance is protected too, as its own class — see
+    // COMPLIANCE_RULE_IDS for why it is not simply part of the floor.
+    const compliance = items.filter((i) => !isFloorItem(i) && isComplianceItem(i));
+    const discretionary = items.filter((i) => !isFloorItem(i) && !isComplianceItem(i));
+    const protectedCount = floor.length + compliance.length;
+    const budget = Math.max(0, cap - protectedCount);
 
     let keptDiscretionary = discretionary;
     if (discretionary.length > budget) {
@@ -860,15 +917,18 @@ function resolveInternal(
       };
     }
 
-    items = [...floor, ...keptDiscretionary].sort((a, b) =>
+    items = [...floor, ...compliance, ...keptDiscretionary].sort((a, b) =>
       a.requirement_id.localeCompare(b.requirement_id)
     );
     composition = {
       nominal_target: cap,
       mandatory: floor.length,
+      compliance_protected: compliance.length,
       discretionary: keptDiscretionary.length,
       total: items.length,
-      mandatory_overage: Math.max(0, floor.length - cap),
+      // Covers BOTH protected classes: the target is exceeded by whatever
+      // cannot be truncated, whichever promise protects it.
+      mandatory_overage: Math.max(0, protectedCount - cap),
     };
   } else if (items.length > cap) {
     // ── 1.0.0: frozen legacy behaviour, byte-for-byte ──────────────────────
