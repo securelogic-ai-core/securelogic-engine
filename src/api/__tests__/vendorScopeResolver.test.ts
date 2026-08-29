@@ -422,7 +422,21 @@ describe("VA-Q2 — engagements stamped 1.0.0 re-resolve BYTE-IDENTICALLY", () =
 
 // ─── The directive's two worked examples (VA-Q0 §6.3, §17 Q2) ───────────────
 
-const fact = (fact_key: string, value: unknown, source: FactRow["source"] = "intake"): FactRow => ({ fact_key, value, source });
+/** Fact rows by ORIGIN; the trust class follows the allowed-pair table (VA-Q2 P3). */
+const SOURCE_FOR: Record<string, string> = {
+  intake: "intake",
+  vendor_profile: "system_derived",
+  ai_system_dependency: "system_derived",
+  profile_default: "system_derived",
+  derived: "system_derived",
+  vendor_answer: "vendor_response",
+};
+const fact = (fact_key: string, value: unknown, origin: FactRow["origin"] = "intake"): FactRow => ({
+  fact_key,
+  value,
+  source: SOURCE_FOR[origin] ?? origin,
+  origin,
+});
 
 /** A corpus with at least one requirement per domain tag group, plus filler. */
 const DOMAIN_CORPUS: ScopableRequirement[] = [

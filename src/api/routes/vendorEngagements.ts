@@ -65,7 +65,26 @@ import {
 } from "../lib/vendorRisk/inherentRisk.js";
 import { resolveEngagementScope } from "../lib/vendorRisk/scopeResolver.js";
 import { summarizeDomains } from "../lib/vendorRisk/requirementDomain.js";
-import { factsFromInherent, resolveFacts } from "../lib/vendorRisk/factResolver.js";
+import { resolveFacts } from "../lib/vendorRisk/factResolver.js";
+import {
+  FACT_ORIGINS,
+  FACT_SOURCES,
+  isFactOrigin,
+  isFactSource,
+  validateFact,
+  type FactOrigin,
+  type FactSource,
+  type FactValidationError,
+} from "../lib/vendorRisk/factRegistry.js";
+import { resolveFactSubject } from "../lib/vendorRisk/factSubjects.js";
+import {
+  FactStoreValidationError,
+  loadFactRows,
+  mirrorSubjectFacts,
+  writeFacts,
+  type FactWrite,
+  type StoredFactRow,
+} from "../lib/vendorRisk/factStore.js";
 import {
   assuranceFor,
   computeControlEffectiveness,
@@ -729,13 +748,24 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
         concentration: row.concentration_snapshot,
       } as InherentRiskInput;
 
+    // VA-Q2 P3: the resolver reads ONE fact surface — the canonical fact store.
+    // The subject is obtained ONLY through the tenant-scoped resolver (D1
+    // integrity layer 3); the mirrors (13 inputs, vendor-profile flags,
+    // AI-system dependencies) are idempotent and run at every resolve while
+    // the scope is mutable (checked above); then the ACCEPTED rows — mirrors
+    // plus whatever `PUT /facts` declared — are resolved by precedence.
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    await mirrorSubjectFacts(pg, organizationId, subject, inherent);
+    const factRows = await loadFactRows(pg, organizationId, subject, { statuses: ["accepted"] });
+
     const resolution = resolveEngagementScope({
       tier: row.assessment_tier as never,
       inherent,
-      // VA-Q2 P1: the resolver reads ONE fact surface. Until P3 lands the fact
-      // store, that surface is the 13 inherent inputs mirrored as `core.*`
-      // intake facts — so S5 sees exactly what S2 sees, nothing more.
-      facts: resolveFacts(factsFromInherent(inherent)),
+      facts: resolveFacts(factRows),
       // The STAMPED rule version is load-bearing (methodologyVersion.ts:
       // "recompute reads the stamped values"). An engagement stamped 1.0.0
       // re-resolves under 1.0.0 — S5 never runs for it — so a pre-Q2
@@ -2112,6 +2142,227 @@ export async function startMonitoring(req: Request, res: Response): Promise<void
   }
 }
 
+/* =========================================================
+   VA-Q2 P3 — the canonical fact store, internal intake surface
+   (assessment_facts; D1 Option B).
+
+   GET  /vendor-engagements/:id/facts   every row of THIS subject (history
+        included, with source / origin / status / provenance / timing) plus
+        the resolved set the scope resolver would read — never cross-subject.
+   PUT  /vendor-engagements/:id/facts   batch declaration. Body:
+        { facts: [{ fact_key, value, source?, origin?, observed_at? }] }
+        - subject_type / subject_id / status / verified_at / provenance in the
+          body are IGNORED (forced server-side; the subject is the path id,
+          resolved inside the tenant scope);
+        - source defaults to `intake`; only `intake` | `internal_user` may be
+          declared here (a human cannot assert a `system_derived` mirror, a
+          vendor answer or a model extraction — those have their own writers,
+          none in Q2) → 400 `source` otherwise;
+        - origin defaults to `intake` and must be `intake` → 400 otherwise;
+        - unknown key / malformed value → 400 with field names;
+        - engagement issued → 409 scope_frozen (the widen-only path for an
+          issued subject is Q3's vendor_response writer, not this route);
+        - subject missing or another org's → 404 (never 403: no oracle).
+        Audit carries KEYS only — never values (T-13).
+   ========================================================= */
+
+const FACT_ROUTE_SOURCES: readonly FactSource[] = ["intake", "internal_user"];
+const FACT_ROUTE_ORIGIN: FactOrigin = "intake";
+const MAX_FACTS_PER_PUT = 200;
+
+function publicFactRow(r: StoredFactRow): Record<string, unknown> {
+  return {
+    id: r.id,
+    fact_key: r.fact_key,
+    value: r.value,
+    source: r.source,
+    origin: r.origin,
+    status: r.status,
+    provenance: r.provenance,
+    observed_at: r.observed_at,
+    verified_at: r.verified_at,
+    confidence: r.confidence,
+    supersedes_id: r.supersedes_id,
+    accepted_at: r.accepted_at,
+    created_at: r.created_at,
+  };
+}
+
+async function loadFactsPayload(organizationId: string, subject: NonNullable<Awaited<ReturnType<typeof resolveFactSubject>>>) {
+  const rows = await loadFactRows(pg, organizationId, subject);
+  const resolved = resolveFacts(rows.filter((r) => r.status === "accepted"));
+  return {
+    subject: { subject_type: subject.kind, subject_id: subject.id },
+    status: subject.state,
+    scope_rule_version: subject.scope_rule_version,
+    resolved,
+    facts: rows.map(publicFactRow),
+  };
+}
+
+export async function getEngagementFacts(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  try {
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    res.status(200).json(await loadFactsPayload(organizationId, subject));
+  } catch (err) {
+    logger.error({ event: "vendor_engagement_facts_read_failed", organizationId, err }, "Facts read failed");
+    res.status(500).json({ error: "facts_read_failed" });
+  }
+}
+
+type FactInputError = { index: number; errors: FactValidationError[] };
+
+/** Parse + validate the PUT body. Values never leave this function except inside the writes. */
+function parseFactWrites(
+  body: unknown,
+  actorUserId: string | null,
+  now: Date
+): { ok: true; writes: FactWrite[] } | { ok: false; error: string; details?: FactInputError[] } {
+  if (!body || typeof body !== "object" || !Array.isArray((body as { facts?: unknown }).facts)) {
+    return { ok: false, error: "facts_required" };
+  }
+  const items = (body as { facts: unknown[] }).facts;
+  if (items.length === 0) return { ok: false, error: "facts_required" };
+  if (items.length > MAX_FACTS_PER_PUT) return { ok: false, error: "too_many_facts" };
+
+  const writes: FactWrite[] = [];
+  const details: FactInputError[] = [];
+  items.forEach((item, index) => {
+    if (!item || typeof item !== "object") {
+      details.push({ index, errors: [{ field: "fact_key", reason: "each fact must be an object" }] });
+      return;
+    }
+    const f = item as Record<string, unknown>;
+    const errors: FactValidationError[] = [];
+
+    const source: unknown = f["source"] === undefined ? "intake" : f["source"];
+    if (!isFactSource(source) || !FACT_ROUTE_SOURCES.includes(source)) {
+      errors.push({ field: "source", reason: `must be one of: ${FACT_ROUTE_SOURCES.join(", ")} (of ${FACT_SOURCES.join(", ")})` });
+    }
+    const origin: unknown = f["origin"] === undefined ? FACT_ROUTE_ORIGIN : f["origin"];
+    if (!isFactOrigin(origin) || origin !== FACT_ROUTE_ORIGIN) {
+      errors.push({ field: "origin", reason: `must be ${FACT_ROUTE_ORIGIN} on this route (of ${FACT_ORIGINS.join(", ")})` });
+    }
+    let observedAt = now;
+    if (f["observed_at"] !== undefined) {
+      const t = typeof f["observed_at"] === "string" ? new Date(f["observed_at"]) : new Date(NaN);
+      if (Number.isNaN(t.getTime()) || t.getTime() > now.getTime() + 5_000) {
+        errors.push({ field: "value", reason: "observed_at must be an ISO-8601 timestamp not in the future" });
+      } else {
+        observedAt = t;
+      }
+    }
+    // Registry validation runs even when source/origin failed, so the caller
+    // sees every defect at once; subject_type is forced, not read from the body.
+    const v = validateFact(f["fact_key"], f["value"], isFactSource(source) ? source : "intake", isFactOrigin(origin) ? origin : "intake", "vendor_engagement");
+    if (!v.ok) errors.push(...v.errors.filter((e) => !errors.some((x) => x.field === e.field)));
+    if (errors.length > 0) {
+      details.push({ index, errors });
+      return;
+    }
+    if (!v.ok) return; // unreachable: errors would be non-empty
+    writes.push({
+      fact_key: v.key,
+      value: v.value,
+      source: v.source,
+      origin: v.origin,
+      observed_at: observedAt,
+      provenance: {
+        actor: { kind: actorUserId ? "user" : "system", id: actorUserId },
+        via: "PUT /vendor-engagements/:id/facts",
+        at: now.toISOString(),
+        evidence: null,
+        model: null,
+      },
+      created_by: actorUserId,
+    });
+  });
+  if (details.length > 0) return { ok: false, error: "invalid_facts", details };
+  return { ok: true, writes };
+}
+
+export async function putEngagementFacts(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const actorUserId = userOf(req);
+
+  try {
+    // Subject FIRST (404 before any body detail leaks a validation shape to a
+    // caller who does not own the engagement).
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    if (!isScopeMutable(subject.state)) {
+      res.status(409).json({
+        error: "scope_frozen",
+        message: "The questionnaire has been issued. Its facts are frozen from this surface — a vendor's answers are only meaningful against the questions they were asked.",
+        status: subject.state,
+      });
+      return;
+    }
+
+    const parsed = parseFactWrites(req.body, actorUserId, new Date());
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error, details: parsed.details ?? [] });
+      return;
+    }
+
+    let outcome;
+    try {
+      outcome = await writeFacts(pg, organizationId, subject, parsed.writes);
+    } catch (err) {
+      if (err instanceof FactStoreValidationError) {
+        res.status(400).json({ error: "invalid_facts", details: [{ index: err.index, errors: err.errors }] });
+        return;
+      }
+      throw err;
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId,
+      eventType: "vendor_engagement.facts_declared",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      // Keys and counts only — never a value (T-13).
+      payload: {
+        keys: outcome.keys,
+        inserted: outcome.inserted,
+        unchanged: outcome.unchanged,
+        superseded: outcome.superseded,
+        source: [...new Set(parsed.writes.map((w) => w.source))],
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      inserted: outcome.inserted,
+      unchanged: outcome.unchanged,
+      superseded: outcome.superseded,
+      ...(await loadFactsPayload(organizationId, subject)),
+    });
+  } catch (err) {
+    logger.error({ event: "vendor_engagement_facts_write_failed", organizationId, err }, "Facts write failed");
+    res.status(500).json({ error: "facts_write_failed" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring — every route behind the same chain.
 // ---------------------------------------------------------------------------
@@ -2129,6 +2380,8 @@ router.get("/vendor-engagements", ...chain, asTenant(listEngagements));
 router.get("/vendor-engagements/:id", ...chain, asTenant(getEngagement));
 router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInherent));
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
+router.get("/vendor-engagements/:id/facts", ...chain, asTenant(getEngagementFacts));
+router.put("/vendor-engagements/:id/facts", ...chain, asTenant(putEngagementFacts));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
