@@ -909,6 +909,13 @@ applicable and unasked. They are NOT given a question floor — per the standing
 ruling, their legitimacy depends on S4 answering whether governed assurance
 covers them.
 
+**S4's own semantics were settled by four owner rulings on 2026-08-29** —
+canonical crosswalk ownership, customer-augment-never-narrow, type-driven
+evidence validity, and qualified opinions failing closed. They are recorded in
+`docs/design/VA-S4-assurance-wiring-plan.md` §2a, with the DEAD reconciliation
+in §2b and the eight-step dependency sequence in §7. **#920 is folded into that
+sequence's step 1** rather than run as a competing curation mechanism (§6).
+
 #### #925 compliance protection — STAGING VERIFIED 2026-08-29 (`f8c0a4be`, 9/9)
 
 `scripts/validation/va-925-compliance-staging-acceptance.mjs`,
