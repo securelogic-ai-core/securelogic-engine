@@ -334,6 +334,56 @@ export const CONTEXT_TRIGGERS: ContextTrigger[] = [
   },
 ];
 
+/**
+ * S2 triggers that read NON-CORE facts (VA-Q2 P4; VA-Q0 §6.2 "S2 reads facts").
+ *
+ * Kept as a SEPARATE table from `CONTEXT_TRIGGERS` on purpose, for two reasons
+ * that are both about not breaking things:
+ *
+ *  1. **Version gate.** These run only under the >= 1.1.0 corpus, alongside S5.
+ *     The route passes declared facts to every resolve regardless of the stamped
+ *     version, so a fact-reading trigger in the shared table would fire for a
+ *     1.0.0 engagement and change a questionnaire that is frozen by 21 golden
+ *     cases. Pre-Q2 engagements must not move.
+ *  2. **Signature.** `CONTEXT_TRIGGERS` read the 13 inherent inputs and nothing
+ *     else. Widening that signature to carry a `FactSet` would touch eight rules
+ *     that have no use for it.
+ *
+ * `accepted`-only is inherited, not re-implemented: `resolveFacts` already drops
+ * any row whose status is not `accepted`, and refuses an `ai_extraction` row
+ * that was never accepted. A test asserts that rather than trusting the comment.
+ */
+type FactContextTrigger = {
+  rule_id: string;
+  tags: string[];
+  applies: (facts: FactSet) => boolean;
+  rationale: string;
+};
+
+export const FACT_CONTEXT_TRIGGERS: FactContextTrigger[] = [
+  {
+    rule_id: "S2.ai_prompts",
+    tags: ["privacy", "data-protection", "ai-governance", "model-provider"],
+    applies: (facts) => factBool(facts, "ai.customer_data_in_prompts") === true,
+    rationale:
+      "Customer data is passed to AI models, so how that data is handled is both a privacy and an AI-governance question.",
+  },
+  {
+    rule_id: "S2.cross_border",
+    tags: ["cross-border", "data-protection"],
+    applies: (facts) => factBool(facts, "data.cross_border") === true,
+    rationale:
+      "Personal data crosses a border, so transfer safeguards and data-protection controls apply.",
+  },
+  {
+    rule_id: "S2.subprocessors",
+    tags: ["supply-chain", "subprocessor"],
+    applies: (facts) => factBool(facts, "nth.subprocessors_declared") === true,
+    rationale:
+      "The vendor has declared sub-processors, so supply-chain and sub-processor controls apply.",
+  },
+];
+
 // ── S5: domain activation (VA-Q0 §6.3, the authoritative table) ─────────────
 
 /**
@@ -597,6 +647,22 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
       "full",
       true
     );
+  }
+
+  // S2-from-facts — the non-core fact triggers (>= 1.1.0 only, same gate as S5).
+  if (runS5) {
+    for (const trigger of FACT_CONTEXT_TRIGGERS) {
+      if (!trigger.applies(facts)) continue;
+      for (const req of requirements) {
+        if (!matchesTags(req, trigger.tags)) continue;
+        include(
+          req,
+          { rule_id: trigger.rule_id, rule_family: "S2", rationale: trigger.rationale },
+          "full",
+          true
+        );
+      }
+    }
   }
 
   // S5 — domain activation (>= 1.1.0 only). ADDS, never excludes.
