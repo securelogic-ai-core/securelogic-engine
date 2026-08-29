@@ -74,6 +74,7 @@ import {
   resolveFacts,
   type FactSet,
 } from "./factResolver.js";
+import type { FactKey } from "./factRegistry.js";
 import {
   DOMAIN_TAGS,
   domainForRequirement,
@@ -155,6 +156,34 @@ export type ScopeItem = {
   domain?: AssessmentDomain;
 };
 
+/**
+ * One applicability determination: a rule fired, and it matched a requirement.
+ *
+ * Recorded at the moment of inclusion — BEFORE composition truncates anything —
+ * which is the whole point: today a rule whose every item is dropped leaves no
+ * trace at all (#926).
+ *
+ * Deliberately NOT part of `ScopeResolution`. The 1.0.0 golden test compares
+ * `JSON.stringify` of the whole resolution object against 21 frozen fixtures,
+ * so adding a field there would rewrite a frozen equivalence proof. Callers that
+ * want applicability use `resolveEngagementScopeWithApplicability`.
+ */
+export type ApplicabilityRecord = {
+  rule_id: string;
+  rule_family: ScopeInclusionReason["rule_family"];
+  /** Absent under 1.0.0, which has no domain rule. */
+  domain: AssessmentDomain | null;
+  requirement_id: string;
+  /** The requirement's reference AS IT WAS — reference data is mutable. */
+  requirement_reference_id: string;
+  /**
+   * Why it applied, captured as VALUES rather than pointers. Facts supersede
+   * and obligations deactivate; a row id would dangle, and re-deriving from
+   * today's state answers a different question.
+   */
+  basis: Record<string, unknown>;
+};
+
 export type ScopeResolution = {
   scope_rule_version: string;
   tier: AssessmentTier;
@@ -210,6 +239,41 @@ export type ScopeResolution = {
  * it is not a SecureLogic minimum.
  */
 const FLOOR_RULE_IDS: ReadonlySet<string> = new Set(["S1.baseline", "S5.security.baseline"]);
+
+/**
+ * The fact VALUES a rule read, for the applicability basis (#926).
+ *
+ * Deliberately narrow: only the keys the named rule actually consults, so the
+ * record says why THIS rule fired rather than dumping the whole fact surface
+ * into every row. Values, never row ids — facts supersede.
+ */
+const RULE_FACT_KEYS: Readonly<Record<string, readonly FactKey[]>> = {
+  "S2.ai_prompts": ["ai.customer_data_in_prompts"],
+  "S2.cross_border": ["data.cross_border"],
+  "S2.subprocessors": ["nth.subprocessors_declared"],
+  "S5.privacy.personal_data": ["data.personal_data"],
+  "S5.privacy.sensitivity": ["core.data_sensitivity"],
+  "S5.privacy.obligation": ["policy.privacy_obligations_active"],
+  "S5.privacy.ai_prompts": ["ai.customer_data_in_prompts"],
+  "S5.ai.involvement": ["core.ai_involvement"],
+  "S5.ai.declared": ["ai.uses_ai"],
+  "S5.ai.dependency": ["ai.uses_ai"],
+  "S5.resilience.dependency": ["core.operational_dependency"],
+  "S5.resilience.recoverability": ["core.recoverability"],
+  "S5.resilience.criticality": ["core.business_criticality"],
+  "S5.nth.fourth_party": ["core.fourth_party_exposure"],
+  "S5.nth.subprocessors": ["nth.subprocessors_declared"],
+  "S5.nth.third_party_models": ["ai.third_party_models"],
+};
+
+function triggerFactBasis(facts: FactSet, ruleId: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of RULE_FACT_KEYS[ruleId] ?? []) {
+    const f = facts[key as keyof FactSet];
+    if (f !== undefined) out[key] = f.value;
+  }
+  return out;
+}
 
 /** Is this item on the assessment floor? */
 function isFloorItem(item: ScopeItem): boolean {
@@ -554,7 +618,29 @@ function matchesTags(req: ScopableRequirement, tags: readonly string[]): boolean
   return req.scope_tags.some((t) => tags.includes(t));
 }
 
+/**
+ * The resolution PLUS what applied, for callers that must persist applicability
+ * independently of composition (#926).
+ *
+ * `resolveEngagementScope` delegates here and returns only `.resolution`, so the
+ * frozen 1.0.0 goldens keep comparing exactly the object they always did.
+ */
+export function resolveEngagementScopeWithApplicability(
+  input: ScopeResolverInput
+): { resolution: ScopeResolution; applicability: ApplicabilityRecord[] } {
+  const applicability: ApplicabilityRecord[] = [];
+  const resolution = resolveInternal(input, applicability);
+  return { resolution, applicability };
+}
+
 export function resolveEngagementScope(input: ScopeResolverInput): ScopeResolution {
+  return resolveInternal(input, []);
+}
+
+function resolveInternal(
+  input: ScopeResolverInput,
+  applicability: ApplicabilityRecord[]
+): ScopeResolution {
   const { tier, requirements, obligationEdges } = input;
   const covered = new Set(input.assuranceCoveredRequirementIds ?? []);
 
@@ -575,8 +661,26 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
     req: ScopableRequirement,
     reason: ScopeInclusionReason,
     depth: ScopeDepth,
-    mandatory: boolean
+    mandatory: boolean,
+    /**
+     * Why this rule fired, as VALUES. Recorded for #926 whether or not the item
+     * survives composition — a rule whose every item is later truncated must
+     * still be answerable.
+     */
+    basis: Record<string, unknown> = {}
   ): void => {
+    // Every (rule, requirement) pair is one applicability determination, even
+    // when the requirement was already chosen by an earlier rule: "why is this
+    // in scope" genuinely has more than one answer, and #926 needs all of them.
+    applicability.push({
+      rule_id: reason.rule_id,
+      rule_family: reason.rule_family,
+      domain: null, // stamped below, once S5 has decided
+      requirement_id: req.requirement_id,
+      requirement_reference_id: req.reference_id,
+      basis,
+    });
+
     const existing = chosen.get(req.requirement_id);
     if (existing) {
       // Record EVERY rule that included it. Depth escalates to the deepest ask,
@@ -614,7 +718,8 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
             : `Baseline for ${tier.replace(/_/g, " ")} vendors.`,
       },
       baselineDepth,
-      true
+      true,
+      { tier, baseline_tags: baselineTags }
     );
   }
 
@@ -627,7 +732,8 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
         req,
         { rule_id: trigger.rule_id, rule_family: "S2", rationale: trigger.rationale },
         "full",
-        true
+        true,
+        { rule_id: trigger.rule_id, inherent_trigger: true }
       );
     }
   }
@@ -645,7 +751,10 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
         rationale: `Required by your active obligation "${edge.obligation_title}".`,
       },
       "full",
-      true
+      true,
+      // The obligation may be deactivated later. Its TITLE is captured, not
+      // only its id, so "which obligation made this apply" survives.
+      { obligation_id: edge.obligation_id, obligation_title: edge.obligation_title }
     );
   }
 
@@ -659,7 +768,10 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
           req,
           { rule_id: trigger.rule_id, rule_family: "S2", rationale: trigger.rationale },
           "full",
-          true
+          true,
+          // Facts supersede. The VALUE that fired the rule is captured, not a
+          // pointer to a row that a later assertion will mark superseded.
+          { facts: triggerFactBasis(facts, trigger.rule_id) }
         );
       }
     }
@@ -680,15 +792,30 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
           req,
           { rule_id: rule.rule_id, rule_family: "S5", rationale: rule.rationale },
           rule.depth,
-          true
+          true,
+          { domain: rule.domain, facts: triggerFactBasis(facts, rule.rule_id) }
         );
       }
     }
 
     // Stamp the domain each item is asked under. Compliance iff reached via S3.
+    // The applicability rows are stamped from the same decision below, so a
+    // truncated requirement still records which domain it applied under.
     for (const item of chosen.values()) {
       const req = byId.get(item.requirement_id)!;
       item.domain = domainForRequirement(req, item.reasons.some((r) => r.rule_family === "S3"));
+    }
+
+    // Stamp the same domain onto the applicability rows. A requirement whose
+    // items are truncated moments from now still records the domain it applied
+    // under — which is the difference between "privacy applied and nothing was
+    // asked" and silence.
+    const domainByRequirement = new Map<string, AssessmentDomain>();
+    for (const item of chosen.values()) {
+      if (item.domain) domainByRequirement.set(item.requirement_id, item.domain);
+    }
+    for (const row of applicability) {
+      row.domain = domainByRequirement.get(row.requirement_id) ?? null;
     }
   }
 
