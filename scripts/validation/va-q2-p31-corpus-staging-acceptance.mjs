@@ -130,35 +130,78 @@ const FACTS = {
   ],
 };
 
-async function resolveEngagement(token, label) {
+/**
+ * Two intakes, and the difference matters.
+ *
+ * `INTAKE_TIER4` is P3's all-low intake. It lands tier_4_low, whose question
+ * cap is 15 — which is directive example TWO's shape ("no access, no data, no
+ * AI → Security attest only, ≤15 items"), not example one's.
+ *
+ * `INTAKE_MODERATE` raises the tier through dimensions that have nothing to do
+ * with privacy or AI — operational dependency, recoverability, criticality,
+ * concentration — and deliberately KEEPS `data_sensitivity` below `confidential`
+ * and `ai_involvement` at `none`. That is what preserves the meaning of the
+ * proof: `S5.privacy.sensitivity` and `S5.ai.involvement` still cannot fire, so
+ * the privacy and AI domains can only have been reached by the DECLARED facts.
+ */
+const INTAKE_TIER4 = {
+  data_sensitivity: "internal", data_volume: "minimal", access_level: "none",
+  operational_dependency: "low", recoverability: "hours", business_criticality: "low",
+  regulatory_exposure: "none", regulatory_breach_notification: false,
+  ai_involvement: "none", ai_autonomy: "none", hosting_model: "on_prem",
+  fourth_party_exposure: "none", concentration: "low",
+};
+const INTAKE_MODERATE = {
+  ...INTAKE_TIER4,
+  // Every value below is a member of its declared enum in inherentRisk.ts.
+  // Guessing them cost a run: `concentration: "high"` and
+  // `hosting_model: "cloud"` are not values, so the engagement was rejected and
+  // the resolve never happened.
+  operational_dependency: "critical",   // low | moderate | high | critical
+  recoverability: "none",               // hours | days | weeks | none
+  business_criticality: "critical",     // low | medium | high | critical
+  concentration: "single_point_of_failure", // none | low | moderate | single_point_of_failure
+  data_volume: "mass",                  // minimal | moderate | large | mass
+  hosting_model: "multi_tenant_saas",   // on_prem | private_cloud | saas | multi_tenant_saas
+  access_level: "read_only",            // none | read_only | read_write | admin | network_access
+  // UNCHANGED ON PURPOSE, and load-bearing for the proof:
+  //   data_sensitivity stays `internal` (< confidential) so S5.privacy.sensitivity cannot fire
+  //   ai_involvement stays `none`      (< embedded)     so S5.ai.involvement cannot fire
+  // Privacy and AI can therefore only have been reached by the DECLARED facts.
+};
+
+async function resolveEngagement(token, label, intake) {
   const e = await api("POST", "/vendor-engagements", {
     token,
     body: {
       vendor_id: VENDOR_A,
       engagement_type: "targeted",
       title: `[VA-Q2-P3.1 ACCEPTANCE] ${label}`,
-      // The SAME all-low intake P3's run used, deliberately: with every core.*
-      // input at its lowest, `S5.privacy.sensitivity` and `S5.ai.involvement`
-      // cannot fire, so the privacy and AI domains can only be reached by the
-      // DECLARED facts (`S5.privacy.personal_data`, `S5.ai.declared`) — which
-      // is exactly what the directive example asks us to prove. It also makes
-      // the before/after numbers comparable with P3's recorded run.
-      intake: {
-        data_sensitivity: "internal", data_volume: "minimal", access_level: "none",
-        operational_dependency: "low", recoverability: "hours", business_criticality: "low",
-        regulatory_exposure: "none", regulatory_breach_notification: false,
-        ai_involvement: "none", ai_autonomy: "none", hosting_model: "on_prem",
-        fourth_party_exposure: "none", concentration: "low",
-      },
+      intake,
     },
   });
   const id = e.json?.id ?? e.json?.engagement?.id ?? null;
-  if (!id) return { id: null, error: e.text.slice(0, 300) };
+  if (!id) {
+    // A rejected intake used to abort the whole run three checks later with
+    // "cannot read properties of undefined". Fail HERE, where the body says why.
+    check(`CREATE:${label}`, "engagement created", false, { status: e.status, body: e.text.slice(0, 300) });
+    return { id: null, tier: null, truncated: null, domains: null, withItems: [], ruleIds: [] };
+  }
 
   await api("PUT", `/vendor-engagements/${id}/facts`, { token, body: FACTS });
   const sc = await api("POST", `/vendor-engagements/${id}/scope`, { token, body: {} });
   const det = await api("GET", `/vendor-engagements/${id}`, { token });
   const domains = det.json?.questionnaire?.domains ?? det.json?.domains ?? null;
+  // The tier cap reports its overflow instead of shrinking the scope quietly.
+  // Reading it is not optional: a scope that lost its security baseline to the
+  // cap looks identical to one that never activated security, and only this
+  // field tells them apart.
+  const truncated = sc.json?.truncated ?? null;
+  // The tier is NOT on either response body under this name — reading it there
+  // returned null and made the tier assertion pass vacuously. `assessment_tier`
+  // is a column; read the column.
+  const tierRow = await q(`SELECT assessment_tier FROM vendor_engagements WHERE id = $1`, [id]);
+  const tier = tierRow.rows?.[0]?.assessment_tier ?? null;
 
   const rules = await q(
     `SELECT DISTINCT jsonb_array_elements(reasons)->>'rule_id' AS rule_id
@@ -168,6 +211,8 @@ async function resolveEngagement(token, label) {
   return {
     id,
     scopeStatus: sc.status,
+    tier,
+    truncated,
     domains,
     withItems: domains ? Object.entries(domains).filter(([, n]) => n > 0).map(([d]) => d).sort() : [],
     ruleIds: (rules.rows ?? []).map((r) => r.rule_id).filter(Boolean),
@@ -205,14 +250,33 @@ async function main() {
     [ORG_A]
   );
   const beforeTags = Object.fromEntries((before.rows ?? []).map((r) => [r.tag, r.n]));
-  check("B1", "BEFORE: the corpus carries no privacy-domain and no AI-domain tag",
-    !["privacy", "data-protection", "retention", "ai-governance", "model-risk"].some((t) => beforeTags[t]),
-    beforeTags);
 
-  const eBefore = await resolveEngagement(TOKEN, "before activation");
-  check("B2", "BEFORE: a resolve with personal-data + AI facts reaches only two domains with items",
-    eBefore.withItems.length === 2 && eBefore.withItems.includes("security"),
-    { domains: eBefore.domains, withItems: eBefore.withItems });
+  // Is this a first run, or a re-run against an already-curated corpus? The
+  // BEFORE assertions are only meaningful once. Re-measuring them after
+  // activation would fail for the RIGHT reason, which is the worst kind of red.
+  const already = await q(
+    `SELECT count(*)::int AS n FROM requirements r JOIN frameworks f ON f.id = r.framework_id
+      WHERE f.organization_id = $1 AND r.scope_tags_source = 'curated'`,
+    [ORG_A]
+  );
+  const firstRun = (already.rows?.[0]?.n ?? 0) === 0;
+  let eBefore = null;
+
+  if (firstRun) {
+    check("B1", "BEFORE: the corpus carries no privacy-domain and no AI-domain tag",
+      !["privacy", "data-protection", "retention", "ai-governance", "model-risk"].some((t) => beforeTags[t]),
+      beforeTags);
+    eBefore = await resolveEngagement(TOKEN, "before activation", INTAKE_MODERATE);
+    check("B2", "BEFORE: a resolve with personal-data + AI facts reaches neither privacy nor AI",
+      !eBefore.withItems.includes("privacy") && !eBefore.withItems.includes("ai"),
+      { tier: eBefore.tier, domains: eBefore.domains, withItems: eBefore.withItems });
+  } else {
+    results.push(`INFO BEFORE state not re-measured: the corpus already holds ${already.rows[0].n} curated ` +
+      `requirements, so this is a re-run. The BEFORE evidence is run 1 (job-da9c4fpf2nfc73f25pb0): ` +
+      `tags {core 34, business-continuity 2, access-control 1, incident-response 1, resilience 1, supply-chain 1} ` +
+      `— no privacy tag, no AI tag — and a resolve with the same facts reached security 14 / nth_party 1, ` +
+      `privacy 0 / ai 0.`);
+  }
 
   // ── 2. ACTIVATE ──────────────────────────────────────────────────────────
   const activatedIds = {};
@@ -281,11 +345,27 @@ async function main() {
     aiRows.map((r) => ({ ref: r.reference_id, tags: r.scope_tags, domain: domainOf(r.scope_tags) })));
 
   // ── 4. AFTER: the four-domain directive proof (owed to P4) ───────────────
-  const eAfter = await resolveEngagement(TOKEN, "directive example 1 four-domain proof");
+  const eAfter = await resolveEngagement(TOKEN, "directive example 1 four-domain proof", INTAKE_MODERATE);
   const wantDomains = ["ai", "nth_party", "privacy", "security"];
-  check("P4-1", "directive example 1: FOUR domains carry items",
-    JSON.stringify(eAfter.withItems) === JSON.stringify(wantDomains),
-    { domains: eAfter.domains, withItems: eAfter.withItems });
+
+  // The canonical definition of directive example 1 (vendorScopeResolver.test.ts
+  // "VA-Q2 — directive example 1: LLM + customer PII") resolves at
+  // tier_3_moderate. Tier 4's question cap is 15, and the ordering puts `full`
+  // depth ahead of `attest`; the security baseline is `attest`. So at tier 4 a
+  // rich multi-domain corpus pushes security out entirely — which is example
+  // TWO's shape, not example one's. Assert the tier rather than hope for it.
+  check("P4-0", "the engagement resolved above tier 4, as directive example 1 requires",
+    // `!= null` catches undefined too — the previous form passed vacuously on an
+    // engagement that was never created.
+    typeof eAfter.tier === "string" && eAfter.tier !== "tier_4_low", { tier: eAfter.tier ?? null });
+
+  // "Contains the four", not "is exactly the four": raising the tier through
+  // operational dimensions legitimately activates resilience too, and the
+  // directive asks that Security+Privacy+AI+Nth activate — not that nothing
+  // else does.
+  check("P4-1", "directive example 1: Security + Privacy + AI + Nth party all carry items",
+    wantDomains.every((d) => eAfter.withItems.includes(d)),
+    { tier: eAfter.tier, domains: eAfter.domains, withItems: eAfter.withItems, truncated: eAfter.truncated });
 
   const wantRules = ["S5.security.baseline", "S5.privacy.personal_data", "S5.ai.declared", "S5.nth.third_party_models"];
   const gotRules = wantRules.filter((r) => eAfter.ruleIds.includes(r));
@@ -319,10 +399,29 @@ async function main() {
     (fromNew.rows ?? []).length > 0 && newSecurity.every((ref) => WANT_SECURITY.includes(ref)),
     { security_items_from_new_frameworks: newSecurity, by_domain: newByDomain, total: (fromNew.rows ?? []).length });
 
-  const secBefore = eBefore.domains?.security ?? null;
+  const secBefore = eBefore?.domains?.security ?? "(not re-measured)";
   const secAfter = eAfter.domains?.security ?? null;
   results.push(`INFO security domain item count: before=${secBefore} after=${secAfter} ` +
-    `(a rise of at most 2 is the two deliberate requirements; the other 22 went to privacy/ai/nth_party)`);
+    `(the new frameworks contributed ${newByDomain["security"] ?? 0} security items — the two deliberate ` +
+    `ones are only included when the tier's cap leaves room; the other 22 went to privacy/ai/nth_party)`);
+
+  // ── 5b. The tier-4 cap, observed deliberately rather than stumbled into ──
+  // A tier-4 engagement over the SAME facts is directive example 2's shape. With
+  // a curated multi-domain corpus its 15-question cap now binds, and because the
+  // cap sorts `full` depth ahead of `attest` — and the security baseline is
+  // `attest` — the security domain can be squeezed to ZERO. The overflow is
+  // RECORDED (`truncated`), so this is the documented no-silent-caps behaviour,
+  // not a silent shrink. It is still a product question: a low-risk vendor that
+  // declares PII and AI gets a questionnaire with no security questions in it.
+  const eTier4 = await resolveEngagement(TOKEN, "tier-4 cap observation", INTAKE_TIER4);
+  check("CAP-1", "the tier-4 cap REPORTS its overflow rather than shrinking the scope silently",
+    eTier4.truncated === null || (typeof eTier4.truncated?.cap === "number" &&
+      Array.isArray(eTier4.truncated?.dropped_requirement_ids)),
+    { tier: eTier4.tier, domains: eTier4.domains, truncated: eTier4.truncated });
+  results.push(`FINDING tier-4 over the same facts: tier=${eTier4.tier} domains=${JSON.stringify(eTier4.domains)} ` +
+    `truncated=${JSON.stringify(eTier4.truncated)}. If security is 0 here, the cap dropped the whole ` +
+    `attest-depth security baseline in favour of full-depth privacy/AI items. Recorded, not silent — ` +
+    `but a ruling is owed on whether the security baseline should be cap-exempt.`);
 
   // ── 6. UNCURATED IS OBSERVABLE ───────────────────────────────────────────
   const sources = await q(
@@ -333,7 +432,11 @@ async function main() {
   );
   const srcMap = Object.fromEntries((sources.rows ?? []).map((r) => [r.src, r.n]));
   check("U1", "the corpus now distinguishes curated / heuristic / uncurated",
-    (srcMap["curated"] ?? 0) === 24, srcMap);
+    // All three must be REPRESENTED. Asserting only the curated count let a
+    // corpus with zero 'uncurated' rows pass, which is the state before the
+    // backfill runs — i.e. the observability this package promises, unproven.
+    (srcMap["curated"] ?? 0) === 24 && (srcMap["uncurated"] ?? 0) > 0,
+    srcMap);
   results.push(`INFO source histogram after the run: ${JSON.stringify(srcMap)} ` +
     `(uncurated rows are SOC 2 / NIST CSF requirements nothing classified — issue #920)`);
 
