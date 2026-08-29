@@ -97,6 +97,7 @@ async function main(): Promise<void> {
   let checked = 0;
   let diverged = 0;
   let skippedNoItems = 0;
+  let corpusGrew = 0;
 
   for (const e of engagements.rows) {
     const stored = await pgElevated.query<StoredItem>(
@@ -171,14 +172,48 @@ async function main(): Promise<void> {
       .sort();
 
     checked++;
-    if (JSON.stringify(storedLines) !== JSON.stringify(freshLines)) {
+
+    // ── Corpus drift is NOT rule drift ────────────────────────────────────
+    //
+    // Comparing a stored resolution to a fresh one only isolates the RULES if
+    // the corpus is unchanged. It rarely is: this org gained 24 curated
+    // requirements after these engagements were resolved, and re-resolving
+    // against the bigger corpus legitimately produces more items. Reporting
+    // that as a Q2 regression would be a false FAIL, and reporting it as a pass
+    // would hide a real one — so the two are separated by AGE.
+    const resolvedAt = await pgElevated.query<{ at: string | null }>(
+      `SELECT max(created_at) AS at FROM vendor_engagement_scope_items WHERE engagement_id = $1`,
+      [e.id]
+    );
+    const newerReqs = await pgElevated.query<{ requirement_id: string }>(
+      `SELECT r.id AS requirement_id
+         FROM requirements r JOIN frameworks f ON f.id = r.framework_id
+        WHERE f.organization_id = $1 AND r.created_at > $2`,
+      [e.organization_id, resolvedAt.rows[0]?.at ?? new Date(0).toISOString()]
+    );
+    const newerIds = new Set(newerReqs.rows.map((r) => r.requirement_id));
+
+    const onlyStored = storedLines.filter((l) => !freshLines.includes(l));
+    const onlyFreshAll = freshLines.filter((l) => !storedLines.includes(l));
+    const onlyFreshOld = onlyFreshAll.filter((l) => !newerIds.has(l.split("|")[0]!));
+    const fromCorpusGrowth = onlyFreshAll.length - onlyFreshOld.length;
+
+    if (fromCorpusGrowth > 0) {
+      corpusGrew++;
+      console.log(
+        `\nCORPUS GREW  engagement=${e.id}: ${fromCorpusGrowth} item(s) come from requirements ` +
+          `created AFTER this engagement was resolved. Not a rule change; excluded from the comparison.`
+      );
+    }
+
+    // A stored item the rules no longer produce, or a NEW item drawn from a
+    // requirement that already existed, is a real divergence.
+    if (onlyStored.length > 0 || onlyFreshOld.length > 0) {
       diverged++;
       console.log(`\nDIVERGED  engagement=${e.id} org=${e.organization_id} tier=${e.assessment_tier}`);
-      const onlyStored = storedLines.filter((l) => !freshLines.includes(l));
-      const onlyFresh = freshLines.filter((l) => !storedLines.includes(l));
       for (const l of onlyStored.slice(0, 10)) console.log(`  stored only : ${l}`);
-      for (const l of onlyFresh.slice(0, 10)) console.log(`  re-resolved : ${l}`);
-      if (onlyStored.length > 10 || onlyFresh.length > 10) console.log("  … truncated");
+      for (const l of onlyFreshOld.slice(0, 10)) console.log(`  re-resolved : ${l}`);
+      if (onlyStored.length > 10 || onlyFreshOld.length > 10) console.log("  … truncated");
     }
 
     // A 1.0.0 resolution must carry no 1.1.0 artefact.
@@ -196,7 +231,8 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\nchecked ${checked} · diverged ${diverged} · skipped (never resolved) ${skippedNoItems}`
+    `\nchecked ${checked} · diverged ${diverged} · corpus grew ${corpusGrew} · ` +
+      `skipped (never resolved) ${skippedNoItems}`
   );
   console.log(diverged === 0 ? "RESULT: PASS" : "RESULT: FAIL");
   process.exit(diverged === 0 ? 0 : 1);
