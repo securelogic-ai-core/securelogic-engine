@@ -141,18 +141,22 @@ CREATE TRIGGER engagement_applicability_check_engagement
 -- ---------------------------------------------------------------
 -- Immutability: history cannot be rewritten, including by us
 -- ---------------------------------------------------------------
-CREATE OR REPLACE FUNCTION engagement_applicability_immutable()
-RETURNS TRIGGER AS $$
-BEGIN
-  RAISE EXCEPTION 'engagement_applicability rows are immutable (% attempted)', TG_OP
-    USING ERRCODE = 'restrict_violation';
-END;
-$$ LANGUAGE plpgsql;
+--
+-- Wired to the SHARED `worm_guard_mutation` (20261017), never a private copy.
+-- `wormGuardConsolidation.test.ts` fails the build for a private copy, and it is
+-- right to: the certified-erasure exception lives in that one function, so a
+-- table with its own guard would silently refuse a governed erasure as well as
+-- an ordinary UPDATE. One policy, one place to amend it.
 
-DROP TRIGGER IF EXISTS engagement_applicability_no_update ON engagement_applicability;
-CREATE TRIGGER engagement_applicability_no_update
+DROP TRIGGER IF EXISTS prevent_engagement_applicability_row_mutation ON engagement_applicability;
+CREATE TRIGGER prevent_engagement_applicability_row_mutation
   BEFORE UPDATE OR DELETE ON engagement_applicability
-  FOR EACH ROW EXECUTE FUNCTION engagement_applicability_immutable();
+  FOR EACH ROW EXECUTE FUNCTION worm_guard_mutation('append-only (applicability history)');
+
+DROP TRIGGER IF EXISTS prevent_engagement_applicability_truncate ON engagement_applicability;
+CREATE TRIGGER prevent_engagement_applicability_truncate
+  BEFORE TRUNCATE ON engagement_applicability
+  FOR EACH STATEMENT EXECUTE FUNCTION worm_guard_mutation('append-only (applicability history)');
 
 -- ---------------------------------------------------------------
 -- Tenant isolation

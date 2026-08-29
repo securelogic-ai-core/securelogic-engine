@@ -15,9 +15,11 @@
 --
 -- Every step is idempotent.
 
-DROP TRIGGER IF EXISTS engagement_applicability_no_update ON engagement_applicability;
+-- The WORM triggers point at the SHARED worm_guard_mutation; drop the triggers,
+-- never the function — other append-only tables depend on it.
+DROP TRIGGER IF EXISTS prevent_engagement_applicability_row_mutation ON engagement_applicability;
+DROP TRIGGER IF EXISTS prevent_engagement_applicability_truncate ON engagement_applicability;
 DROP TRIGGER IF EXISTS engagement_applicability_check_engagement ON engagement_applicability;
-DROP FUNCTION IF EXISTS engagement_applicability_immutable();
 DROP FUNCTION IF EXISTS engagement_applicability_check_engagement();
 
 DROP POLICY IF EXISTS engagement_applicability_tenant_isolation ON engagement_applicability;
