@@ -163,7 +163,70 @@ export type ScopeResolution = {
   excluded: Array<{ requirement_id: string; rationale: string }>;
   /** Non-empty when the tier cap bound. Never silent. */
   truncated: { cap: number; dropped_requirement_ids: string[] } | null;
+  /**
+   * How the questionnaire was composed against the tier's nominal target
+   * (>= 1.1.0 only; absent under 1.0.0 so pre-Q2 output stays byte-identical).
+   *
+   * `nominal_target` is a TARGET, not a ceiling: `total` exceeds it whenever the
+   * mandatory floor alone does, and `mandatory_overage` says by how much.
+   */
+  composition?: {
+    /** The tier's nominal question target (`TIER_QUESTION_CAP`). */
+    nominal_target: number;
+    /** Items on the SecureLogic assessment floor. Never truncated. */
+    mandatory: number;
+    /** Risk-triggered items kept after the floor took its room. */
+    discretionary: number;
+    /** `mandatory + discretionary` — what the vendor is actually asked. */
+    total: number;
+    /** How far the floor alone exceeds the nominal target. 0 when it fits. */
+    mandatory_overage: number;
+  };
 };
+
+/**
+ * The SecureLogic assessment floor: rules whose items MUST survive
+ * truncation.
+ *
+ * Owner ruling 2026-08-29 (issue #922). Before it, every item was
+ * `mandatory: true` — all four rule families pass `true` — which made that flag
+ * inert as a sort key and left DEPTH as the effective tiebreak. Since
+ * `S5.security.baseline` asks at `attest` depth and the domain rules ask at
+ * `full`, a curated multi-domain corpus displaced every security item at
+ * tier 4: a low-risk vendor handling personal data and AI received a
+ * questionnaire with NO security questions in it.
+ *
+ * These two rules are what SecureLogic asks of a vendor *because of the tier
+ * itself*, not because a risk fact triggered them:
+ *   - `S1.baseline`          — the tier's own baseline set;
+ *   - `S5.security.baseline` — `applies: () => true`, i.e. security is assessed
+ *                              for every vendor. That promise has to be kept
+ *                              when the corpus is crowded, or it is not a
+ *                              promise.
+ *
+ * S2 (fact triggers), S3 (obligations) and the non-security S5 domain rules are
+ * risk-triggered and remain discretionary: they compete for the room the floor
+ * leaves. That is a deliberate line — a regulatory obligation is important, but
+ * it is not a SecureLogic minimum.
+ */
+const FLOOR_RULE_IDS: ReadonlySet<string> = new Set(["S1.baseline", "S5.security.baseline"]);
+
+/** Is this item on the assessment floor? */
+function isFloorItem(item: ScopeItem): boolean {
+  return item.reasons.some((r) => FLOOR_RULE_IDS.has(r.rule_id));
+}
+
+/**
+ * Deterministic drop order for DISCRETIONARY items: deepest ask first (a `full`
+ * question is worth more than an `attest` one), then id, so the same inputs
+ * always drop the same requirements.
+ */
+function discretionaryOrder(a: ScopeItem, b: ScopeItem): number {
+  const depthRank = (d: ScopeDepth) => (d === "full" ? 0 : d === "confirm" ? 1 : 2);
+  const dr = depthRank(a.depth) - depthRank(b.depth);
+  if (dr !== 0) return dr;
+  return a.requirement_id.localeCompare(b.requirement_id);
+}
 
 // ── S1: tier baselines ──────────────────────────────────────────────────────
 
@@ -581,10 +644,46 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
   const cap = TIER_QUESTION_CAP[tier];
   let items = [...chosen.values()];
   let truncated: ScopeResolution["truncated"] = null;
+  let composition: ScopeResolution["composition"] = undefined;
 
-  if (items.length > cap) {
-    // Deterministic ordering: mandatory first, then deepest ask, then id — so
-    // the same inputs always drop the same requirements.
+  if (runS5) {
+    // ── >= 1.1.0: the assessment floor is satisfied FIRST ──────────────────
+    //
+    // The floor is never truncated, even when it alone exceeds the nominal
+    // target — a size target must not silently delete a SecureLogic minimum.
+    // Discretionary items then take whatever room is left, dropped in a
+    // deterministic order with the overflow recorded.
+    const floor = items.filter(isFloorItem);
+    const discretionary = items.filter((i) => !isFloorItem(i));
+    const budget = Math.max(0, cap - floor.length);
+
+    let keptDiscretionary = discretionary;
+    if (discretionary.length > budget) {
+      const ordered = [...discretionary].sort(discretionaryOrder);
+      keptDiscretionary = ordered.slice(0, budget);
+      truncated = {
+        cap,
+        dropped_requirement_ids: ordered.slice(budget).map((i) => i.requirement_id),
+      };
+    }
+
+    items = [...floor, ...keptDiscretionary].sort((a, b) =>
+      a.requirement_id.localeCompare(b.requirement_id)
+    );
+    composition = {
+      nominal_target: cap,
+      mandatory: floor.length,
+      discretionary: keptDiscretionary.length,
+      total: items.length,
+      mandatory_overage: Math.max(0, floor.length - cap),
+    };
+  } else if (items.length > cap) {
+    // ── 1.0.0: frozen legacy behaviour, byte-for-byte ──────────────────────
+    //
+    // Deliberately NOT fixed here. 21 golden cases freeze this output and two
+    // of them truncate; changing the rule would rewrite a frozen equivalence
+    // proof. The defect cannot arise under 1.0.0 anyway: with no S5 there are
+    // no domain rules to crowd the security baseline out.
     items.sort((a, b) => {
       if (a.mandatory !== b.mandatory) return a.mandatory ? -1 : 1;
       const depthRank = (d: ScopeDepth) => (d === "full" ? 0 : d === "confirm" ? 1 : 2);
@@ -618,5 +717,8 @@ export function resolveEngagementScope(input: ScopeResolverInput): ScopeResoluti
     items,
     excluded,
     truncated,
+    // Spread so the key is ABSENT (not `undefined`) under 1.0.0 — the golden
+    // equivalence test compares JSON.stringify of the whole object.
+    ...(composition === undefined ? {} : { composition }),
   };
 }
