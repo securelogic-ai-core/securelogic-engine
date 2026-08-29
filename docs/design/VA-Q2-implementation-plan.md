@@ -134,6 +134,7 @@ repeat this check on the day they create the file.**
 |---|---|---|---|
 | `20261062` | `scope_item_domain.sql` — `vendor_engagement_scope_items.domain TEXT NULL CHECK (domain IN (…six…))`; partial index `(engagement_id, domain)` | P2 | additive column |
 | `20261063` | `assessment_facts.sql` — the canonical polymorphic fact store (D1 Option B: closed `subject_type` allowlist, subject-check trigger, RLS, `SELECT/INSERT/UPDATE` grants, classification) | P3 | new table — **UNBLOCKED** |
+| `20261065` | **RESERVED (owner, 2026-08-29) for the applicability/activation record** — #926. Must preserve, independently of questionnaire composition: which rules fired, which domains applied, which requirements became applicable, why, and what happened to them during assurance/composition. **Not P4.** | #926 | reserved, unbuilt |
 | `20261064` | `scope_tags_source_uncurated.sql` — widens the `requirements.scope_tags_source` CHECK to `('heuristic','curated','uncurated')` | P3.1 (corpus curation defect) | CHECK widened — **RELEASED FROM RESERVE 2026-08-29**, which is exactly what the reserve was held for. Ledger re-checked the day the file was created: `db/migrations` topped at `20261063`, no remote branch and no commit on any branch claimed `2026106[4-9]`. Q2 now uses three of Q0 §16's budgeted slots; P4 needs none |
 
 Q0 §16 budgeted `+1` for Q2; this plan uses two so P2 (column) and P3 (table)
@@ -525,7 +526,7 @@ is stamped honestly, re-activation is idempotent, `SCOPE_TAG_SOURCES` equals the
 CHECK list read from `pg_constraint`, and the DB accepts `uncurated` while
 refusing a value outside the set).
 
-### P4 — Directive golden proof, S2-from-facts, adversarial E2E, staging proof, matrix (no schema) — **size S — UNBLOCKED by D1; starts after P3**
+### P4 — Directive golden proof, S2-from-facts, adversarial E2E, staging proof, matrix (no schema) — **size S — IMPLEMENTED + TESTED 2026-08-29** (branch `feat/va-q2-p4-s2-facts-and-e2e`; no schema, slot 20261065 is reserved for #926 and untouched)
 
 - Domain-aware S2 triggers reading non-core facts (VA-Q0 §6.2 "S2 reads facts"):
   `S2.ai_prompts` (`ai.customer_data_in_prompts` → privacy + ai tags),
@@ -828,6 +829,64 @@ even when nothing is dropped.
   is not an authoritative record of applicability. The correction is to separate
   APPLICABILITY from QUESTIONNAIRE COMPOSITION with an activation record written
   at resolve time. Needs a schema slot; NOT part of P4.
+
+## H.2 Owner rulings, 2026-08-29 — assurance sufficiency over question count
+
+Three rulings that govern how VA-Q composes questionnaires from here. Recorded
+because each one changes what a future package is allowed to do.
+
+### Ruling 1 — domain starvation (#925): assurance, not question quotas
+
+> **Every applicable domain must receive sufficient assurance coverage.** That
+> does NOT necessarily mean every applicable domain must contribute a minimum
+> number of questionnaire questions.
+
+- `activated domain + zero questions + sufficient approved assurance` — may
+  eventually be VALID.
+- `activated domain + zero questions + no sufficient assurance` — is **NOT**
+  valid.
+
+**Do not implement per-domain question minimums.** #925 stays open pending S4
+validation, because if approved evidence can satisfy a domain then a question
+floor would be a guarantee the assurance model has to unwind later.
+
+### Ruling 2 — S3 regulatory obligations are not truncation-eligible
+
+An applicable regulatory obligation is **not** discretionary in the sense that
+questionnaire truncation may eliminate the assurance obligation. But the answer
+is **not** to promote every S3 question into the permanent floor. Separate the
+three concepts:
+
+| Concept | What must be true |
+|---|---|
+| **Applicability** | Survives truncation. If S3 says a regulatory requirement applies, that fact must remain recorded and legible however the questionnaire is composed |
+| **Assurance** | Survives truncation. The obligation to obtain assurance persists even when no question was asked |
+| **Question composition** | May legitimately vary — approved, current evidence may satisfy the obligation; otherwise the assessment must obtain assurance through a question, an evidence request, a follow-up, or a governed review |
+
+**A nominal questionnaire target may NEVER make an applicable regulatory
+obligation silently disappear.**
+
+*Current state against this ruling, stated plainly:* today S3 items are
+discretionary and CAN be truncated, and applicability is only recorded on
+surviving items (#926). So the ruling is **not yet satisfied** — it is satisfied
+by #926 (applicability survives) plus the S4/assurance work (assurance
+survives), not by a change to `FLOOR_RULE_IDS`. **No broad S3 change is forced
+into P4**: P4 does not violate its own acceptance criteria without it.
+
+### Ruling 3 — #926 gets slot 20261065
+
+Reserved above. Not implemented in P4.
+
+### The target model this protects
+
+```
+APPLICABILITY -> ASSURANCE ALREADY AVAILABLE -> ASSURANCE GAPS ->
+QUESTION / EVIDENCE COMPOSITION -> FOLLOW-UPS -> HUMAN DECISION ->
+MONITORING / REASSESSMENT
+```
+
+Question count is an **output/constraint** of this process, never the
+authoritative definition of assessment sufficiency.
 
 ## I. Blocking issues
 

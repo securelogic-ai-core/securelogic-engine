@@ -658,6 +658,101 @@ const s5RuleIds = (r: ReturnType<typeof resolveEngagementScope>) =>
   new Set(r.items.flatMap((i) => i.reasons.filter((x) => x.rule_family === "S5").map((x) => x.rule_id)));
 const domainsOf = (r: ReturnType<typeof resolveEngagementScope>) => new Set(r.items.map((i) => i.domain));
 
+// ═══════════════════════════════════════════════════════════════════════════
+// VA-Q2 P4 — S2 triggers that read NON-CORE facts
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("VA-Q2 P4 — S2 reads facts", () => {
+  const FACT_CORPUS: ScopableRequirement[] = [
+    ...DOMAIN_CORPUS,
+    req("xborder-1", ["cross-border"]),
+    req("provider-1", ["model-provider"]),
+  ];
+
+  const withFact = (key: string, value: unknown, over: Partial<ScopeResolverInput> = {}) =>
+    resolveEngagementScope(
+      base({
+        tier: "tier_1_critical", // `*` baseline: nothing is excluded for tag reasons
+        requirements: FACT_CORPUS,
+        facts: resolveFacts([...factsFromInherent(benign), fact(key as never, value as never)]),
+        ...over,
+      })
+    );
+
+  const reasonIds = (r: ReturnType<typeof resolveEngagementScope>, id: string) =>
+    r.items.find((i) => i.requirement_id === id)?.reasons.map((x) => x.rule_id) ?? [];
+
+  it("S2.ai_prompts fires on ai.customer_data_in_prompts and reaches privacy AND AI tags", () => {
+    const r = withFact("ai.customer_data_in_prompts", true);
+    expect(reasonIds(r, "privacy-1")).toContain("S2.ai_prompts");
+    expect(reasonIds(r, "ai-1")).toContain("S2.ai_prompts");
+    expect(reasonIds(r, "provider-1")).toContain("S2.ai_prompts");
+    // Recorded as an S2 rule, not smuggled in as S5.
+    const reason = r.items
+      .flatMap((i) => i.reasons)
+      .find((x) => x.rule_id === "S2.ai_prompts");
+    expect(reason!.rule_family).toBe("S2");
+  });
+
+  it("S2.cross_border fires on data.cross_border", () => {
+    const r = withFact("data.cross_border", true);
+    expect(reasonIds(r, "xborder-1")).toContain("S2.cross_border");
+    expect(reasonIds(r, "data-1")).toContain("S2.cross_border");
+  });
+
+  it("S2.subprocessors fires on nth.subprocessors_declared", () => {
+    const r = withFact("nth.subprocessors_declared", true);
+    expect(reasonIds(r, "supply-1")).toContain("S2.subprocessors");
+    expect(reasonIds(r, "sub-1")).toContain("S2.subprocessors");
+  });
+
+  it("a false fact does not fire the trigger", () => {
+    const r = withFact("data.cross_border", false);
+    expect(reasonIds(r, "xborder-1")).not.toContain("S2.cross_border");
+  });
+
+  it("an ABSENT fact does not fire the trigger", () => {
+    const r = resolveEngagementScope(
+      base({ tier: "tier_1_critical", requirements: FACT_CORPUS })
+    );
+    for (const id of ["S2.ai_prompts", "S2.cross_border", "S2.subprocessors"]) {
+      expect(r.items.flatMap((i) => i.reasons).some((x) => x.rule_id === id)).toBe(false);
+    }
+  });
+
+  it("reads ONLY accepted rows — a proposed fact is not a fact", () => {
+    // Inherited from resolveFacts rather than re-implemented; asserted so the
+    // inheritance cannot be quietly broken.
+    const proposed = resolveFacts([
+      ...factsFromInherent(benign),
+      { fact_key: "data.cross_border", value: true, source: "intake", origin: "intake", status: "proposed" } as never,
+    ]);
+    const r = resolveEngagementScope(
+      base({ tier: "tier_1_critical", requirements: FACT_CORPUS, facts: proposed })
+    );
+    expect(reasonIds(r, "xborder-1")).not.toContain("S2.cross_border");
+  });
+
+  it("does NOT fire under 1.0.0 — pre-Q2 engagements cannot move", () => {
+    const r = resolveEngagementScope({
+      ...base({
+        tier: "tier_1_critical",
+        requirements: FACT_CORPUS,
+        facts: resolveFacts([...factsFromInherent(benign), fact("data.cross_border", true)]),
+      }),
+      scopeRuleVersion: "1.0.0",
+    });
+    expect(r.items.flatMap((i) => i.reasons).some((x) => x.rule_id === "S2.cross_border")).toBe(false);
+  });
+
+  it("the domain an S2-fact requirement is asked under still comes from its TAGS", () => {
+    const r = withFact("ai.customer_data_in_prompts", true);
+    // privacy-1 carries `privacy`; provider-1 carries `model-provider` (an AI tag).
+    expect(r.items.find((i) => i.requirement_id === "privacy-1")!.domain).toBe("privacy");
+    expect(r.items.find((i) => i.requirement_id === "provider-1")!.domain).toBe("ai");
+  });
+});
+
 describe("VA-Q2 — directive example 1: LLM + customer PII", () => {
   const facts = resolveFacts([
     ...factsFromInherent(benign),

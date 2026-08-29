@@ -114,6 +114,62 @@ question, which is merely annoying.
   counted in `composition.mandatory` (the #924 interaction).
 - Equivalence: with no assurance data, output is byte-identical to today.
 
+## 5b. ADR-0012 dependency analysis (owner-required, 2026-08-29)
+
+ADR-0012 was **ratified and never built** — migrations 20261051–55 were
+authorized and the ledger jumps `20261049` → `20261059`. So the question is not
+"does S4 use ADR-0012" but **"which ADR-0012 capabilities must exist before
+assurance-based question reduction is DEFENSIBLE?"**
+
+The test is a single sentence: **we must be able to reconstruct, later, why a
+question was not asked.** A depth reduction is a decision not to ask; if the
+basis for it cannot be reproduced, the assessment cannot be defended to an
+auditor, a customer, or a court.
+
+| Must be reconstructible | Available without ADR-0012? | Verdict |
+|---|---|---|
+| **Evidence used** | Yes — the document/extraction/mapping rows are addressable by id | Sufficient IF the ids are recorded at decision time |
+| **Evidence version** | **NO.** Extractions and `field_overrides` are mutable; a re-review changes `currentValue()` with no history | **REQUIRED** |
+| **Evidence review/acceptance** | Partly — `review_decisions` carries `decided_by_user_id` and `decided_at` per field, but nothing pins WHICH decision was current when S4 ran | **REQUIRED** (snapshot of the accepted state) |
+| **Requirement/control mapping used** | Partly — `cuec_control_mappings` and `control_mappings` are mutable and carry no history. A mapping accepted today and revoked tomorrow leaves no trace that it justified a reduction | **REQUIRED** |
+| **Assessment/scope version** | Yes — `scope_rule_version` is stamped on the engagement | Sufficient |
+| **Reason depth was reduced** | Yes — S4 writes a `reasons` entry on the item | Sufficient, IF the rationale names the document and mapping rather than saying "covered by assurance" |
+| **Reviewer identity** | Partly — available on `review_decisions`, not pinned to the S4 decision | **REQUIRED** (as part of the snapshot) |
+| **Timestamp** | Yes — the resolve time is recoverable | Sufficient |
+| **Contradictory findings/exceptions present at decision time** | **NO.** Findings open and close; a finding that existed when S4 ran and was closed since is invisible afterwards | **REQUIRED** |
+
+### Conclusion
+
+**Four of the nine are not reconstructible today, and they are the four that
+matter most** — evidence version, the accepted state, the mapping used, and the
+contradictions present at the time. Every one of them is mutable state that S4
+reads and nothing preserves.
+
+What S4 needs is precisely ADR-0012's **decision-basis snapshot**: an immutable
+record, written at the moment of the reduction, of the evidence version, the
+accepted review state, the mapping ids, the reviewer, and the contradiction set
+as it stood. Not the whole of ADR-0012 — the immutable *history* of every
+evidence object is a larger promise than S4 requires.
+
+### The ruling this implies
+
+**S4 must not be production-enabled before a decision-basis snapshot exists.**
+It could be built and validated first — the predicate and its dry run need no
+snapshot — but flipping it on in production without one would create depth
+reductions nobody can later justify, which is a worse failure than asking a
+redundant question.
+
+Recommended sequencing:
+
+1. validate the predicate (§3) — no ADR-0012 dependency;
+2. build the ADR-0012 decision-basis snapshot **subset** listed above, under its
+   own authorization;
+3. then wire S4, writing a snapshot with every reduction;
+4. only then consider production enablement.
+
+**Do not build ADR-0012 now** — it is not authorized, and this section exists to
+record the dependency, not to start it.
+
 ## 6. Sequencing
 
 **After VA-Q2 P4, not inside it.** P4's acceptance criteria — S2-from-facts
