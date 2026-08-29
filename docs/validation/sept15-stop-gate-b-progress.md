@@ -24,8 +24,8 @@ This document exists so the near-complete state cannot be mistaken for a pass.
 |---|---|---|
 | B.1 | Full adversarial suite — all nine classes | **PASS** — 9 of 9, 70 cases |
 | B.2 | Static invariant: no portal route reads a caller-supplied identifier | **PASS** — now enforced by test, not by reading |
-| B.3 | Independent security review of the portal surface | **NOT SATISFIABLE HERE** |
-| B.4 | A real external tester completes an engagement on staging | **NOT SATISFIABLE HERE** |
+| B.3 | Independent security review of the portal surface | **NOT SATISFIABLE HERE** — reviewer brief: [`sept15-b3-security-review-package.md`](sept15-b3-security-review-package.md) |
+| B.4 | A real external tester completes an engagement on staging | **NOT SATISFIABLE HERE** — tester brief: [`sept15-b4-external-tester-package.md`](sept15-b4-external-tester-package.md) |
 | B.5 | Rate limiting holds with Redis stopped | **PASS** — DB-backed by design |
 | B.6 | Kill switch 404s every route and invalidates live sessions | **PASS** — re-verified across all eleven |
 | B.7 | Every portal action in `audit_log` with its invite and engagement | **PASS** — all eleven routes |
