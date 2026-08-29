@@ -1,7 +1,9 @@
 # VA-S4 — wiring `S4.assurance`: implementation plan
 
-**Status:** PLAN ONLY. Not authorized for implementation, and deliberately NOT
-scheduled inside VA-Q2 P4 — P4's acceptance criteria do not require it.
+**Status:** PLAN ONLY. Not authorized for implementation.
+**Predicate validated read-only against staging 2026-08-29 — result: DEAD.**
+Four owner rulings incorporated 2026-08-29 (§2a). VA-Q2 P4 is complete and
+staging verified; S4 remains deliberately outside it.
 **Prerequisite reading:** `docs/design/VA-EVIDENCE-architecture-reconciliation.md`.
 
 ## 1. What is being wired, and what is not
@@ -71,6 +73,204 @@ Any clause failing → not covered → the question is asked at full depth. **Fa
 closed, always**: the failure mode of a wrong "covered" is an unasked question,
 which is invisible; the failure mode of a wrong "not covered" is a redundant
 question, which is merely annoying.
+
+## 2a. OWNER RULINGS, 2026-08-29 — the eligibility semantics, settled
+
+These four rulings replace the corresponding open questions in §2. Where a
+ruling and the §2 table disagree, the ruling governs.
+
+### Ruling 1 — SecureLogic owns the canonical crosswalk
+
+The control ↔ requirement crosswalk is **governed, versioned SecureLogic
+reference content**, not per-customer accident. Initial framework priority:
+
+1. NIST CSF · 2. SOC 2 · 3. GDPR · 4. CCPA/CPRA · 5. NIST AI RMF
+
+It must carry **provenance and version identity**. **AI may PROPOSE candidate
+mappings; it may not PUBLISH authoritative canonical mappings** without the
+governed approval path — the same boundary `vendor_assurance_cuec_control_mappings`
+already draws with `mapping_status` (`suggested` → accepted) and `mapping_source`
+(`auto` | `manual`).
+
+*Current state against this ruling.* `control_mappings` is
+`(id, control_id, requirement_id, created_at)`. **No `organization_id`, no
+provenance, no version, no source, no approval state**, and `frameworks.ts`
+hard-`DELETE`s rows when a framework is deleted. It cannot satisfy the ruling as
+it stands; it needs augmenting, not replacing.
+
+### Ruling 2 — customer mappings augment, never narrow
+
+Customers may **strengthen** requirements, mappings, evidence expectations,
+assessment depth and regulatory applicability. They may **not** silently narrow
+or overwrite the SecureLogic canonical baseline.
+
+A customer wishing to exclude a SecureLogic-applicable requirement must use an
+explicit **governed exception / risk-acceptance** mechanism — not the removal of
+a canonical mapping. This is the same principle VA-Q2 already enforces for
+vendor-sourced facts ("a vendor answer widens, never narrows"), applied one
+layer up, and it means the canonical baseline and the customer layer must remain
+**separately identifiable at read time** rather than merged on write.
+
+### Ruling 3 — evidence validity is type- and policy-driven
+
+**No universal TTL, and validity is never based on `uploaded_at` alone.**
+Validity must respect what the artifact actually asserts:
+
+| Evidence type | What determines validity |
+|---|---|
+| SOC / independent assurance report | coverage period, plus bridge-letter considerations |
+| Penetration test | test date / testing period and age |
+| Certification (ISO etc.) | certificate validity term |
+| Policy | approval + review cadence |
+| Technical / configuration evidence | observation age |
+| Vendor attestation | assessment / reassessment cycle |
+| Contractual evidence | effective term |
+
+SecureLogic provides **default guardrails by evidence type**; customer policy may
+tighten or adjust within governed bounds.
+
+**This package does NOT choose production default durations.** They are proposed
+separately for owner ratification — picking numbers here would make an unratified
+policy look like an implementation detail.
+
+*Reuse before invention.* The model **already does exactly this shape** and has
+no universal expiry anywhere: `controls.testing_frequency + last_tested_at +
+next_test_due`, `pen_test_engagements.next_test_due`, `policies.review_frequency
++ last_reviewed_at + next_review_at`, `risks.next_review_due`,
+`retention_policies.effective_from`. The idiom is
+`<frequency> + <last event> → <next due>`, per object class. Validity policy
+should follow it rather than introduce a competing concept; only
+`evidence.valid_from` / `valid_until` (what the artifact ASSERTS, snapshotted at
+promotion — ADR-0012 §3) is new persistence.
+
+### Ruling 4 — a qualified opinion is not automatically unusable
+
+A qualified independent-assurance opinion **may** contribute coverage for a
+mapped control — but only when the qualification or exception is **demonstrably
+unrelated** to that control and the remaining evidence is sufficient.
+
+**If that separation cannot be established, FAIL CLOSED**: the evidence does not
+suppress the questionnaire requirement.
+
+**AI alone may not determine that an exception is unrelated.** That is a
+governed human judgement, and the same boundary that keeps `ai_extraction` facts
+`proposed` until a human accepts applies here.
+
+*Why this ruling has teeth.* All five staging extractions read:
+
+> `"Unqualified opinion, except for the specific deviations and exception described in Section IV"`
+
+A `LIKE '%Unqualified%'` test returns **TRUE** on that. It is a qualified
+opinion, and under this ruling it can only contribute coverage for controls the
+Section IV exceptions demonstrably do not touch — a determination nothing in the
+current model can make, because the structured `exceptions` array is **empty in
+all five extractions** while the narrative cites them.
+
+---
+
+## 2b. Reconciliation findings — why S4 is DEAD, exactly
+
+Measured read-only against staging 2026-08-29 (`job-da9hs7ijnfac73dub8gg` and
+follow-ups). No staging data was modified.
+
+### The chain, hop by hop
+
+```
+applicable requirement → canonical control mapping → CUEC-reachable control
+  → evidence → evidence validity → assurance eligibility → assurance gap
+  → questionnaire composition
+```
+
+It dies at hop 2, in **two independent ways**:
+
+1. **Cross-tenant.** The 5 CUEC-reachable controls belong to org `fe2ede61`
+   (Staging Inc). All 3 `control_mappings` rows belong to org `295b989a`
+   (Walkthrough) and map manual controls to NIST CSF requirements. A correctly
+   org-scoped predicate could never join them — and should never.
+2. **Population.** `cuec_controls_have_any_mapping = 0`. Not one CUEC-reachable
+   control has ANY mapping of any kind. All 14 controls are manual
+   (`template_source` NULL on every one) and `synthetic_requirements = 0`, so
+   the industry templates that would create control→requirement links have never
+   been loaded on this environment.
+
+So the chain reads `applicable requirement → ∅ → CUEC → evidence`.
+
+### Corpus measurements
+
+| Measure | Value |
+|---|---|
+| Requirements (all orgs) | 197 |
+| VA documents | 57 — `extraction_failed` 52, `extracted` 3, `approved` 2 |
+| Documents `finalized` | **0** |
+| Extractions | 5 |
+| **Human review decisions** | **0** |
+| Field overrides | 0 |
+| CUEC→control mappings | `accepted/auto` 3, `suggested/auto` 7 |
+| `control_mappings` | 3 rows / 3 controls / 3 requirements |
+| **CUEC-reachable controls WITH any mapping** | **0** |
+| Evidence rows | 17 — 12 with `sha256`, 2 with `collected_at`, **1** with a requirement link |
+| `evidence_analysis` | 2 rows, both `unreadable` |
+
+### Four independent predicate failures
+
+Any one of them is fatal on its own:
+
+1. the mapping hop is empty (above);
+2. **nobody has accepted anything** — `review_decisions` and `field_overrides`
+   are empty corpus-wide, so the "approved, not raw extraction output" clause has
+   zero satisfying rows;
+3. **§2 clause 1 was wrong** — it gates on `processing_status='finalized'`, and
+   the real vocabulary is `pending | extracting | extracted | extraction_failed |
+   finalized | approved | manual_review_requested | rejected`. **Zero** documents
+   are `finalized`; the terminal states in use are `approved` and `extracted`;
+4. the opinion trap of Ruling 4.
+
+### Are the rulings sufficient to make S4 viable?
+
+**No — one genuine architectural dependency remains beyond them.** Rulings 1–4
+settle the *semantics*. They do not create the *canonical crosswalk content*,
+and without it hop 2 stays empty however correct the predicate is. That content
+is the blocking dependency, and it is a curation/ownership question, not an
+engineering one.
+
+Everything else the chain needs already exists as canonical objects: `evidence`
+(with `sha256`, `engagement_id`, `requirement_id`), the SOC 1/2 document chain,
+CUEC→control mappings, `controls`, `requirements`, `findings`, and — since
+2026-08-29 — `engagement_applicability` (#926) for the applicability half.
+
+**There is no second control model and none is needed.** CUEC mappings and
+`control_mappings` already reference the same `controls` table by foreign key.
+The gap is population plus governance metadata on one existing table.
+
+---
+
+## 2c. The missing assurance state — "evidence not expected"
+
+Six states must eventually be distinguishable. Mapped against canonical
+semantics **before** proposing anything new:
+
+| State | Canonical representation today | Verdict |
+|---|---|---|
+| Evidence **supplied and acceptable** | `evidence` row + `reviewed_at`; `evidence_analysis.verdict='supports'` (advisory) | **EXISTS** |
+| Evidence **supplied but insufficient** | `evidence_analysis.verdict='insufficient'` + reviewer note | **EXISTS** (advisory; no rule consumes it) |
+| Evidence **contradictory** | `evidence_analysis.verdict='contradicts'` | **EXISTS** (advisory) |
+| Evidence **stale** | SOC coverage period via extraction fields only | **PARTIAL** — assurance reports only; unrepresentable for generic evidence until `evidence.valid_until` exists |
+| Evidence **expected but unavailable** | — | **MISSING** as a positive state; today it is silence |
+| Evidence **not expected for this risk profile** | — | **MISSING**; today indistinguishable from omission |
+
+**Recommendation: do NOT build an evidence state machine.** Four of the six
+already exist or are one column away, and the two genuinely missing ones are the
+same concept — **EXPECTATION** — which is a property of
+`(requirement × tier × evidence_type)`, not of an evidence row. An evidence
+record cannot describe evidence that does not exist.
+
+Expectation belongs in a **subsequent assurance-policy increment**, not in S4.
+S4 answers "is this requirement covered?"; expectation answers "was cover even
+required here?" — and conflating them would put a policy question inside a
+predicate. S4 can ship without it and degrade honestly to "covered / not
+covered".
+
+---
 
 ## 3. Validation before coding (the first task, not a footnote)
 
@@ -170,16 +370,71 @@ Recommended sequencing:
 **Do not build ADR-0012 now** — it is not authorized, and this section exists to
 record the dependency, not to start it.
 
-## 6. Sequencing
+## 6. #920 reconciliation — one curation mechanism, not two
 
-**After VA-Q2 P4, not inside it.** P4's acceptance criteria — S2-from-facts
-triggers, reassessment E2E, AI-authority E2E, equivalence script — do not
-require S4, and inserting it would put a new deterministic input into the
-resolver in the middle of the package that proves the resolver's current inputs.
+**#920 (SOC 2 / NIST CSF scope-tag re-curation) must NOT proceed as a separate
+curation effort.** Owner ruling 1 makes SecureLogic the owner of governed,
+versioned reference content, and #920 is reference-data curation over two of the
+five priority frameworks. Running it independently would create a second
+curation mechanism competing with the canonical crosswalk — different
+provenance, different versioning, different approval path, for the same corpus.
 
-It also interacts with #925: if evidence can satisfy a domain, "activated domain
-with zero questions" becomes a legitimate state rather than starvation — so the
-starvation ruling is better made after this plan is validated, not before.
+They are **different axes of the same content**, and they should share one
+governance spine:
+
+| | #920 | Canonical crosswalk |
+|---|---|---|
+| Axis | requirement → `scope_tags` (which domain/rules reach it) | control → requirement (what evidences it) |
+| Governs | applicability | assurance |
+| Today | `scope_tags_source` ∈ `curated` / `heuristic` / `uncurated` — provenance **already exists** (VA-Q2 P3.1, 20261064) | `control_mappings` — **no provenance at all** |
+
+Note the asymmetry: **the tagging axis already has the governance the mapping
+axis lacks.** `scope_tags_source` is exactly the provenance concept Ruling 1
+demands, already shipped and staging-verified. The crosswalk package should
+adopt that pattern rather than invent a parallel one, and #920 should be folded
+in as the tagging half of the first reference-content package — same frameworks,
+same version identity, same approval path, one review pass over one corpus.
+
+**#920's own regression requirement stands unchanged**: re-tagging changes what
+existing questionnaires ask on re-resolve, so the diff analysis it already
+specifies is still owed, whichever package carries it.
+
+## 7. Smallest dependency-ordered sequence to make S4 LIVE
+
+Eight steps. The ordering is a real dependency chain, not a preference: nothing
+after step 1 can be demonstrated without step 1.
+
+| # | Package | Depends on | Migration | Notes |
+|---|---|---|---|---|
+| 1 | **Canonical crosswalk + reference content** (absorbs #920) — provenance, version identity, approval state on `control_mappings`; SecureLogic baseline for NIST CSF, SOC 2, GDPR, CCPA/CPRA, NIST AI RMF; customer layer separately identifiable (Ruling 2) | — | yes | **THE blocker.** Until CUEC-reachable controls have canonical mappings, every later step is unobservable |
+| 2 | **ADR-0012 subset** — `evidence.valid_from/valid_until` + version chain (20261051), `evidence_links` with per-use confirmation (20261052–53), `evidence_lifecycle_events` (20261054) | — | yes (reserved) | Only the subset S4 needs; the full lifecycle is larger than S4 requires |
+| 3 | **Evidence-validity policy** — type/purpose guardrails, customer tightening within bounds (Ruling 3) | 2 | maybe | **Default durations proposed separately for ratification, not chosen here** |
+| 4 | **Auditor-opinion normalisation** — `unmodified / qualified / adverse / disclaimer / not_evaluated`, human-accepted, free text retained beside it (Ruling 4) | — | yes | Genuinely new: no equivalent vocabulary exists in the model |
+| 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,4 | no | One module, one call-site change |
+| 6 | **Adversarial / security tests** — cross-tenant coverage leakage, forged mapping, expired-at-decision-time, qualified-opinion fail-closed, AI-proposed mapping cannot publish, partial coverage does not reduce | 5 | no | Fail-closed is the assertion, not an aspiration |
+| 7 | **Staging acceptance** on the exact merged SHA | 6 | no | Must show a REAL reduction, not a vacuous pass |
+| 8 | **#925 reassessment** — re-measure Privacy 17/17, AI 16/16, Nth-party 2/2 against live assurance | 7 | no | The ruling becomes decidable only here |
+
+### What can run in parallel
+
+- **1, 2 and 4 are independent of each other** and can run concurrently — they
+  touch different tables (`control_mappings`, `evidence`/`evidence_links`,
+  extraction fields) and share no schema slot. This is the only meaningful
+  parallelism available, and it is worth taking: step 1 is the long pole because
+  it is curation work, so 2 and 4 should run alongside it rather than after.
+- **3 depends on 2** (there is nothing to apply a validity policy to until the
+  columns exist) but its *ratification* — the default durations — can be decided
+  in parallel with everything.
+- **5 depends on all of 1–4** and cannot start early. Wiring S4 against a
+  partial chain would produce a predicate that passes vacuously, which is worse
+  than one that fails: a vacuous pass reads as "no reduction was warranted".
+- **6, 7, 8 are strictly serial** after 5.
+
+### Gate before step 5
+
+Re-run the read-only validation of §3. If it still reports zero eligible
+requirements, **stop** — S4 would ship dead a second time, and the cause will be
+step 1's population rather than the predicate.
 
 ## Related
 
