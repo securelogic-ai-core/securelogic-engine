@@ -770,6 +770,65 @@ data and AI now receives a questionnaire with no security questions in it, and
 whether the security baseline should be cap-exempt is a product decision.
 Tiers 1–3 are unaffected (the same facts at `tier_2_high` truncated nothing).
 
+### #922 — the security baseline as a protected assessment floor — STAGING VERIFIED 2026-08-29 (`876bdcd80fe64824cb2c90f14bcd86f937c254ed`, 42/42)
+
+Owner ruling: the SecureLogic security baseline is a protected assessment floor
+and may not disappear because Privacy, AI, Nth Party or other questions sort
+ahead of it. Fixed in **PR #924** (`f83efb1d`, merged as `876bdcd8`), no schema
+change. Instrument:
+`scripts/validation/va-q2-922-floor-staging-acceptance.mjs`
+(`job-da9enjqjnfac73dl3ph0`).
+
+**Root cause.** All four rule families pass `mandatory: true` to `include()`, so
+that sort key was inert and DEPTH decided. `S5.security.baseline` asks at
+`attest` (sorted last); the domain rules ask at `full` (sorted first). 22
+full-depth items displaced every security item inside the tier-4 target of 15.
+
+**Fix.** `FLOOR_RULE_IDS = {S1.baseline, S5.security.baseline}` — what
+SecureLogic asks because of the TIER, not because a risk fact triggered it. The
+floor is satisfied first and never truncated; discretionary items (S2, S3,
+non-security S5) take the room that remains. `cap` becomes a NOMINAL TARGET and
+`composition` reports the arithmetic. **1.0.0 is deliberately unchanged** — two
+of the 21 frozen goldens truncate and the golden test compares the whole object,
+so the floor rule and the `composition` key are gated to corpus >= 1.1.0 exactly
+as `domain` is. The defect cannot arise under 1.0.0 (no S5, nothing to crowd
+security out).
+
+**Live result — every tier_4_low domain combination, security baseline 36 items
+where it was previously 0:**
+
+| Case (tier_4_low) | security items | composition | truncated |
+|---|---|---|---|
+| Security only | 36 | target 15, mandatory 36, discretionary 0, total 36, overage 21 | cap 15, 4 dropped |
+| + Privacy | 36 | identical | cap 15, 21 dropped |
+| + AI | 36 | identical | cap 15, 4 dropped |
+| + Privacy + AI | 36 | identical | cap 15, 21 dropped |
+| + Nth Party | 36 | identical | cap 15, 6 dropped |
+| + Privacy + AI + Nth Party | 36 | identical | cap 15, 23 dropped |
+| **contrast: tier_2_high, all four** | 37 | target 120, mandatory 44, discretionary 19, total 63, overage 0 | null |
+
+Also proven live: the floor exceeds the nominal target in all six tier-4 cases
+and is preserved whole with the overage recorded (36 kept against a target of
+15, overage 21); no floor item is ever named in `dropped_requirement_ids`; the
+stored scope equals what `composition` reported; and `composition` is emitted
+even when nothing is dropped.
+
+**Two findings preserved rather than absorbed into #924, both observed live:**
+
+- **#925 — activated-domain starvation.** 6 of 6 tier-4 cases activated a
+  discretionary domain that received ZERO items, because the tier-4 floor (36
+  `core` requirements) already exceeds the target of 15, leaving a discretionary
+  budget of 0. Reachable for privacy, AI, nth-party, resilience **and
+  compliance** — S3 obligations are discretionary today. Ruling owed AFTER the
+  evidence reconciliation: if evidence can satisfy a domain, zero questions may
+  be the right answer rather than starvation.
+- **#926 — applicability provenance lost by truncation.** A rule whose every
+  item is dropped leaves no trace in the stored scope items; activation survives
+  only in the transient `POST /scope` `truncated.dropped_requirement_ids`, which
+  is not an authoritative record of applicability. The correction is to separate
+  APPLICABILITY from QUESTIONNAIRE COMPOSITION with an activation record written
+  at resolve time. Needs a schema slot; NOT part of P4.
+
 ## I. Blocking issues
 
 - **None owner-level.** D1 and D2 are ruled (§J). P3 waits only on P2's
