@@ -63,7 +63,8 @@ import {
   computeVendorInherentRisk,
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
-import { resolveEngagementScope } from "../lib/vendorRisk/scopeResolver.js";
+import { resolveEngagementScopeWithApplicability } from "../lib/vendorRisk/scopeResolver.js";
+import { recordApplicability } from "../lib/vendorRisk/applicabilityStore.js";
 import { summarizeDomains } from "../lib/vendorRisk/requirementDomain.js";
 import { resolveFacts } from "../lib/vendorRisk/factResolver.js";
 import {
@@ -762,7 +763,7 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
     await mirrorSubjectFacts(pg, organizationId, subject, inherent);
     const factRows = await loadFactRows(pg, organizationId, subject, { statuses: ["accepted"] });
 
-    const resolution = resolveEngagementScope({
+    const { resolution, applicability } = resolveEngagementScopeWithApplicability({
       tier: row.assessment_tier as never,
       inherent,
       facts: resolveFacts(factRows),
@@ -819,6 +820,17 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
         ]
       );
     }
+
+    // #926: record WHAT APPLIED, independently of what composition kept. This
+    // is written from `applicability`, which the resolver collected BEFORE
+    // truncation — a rule whose every item was dropped is recorded here and
+    // nowhere else. Idempotent by unique key, so a repeat resolve inserts 0.
+    await recordApplicability(pg, {
+      organizationId,
+      engagementId: id,
+      scopeRuleVersion: resolution.scope_rule_version,
+      records: applicability,
+    });
 
     await pg.query(
       `UPDATE vendor_engagements
