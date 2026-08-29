@@ -24,7 +24,7 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
-import { deriveScopeTags } from "../lib/vendorRisk/requirementScopeTags.js";
+import { resolveScopeTags } from "../lib/vendorRisk/curatedFrameworkTags.js";
 
 const router = Router();
 
@@ -99,12 +99,18 @@ router.post(
         const placeholders: string[] = [];
 
         for (const req of template.requirements) {
-          // VA-6: tag at instantiation, same heuristic + same 'heuristic'
-          // stamp as the 20260926 backfill. Before this, a freshly activated
+          // VA-6: tag at instantiation. Before this, a freshly activated
           // framework landed with scope_tags='{}' and was invisible to every
           // tier-2/3/4 vendor questionnaire until someone re-ran a backfill
           // that only ever runs once.
-          const derived = deriveScopeTags({
+          //
+          // The template KEY is passed, which is what lets a curated framework
+          // be born curated instead of heuristic. Without it, activating
+          // nist_ai_rmf produced four `core` rows and an empty AI question set.
+          // A template with no curation still resolves — to 'heuristic' where a
+          // pattern matched, and to 'uncurated' where nothing did.
+          const resolved = resolveScopeTags({
+            templateKey,
             reference_id: req.reference_id,
             title: req.title,
           });
@@ -114,10 +120,11 @@ router.post(
             req.reference_id,
             req.title,
             req.description ?? null,
-            derived.tags
+            resolved.tags,
+            resolved.source
           );
           placeholders.push(
-            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, 'heuristic', NOW())`
+            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, NOW())`
           );
         }
 

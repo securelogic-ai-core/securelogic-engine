@@ -196,7 +196,7 @@ describe("tenant isolation — the framework join is the boundary", () => {
 });
 
 describe("framework activation tags at instantiation", () => {
-  it("an activated template lands with heuristic tags, not empty arrays", async () => {
+  it("an activated template lands with tags, not empty arrays, honestly stamped", async () => {
     const res = await request(app)
       .post("/api/frameworks/activate")
       .set("X-Api-Key", seed.orgB.apiKey)
@@ -216,7 +216,17 @@ describe("framework activation tags at instantiation", () => {
     expect(rows.rows.length).toBeGreaterThan(0);
     for (const row of rows.rows) {
       expect(row.scope_tags.length).toBeGreaterThan(0);
-      expect(row.scope_tags_source).toBe("heuristic");
+      // SOC 2 carries no curated reference data, so every row is either a
+      // genuine pattern match or the `core` fallback. The fallback rows are
+      // stamped 'uncurated' rather than claiming a heuristic decided them —
+      // several SOC 2 titles ("COSO Principle 1: Demonstrates commitment to
+      // integrity and ethical values") match no pattern at all.
+      expect(["heuristic", "uncurated"]).toContain(row.scope_tags_source);
+      expect(row.scope_tags_source).not.toBe("curated");
+    }
+    expect(rows.rows.some((r) => r.scope_tags_source === "uncurated")).toBe(true);
+    for (const row of rows.rows.filter((r) => r.scope_tags_source === "uncurated")) {
+      expect(row.scope_tags).toEqual(["core"]);
     }
   });
 });

@@ -134,7 +134,7 @@ repeat this check on the day they create the file.**
 |---|---|---|---|
 | `20261062` | `scope_item_domain.sql` — `vendor_engagement_scope_items.domain TEXT NULL CHECK (domain IN (…six…))`; partial index `(engagement_id, domain)` | P2 | additive column |
 | `20261063` | `assessment_facts.sql` — the canonical polymorphic fact store (D1 Option B: closed `subject_type` allowlist, subject-check trigger, RLS, `SELECT/INSERT/UPDATE` grants, classification) | P3 | new table — **UNBLOCKED** |
-| `20261064` | held in reserve for Q2 defect follow-ups; released to Q3 if unused | — | — |
+| `20261064` | `scope_tags_source_uncurated.sql` — widens the `requirements.scope_tags_source` CHECK to `('heuristic','curated','uncurated')` | P3.1 (corpus curation defect) | CHECK widened — **RELEASED FROM RESERVE 2026-08-29**, which is exactly what the reserve was held for. Ledger re-checked the day the file was created: `db/migrations` topped at `20261063`, no remote branch and no commit on any branch claimed `2026106[4-9]`. Q2 now uses three of Q0 §16's budgeted slots; P4 needs none |
 
 Q0 §16 budgeted `+1` for Q2; this plan uses two so P2 (column) and P3 (table)
 stay separately reviewable and separately rollback-able. Rollback:
@@ -438,6 +438,93 @@ values may describe data subjects/jurisdictions, never a person); grants lint
 functions table-driven; `factSubjects.test.ts`; canonical `value_hash` stable
 across key order.
 
+### P3.1 — Curated framework scope tags (corpus-curation defect fix) (slot 20261064) — **size S — IMPLEMENTED + TESTED 2026-08-29** (branch `fix/va-q2-curated-framework-tags`, off `develop` @ `038c43bc`; rollback `docs/release/ROLLBACK-20261064.sql`)
+
+**Not in the original plan.** P3's staging run recorded that example 1 was
+blocked on "curation, not code". Curating the corpus surfaced a **product
+defect** in the layer that assigns tags, so the curation could not be done as a
+staging data operation without shipping the same wrong questionnaire to every
+customer.
+
+**The defect, measured.** `deriveScopeTags` is a keyword heuristic written
+against control-style titles ("Access Control Policy", "Cryptographic
+Protection"). Regulatory and AI frameworks do not write titles that way. Against
+the three shipped templates:
+
+| Template | Requirements | Fell back to `core` → asked as SECURITY | Mis-classified |
+|---|---|---|---|
+| NIST AI RMF | 4 | **4 of 4** (GOVERN, MAP, MEASURE, MANAGE) | — |
+| CCPA / CPRA | 8 | 6 of 8 | — |
+| GDPR | 12 | 3 of 12 (Art-6, Art-28, Art-30) | Art-12-14 → `explainability` → **domain `ai`** |
+
+So activating the AI-governance framework produced an **empty AI question set**
+and four extra security questions; a GDPR privacy-notice article was asked as an
+AI question; and 11 of 24 requirements sat in the security domain
+**indistinguishably from requirements a human had deliberately classified as
+security** — because `core` is simultaneously a real classification and the
+fallback value.
+
+**The fix, in four parts.**
+
+1. **`src/api/lib/vendorRisk/curatedFrameworkTags.ts`** — version-controlled
+   reference data keyed by canonical template key + stable `reference_id` (never
+   DB id, framework name string, or row order). Each of the 24 entries carries
+   `tags`, the `domain` the curator intends, and `why`. A test asserts
+   `domainForScopeTags(tags) === domain` for every entry, so a tag edit that
+   moves a requirement between question sets fails CI instead of quietly
+   changing what vendors are asked.
+2. **A third `scope_tags_source` value, `uncurated`** (migration 20261064). The
+   `core` fallback is PRESERVED — `core` is the entire tier-4 baseline and an
+   untagged requirement is invisible to every tier below 1 — but a row nothing
+   classified no longer claims a heuristic decided it. `scopeTagCoverage()`
+   reports `uncurated` alongside `curated`/`heuristic`, and the framework detail
+   page renders it as **"not classified"** rather than "heuristic tags".
+3. **Both write paths resolve through `resolveScopeTags`** — curated → heuristic
+   → uncurated, in that order. `POST /frameworks/activate` passes the template
+   key, so a curated framework is **born curated**; `POST /requirements` passes
+   none, so a custom question is honestly heuristic-or-uncurated.
+4. **`scripts/backfill-curated-framework-tags.ts`** — dry-run by default,
+   `--apply` to write. Curates already-activated rows by canonical
+   `(name, version)` + `reference_id`, then reclassifies remaining fallback rows
+   as `uncurated`. Never overwrites a hand-`curated` row. Idempotent.
+
+**Deliberate security is explicit, not a leftover.** Two entries — GDPR Art-32
+("Security of Processing") and CCPA-8 ("Reasonable Data Security Requirements")
+— ARE the security obligations inside privacy laws and are classified `security`
+on purpose, flagged `deliberate_security: true`. A test asserts those are the
+only two, and that no `security` entry lacks the flag.
+
+**Why the regexes were not simply extended instead.** Adding patterns for
+"Rights of the Data Subject" or "Govern AI Risk" would put a THIRD copy of the
+rules in play (module, 20260926 SQL mirror, new patterns) and would still be a
+guess dressed as a decision. Six of the nine VA-Q0 §5 starred tags are
+`CURATED_ONLY_SCOPE_TAGS` precisely because a title cannot carry their meaning.
+The heuristic keeps its job — a starting set for uncurated corpora — and stops
+being asked to do a curator's.
+
+**Scope held.** The 39 SOC 2 / NIST CSF rows already in the field are NOT
+re-curated here; they are under-tagged in ways that change what existing
+security questionnaires ask on re-resolve, which needs its own regression
+analysis. Recorded as a separate reference-data follow-up: **issue #920**. Those rows do get the honest `uncurated` provenance stamp.
+
+**Content gaps recorded, not papered over.** Three vocabulary tags find no home
+in these templates and were deliberately not forced onto a requirement to look
+used: `cross-border` (the GDPR template has no Chapter V / Art 44–49 transfers
+requirement), and `model-provider` / `explainability` (the NIST AI RMF template
+carries the four top-level functions only, not the subcategories). These are
+template CONTENT gaps.
+
+**Tests.** `src/api/__tests__/curatedFrameworkTags.test.ts` (48 assertions:
+exhaustive both-direction template coverage, intended-domain lockstep, the four
+named regressions, `resolveScopeTags` precedence, unknown-vs-deliberate-security
+distinguishability) and `test/isolation/curatedFrameworkActivation.test.ts`
+(11 against real Postgres: activation writes curated rows and curated domains,
+the AI framework yields four AI questions, security gains exactly the two
+deliberate requirements across all 24, an uncurated template still activates and
+is stamped honestly, re-activation is idempotent, `SCOPE_TAG_SOURCES` equals the
+CHECK list read from `pg_constraint`, and the DB accepts `uncurated` while
+refusing a value outside the set).
+
 ### P4 — Directive golden proof, S2-from-facts, adversarial E2E, staging proof, matrix (no schema) — **size S — UNBLOCKED by D1; starts after P3**
 
 - Domain-aware S2 triggers reading non-core facts (VA-Q0 §6.2 "S2 reads facts"):
@@ -478,7 +565,7 @@ across key order.
 | Vendor-sourced facts never narrow scope (R4) | P1, P3 | `exclude` absent from S5 effects (type-level); precedence test: `vendor_answer` cannot lower a ranked `intake` value; no vendor-answer writer exists in Q2 (grep-asserted in P3's test) — **STAGING VERIFIED 1e3a57c7**: `DomainActivationRule` has no exclude field (shape-asserted); `factResolver.test.ts` widen-only for ranked / bool / list / enum against EVERY internal source; `verifiedOnly` reassessment view may narrow; resolver-level "vendor answer widens, never narrows" |
 | Issued snapshots never shrink or move | P3 | PUT facts after issue → 409; hash unchanged; existing Q1 edit-after-issue golden still green — **P3 TESTED**: `assessmentFacts.test.ts` "vendor attempt to narrow issued scope" (409 `scope_frozen`, `question_set_hash` unchanged, integrity `match`) |
 | Pre-Q2 engagements unchanged | P1, P4 | 1.0.0 golden equivalence (unit) + equivalence script on harness and staging — **STAGING VERIFIED 1e3a57c7**: 21 golden cases byte-identical under `scopeRuleVersion: "1.0.0"` (no `domain`, no S5); malformed stamp never runs S5; route passes the stamped version |
-| Directive examples 1 and 2 | P1 (unit), P4 (E2E) | four distinct S5 rule_ids; ≤ 15 attest items — **P1 TESTED (unit); STAGING PARTIAL 1e3a57c7** — ex. 2 verified live (15 attest, `S1.baseline`+`S5.security.baseline` only); ex. 1 NOT reachable on staging until P3 supplies `data.personal_data`/`ai.*` facts AND the staging corpus gains privacy/AI-tagged requirements (walkthrough org has none) — staging proof owed to P4: ex. 1 → Security+Privacy+AI+Nth, `S5.security.baseline` / `S5.privacy.personal_data` / `S5.ai.declared` / `S5.nth.third_party_models`; ex. 2 → security attest only, ≤ 15, identical to 1.0.0 — **P3 staging run 2026-08-29 (9258b4fe) CONFIRMS the corpus gap and quantifies it:** with `data.personal_data`, `ai.uses_ai`, `ai.third_party_models` all declared `true`, the resolve reached **two** domains with items — `security` 14, `nth_party` 1 — and `privacy` 0 / `ai` 0. `S5.privacy.personal_data` and `S5.ai.declared` DID activate and matched zero requirements: the walkthrough org's own frameworks carry only `core` 34, `business-continuity` 2, `access-control` 1, `incident-response` 1, `resilience` 1, `supply-chain` 1 — no privacy tag and no AI tag anywhere. So example 1 is blocked on CURATION, not on code, and P4's staging proof cannot pass until the corpus gains privacy/AI-tagged requirements. |
+| Directive examples 1 and 2 | P1 (unit), P4 (E2E) | four distinct S5 rule_ids; ≤ 15 attest items — **P1 TESTED (unit); STAGING PARTIAL 1e3a57c7** — ex. 2 verified live (15 attest, `S1.baseline`+`S5.security.baseline` only); ex. 1 NOT reachable on staging until P3 supplies `data.personal_data`/`ai.*` facts AND the staging corpus gains privacy/AI-tagged requirements (walkthrough org has none) — staging proof owed to P4: ex. 1 → Security+Privacy+AI+Nth, `S5.security.baseline` / `S5.privacy.personal_data` / `S5.ai.declared` / `S5.nth.third_party_models`; ex. 2 → security attest only, ≤ 15, identical to 1.0.0 — **P3 staging run 2026-08-29 (9258b4fe) CONFIRMS the corpus gap and quantifies it:** with `data.personal_data`, `ai.uses_ai`, `ai.third_party_models` all declared `true`, the resolve reached **two** domains with items — `security` 14, `nth_party` 1 — and `privacy` 0 / `ai` 0. `S5.privacy.personal_data` and `S5.ai.declared` DID activate and matched zero requirements: the walkthrough org's own frameworks carry only `core` 34, `business-continuity` 2, `access-control` 1, `incident-response` 1, `resilience` 1, `supply-chain` 1 — no privacy tag and no AI tag anywhere. So example 1 is blocked on CURATION, not on code, and P4's staging proof cannot pass until the corpus gains privacy/AI-tagged requirements. **P3.1 (2026-08-29) supplies them and found a product defect doing it:** the tag heuristic sent all 4 NIST AI RMF functions, 6 of 8 CCPA and 3 of 12 GDPR requirements to the `core` fallback (asked as SECURITY), and mis-sent GDPR Art-12-14 to the AI domain via `/transparen/`. Curated reference data now assigns all 24 — privacy 17, ai 4, nth_party 1, security 2 (both deliberate) — so activating GDPR + CCPA + NIST AI RMF on the target org is what makes example 1 reachable. P4's four-domain proof is unblocked once P3.1 reaches staging. |
 | Same facts → same hash across runs | P1, P4 | 100-run unit loop; two-engagement E2E — **STAGING VERIFIED 1e3a57c7**: 100 runs with shuffled fact rows → one byte string; ordered item list independent of requirement input order |
 | Domain on every new scope item, closed vocabulary | P2 | DB CHECK + isolation assertion — **STAGING VERIFIED 2640f2e1**: `test/isolation/scopeItemDomain.test.ts` (every 1.1.0 item non-NULL in the closed set; `domains` sums to the item count on `GET /:id` and `/responses`; 1.0.0 re-resolve writes NULL and reports `domains: null`; bogus value → `23514`; CHECK list == `ASSESSMENT_DOMAINS` read from `pg_constraint`; migration applied twice = no-op; issued → 409 + `verdict: match`; org-B 404 + zero rows under org-B RLS session); unit: `vendorScopeResolver.test.ts` (1.1.0 stamps every item, compliance iff S3; 1.0.0 has no `domain` key), `requirementDomain.test.ts` (nine-tag table, `summarizeDomains`), `requirementScopeTags.test.ts` (nine tags curated-only, never heuristic; S5's `DOMAIN_TAGS` counted as a consumer) |
 | Tenant isolation on the fact store | P3 | RLS proof; cross-org 404; vendor-B dependency never leaks into vendor-A facts; §G.1 A1–A3 — **STAGING VERIFIED 2026-08-29 (9258b4fe)** (A3 refused by the subject trigger before RLS — see the A3 row) |
@@ -497,6 +584,20 @@ across key order.
 | Safe, idempotent mirror | P3 | double-run row count — **P3 TESTED** (two scope resolves = identical count; a changed inherent input supersedes its `core.*` row; no `ON CONFLICT … DO UPDATE` exists — values are never updated, a changed input inserts a superseding row) |
 | Rollback / recovery | P2, P3 | `ROLLBACK-20261062-20261063.sql` rehearsed on the harness DB after P3's suites populate it; forward re-apply exit 0 — **STAGING VERIFIED 2640f2e1** (forward half): 20261062 re-applied on a populated harness DB = no-op (`scopeItemDomain.test.ts`); `ROLLBACK-20261062.sql` written; **P3 TESTED**: `ROLLBACK-20261063.sql` rehearsed on the populated harness DB inside a rolled-back tx (drop → forward re-apply → table back), migration re-applied on a populated table = no-op; the two files stay separate (P3 after P2 on rollback) |
 | Existing VA E2E green | every | the eleven VA isolation suites (list in §B) in every PR's CI |
+
+### G.2 Corpus curation (P3.1) — acceptance criteria → proof
+
+| Criterion | Pkg | Proof | Status |
+|---|---|---|---|
+| A curated framework is born curated at activation, not heuristic | P3.1 | `curatedFrameworkActivation.test.ts` "%s activates fully curated" over all three templates: tags, `source='curated'`, and `domainForScopeTags` of the DATABASE row all match the map | **P3.1 TESTED** |
+| The AI framework produces an AI question set | P3.1 | same file: 4 rows, all `domain='ai'`, none equal to `['core']` — the pre-fix state was 4 × `core` → security | **P3.1 TESTED** |
+| The security domain is not inflated by the 24 | P3.1 | same file: across all three templates the security domain gains exactly `ccpa/CCPA-8` and `gdpr/Art-32`, both flagged `deliberate_security`; privacy 17, ai 4, nth_party 1 | **P3.1 TESTED** |
+| Every shipped requirement of a curated template is curated | P3.1 | `curatedFrameworkTags.test.ts` asserts BOTH directions per template — a requirement added without curation, or curation for a requirement no longer shipped, fails CI | **P3.1 TESTED** |
+| Intended domain is pinned, not incidental | P3.1 | `domainForScopeTags(entry.tags) === entry.domain` for all 24; a tag edit that moves a requirement between question sets fails CI | **P3.1 TESTED** |
+| Unknown is observable and distinct from deliberate security | P3.1 | new `scope_tags_source='uncurated'` (20261064); `scopeTagCoverage().uncurated`; UI renders "not classified"; `curatedFrameworkActivation.test.ts` proves two rows with identical `['core']` tags and identical resulting domain are distinguishable IN THE DATABASE | **P3.1 TESTED** |
+| The `core` fallback still protects tier-4 questionnaires | P3.1 | `resolveScopeTags` keeps `['core']` on an unmatched requirement — only the provenance claim changes; isolation test asserts every `uncurated` row holds exactly `['core']` | **P3.1 TESTED** |
+| Code enum and DB CHECK move together | P3.1 | `SCOPE_TAG_SOURCES` equals the CHECK list read from `pg_constraint`; DB accepts `uncurated`, refuses `guessed` with `23514` | **P3.1 TESTED** |
+| Backfill never overwrites a human's decision | P3.1 | `scripts/backfill-curated-framework-tags.ts` skips `source='curated'` rows (logged `[KEEP]`); dry-run preview equals what `--apply` does; second run is a no-op | **P3.1 TESTED** (exercised against the harness DB 2026-08-29) |
 
 ### G.1 Adversarial matrix for the fact store (owner-required minimum; one named test per row)
 

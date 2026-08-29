@@ -5735,7 +5735,7 @@ export type RequirementWithResponse = {
   description: string | null;
   /** VA-6 content-layer fields. Optional: absent on older engine payloads. */
   scope_tags?: string[];
-  scope_tags_source?: "heuristic" | "curated" | null;
+  scope_tags_source?: "heuristic" | "curated" | "uncurated" | null;
   response: RequirementResponse | null;
 };
 

@@ -143,15 +143,23 @@ function RequirementRow({
                 style={
                   content.scope_tags_source === "curated"
                     ? { background: "rgba(34,197,94,0.12)", color: "#86efac" }
-                    : { background: "rgba(245,158,11,0.12)", color: "#fcd34d" }
+                    : content.scope_tags_source === "uncurated"
+                      ? { background: "rgba(239,68,68,0.12)", color: "#fca5a5" }
+                      : { background: "rgba(245,158,11,0.12)", color: "#fcd34d" }
                 }
                 title={
                   content.scope_tags_source === "curated"
                     ? "Scope tags reviewed by a person"
-                    : "Scope tags derived from the title — not yet reviewed"
+                    : content.scope_tags_source === "uncurated"
+                      ? "Nothing classified this requirement. It carries `core` by fallback, so it is asked as a baseline security question — not because anyone decided it was one."
+                      : "Scope tags derived from the title — not yet reviewed"
                 }
               >
-                {content.scope_tags_source === "curated" ? "curated" : "heuristic tags"}
+                {content.scope_tags_source === "curated"
+                  ? "curated"
+                  : content.scope_tags_source === "uncurated"
+                    ? "not classified"
+                    : "heuristic tags"}
               </span>
             ) : null}
           </div>

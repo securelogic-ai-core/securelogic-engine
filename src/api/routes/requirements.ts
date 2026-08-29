@@ -46,9 +46,9 @@ import { requireAdminRole } from "../middleware/requireRole.js";
 import {
   SCOPE_TAG_VOCABULARY,
   areValidScopeTags,
-  deriveScopeTags,
   scopeTagCoverage,
 } from "../lib/vendorRisk/requirementScopeTags.js";
+import { resolveScopeTags } from "../lib/vendorRisk/curatedFrameworkTags.js";
 
 const router = Router();
 
@@ -149,7 +149,12 @@ router.post(
       // the fate of every requirement created between the 20260926 backfill
       // and this package. Heuristic tags are a weak signal and are stamped as
       // such; curation (PATCH below) upgrades them to 'curated'.
-      const derived = deriveScopeTags({
+      //
+      // No template key: a custom question is by definition not curated
+      // reference data. It resolves to 'heuristic' where a pattern matched, and
+      // to 'uncurated' where nothing did — so a question nobody has classified
+      // is visible AS unclassified instead of arriving as a security question.
+      const derived = resolveScopeTags({
         reference_id: input.reference_id,
         title: input.title,
       });
@@ -161,7 +166,7 @@ router.post(
           INSERT INTO requirements
             (framework_id, reference_id, title, description,
              scope_tags, scope_tags_source, scope_tags_at)
-          VALUES ($1, $2, $3, $4, $5, 'heuristic', NOW())
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
           RETURNING
             id,
             framework_id,
@@ -179,6 +184,7 @@ router.post(
             input.title,
             input.description,
             derived.tags,
+            derived.source,
           ]
         );
       } catch (err: any) {
@@ -218,7 +224,7 @@ router.post(
           reference_id: input.reference_id,
           has_description: input.description !== null,
           scope_tags: derived.tags,
-          scope_tags_source: "heuristic",
+          scope_tags_source: derived.source,
         },
         ipAddress: req.ip ?? null,
       });
