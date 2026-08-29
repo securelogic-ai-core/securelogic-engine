@@ -15,6 +15,79 @@
 | 4 | [#432](https://github.com/securelogic-ai-core/securelogic-engine/issues/432) | SEC-H2 — HTTP rate limiters in-memory / per-replica | High | P2 | **No** | M (~1–2d) | Redis (already wired); soft dep on #433 keying |
 | 5 | [#431](https://github.com/securelogic-ai-core/securelogic-engine/issues/431) | SEC-H1 — SSO session JWT transmitted in URL | High | P2 (deferred) | **No** — *must-fix-before-SSO-GA* | M–H (~2–4d) | Design decision (form_post vs one-time code); shares JWT-revocation store with finding M8 |
 
+## Administrative access plane (added 2026-08-21, ADR-0011)
+
+Raised by the ADMIN-NET-1 ruling. The `/admin` chain was audited rather than
+assumed; the audit found **no P0 and no bypass**. Two P1s and one P2 below.
+
+| ID | Title | Severity | Priority | Promotion-gate | Effort | Dependencies |
+|---|---|---|---|---|---|---|
+| **ADMIN-NET-1** | Admin network allowlisting — **DEFERRED ENFORCEMENT / OBSERVATIONAL CONTROL** | n/a | **Closed as a ruling** (ADR-0011) | **No** | none — do not build | A stable trusted egress path (ADMIN-ACCESS-2) |
+| **ADMIN-AUDIT-1** | Administrative actions are not durably audited — **1 of 32** admin route modules writes an audit row; the rest are stdout only | Medium | **P1** | **No** | S–M | `src/api/lib/auditLog.ts` already exists; actor field needs ADMIN-ACCESS-2 to be meaningful |
+| **ADMIN-ACCESS-2** | Trusted Administrative Access Architecture — authentication today has **no administrator identity** | Medium (High once a 2nd admin exists) | **P1 — record, do not build** | **No** | L | Operator decision; must handle mobile operators and dynamic source IPs |
+| **ADMIN-LOCKOUT-P2** | `adminLockout` falls back to a single **shared** bucket when no client address parses — one caller could lock out everyone | Low | P2 | **No** | XS | Should not trigger behind Cloudflare; observation only |
+
+### ADMIN-NET-1 — ruled, closed, do not enforce
+
+Full reasoning in `docs/architecture/decisions/ADR-0011-admin-network-deferred-enforcement.md`.
+`SECURELOGIC_ADMIN_NETWORK_ENFORCED` must not be enabled in staging or
+production: the sole operator administers from an iPad on a dynamic IP, and
+enforcing against a moving address locks the operator out of production admin —
+including the endpoints used to diagnose being locked out. The middleware,
+its `admin_network_evaluated` telemetry, and the corrected `clientIp.ts`
+resolution are all **preserved**. The operator's IP must not become a production
+authorization dependency, and the allowlist must not be updated to chase it.
+
+**Prerequisite for revisiting:** a stable, **independently recoverable** trusted
+administrative network path must exist and be validated. Independently
+recoverable is load-bearing — a break-glass that lives behind the allowlist is
+not a control.
+
+### ADMIN-AUDIT-1 — the audit trail is telemetry, not a record
+
+`adminAudit` emits `admin_request` (method, route, status, duration, requestId)
+via `logger.info`. That is stdout, retained by the host, not by the product: not
+queryable, not tenant-linked, not under a retention policy we control, not
+usable as evidence. Only `adminProviderSuppressionRecovery.ts` writes durably.
+
+For a GRC product this is a credible finding against us in our own customers'
+vendor reviews. The fix extends `lib/auditLog.ts`, an existing pattern. It is
+**not launch-critical** — `/admin` is unreachable without the key and the chain
+fails closed — so it belongs to the Enterprise Capability Baseline, not to the
+Sept 15 path.
+
+### ADMIN-ACCESS-2 — record the target, build nothing
+
+Today `/admin` is protected by a **static shared credential**
+(`SECURELOGIC_ADMIN_KEY`, timing-safe compare, rotatable set, max 10). No
+per-person account, no MFA, no session, no actor attribution.
+
+Target architecture to be **evaluated** later, not chosen now:
+
+```
+authorized administrator → strong identity + MFA → trusted administrative
+access path → privileged authorization → SecureLogic administrative plane
+```
+
+with full auditability and an **independently usable break-glass/recovery
+mechanism**. It must accommodate mobile operators and dynamic source IPs — the
+constraint that produced ADMIN-NET-1. **No VPN or zero-trust vendor is selected
+in this item.**
+
+**Role separation — intended direction for the Enterprise Capability Baseline.**
+Do not assume future Support, Operations, Engineering or Security personnel get
+the platform owner's `/admin` access:
+
+| Role | Intended scope |
+|---|---|
+| **L1 Support** | Constrained intake/triage and customer-visible diagnostic state |
+| **L2 Operations** | Appropriately scoped read-only operational telemetry |
+| **Engineering / SRE** | Controlled deeper diagnostics |
+| **Security** | Security-specific investigation capability |
+| **Privileged Administrator** | Separately controlled administrative actions |
+
+Not implemented, not designed, recorded only.
+
 ## Release-parity gap (added 2026-08-21, Sept 15 reconciliation)
 
 | ID | Title | Severity | Priority | Promotion-gate | Effort | Dependencies |
