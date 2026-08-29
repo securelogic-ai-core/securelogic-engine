@@ -49,7 +49,13 @@ const BASE = "https://securelogic-engine-staging.onrender.com/api";
 const ORG_A = "295b989a-89d6-49ec-a7ed-deb04489d068";   // [SEED] Walkthrough Org
 const USER_A = "76cc5c29-2aa7-4b19-afd2-9dacbbe6a1e0";  // walkthrough-approver, admin, se=1
 const SE_A = 1;
-const VENDOR_A = "906991bb-eda0-44f2-9836-4932006d64b0"; // Harbourline Data Services
+/**
+ * Resolved at run time, NOT hard-coded. The vendor id P3's instrument used no
+ * longer exists on staging, which would have failed this run at engagement
+ * creation with a body that says nothing about curation. Seeded tenants change;
+ * the acceptance should not depend on a row id staying alive.
+ */
+let VENDOR_A = null;
 
 const TEMPLATES = ["gdpr", "ccpa", "nist_ai_rmf"];
 const FRAMEWORK_IDENTITY = {
@@ -131,7 +137,19 @@ async function resolveEngagement(token, label) {
       vendor_id: VENDOR_A,
       engagement_type: "targeted",
       title: `[VA-Q2-P3.1 ACCEPTANCE] ${label}`,
-      intake: { data_sensitivity: "confidential", ai_involvement: "embedded" },
+      // The SAME all-low intake P3's run used, deliberately: with every core.*
+      // input at its lowest, `S5.privacy.sensitivity` and `S5.ai.involvement`
+      // cannot fire, so the privacy and AI domains can only be reached by the
+      // DECLARED facts (`S5.privacy.personal_data`, `S5.ai.declared`) — which
+      // is exactly what the directive example asks us to prove. It also makes
+      // the before/after numbers comparable with P3's recorded run.
+      intake: {
+        data_sensitivity: "internal", data_volume: "minimal", access_level: "none",
+        operational_dependency: "low", recoverability: "hours", business_criticality: "low",
+        regulatory_exposure: "none", regulatory_breach_notification: false,
+        ai_involvement: "none", ai_autonomy: "none", hosting_model: "on_prem",
+        fourth_party_exposure: "none", concentration: "low",
+      },
     },
   });
   const id = e.json?.id ?? e.json?.engagement?.id ?? null;
@@ -165,6 +183,19 @@ async function main() {
   }
   await elev.connect();
   const TOKEN = signJwt(USER_A, ORG_A, "admin", SE_A);
+
+  const v = await q(`SELECT id, name FROM vendors WHERE organization_id = $1 ORDER BY created_at LIMIT 1`, [ORG_A]);
+  VENDOR_A = v.rows?.[0]?.id ?? null;
+  if (!VENDOR_A) {
+    const made = await q(
+      `INSERT INTO vendors (organization_id, name) VALUES ($1, '[VA-Q2-P3.1 ACCEPTANCE] vendor') RETURNING id`,
+      [ORG_A]
+    );
+    VENDOR_A = made.rows?.[0]?.id ?? null;
+  }
+  check("PRE", "a vendor exists in the walkthrough org to hang the engagements on", !!VENDOR_A,
+    { vendor: VENDOR_A, name: v.rows?.[0]?.name ?? "(created)" });
+  if (!VENDOR_A) { await elev.end(); return; }
 
   // ── 1. BEFORE ────────────────────────────────────────────────────────────
   const before = await q(
