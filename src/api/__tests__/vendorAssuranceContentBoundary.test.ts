@@ -261,6 +261,14 @@ describe("the set of modules that touch requirements.scope_tags stays closed", (
       "api/lib/questionnaire/bridgeQuestions.ts",
       // The vocabulary + heuristic themselves — no I/O.
       "api/lib/requirementValidation.ts",
+      // VA-Q2 P3.1: the curated reference data for the shipped regulatory /
+      // AI templates, plus resolveScopeTags (curated -> heuristic ->
+      // uncurated). PURE — a frozen map and two lookups, no I/O and no flag.
+      // It joins the census on the frameworks-spine side, not the flag side:
+      // its consumers are the two WRITERS below, which VA-6 ruled are premium
+      // + org-admin rather than flag-gated. It reaches the resolver only the
+      // way any tag does, through the rows those writers persist.
+      "api/lib/vendorRisk/curatedFrameworkTags.ts",
       "api/lib/vendorRisk/methodologyVersion.ts",
       // VA-Q2 P1: the promoted requirement→domain rule (pure; the reader the
       // Q1 comment above foresaw). Consumed by the resolver, inside the flag.
