@@ -852,6 +852,12 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       // this line: it previously read a `notes` field the resolver has never
       // had, so the tier cap was computed and then always reported as null.)
       truncated: resolution.truncated ?? null,
+      // #922: how the questionnaire was composed against the tier's NOMINAL
+      // target. `nominal_target` is a target, not a ceiling — the SecureLogic
+      // assessment floor is satisfied first and is never truncated, so `total`
+      // exceeds it whenever the floor alone does and `mandatory_overage` says
+      // by how much. Absent for 1.0.0 resolutions, which keep frozen behaviour.
+      composition: resolution.composition ?? null,
     });
   } catch (err) {
     logger.error({ event: "vendor_scope_resolve_failed", organizationId, err }, "Scope resolve failed");

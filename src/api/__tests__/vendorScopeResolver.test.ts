@@ -317,27 +317,233 @@ describe("scope resolution — S4 assurance offset", () => {
 // ─── Caps: never silent ─────────────────────────────────────────────────────
 
 describe("scope resolution — no silent truncation", () => {
-  it("an over-cap tier RECORDS what it dropped", () => {
-    // The repo's standing no-silent-caps principle. A scope that silently shrank
-    // would read as "we asked everything that applies" when it did not.
-    const many = Array.from({ length: 40 }, (_, i) => req(`core-${i}`, ["core"]));
-    const r = resolveEngagementScope(base({ tier: "tier_4_low", requirements: many }));
+  // 40 `core` requirements are 40 S1.baseline items — i.e. all floor. Under the
+  // #922 ruling the nominal target does not delete a floor, so nothing is
+  // dropped and the OVERAGE is what gets recorded.
+  const manyCore = Array.from({ length: 40 }, (_, i) => req(`core-${i}`, ["core"]));
 
-    expect(r.truncated).not.toBeNull();
-    expect(r.truncated!.cap).toBe(15);
+  it("a floor larger than the nominal target is KEPT, and the overage is recorded", () => {
+    const r = resolveEngagementScope(base({ tier: "tier_4_low", requirements: manyCore }));
+
+    expect(r.items).toHaveLength(40);
+    expect(r.truncated).toBeNull();
+    expect(r.composition).toEqual({
+      nominal_target: 15,
+      mandatory: 40,
+      discretionary: 0,
+      total: 40,
+      mandatory_overage: 25,
+    });
+  });
+
+  it("the 1.0.0 corpus keeps its frozen truncation behaviour, unchanged", () => {
+    // Deliberately NOT fixed under 1.0.0: two of the 21 golden cases truncate,
+    // and the defect cannot arise there (no S5, so nothing crowds security out).
+    const r = resolveEngagementScope({
+      ...base({ tier: "tier_4_low", requirements: manyCore }),
+      scopeRuleVersion: "1.0.0",
+    });
     expect(r.items).toHaveLength(15);
+    expect(r.truncated!.cap).toBe(15);
     expect(r.truncated!.dropped_requirement_ids).toHaveLength(25);
+    expect("composition" in r).toBe(false);
   });
 
-  it("truncation is deterministic — the same inputs drop the same requirements", () => {
-    const many = Array.from({ length: 40 }, (_, i) => req(`core-${i}`, ["core"]));
-    const a = resolveEngagementScope(base({ tier: "tier_4_low", requirements: many }));
-    const b = resolveEngagementScope(base({ tier: "tier_4_low", requirements: [...many].reverse() }));
+  it("discretionary truncation is deterministic — same inputs, same drops", () => {
+    // A corpus where the floor fits but discretionary items do not: 10 core
+    // (floor) plus 30 privacy requirements activated by a declared fact.
+    const corpus = [
+      ...Array.from({ length: 10 }, (_, i) => req(`core-${i}`, ["core"])),
+      ...Array.from({ length: 30 }, (_, i) => req(`privacy-${i}`, ["privacy"])),
+    ];
+    const facts = resolveFacts([...factsFromInherent(benign), fact("data.personal_data", true)]);
+    const a = resolveEngagementScope(base({ tier: "tier_4_low", requirements: corpus, facts }));
+    const b = resolveEngagementScope(
+      base({ tier: "tier_4_low", requirements: [...corpus].reverse(), facts })
+    );
+
+    expect(a.truncated).not.toBeNull();
     expect(a.truncated!.dropped_requirement_ids).toEqual(b.truncated!.dropped_requirement_ids);
+    expect(a.items.map((i) => i.requirement_id)).toEqual(b.items.map((i) => i.requirement_id));
+    // The floor took its 10, the remaining 5 slots went to privacy.
+    expect(a.composition).toEqual({
+      nominal_target: 15,
+      mandatory: 10,
+      discretionary: 5,
+      total: 15,
+      mandatory_overage: 0,
+    });
   });
 
-  it("under the cap, truncated is null rather than an empty object", () => {
+  it("under the target, truncated is null rather than an empty object", () => {
     expect(resolveEngagementScope(base()).truncated).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #922 — the SecureLogic security baseline is a protected assessment floor
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("#922 — the security baseline survives truncation at tier_4_low", () => {
+  /** A corpus big enough in every non-security domain to crowd security out. */
+  const CROWDED: ScopableRequirement[] = [
+    ...Array.from({ length: 6 }, (_, i) => req(`core-${i}`, ["core"])),
+    ...Array.from({ length: 20 }, (_, i) => req(`privacy-${i}`, ["privacy"])),
+    ...Array.from({ length: 20 }, (_, i) => req(`ai-${i}`, ["ai-governance"])),
+    ...Array.from({ length: 20 }, (_, i) => req(`sub-${i}`, ["subprocessor"])),
+  ];
+
+  const withFacts = (extra: Array<ReturnType<typeof fact>>) =>
+    resolveEngagementScope(
+      base({
+        tier: "tier_4_low",
+        requirements: CROWDED,
+        facts: resolveFacts([...factsFromInherent(benign), ...extra]),
+      })
+    );
+
+  /** Items the security baseline is responsible for. */
+  const securityFloor = (r: ReturnType<typeof resolveEngagementScope>) =>
+    r.items.filter((i) => i.reasons.some((x) => x.rule_id === "S5.security.baseline"));
+
+  const CASES: Array<[string, Array<ReturnType<typeof fact>>, string[]]> = [
+    ["Security only", [], []],
+    ["Security + Privacy", [fact("data.personal_data", true)], ["privacy-"]],
+    ["Security + AI", [fact("ai.uses_ai", true)], ["ai-"]],
+    [
+      "Security + Privacy + AI",
+      [fact("data.personal_data", true), fact("ai.uses_ai", true)],
+      ["privacy-", "ai-"],
+    ],
+    ["Security + Nth Party", [fact("ai.third_party_models", true)], ["sub-"]],
+    [
+      "Security + Privacy + AI + Nth Party",
+      [
+        fact("data.personal_data", true),
+        fact("ai.uses_ai", true),
+        fact("ai.third_party_models", true),
+      ],
+      ["privacy-", "ai-", "sub-"],
+    ],
+  ];
+
+  for (const [name, facts, expectPrefixes] of CASES) {
+    describe(name, () => {
+      const r = withFacts(facts);
+
+      it("keeps every security-baseline item — the floor cannot disappear", () => {
+        // The regression in one assertion: before the ruling this was 0 for
+        // every case that activated another domain.
+        expect(securityFloor(r).length).toBeGreaterThan(0);
+        expect(r.items.filter((i) => i.domain === "security").length).toBeGreaterThan(0);
+      });
+
+      it("considers the requirements its facts call for — kept, or visibly dropped", () => {
+        // A rule firing and a domain surviving truncation are different things.
+        // On a crowded tier-4 corpus a DISCRETIONARY domain can activate and
+        // still receive zero items once the floor has taken its room.
+        //
+        // Note what this assertion had to work around: `reasons` live on ITEMS,
+        // so once every item a rule contributed is truncated, the resolution no
+        // longer records that the rule fired at all. Activation is therefore
+        // proven here the only way it can be — the requirements were either
+        // kept or named in `dropped_requirement_ids`. That gap is real and is
+        // reported rather than papered over; see the starvation test below.
+        const seen = new Set([
+          ...r.items.map((i) => i.requirement_id),
+          ...(r.truncated?.dropped_requirement_ids ?? []),
+        ]);
+        for (const prefix of expectPrefixes) {
+          expect([...seen].some((id) => id.startsWith(prefix))).toBe(true);
+        }
+      });
+
+      it("satisfies the floor before any discretionary item is kept", () => {
+        const floorCount = r.items.filter((i) =>
+          i.reasons.some((x) => x.rule_id === "S1.baseline" || x.rule_id === "S5.security.baseline")
+        ).length;
+        expect(r.composition!.mandatory).toBe(floorCount);
+        expect(r.composition!.total).toBe(r.items.length);
+        expect(r.composition!.mandatory + r.composition!.discretionary).toBe(r.items.length);
+      });
+
+      it("never drops a floor item, whatever it drops", () => {
+        const droppedIds = new Set(r.truncated?.dropped_requirement_ids ?? []);
+        const floorIds = r.items
+          .filter((i) =>
+            i.reasons.some(
+              (x) => x.rule_id === "S1.baseline" || x.rule_id === "S5.security.baseline"
+            )
+          )
+          .map((i) => i.requirement_id);
+        for (const id of floorIds) expect(droppedIds.has(id)).toBe(false);
+      });
+
+      it("reports the nominal target, and never claims a target it exceeded silently", () => {
+        expect(r.composition!.nominal_target).toBe(15);
+        if (r.composition!.total > 15) {
+          expect(r.composition!.mandatory_overage).toBeGreaterThan(0);
+        } else {
+          expect(r.composition!.mandatory_overage).toBe(0);
+        }
+      });
+    });
+  }
+
+  it("a floor that alone exceeds the nominal target is preserved whole", () => {
+    const bigFloor = [
+      ...Array.from({ length: 25 }, (_, i) => req(`core-${i}`, ["core"])),
+      ...Array.from({ length: 20 }, (_, i) => req(`privacy-${i}`, ["privacy"])),
+    ];
+    const r = resolveEngagementScope(
+      base({
+        tier: "tier_4_low",
+        requirements: bigFloor,
+        facts: resolveFacts([...factsFromInherent(benign), fact("data.personal_data", true)]),
+      })
+    );
+
+    expect(r.composition!.mandatory).toBe(25);
+    expect(r.composition!.mandatory_overage).toBe(10);
+    expect(r.composition!.discretionary).toBe(0);
+    expect(r.items).toHaveLength(25);
+    // Every privacy requirement was dropped — correctly, and visibly.
+    expect(r.truncated!.dropped_requirement_ids).toHaveLength(20);
+    expect(r.items.every((i) => i.requirement_id.startsWith("core-"))).toBe(true);
+  });
+
+  it("a DISCRETIONARY domain can still be starved by the target — visibly, not silently", () => {
+    // The honest limit of this fix. #922 protects the SecureLogic floor; it does
+    // not promise every activated domain a slot. Here privacy and nth-party
+    // activate and lose their slots to AI on a deterministic id ordering. The
+    // loss is recorded in `truncated`, and `composition` shows the arithmetic.
+    // Whether discretionary domains deserve a floor of their own is the
+    // assurance-need question, not a cap question.
+    const r = withFacts([
+      fact("data.personal_data", true),
+      fact("ai.uses_ai", true),
+      fact("ai.third_party_models", true),
+    ]);
+    // Privacy activated — its requirements were considered — yet none survived.
+    const dropped = new Set(r.truncated?.dropped_requirement_ids ?? []);
+    expect([...dropped].some((id) => id.startsWith("privacy-"))).toBe(true);
+    expect(r.items.some((i) => i.domain === "privacy")).toBe(false);
+    expect(r.truncated).not.toBeNull();
+    expect(r.truncated!.dropped_requirement_ids.length).toBeGreaterThan(0);
+    expect(r.composition!.discretionary).toBe(15 - r.composition!.mandatory);
+    // Security, being the floor, is untouched by that competition.
+    expect(r.items.filter((i) => i.domain === "security").length).toBe(6);
+  });
+
+  it("the regression itself: a crowded corpus no longer yields zero security items", () => {
+    const r = withFacts([
+      fact("data.personal_data", true),
+      fact("ai.uses_ai", true),
+      fact("ai.third_party_models", true),
+    ]);
+    const securityItems = r.items.filter((i) => i.domain === "security");
+    expect(securityItems.length).toBe(6); // all six core requirements survive
+    expect(r.composition!.mandatory).toBe(6);
   });
 });
 
