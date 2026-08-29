@@ -667,7 +667,7 @@ staging 2026-08-28.
 | F | Evidence requirement rules | §10 | Q3 | T-12 | 11 | — | DESIGNED |
 | G | Issued-assessment snapshot preserves what was asked and why | §4.4, §9 | Q1 (text) + Q3 (snapshot) | T-4 | 10 | P2 #900 @ `c9531cf1`, staging §H.3 2026-08-28: pre-P2 engagement → `unstamped` and still renders; new engagement 39/39 versioned → issue → `match`; **requirement edited AFTER issue → portal unchanged, reviewer unchanged, stamp unchanged, integrity `match`; next engagement sees the edit** | **STAGING VERIFIED** (version addressing, content-addressed stamp, integrity) · DESIGNED (`questionnaire_snapshots` table + follow-up append — Q3) |
 | H | Customer-configurable policy, safe defaults | §4.2, §15 flags | Q7 | T-16 | 1 | — | DESIGNED |
-| I | Deterministic scoping is authoritative | §3, §6 | (exists) + Q2/Q3 | — | 13 | S1–S4 with rule_ids live | **STAGING VERIFIED** (S1–S4) / DESIGNED (S5–S6, E1) |
+| I | Deterministic scoping is authoritative | §3, §6 | (exists) + Q2/Q3 | — | 13 | S1–S4 with rule_ids live; **S5 live and proven on staging 2026-08-29 (`9258b4fe`)** — `S5.security.baseline` and `S5.nth.third_party_models` produced items on a 1.1.0 engagement, every item domain-stamped, resolver still pure (no I/O) | **STAGING VERIFIED** (S1–S5) / DESIGNED (S6, E1) |
 | J | AI as governed analysis layer, not decision-maker | §11 | (exists for evidence) + Q6 | T-7,8,9 | 14–17 | `analysis_coverage` deterministic→full, 08-28 | **STAGING VERIFIED** (evidence_support) / DESIGNED (5 types) |
 | D-SEC | Security domain first-class | §6.3 | Q2 | — | 13 | implicit today | DESIGNED |
 | D-PRIV | Privacy domain first-class + tree | §7 | Q2, Q4 | T-13 | 9,13,18 | one tag today | DESIGNED |
@@ -675,7 +675,7 @@ staging 2026-08-28.
 | D-RES | Resilience domain | §6.3 | Q2 | — | 13 | S2.resilience today | IMPLEMENTED (rule) → DESIGNED (domain) |
 | D-NTH | Fourth/Nth party domain | §6.3 | Q2 | — | 13 | S2.fourth_party today | IMPLEMENTED (rule) → DESIGNED (domain) |
 | D-COMP | Compliance/Regulatory domain | §6.3 | Q2 | — | 13 | S3 today | IMPLEMENTED (rule) → DESIGNED (domain) |
-| DS | Dynamic scoping over the directive's fact list | §6.1 | Q2 | T-6 | 13 | 13 of ~35 facts today | DESIGNED |
+| DS | Dynamic scoping over the directive's fact list | §6.1 | Q2 | T-6 | 13 | **47 keys registered** (`factRegistry.ts`) and the canonical store is live: VA-Q2 P3 `assessment_facts` + `PUT/GET /vendor-engagements/:id/facts`, staging-verified 2026-08-29 (`9258b4fe`, 32/32 adversarial checks). The 13 `core.*` inputs are mirrored from the inherent-risk columns; `data.*` / `ai.*` / `nth.*` are declarable through the intake route. **Not yet closed:** S5 activates privacy and AI but the staging corpus has no privacy- or AI-tagged requirement, so those domains resolve to zero items — curation, not code | IMPLEMENTED (registry + store + S5) → DESIGNED (full directive coverage, pending corpus curation) |
 | AI-A | AI-assisted analysis, 8 task types | §11 | Q6 | T-7–9 | 14–17 | 1 of 8 live | DESIGNED |
 | AI-B | AI never authoritative; fail closed | §11 | (exists) + Q6 | T-8 | 14 | ladder moves only on human confirm, proven 08-28 | **STAGING VERIFIED** (existing) / DESIGNED (extension) |
 | SEC | 22 security requirements | §12–13 | every | T-1–17 | 3–7,11,18 | portal suites behind real middleware | IMPLEMENTED (portal) / DESIGNED (VA-Q) |
