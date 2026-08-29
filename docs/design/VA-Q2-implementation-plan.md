@@ -875,7 +875,7 @@ into P4**: P4 does not violate its own acceptance criteria without it.
 
 ### Ruling 1a — #925 RESOLVED for compliance, 2026-08-29: compliance is non-truncatable
 
-Ruled after the S4 predicate validation returned **DEAD** (see below), which is
+**STAGING VERIFIED 2026-08-29 (`f8c0a4bea2d8efc9dc458aa59d63bb3510c49c71`, 9/9).** Ruled after the S4 predicate validation returned **DEAD** (see below), which is
 what made the decision possible: the only mechanism that could legitimise
 "applicable + activated + zero questions" does not work on any current corpus,
 so every observed instance of that state is a coverage defect rather than an
@@ -908,6 +908,24 @@ resilience). Measured on staging: privacy 17/17, ai 16/16, nth_party 2/2 all
 applicable and unasked. They are NOT given a question floor — per the standing
 ruling, their legitimacy depends on S4 answering whether governed assurance
 covers them.
+
+#### #925 compliance protection — STAGING VERIFIED 2026-08-29 (`f8c0a4be`, 9/9)
+
+`scripts/validation/va-925-compliance-staging-acceptance.mjs`,
+`job-da9jjsqjnfac73e2kl4g`. The run resolves the SAME requirement twice, so the
+protection is proven to be doing the work rather than the fixture:
+
+| | Result |
+|---|---|
+| **A. no obligation** | `Art-15-22` **truncated away** — `{target 15, mandatory 37, compliance_protected 0, discretionary 0, total 37, overage 22}` |
+| **B. active obligation** | the **same** requirement **survives** — `{target 15, mandatory 37, compliance_protected 1, discretionary 0, total 38, overage 23}` |
+| Never in `dropped_requirement_ids` | ✓ |
+| A separate number from the floor | `mandatory 37` vs `compliance_protected 1` |
+| Three-term identity | 37 + 1 + 0 = 38 ✓ |
+| Overage covers both classes | 38 − 15 = 23 ✓ |
+| Asked under the compliance domain | `{compliance: 1, security: 37}` |
+| #926 records the S3 applicability | 1 row, `S3.obligation` |
+| 1.0.0 frozen | no `composition`, still truncated at 15 |
 
 ### Ruling 3 — #926 gets slot 20261065
 
