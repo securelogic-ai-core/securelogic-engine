@@ -98,6 +98,7 @@ async function main(): Promise<void> {
   let diverged = 0;
   let skippedNoItems = 0;
   let corpusGrew = 0;
+  let q2Introduced = 0;
 
   for (const e of engagements.rows) {
     const stored = await pgElevated.query<StoredItem>(
@@ -173,7 +174,7 @@ async function main(): Promise<void> {
 
     checked++;
 
-    // ── Corpus drift is NOT rule drift ────────────────────────────────────
+    // ── CATEGORY 1: corpus drift is NOT rule drift ────────────────────────
     //
     // Comparing a stored resolution to a fresh one only isolates the RULES if
     // the corpus is unchanged. It rarely is: this org gained 24 curated
@@ -185,13 +186,21 @@ async function main(): Promise<void> {
       `SELECT max(created_at) AS at FROM vendor_engagement_scope_items WHERE engagement_id = $1`,
       [e.id]
     );
-    const newerReqs = await pgElevated.query<{ requirement_id: string }>(
+    const at = resolvedAt.rows[0]?.at ?? new Date(0).toISOString();
+
+    // A requirement counts as CHANGED SINCE if it was created after the resolve
+    // OR if its scope_tags were re-stamped after it. Tag curation is the second
+    // case and it is not hypothetical: 63 rows on this tenant were retagged on
+    // 2026-08-29. Retagging changes which S1/S2 rules match a requirement with
+    // no rule having changed at all.
+    const changedReqs = await pgElevated.query<{ requirement_id: string }>(
       `SELECT r.id AS requirement_id
          FROM requirements r JOIN frameworks f ON f.id = r.framework_id
-        WHERE f.organization_id = $1 AND r.created_at > $2`,
-      [e.organization_id, resolvedAt.rows[0]?.at ?? new Date(0).toISOString()]
+        WHERE f.organization_id = $1
+          AND (r.created_at > $2 OR COALESCE(r.scope_tags_at, r.created_at) > $2)`,
+      [e.organization_id, at]
     );
-    const newerIds = new Set(newerReqs.rows.map((r) => r.requirement_id));
+    const newerIds = new Set(changedReqs.rows.map((r) => r.requirement_id));
 
     const onlyStored = storedLines.filter((l) => !freshLines.includes(l));
     const onlyFreshAll = freshLines.filter((l) => !storedLines.includes(l));
@@ -206,8 +215,9 @@ async function main(): Promise<void> {
       );
     }
 
+    // ── CATEGORY 3: a genuine, unexpected regression ──────────────────────
     // A stored item the rules no longer produce, or a NEW item drawn from a
-    // requirement that already existed, is a real divergence.
+    // requirement that existed AND was untouched, is a real divergence.
     if (onlyStored.length > 0 || onlyFreshOld.length > 0) {
       diverged++;
       console.log(`\nDIVERGED  engagement=${e.id} org=${e.organization_id} tier=${e.assessment_tier}`);
@@ -216,26 +226,42 @@ async function main(): Promise<void> {
       if (onlyStored.length > 10 || onlyFreshOld.length > 10) console.log("  … truncated");
     }
 
-    // A 1.0.0 resolution must carry no 1.1.0 artefact.
-    if (resolution.composition !== undefined) {
-      diverged++;
-      console.log(`\nDIVERGED  engagement=${e.id}: a 1.0.0 resolution carried a \`composition\` field`);
-    }
-    for (const item of resolution.items) {
-      if ("domain" in item) {
-        diverged++;
-        console.log(`\nDIVERGED  engagement=${e.id}: a 1.0.0 item carried a \`domain\``);
-        break;
-      }
+    // ── CATEGORY 2: a Q2-INTRODUCED behavioural change ────────────────────
+    //
+    // Under 1.0.0 these are impossible by construction — S5, the fact triggers,
+    // `composition` and `domain` are all gated to >= 1.1.0. Seeing one means the
+    // version gate leaked, which is the single most serious failure this script
+    // can find: it would mean a pre-Q2 questionnaire moved under a customer.
+    const Q2_RULE_IDS = ["S2.ai_prompts", "S2.cross_border", "S2.subprocessors"];
+    const q2Leaks: string[] = [];
+    if (resolution.composition !== undefined) q2Leaks.push("`composition` present on a 1.0.0 resolution");
+    if (resolution.items.some((i) => "domain" in i)) q2Leaks.push("`domain` present on a 1.0.0 item");
+    const leakedRules = [
+      ...new Set(
+        resolution.items
+          .flatMap((i) => i.reasons.map((r) => r.rule_id))
+          .filter((id) => id.startsWith("S5.") || Q2_RULE_IDS.includes(id))
+      ),
+    ];
+    if (leakedRules.length > 0) q2Leaks.push(`Q2 rules fired: ${leakedRules.join(", ")}`);
+
+    if (q2Leaks.length > 0) {
+      q2Introduced++;
+      console.log(`\nQ2 LEAK  engagement=${e.id}: ${q2Leaks.join("; ")}`);
     }
   }
 
+  // Three categories, reported separately and weighted differently.
   console.log(
-    `\nchecked ${checked} · diverged ${diverged} · corpus grew ${corpusGrew} · ` +
-      `skipped (never resolved) ${skippedNoItems}`
+    `\nchecked ${checked}` +
+      `\n  corpus growth/change (EXPECTED, reported)   : ${corpusGrew}` +
+      `\n  Q2-introduced behavioural change (FAIL)     : ${q2Introduced}` +
+      `\n  unexpected rule/resolution regression (FAIL): ${diverged}` +
+      `\n  skipped (never resolved)                    : ${skippedNoItems}`
   );
-  console.log(diverged === 0 ? "RESULT: PASS" : "RESULT: FAIL");
-  process.exit(diverged === 0 ? 0 : 1);
+  const failed = diverged + q2Introduced;
+  console.log(failed === 0 ? "RESULT: PASS" : "RESULT: FAIL");
+  process.exit(failed === 0 ? 0 : 1);
 }
 
 main().catch((err) => {
