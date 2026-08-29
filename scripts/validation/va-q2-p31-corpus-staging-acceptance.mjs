@@ -310,9 +310,14 @@ async function main() {
     [eAfter.id, Object.values(activatedIds).filter(Boolean)]
   );
   const newSecurity = (fromNew.rows ?? []).filter((r) => r.domain === "security").map((r) => r.reference_id).sort();
+  const newByDomain = {};
+  for (const r of fromNew.rows ?? []) newByDomain[r.domain] = (newByDomain[r.domain] ?? 0) + 1;
   check("S1", "of the items drawn from the three new frameworks, the ONLY security ones are Art-32 and CCPA-8",
-    newSecurity.every((ref) => WANT_SECURITY.includes(ref)),
-    { security_items_from_new_frameworks: newSecurity, all: (fromNew.rows ?? []).length });
+    // Non-vacuous by construction: the new frameworks must have contributed
+    // items at all, otherwise "security was not inflated" would pass simply
+    // because nothing was included.
+    (fromNew.rows ?? []).length > 0 && newSecurity.every((ref) => WANT_SECURITY.includes(ref)),
+    { security_items_from_new_frameworks: newSecurity, by_domain: newByDomain, total: (fromNew.rows ?? []).length });
 
   const secBefore = eBefore.domains?.security ?? null;
   const secAfter = eAfter.domains?.security ?? null;
