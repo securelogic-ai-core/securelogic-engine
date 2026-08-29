@@ -134,7 +134,7 @@ repeat this check on the day they create the file.**
 |---|---|---|---|
 | `20261062` | `scope_item_domain.sql` — `vendor_engagement_scope_items.domain TEXT NULL CHECK (domain IN (…six…))`; partial index `(engagement_id, domain)` | P2 | additive column |
 | `20261063` | `assessment_facts.sql` — the canonical polymorphic fact store (D1 Option B: closed `subject_type` allowlist, subject-check trigger, RLS, `SELECT/INSERT/UPDATE` grants, classification) | P3 | new table — **UNBLOCKED** |
-| `20261065` | **RESERVED (owner, 2026-08-29) for the applicability/activation record** — #926. Must preserve, independently of questionnaire composition: which rules fired, which domains applied, which requirements became applicable, why, and what happened to them during assurance/composition. **Not P4.** | #926 | reserved, unbuilt |
+| `20261065` | **RESERVED (owner, 2026-08-29) for the applicability/activation record** — #926. Must preserve, independently of questionnaire composition: which rules fired, which domains applied, which requirements became applicable, why, and what happened to them during assurance/composition. **Not P4.** Plan: `docs/design/VA-926-applicability-record-plan.md`. | #926 | reserved, unbuilt |
 | `20261064` | `scope_tags_source_uncurated.sql` — widens the `requirements.scope_tags_source` CHECK to `('heuristic','curated','uncurated')` | P3.1 (corpus curation defect) | CHECK widened — **RELEASED FROM RESERVE 2026-08-29**, which is exactly what the reserve was held for. Ledger re-checked the day the file was created: `db/migrations` topped at `20261063`, no remote branch and no commit on any branch claimed `2026106[4-9]`. Q2 now uses three of Q0 §16's budgeted slots; P4 needs none |
 
 Q0 §16 budgeted `+1` for Q2; this plan uses two so P2 (column) and P3 (table)
@@ -526,7 +526,7 @@ is stamped honestly, re-activation is idempotent, `SCOPE_TAG_SOURCES` equals the
 CHECK list read from `pg_constraint`, and the DB accepts `uncurated` while
 refusing a value outside the set).
 
-### P4 — Directive golden proof, S2-from-facts, adversarial E2E, staging proof, matrix (no schema) — **size S — IMPLEMENTED + TESTED 2026-08-29** (branch `feat/va-q2-p4-s2-facts-and-e2e`; no schema, slot 20261065 is reserved for #926 and untouched)
+### P4 — Directive golden proof, S2-from-facts, adversarial E2E, staging proof, matrix (no schema) — **size S — STAGING VERIFIED 2026-08-29 (`2527a5a0` behaviours 11/11; equivalence `802f5c42` PASS)** (branch `feat/va-q2-p4-s2-facts-and-e2e`; no schema, slot 20261065 is reserved for #926 and untouched)
 
 - Domain-aware S2 triggers reading non-core facts (VA-Q0 §6.2 "S2 reads facts"):
   `S2.ai_prompts` (`ai.customer_data_in_prompts` → privacy + ai tags),
@@ -887,6 +887,67 @@ MONITORING / REASSESSMENT
 
 Question count is an **output/constraint** of this process, never the
 authoritative definition of assessment sufficiency.
+
+### P4 staging acceptance — RUNS 2026-08-29, RESULT PASS
+
+Two instruments, two SHAs, because equivalence needed a correction the
+behavioural run surfaced.
+
+**Behaviours — `2527a5a08e47632e5424df15d84444dd8f470135`, 11/11**
+(`job-da9ft4psrm7s73c87qp0`,
+`scripts/validation/va-q2-p4-staging-acceptance.mjs`).
+
+| Check | Live result |
+|---|---|
+| `S2.ai_prompts` fires on the real corpus | privacy 17, ai 4 · composition target 120 / mandatory 44 / discretionary 17 / total 61 |
+| `S2.cross_border` fires | privacy 6 · discretionary 6 |
+| `S2.subprocessors` fires | nth_party 2 · discretionary 8 |
+| **Version gate on real data** | a 1.0.0 engagement fires only the inherent S2 rules (`S2.resilience`, `S2.tenancy`), **no fact trigger**, and carries **no domain** |
+| Issued engagement refuses a Q2 write | 409 `scope_frozen`, hash unchanged |
+| Child with VERIFIED narrower facts | privacy 17 → **6**, parent unchanged at 17 |
+| Child with vendor-sourced narrower fact | privacy stays 17 — vendor answers widen only |
+| `ai_extraction` born `accepted` | refused, `23514` |
+| `proposed` AI row | resolve byte-identical to the pre-insert baseline |
+| Governed accept | privacy 6 → **17**, `S5.privacy.obligation` fires |
+
+**Equivalence — `802f5c4213b41f1f28cb7233ff1dc3e9559e7ff9`, PASS**
+(`job-da9gjam7bikc73995hvg`,
+`scripts/validation/va-q2-scope-equivalence.ts`):
+
+```
+pre-Q2, pre-issue engagements to check: 4
+CORPUS GREW  engagement=af14c9b4…: 23 item(s) from requirements created AFTER
+             this engagement was resolved. Not a rule change; excluded.
+checked 4
+  corpus growth/change (EXPECTED, reported)   : 1
+  Q2-introduced behavioural change (FAIL)     : 0
+  unexpected rule/resolution regression (FAIL): 0
+RESULT: PASS
+```
+
+**1.0.0 compatibility guarantee holds.** All 21 frozen golden cases remain
+byte-equal (`vendorScopeResolver.test.ts`, whole-object `JSON.stringify`
+comparison), and the live run found **zero** Q2 leaks — no `composition`, no
+`domain`, no S5 or fact-trigger rule on any 1.0.0 resolution.
+
+**Corrections the runs forced, all in the instruments, none in shipped code:**
+
+1. **Tier.** The first behavioural run used a tier-4 intake. On this corpus the
+   tier-4 floor is 36 against a nominal target of 15, so the discretionary
+   budget is **0** and no S5-driven domain can appear at all — #925, by default,
+   at tier 4. P4's behaviours are only demonstrable at a tier the corpus fits
+   inside.
+2. **"Narrower" is not "zero".** The org's active privacy obligations mirror
+   into `policy.privacy_obligations_active`, so `S5.privacy.obligation` fires
+   whatever `data.personal_data` says. Narrowing is 17 → 6.
+3. **Corpus drift is not rule drift.** The first equivalence run reported
+   DIVERGED on an engagement whose org had gained 24 curated requirements hours
+   earlier. Comparing a stored resolution to a fresh one isolates the RULES only
+   if the CORPUS is unchanged — and retagging counts as change, not only
+   creation. Fixed in #929 with the three-category classification.
+
+**VA-Q2 P4 is STAGING VERIFIED. VA-Q2 (P1, P2, P3, P3.1, #922, P4) is fully
+STAGING VERIFIED.**
 
 ## I. Blocking issues
 
