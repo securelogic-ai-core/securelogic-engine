@@ -1,6 +1,6 @@
 # VA-926 — the applicability record: implementation plan
 
-**Status:** PLAN ONLY. Not authorized for implementation.
+**Status:** **IMPLEMENTED + STAGING VERIFIED 2026-08-29** — PR #931, merged `2471a76d7c03bc4aecf2ae42224a5d387938b61f`, staging acceptance 18/18 (`job-da9hpkcs728c73dqciq0`).
 **Slot:** `20261065`, reserved by owner ruling 2026-08-29.
 **Issue:** #926. Related: #925 (blocked on this being decidable), the S3 ruling
 (plan §H.2 Ruling 2), `docs/design/VA-S4-assurance-wiring-plan.md`.
@@ -147,6 +147,47 @@ that reproduces and one that dangles.
    `ScopeResolution.excluded` with rationales. Recording *why a requirement did
    NOT apply* is a different and larger claim; recommend **no** for this
    package.
+
+## 7b. Staging acceptance — `2471a76d7c03bc4aecf2ae42224a5d387938b61f`, PASS 18/18
+
+`scripts/validation/va-926-applicability-staging-acceptance.mjs`,
+`job-da9hpkcs728c73dqciq0`. Run on the walkthrough tenant at `tier_4_low`, which
+is where truncation actually bites: the floor is 36 `core` requirements against
+a nominal target of 15, so the discretionary budget is **zero**.
+
+**The claim, proven live:**
+
+| | Result |
+|---|---|
+| Every rule that fired is recorded, including fully-truncated ones | `S1.baseline`, `S5.security.baseline`, `S5.privacy.personal_data`, `S5.ai.declared`, `S5.ai.dependency`, `S5.nth.third_party_models` |
+| **Applicable but NOT asked is visible** | **99 applicable · 36 asked · 27 applicable-but-not-asked** |
+| A domain with ZERO questions still records that it applied | **17 privacy** requirements applicable, `discretionary: 0` |
+| Basis captured as VALUES, hash matches | `{"facts":{"data.personal_data":true},"domain":"privacy"}` |
+| Re-resolving unchanged inputs writes nothing | 99 → 99 |
+| S3 recorded with obligation id AND title | ✓ |
+| **S3 survives the obligation being deactivated** | record byte-identical afterwards |
+| Reproduces after facts superseded and requirements retagged | 99 rows identical; the live fact is now `false` while the record still reads `true` |
+| Answerable: rule / domain / requirement / basis / version / when | `S5.privacy.personal_data` · `privacy` · `Art-12-14` · `{data.personal_data: true}` · `1.1.0` |
+| Rows immutable | UPDATE and DELETE both `42501` — the grant layer refuses before the WORM trigger is even reached |
+| Cross-tenant read | another tenant reads **0** rows |
+| Forged org + engagement | `23503` |
+| Invalid domain | `23514` |
+| 1.0.0 engagement | 37 rows, families `["S1"]` only, every `domain` NULL |
+| 1.0.0 questionnaire unchanged | 0 scope items carry a domain |
+
+**One correction CI forced, and it mattered.** The first implementation carried
+its own immutability trigger. `wormGuardConsolidation.test.ts` failed the build
+for it, correctly: the certified-erasure exception lives in the shared
+`worm_guard_mutation` and nowhere else, so a table with a private copy would
+have silently refused a **governed erasure** as well as an ordinary UPDATE. The
+private guard was not duplication, it was a latent erasure bug. Now wired to the
+shared function, with the TRUNCATE trigger the shared policy also expects.
+
+**#925 is now technically decidable.** "Applicable, activated, zero questions"
+is a queryable state — 17 privacy requirements on that engagement — instead of
+silence. Whether zero questions is *legitimate* there still depends on S4
+answering whether governed assurance covers them, which is the owner's standing
+position and unchanged by this package.
 
 ## 8. Sequencing
 
