@@ -211,7 +211,7 @@ route in P1 passes `facts = factsFromInherent(row)` and the engagement's stamped
 version, so pre-Q2 engagements are unchanged and new ones gain S5 over the 13
 facts only.
 
-### P2 — Domain first-class on scope items (slot 20261062) — **size S — MAY START after P1**
+### P2 — Domain first-class on scope items (slot 20261062) — **size S — IMPLEMENTED + TESTED 2026-08-28** (branch `feat/va-q2-p2-scope-item-domain`, stacked on P1; ledger re-checked the day the file was created: `db/migrations` topped at `20261061`, no remote branch and no commit on any branch claimed `2026106[2-9]`; rollback in `docs/release/ROLLBACK-20261062.sql` — the P2 half of the combined file §E names)
 
 **Goal.** Every scope item records the domain it was asked under; the reviewer
 surface and the engagement read can group by it.
@@ -480,7 +480,7 @@ across key order.
 | Pre-Q2 engagements unchanged | P1, P4 | 1.0.0 golden equivalence (unit) + equivalence script on harness and staging — **P1 TESTED**: 21 golden cases byte-identical under `scopeRuleVersion: "1.0.0"` (no `domain`, no S5); malformed stamp never runs S5; route passes the stamped version |
 | Directive examples 1 and 2 | P1 (unit), P4 (E2E) | four distinct S5 rule_ids; ≤ 15 attest items — **P1 TESTED**: ex. 1 → Security+Privacy+AI+Nth, `S5.security.baseline` / `S5.privacy.personal_data` / `S5.ai.declared` / `S5.nth.third_party_models`; ex. 2 → security attest only, ≤ 15, identical to 1.0.0 |
 | Same facts → same hash across runs | P1, P4 | 100-run unit loop; two-engagement E2E — **P1 TESTED**: 100 runs with shuffled fact rows → one byte string; ordered item list independent of requirement input order |
-| Domain on every new scope item, closed vocabulary | P2 | DB CHECK + isolation assertion |
+| Domain on every new scope item, closed vocabulary | P2 | DB CHECK + isolation assertion — **P2 TESTED**: `test/isolation/scopeItemDomain.test.ts` (every 1.1.0 item non-NULL in the closed set; `domains` sums to the item count on `GET /:id` and `/responses`; 1.0.0 re-resolve writes NULL and reports `domains: null`; bogus value → `23514`; CHECK list == `ASSESSMENT_DOMAINS` read from `pg_constraint`; migration applied twice = no-op; issued → 409 + `verdict: match`; org-B 404 + zero rows under org-B RLS session); unit: `vendorScopeResolver.test.ts` (1.1.0 stamps every item, compliance iff S3; 1.0.0 has no `domain` key), `requirementDomain.test.ts` (nine-tag table, `summarizeDomains`), `requirementScopeTags.test.ts` (nine tags curated-only, never heuristic; S5's `DOMAIN_TAGS` counted as a consumer) |
 | Tenant isolation on the fact store | P3 | RLS proof; cross-org 404; vendor-B dependency never leaks into vendor-A facts; §G.1 A1–A3 |
 | Object-level authorisation | P3 | portal cookie → 401; contributor → 403; org-B id → 404; §G.1 A4 |
 | Closed subject-type allowlist (D1) | P3 | DB CHECK + code enum lockstep test (`FACT_SUBJECT_TYPES` equals the CHECK list, read from `pg_constraint`); RESERVED types refused; §G.1 A5 |
@@ -493,9 +493,9 @@ across key order.
 | Tenant+subject+fact lookup paths indexed | P3 | `EXPLAIN` assertion in the isolation suite: the subject read and the `fact_key` read both use the named indexes (no seq scan) |
 | Traceability | every | §G.1 status column + VA-Q0 §18 rows updated in every PR; no increment COMPLETE before STAGING VERIFIED |
 | No fact values in logs/audit/vendor-visible text (T-13) | P1, P3 | audit payload carries keys only (test inspects `security_audit_log` row); rationale-interpolation test; §G.1 A15 — **P1 TESTED**: every S5 rationale is a static string; no registry vocabulary value appears in any rationale; distinctive fact values absent from every reason |
-| Grants, WORM, real-gate, classification, premium-count lints | P2, P3 | the five existing lints stay green with the new table/routes registered |
+| Grants, WORM, real-gate, classification, premium-count lints | P2, P3 | the five existing lints stay green with the new table/routes registered — **P2 TESTED**: `appRequestGrants.test.ts` + `dataClassification.test.ts` green; no new table, policy or grant (the column inherits 20260924's) |
 | Safe, idempotent mirror | P3 | double-run row count; `ON CONFLICT … DO UPDATE` only when `captured_at` advances |
-| Rollback / recovery | P2, P3 | `ROLLBACK-20261062-20261063.sql` rehearsed on the harness DB after P3's suites populate it; forward re-apply exit 0 |
+| Rollback / recovery | P2, P3 | `ROLLBACK-20261062-20261063.sql` rehearsed on the harness DB after P3's suites populate it; forward re-apply exit 0 — **P2 TESTED** (forward half): 20261062 re-applied on a populated harness DB = no-op (`scopeItemDomain.test.ts`); `ROLLBACK-20261062.sql` written, rehearsal owed with P3's combined file |
 | Existing VA E2E green | every | the eleven VA isolation suites (list in §B) in every PR's CI |
 
 ### G.1 Adversarial matrix for the fact store (owner-required minimum; one named test per row)

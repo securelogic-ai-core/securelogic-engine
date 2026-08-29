@@ -7594,10 +7594,39 @@ export type VendorEngagementDetail = {
   updated_at: string;
 };
 
+/** The closed assessment-domain vocabulary (engine: requirementDomain.ts, DB CHECK 20261062). */
+export const VENDOR_ASSESSMENT_DOMAINS = [
+  "security",
+  "privacy",
+  "ai",
+  "resilience",
+  "nth_party",
+  "compliance",
+] as const;
+export type VendorAssessmentDomain = (typeof VENDOR_ASSESSMENT_DOMAINS)[number];
+
+export const VENDOR_ASSESSMENT_DOMAIN_LABELS: Record<VendorAssessmentDomain, string> = {
+  security: "Security",
+  privacy: "Privacy",
+  ai: "AI governance",
+  resilience: "Resilience",
+  nth_party: "Fourth / Nth party",
+  compliance: "Compliance",
+};
+
+/**
+ * Per-domain item counts (VA-Q2 P2). `null` for an engagement resolved under
+ * scope-rule 1.0.0 — its items were never asked per domain, and the server
+ * reports null rather than six zeros. When present, the six values sum to
+ * `scoped`.
+ */
+export type VendorEngagementDomainCounts = Record<VendorAssessmentDomain, number>;
+
 export type VendorEngagementQuestionnaire = {
   scoped: number;
   answered: number;
   mandatory: number;
+  domains: VendorEngagementDomainCounts | null;
 };
 
 /** One row of GET /api/vendor-engagements/:id/evidence. */
@@ -7909,7 +7938,8 @@ export type VendorEngagementResponseItem = {
     title: string;
     description: string | null;
   };
-  scope: { depth: string; mandatory: boolean };
+  /** `domain` is null on items resolved under scope-rule 1.0.0 (VA-Q2 P2). */
+  scope: { depth: string; mandatory: boolean; domain: VendorAssessmentDomain | null };
   response: {
     status: string | null;
     notes: string | null;
@@ -7937,7 +7967,12 @@ export type VendorEngagementResponseItem = {
 export type VendorEngagementResponses = {
   engagement_id: string;
   engagement_status: string;
-  counts: { scoped: number; answered: number; mandatory: number };
+  counts: {
+    scoped: number;
+    answered: number;
+    mandatory: number;
+    domains: VendorEngagementDomainCounts | null;
+  };
   items: VendorEngagementResponseItem[];
 };
 

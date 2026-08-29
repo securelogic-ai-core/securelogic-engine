@@ -70,9 +70,47 @@ export const SCOPE_TAG_VOCABULARY = [
   "model-risk",
   "explainability",
   "human-oversight",
+  // ── VA-Q2 P2: the nine starred VA-Q0 §5 tags. CURATED-ONLY (see below). ──
+  // Security
+  "vulnerability-management",
+  "secure-development",
+  // Privacy
+  "data-subject-rights",
+  "cross-border",
+  "lawful-basis",
+  "breach-notification",
+  // AI
+  "training-data",
+  "model-provider",
+  "automated-decision",
 ] as const;
 
 export type ScopeTag = (typeof SCOPE_TAG_VOCABULARY)[number];
+
+/**
+ * Tags a human must apply — `deriveScopeTags` NEVER emits them.
+ *
+ * Added in VA-Q2 P2 as vocabulary only: they are consumed by S5 through
+ * `DOMAIN_TAGS` (requirementDomain.ts) and accepted by `areValidScopeTags`,
+ * but they have no heuristic pattern. Two reasons, both deliberate:
+ *   - the SQL backfill in migration 20260926 is the heuristic's mirror and is
+ *     parity-tested against this module; a code-only pattern would silently
+ *     desynchronise the two;
+ *   - these are precisely the tags whose meaning a title cannot carry
+ *     ("lawful basis", "cross-border") — a curator's judgement, not a regex.
+ */
+export const CURATED_ONLY_SCOPE_TAGS = [
+  "vulnerability-management",
+  "secure-development",
+  "data-subject-rights",
+  "cross-border",
+  "lawful-basis",
+  "breach-notification",
+  "training-data",
+  "model-provider",
+  "automated-decision",
+] as const satisfies readonly ScopeTag[];
+export type CuratedOnlyScopeTag = (typeof CURATED_ONLY_SCOPE_TAGS)[number];
 
 export const SCOPE_TAG_SOURCES = ["heuristic", "curated"] as const;
 export type ScopeTagSource = (typeof SCOPE_TAG_SOURCES)[number];
@@ -85,7 +123,7 @@ export type ScopeTagSource = (typeof SCOPE_TAG_SOURCES)[number];
  * one requirement, which is correct — an "Encryption of personal data at rest"
  * control is genuinely both `encryption` and `privacy`.
  */
-const TAG_PATTERNS: Record<Exclude<ScopeTag, "core">, RegExp[]> = {
+const TAG_PATTERNS: Record<Exclude<ScopeTag, "core" | CuratedOnlyScopeTag>, RegExp[]> = {
   "access-control": [/\baccess control\b/i, /\bauthoriz/i, /\bauthentication\b/i, /\bpassword\b/i, /\bmfa\b/i, /multi-?factor/i],
   iam: [/\bidentity\b/i, /\baccount (management|provisioning)\b/i, /\bjoiner\b/i, /\bleaver\b/i, /\bprovisioning\b/i],
   "privileged-access": [/\bprivileged\b/i, /\badministrat/i, /\broot access\b/i, /\bsuperuser\b/i],

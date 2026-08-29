@@ -47,10 +47,17 @@ export const TAG_DOMAIN: Readonly<Record<string, Exclude<AssessmentDomain, "secu
   privacy: "privacy",
   "data-protection": "privacy",
   retention: "privacy",
+  "data-subject-rights": "privacy",
+  "cross-border": "privacy",
+  "lawful-basis": "privacy",
+  "breach-notification": "privacy",
   "ai-governance": "ai",
   "model-risk": "ai",
   explainability: "ai",
   "human-oversight": "ai",
+  "training-data": "ai",
+  "model-provider": "ai",
+  "automated-decision": "ai",
   resilience: "resilience",
   "business-continuity": "resilience",
   "supply-chain": "nth_party",
@@ -76,9 +83,27 @@ export const DOMAIN_TAGS: Readonly<Record<Exclude<AssessmentDomain, "compliance"
     "tenancy-isolation",
     "logging",
     "incident-response",
+    "vulnerability-management",
+    "secure-development",
   ],
-  privacy: ["privacy", "data-protection", "retention"],
-  ai: ["ai-governance", "model-risk", "explainability", "human-oversight"],
+  privacy: [
+    "privacy",
+    "data-protection",
+    "retention",
+    "data-subject-rights",
+    "cross-border",
+    "lawful-basis",
+    "breach-notification",
+  ],
+  ai: [
+    "ai-governance",
+    "model-risk",
+    "explainability",
+    "human-oversight",
+    "training-data",
+    "model-provider",
+    "automated-decision",
+  ],
   resilience: ["resilience", "business-continuity"],
   nth_party: ["supply-chain", "subprocessor"],
 };
@@ -104,4 +129,28 @@ export function domainForRequirement(
 ): AssessmentDomain {
   if (reachedViaObligation) return "compliance";
   return domainForScopeTags(req.scope_tags);
+}
+
+/** Per-domain item counts; every domain present, zero included. */
+export type DomainCounts = Record<AssessmentDomain, number>;
+
+/**
+ * Group stored scope items by the domain they were asked under (VA-Q2 P2).
+ *
+ * Returns `null` when NO item carries a domain — an engagement resolved under
+ * 1.0.0 was never asked per domain, and reporting six zeros for it would
+ * read as "asked, found nothing". A stamped engagement reports all six keys,
+ * zeros included, so the sum always equals the stamped item count. Values
+ * outside the closed set cannot exist (DB CHECK) and are ignored, never
+ * counted under a wrong key.
+ */
+export function summarizeDomains(domains: ReadonlyArray<string | null | undefined>): DomainCounts | null {
+  let stamped = false;
+  const counts = Object.fromEntries(ASSESSMENT_DOMAINS.map((d) => [d, 0])) as DomainCounts;
+  for (const d of domains) {
+    if (!isAssessmentDomain(d)) continue;
+    stamped = true;
+    counts[d] += 1;
+  }
+  return stamped ? counts : null;
 }

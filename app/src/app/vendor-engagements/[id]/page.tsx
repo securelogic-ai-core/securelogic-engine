@@ -10,6 +10,8 @@ import {
   listVendorEngagementComments,
   type VendorEngagementDetail,
   type VendorEngagementQuestionnaire,
+  VENDOR_ASSESSMENT_DOMAINS,
+  VENDOR_ASSESSMENT_DOMAIN_LABELS,
   type VendorEngagementEvidenceRow,
   type VendorEngagementComment,
 } from "@/lib/api";
@@ -194,6 +196,13 @@ export default async function VendorEngagementPage({
                 ? "Not scoped"
                 : `${q.answered}/${q.scoped} answered · ${q.mandatory} mandatory`}
             </span>
+            {q.domains ? (
+              <span style={{ fontSize: 12, color: "#9ca3af" }} title="Questions by assessment domain (VA-Q2)">
+                {VENDOR_ASSESSMENT_DOMAINS.filter((d) => q.domains![d] > 0)
+                  .map((d) => `${VENDOR_ASSESSMENT_DOMAIN_LABELS[d]} ${q.domains![d]}`)
+                  .join(" · ")}
+              </span>
+            ) : null}
           </div>
           {coverage && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

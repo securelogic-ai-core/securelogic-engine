@@ -16,7 +16,13 @@
  * facts and are rendered differently.
  */
 
-import type { VendorEngagementResponses, VendorEngagementResponseItem } from "@/lib/api";
+import {
+  VENDOR_ASSESSMENT_DOMAINS,
+  VENDOR_ASSESSMENT_DOMAIN_LABELS,
+  type VendorAssessmentDomain,
+  type VendorEngagementResponses,
+  type VendorEngagementResponseItem,
+} from "@/lib/api";
 
 const STATUS_STYLE: Record<string, { label: string; fg: string; bg: string; border: string }> = {
   pass: { label: "Pass", fg: "#86efac", bg: "rgba(22,101,52,0.2)", border: "#166534" },
@@ -126,6 +132,22 @@ function ResponseRow({ item }: { item: VendorEngagementResponseItem }) {
   );
 }
 
+/**
+ * Group STAMPED items by domain in the canonical domain order, keeping the
+ * server's item order inside each group (VA-Q2 P2). Only called when
+ * `counts.domains` is non-null; one resolve writes all items' domains or none,
+ * so an "Unassigned" bucket is a defensive tail, never a silent drop.
+ */
+function groupByDomain(
+  items: VendorEngagementResponseItem[]
+): Array<[VendorAssessmentDomain | "unassigned", VendorEngagementResponseItem[]]> {
+  const buckets = new Map<VendorAssessmentDomain | "unassigned", VendorEngagementResponseItem[]>();
+  for (const d of VENDOR_ASSESSMENT_DOMAINS) buckets.set(d, []);
+  buckets.set("unassigned", []);
+  for (const item of items) buckets.get(item.scope.domain ?? "unassigned")!.push(item);
+  return [...buckets.entries()].filter(([, list]) => list.length > 0);
+}
+
 export default function ResponsesSection({
   responses,
   loadFailed,
@@ -178,9 +200,32 @@ export default function ResponsesSection({
             {responses.counts.answered}/{responses.counts.scoped} answered ·{" "}
             {responses.counts.mandatory} required
           </div>
-          {responses.items.map((item) => (
-            <ResponseRow key={item.requirement.id} item={item} />
-          ))}
+          {responses.counts.domains === null ? (
+            // Resolved under scope-rule 1.0.0: no item carries a domain, so the
+            // list stays flat — grouping would invent a domain nobody computed.
+            responses.items.map((item) => <ResponseRow key={item.requirement.id} item={item} />)
+          ) : (
+            groupByDomain(responses.items).map(([domain, items]) => (
+              <div key={domain} style={{ display: "grid", gap: 10 }}>
+                <h3
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "#d1d5db",
+                    margin: "8px 0 0",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  {domain === "unassigned" ? "Unassigned" : VENDOR_ASSESSMENT_DOMAIN_LABELS[domain]}{" "}
+                  <span style={{ color: "#6b7280", fontWeight: 400 }}>· {items.length}</span>
+                </h3>
+                {items.map((item) => (
+                  <ResponseRow key={item.requirement.id} item={item} />
+                ))}
+              </div>
+            ))
+          )}
         </div>
       )}
     </section>

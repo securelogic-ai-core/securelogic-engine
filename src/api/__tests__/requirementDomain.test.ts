@@ -11,6 +11,7 @@ import {
   domainForRequirement,
   domainForScopeTags,
   isAssessmentDomain,
+  summarizeDomains,
 } from "../lib/vendorRisk/requirementDomain.js";
 import { QUESTION_DOMAINS, domainForScopeTags as reExported } from "../lib/questionnaire/questionContent.js";
 import { SCOPE_TAG_VOCABULARY } from "../lib/vendorRisk/requirementScopeTags.js";
@@ -94,5 +95,44 @@ describe("domainForRequirement — compliance only via an obligation edge", () =
   it("not reached via S3 → the tag rule", () => {
     expect(domainForRequirement({ scope_tags: ["privacy"] }, false)).toBe("privacy");
     expect(domainForRequirement({ scope_tags: [] }, false)).toBe("security");
+  });
+});
+
+describe("VA-Q2 P2 — the nine starred VA-Q0 §5 tags map per the ratified table", () => {
+  it("security ← vulnerability-management, secure-development (floor: absent from TAG_DOMAIN)", () => {
+    for (const t of ["vulnerability-management", "secure-development"]) {
+      expect(TAG_DOMAIN[t]).toBeUndefined();
+      expect(DOMAIN_TAGS.security).toContain(t);
+      expect(domainForScopeTags([t])).toBe("security");
+    }
+  });
+  it("privacy ← data-subject-rights, cross-border, lawful-basis, breach-notification", () => {
+    for (const t of ["data-subject-rights", "cross-border", "lawful-basis", "breach-notification"]) {
+      expect(TAG_DOMAIN[t]).toBe("privacy");
+      expect(DOMAIN_TAGS.privacy).toContain(t);
+    }
+  });
+  it("ai ← training-data, model-provider, automated-decision", () => {
+    for (const t of ["training-data", "model-provider", "automated-decision"]) {
+      expect(TAG_DOMAIN[t]).toBe("ai");
+      expect(DOMAIN_TAGS.ai).toContain(t);
+    }
+  });
+});
+
+describe("VA-Q2 P2 — summarizeDomains (the `domains` read)", () => {
+  it("is null when no item carries a domain — a 1.0.0 engagement is not six zeros", () => {
+    expect(summarizeDomains([])).toBeNull();
+    expect(summarizeDomains([null, null, undefined])).toBeNull();
+  });
+  it("reports all six keys, zeros included, and the values sum to the stamped count", () => {
+    const out = summarizeDomains(["security", "security", "privacy", "compliance"]);
+    expect(out).toEqual({ security: 2, privacy: 1, ai: 0, resilience: 0, nth_party: 0, compliance: 1 });
+    expect(Object.keys(out!)).toEqual([...ASSESSMENT_DOMAINS]);
+    expect(Object.values(out!).reduce((a, b) => a + b, 0)).toBe(4);
+  });
+  it("never counts a value outside the closed set under any key", () => {
+    expect(summarizeDomains(["bogus"])).toBeNull();
+    expect(summarizeDomains(["ai", "bogus"])).toEqual({ security: 0, privacy: 0, ai: 1, resilience: 0, nth_party: 0, compliance: 0 });
   });
 });
