@@ -2262,6 +2262,13 @@ function parseFactWrites(
         observedAt = t;
       }
     }
+    // `core.*` is mirrored from the 13 inherent-risk columns on every scope
+    // resolve (mirrorInherentFacts) — the columns are the store of record, so a
+    // declared core.* row would be silently superseded before it could ever
+    // influence scope. Refuse it and point the caller at the real writer.
+    if (typeof f["fact_key"] === "string" && f["fact_key"].startsWith("core.")) {
+      errors.push({ field: "fact_key", reason: "core.* facts are derived from the inherent-risk intake; use PATCH /inherent" });
+    }
     // Registry validation runs even when source/origin failed, so the caller
     // sees every defect at once; subject_type is forced, not read from the body.
     const v = validateFact(f["fact_key"], f["value"], isFactSource(source) ? source : "intake", isFactOrigin(origin) ? origin : "intake", "vendor_engagement");

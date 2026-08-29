@@ -403,6 +403,8 @@ describe("VA-Q2 P3 · §G.1 malformed fact type/value", () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [{ fact_key: "data.does_not_exist", value: true }, "fact_key"],
       [{ fact_key: "core.data_volume", value: "huge" }, "value"],
+      // a well-formed core.* value is still refused: the inherent-risk columns are the store of record
+      [{ fact_key: "core.data_volume", value: "moderate" }, "fact_key"],
       [{ fact_key: "ai.uses_ai", value: "yes" }, "value"],
       [{ fact_key: "DATA.personal_data", value: true }, "fact_key"],
       [{ fact_key: "data..personal_data", value: true }, "fact_key"],
