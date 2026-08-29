@@ -50,27 +50,73 @@ promotion and never recomputed.
 
 ## 2. Are the existing evidence types normalized enough?
 
-**Not yet — and this needs an answer before §3 can be applied.**
+**CORRECTED 2026-08-29.** An earlier revision of this document said
+`evidence.evidence_type` was "free TEXT with no CHECK". **That was wrong**, and
+the correction changes the recommendation rather than merely tidying it.
 
-`evidence.evidence_type` is a free TEXT column with **no CHECK constraint**. On
-staging the population is tiny (17 rows) and the two structured sources —
-`vendor_assurance_documents.document_type_hint` (`soc1` | `soc2_type1` |
-`soc2_type2`) and `pen_test_engagements.test_type` — carry their own
-vocabularies that do not align with it.
+`evidence.evidence_type` **is** a closed vocabulary, enforced twice:
 
-So there are effectively **three partial type vocabularies** and one free-text
-column. Applying per-type validity to a free-text field would produce policy
-that silently misses on a typo.
+| Layer | Values |
+|---|---|
+| `evidence_type_check` (DB) | `document`, `screenshot`, `log`, `test_result`, `interview`, `observation`, `policy`, `other` |
+| `VALID_EVIDENCE_TYPES` (`evidenceValidation.ts`) | the same eight |
 
-**Recommendation:** normalise `evidence.evidence_type` to a closed vocabulary as
-part of the validity package — reusing the two existing vocabularies as inputs
-rather than inventing a third — and treat unrecognised values as
-`not_established` rather than defaulting them. This is a prerequisite for §3,
-not an optional tidy-up. **Do not create a duplicate classification**: the SOC
-document hint and pen-test type should map INTO the evidence type, not sit
-beside it.
+So the risk is **not** spelling or alias drift. The real problem is sharper:
 
----
+> **`evidence_type` describes the artifact's FORM. The validity policy in §3 is
+> keyed on its ASSURANCE CLASS. They are different questions, and the existing
+> column answers the wrong one.**
+
+A SOC 2 Type II report, a DPA, an ISO certificate and a pen-test report are all
+`document`. A policy PDF is `policy` OR `document` depending on who filed it.
+Nothing in the vocabulary distinguishes "independent assurance report covering a
+period" from "a screenshot someone took" beyond shape.
+
+### The related vocabularies, and whether they are the same concept
+
+| Vocabulary | Values | Same concept as `evidence_type`? |
+|---|---|---|
+| `evidence.evidence_type` | document, screenshot, log, test_result, interview, observation, policy, other | — (FORM) |
+| `vendor_assurance_documents.document_type_hint` | soc1, soc2_type1, soc2_type2 | **No.** This IS assurance class, but only for SOC, and only as a *hint* on the document object |
+| `pen_test_engagements.test_type` | network, web_application, mobile_application, api, cloud, social_engineering, physical, … | **No.** This is a sub-classification *within* one assurance class |
+| `evidence_analysis.verdict` | supports, insufficient, contradicts, unreadable | **No.** An advisory judgement about an artifact, not a type |
+| `evidence.source_type` | control_test, vendor_review, ai_review, obligation_review, dependency_review, risk_treatment, finding | **No.** This is the *originating workflow*, i.e. provenance |
+
+**Four partial vocabularies, three orthogonal axes**: form (`evidence_type`),
+origin (`source_type`), assurance class (only for SOC, as a hint), and a
+within-class sub-type (pen test).
+
+### Recommendation — ADD a dimension, do not normalise the existing one
+
+**Do NOT rewrite `evidence_type`.** It is correct for what it describes, it is
+already constrained, and collapsing it into assurance class would destroy the
+form information and break `auditPackage`, `applicabilityAssessments`,
+`riskLifecycle` and the import boundary that all read it today.
+
+Instead add **one new orthogonal dimension** — `evidence.assurance_class` — over
+a closed, governed vocabulary that §3's policy keys on, with:
+
+- `document_type_hint` (soc1 / soc2_type1 / soc2_type2) and
+  `pen_test_engagements.test_type` mapping **into** it rather than beside it;
+- a deterministic backfill from those two existing signals where they exist;
+- **`unclassified` for everything else — never a silent default to a class that
+  carries validity.** An unclassified artifact must be observable and must fail
+  safe, exactly as `uncurated` does for scope tags (20261064);
+- historical rows keeping their existing `evidence_type` untouched, so nothing
+  that reads form today changes meaning.
+
+### Representation: not a Postgres ENUM
+
+Per the owner ruling to compare project patterns rather than default to ENUM:
+this repository uses **`TEXT` + a CHECK constraint + a mirrored code constant,
+with a lockstep test reading the CHECK from `pg_constraint`** — for
+`scope_tags_source`, `assessment_facts.source`/`origin`, `engagement_applicability.domain`,
+`evidence_analysis.verdict` and every other closed vocabulary in the model.
+
+That pattern is chosen deliberately: a Postgres ENUM cannot have a value removed
+or reordered without a type rewrite, which makes governed vocabulary evolution
+a migration hazard. **Use TEXT + CHECK + lockstep test.** There is no ENUM in
+this schema to be consistent with.
 
 ## 3. Proposed defaults, by evidence type
 
@@ -245,8 +291,13 @@ Recorded so ratification is not mistaken for completeness:
 ## 6. Decisions required to ratify
 
 1. Every duration in §3 — this document proposes, it does not decide.
+0. §2: approval to add `evidence.assurance_class` as a NEW orthogonal dimension
+   rather than normalising `evidence_type` (which is already constrained and
+   describes a different axis).
 2. §3.1: the bridge-letter window (proposed 3 months).
 3. §3.2: whether a missed surveillance audit makes a certificate stale.
 4. §3.9: separate treatment for DPA vs sub-processor list (recommended).
 5. §3.10: whether model-version change invalidates unconditionally.
-6. §2: approval to normalise `evidence.evidence_type` as part of the package.
+6. §2 (superseded by item 0 above): `evidence_type` is already a closed
+   vocabulary; the gap is a missing assurance-class axis, not an unconstrained
+   one.
