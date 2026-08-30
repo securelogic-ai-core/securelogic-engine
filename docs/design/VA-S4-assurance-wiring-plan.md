@@ -2,6 +2,8 @@
 
 **Status:** PLAN ONLY. Not authorized for implementation.
 **Predicate validated read-only against staging 2026-08-29 — result: DEAD.**
+**Re-validated 2026-08-30 after canonical publication + a proven end-to-end
+chain — result: STILL DEAD. Gate fired, S4 NOT wired. See §2d.**
 Four owner rulings incorporated 2026-08-29 (§2a). VA-Q2 P4 is complete and
 staging verified; S4 remains deliberately outside it.
 **Prerequisite reading:** `docs/design/VA-EVIDENCE-architecture-reconciliation.md`.
@@ -272,6 +274,166 @@ covered".
 
 ---
 
+## 2d. Post-publication re-validation, 2026-08-30 — the three proven prerequisites
+
+The canonical crosswalk was **published on staging** on 2026-08-30 and the Step 1
+chain was **proven end to end**. Full record:
+`docs/validation/VA-S4-canonical-control-publication-2026-08-30.md`.
+
+**The read-only predicate of §3 was re-run against that state. It is still
+DEAD.** The §7 gate therefore holds and S4 remains unwired. What changed is that
+the cause is now measured rather than inferred, and it decomposes into exactly
+three prerequisites — one missing MECHANISM, one missing CONTENT, one missing
+STAGING STATE. None of them is the crosswalk.
+
+### The structural break, hop-isolated
+
+The predicate dies **before any eligibility clause is applied**: the bare
+structural join is already empty.
+
+| Hop | Rows |
+|---|---|
+| documents → CUECs | 9 |
+| CUECs → CUEC→control mappings | 10 |
+| mappings → controls (same org) | 10 |
+| **controls → `control_mappings`** | **0** |
+
+The terminal break is the **control → requirement** hop — precisely the
+deficiency Ruling 1 named in `control_mappings` ("no `organization_id`, no
+provenance, no version, no source, no approval state").
+
+**Substituting the governed canonical crosswalk for that hop still returns
+zero**, and this was measured, not assumed. Two independent reasons, each
+sufficient:
+
+1. all 5 CUEC-mapped controls belong to `Staging Inc` (`fe2ede61`) and are
+   **hand-created**, so they carry no `control_canonical_identities` row — and
+   Ruling 1 forbids manufacturing one;
+2. that org's only activated framework is **NIST SP 800-53 Rev 5**, which the
+   published corpus does not cover.
+
+So publishing the crosswalk was necessary and is not sufficient. Re-pointing the
+predicate at it is also necessary and still not sufficient.
+
+### Prerequisite 1 — assurance-eligible evidence (missing STAGING STATE)
+
+Staging corpus at re-validation: **57 VA documents, 0 finalized, 0 accepted
+CUECs, 0 human-accepted opinions** (2 documents `approved`).
+
+**S4 cannot be proven on non-final, non-accepted evidence.** A predicate that
+reduces question depth on unreviewed extraction output is exactly the
+fail-open the hard boundaries forbid.
+
+**Minimum governed state for evidence to contribute assurance** — every clause
+required, no substitutions:
+
+| # | Required | Why it cannot be relaxed |
+|---|---|---|
+| 1 | The document has reached a **terminal, human-owned state** | Raw extraction is a model output. **Note the §2b correction: the real vocabulary is `pending / extracting / extracted / extraction_failed / finalized / approved / manual_review_requested / rejected`, zero documents ever reach `finalized`, and the terminal state actually in use is `approved`.** The clause must be written against the state the product really produces, or it gates on a value that never occurs and fails closed forever |
+| 2 | The **auditor opinion is human-accepted** — `assurance_opinion_accepted_by_user_id` present (20261066) | Ruling 4. The CHECK already makes an opinion without an acceptor impossible; the predicate must actually read the acceptance, not the extracted string |
+| 3 | The opinion resolves through `opinionCoverageGate` to a **covering** verdict | `qualified` returns `conditional` and deliberately cannot self-resolve — it needs a human decision, not a default |
+| 4 | The report period is **in validity at resolve time**, by a Type I / Type II aware rule | Ruling 3. No universal TTL, never `uploaded_at` |
+| 5 | The CUEC→control mapping is **`accepted`**, never `suggested`, never `auto`-only | `auto` is matcher output — AI may propose, not confirm |
+| 6 | A **governed** control→requirement association exists (see prerequisite 2) | The hop that is currently empty |
+| 7 | **No contradicting signal** — no `contradicts` analysis, no open finding on that control/requirement for that vendor | Contradiction beats coverage, always |
+| 8 | Coverage is **full**, not partial | §2 #11 |
+
+Until at least one document satisfies 1–4 on staging, any S4 acceptance run is
+vacuous regardless of how the other prerequisites land.
+
+### Prerequisite 2 — governed tenant-control → canonical-control association (missing MECHANISM)
+
+`templateLoader` is the **only** writer of `control_canonical_identities`.
+Provenance `attestation`, `customer_mapped` and `inferred` have **no route, no
+service and no script**. A hand-created control — the normal case for a real
+tenant — can acquire a canonical identity by no means at all.
+
+**Hand-created controls must NOT be auto-assigned to canonical controls.** Name
+similarity is not identity, and a wrong canonical identity silently changes what
+a historical assurance decision was anchored to — the exact defect Step 1 was
+built to end.
+
+The association path is **governed, staged, and human-terminated**:
+
+```
+customer / tenant control
+  → candidate canonical association        (proposal; may be AI-generated)
+  → validation / mapping analysis          (evidence for the proposal, reviewable)
+  → governed confirmation                  (a named human accepts or rejects)
+  → control_canonical_identities row       (the durable identity)
+```
+
+**Only the final step writes an identity row.** A proposal is not an identity,
+and no proposal may skip the confirmation step — the same boundary
+`vendor_assurance_cuec_control_mappings` already draws with `mapping_status`
+(`suggested` → accepted) and `mapping_source` (`auto` | `manual`), and the same
+boundary the crosswalk's publication CHECK draws. **AI may PROPOSE a canonical
+association; it may never authoritatively publish or confirm one.**
+
+How the existing provenance vocabulary should be used — settling this before any
+build, because the values already exist and misusing them is worse than adding
+one:
+
+| Provenance | Correct use | Not for |
+|---|---|---|
+| `template` | Written by `templateLoader` when `TemplateControl.id` resolves through a registered alias to a **published** canonical control. Already built and now proven live | Anything a human or a model decided |
+| `attestation` | A named human in the tenant explicitly declares this control implements this canonical control. The 20261069 CHECK **already requires an actor** for this value and forbids one on the others — so this is the terminal state of the governed path above | A bulk or inferred assignment |
+| `customer_mapped` | The tenant's own mapping asserted through a governed customer-mapping surface (Ruling 2: customers may strengthen, never silently narrow the SecureLogic baseline) | A SecureLogic-authored claim |
+| `inferred` | A weak/machine match that **nobody stood behind**. It exists so a candidate is representable without being mistaken for a decision, and it must **never** be treated as evidence, nor be sufficient for S4 coverage | Any coverage-bearing decision |
+
+**Open question this raises, and it is a design decision not an implementation
+detail:** whether a *candidate* association is a row in
+`control_canonical_identities` with provenance `inferred`, or a separate
+proposal object that only ever becomes an identity on confirmation. The former
+reuses an existing table and risks a candidate being read as an identity by
+every consumer that does not filter provenance; the latter is one more object
+but keeps "proposed" and "decided" structurally distinct — the pattern
+`vendor_assurance_cuec_control_mappings` and the crosswalk both chose. **Decide
+this before building.**
+
+**Controls with no canonical equivalent must be preserved as such.** A
+customer-specific control with no SecureLogic counterpart is a legitimate,
+representable state — no row, and that absence is meaningful. It is not a gap to
+be filled, not a data-quality defect, and not something a coverage metric may
+count against the tenant.
+
+### Prerequisite 3 — crosswalk corpus coverage (missing CONTENT)
+
+The two must not be confused:
+
+| | |
+|---|---|
+| **MECHANISM — PROVEN** | Governed canonical publication works end to end: publication authority, fail-closed drift detection, alias resolution, versioned requirement identity, the crosswalk join, the tenant identity write, and the evidence terminus. Demonstrated on staging 2026-08-30 with 45 controls / 54 aliases / 75 crosswalk rows and a live 57 → 44 → 34 chain |
+| **CONTENT — INCOMPLETE** | The published corpus covers **NIST CSF 1.1 only**. The evidence-bearing staging org runs **NIST SP 800-53 Rev 5**. Zero governed crosswalk reachability there is the **expected and correct** result, not a defect |
+
+**Do not manufacture NIST SP 800-53 mappings to make the staging test pass.** A
+crosswalk invented to turn a number green is precisely the "correct and joins to
+nothing" failure the NIST CSF 1.1-over-2.0 decision was taken to avoid, and it
+would be published as governed SecureLogic reference content asserting mappings
+no one curated.
+
+Reconciliation with the planned curation work: Ruling 1 fixes framework priority
+as **NIST CSF · SOC 2 · GDPR · CCPA/CPRA · NIST AI RMF**, and #920's SOC 2 /
+NIST CSF re-curation rides this same crosswalk (§6). **NIST SP 800-53 is not on
+that list.** Two legitimate routes, and the choice is an owner decision, not an
+implementation one:
+
+- **(a)** curate the next priority framework (SOC 2) and prove reachability
+  against an org that runs it — keeping the priority order intact; or
+- **(b)** add NIST SP 800-53 Rev 5 to the curation queue **on its own merits**
+  as a customer-demand decision, explicitly re-ordering the priority list.
+
+What is not legitimate is bending the corpus to the shape of one staging org.
+
+### Status
+
+**S4 remains DEAD. It is not to be wired.** Prerequisites 1, 2 and 3 are now
+named, measured and independent; the smallest dependency-ordered plan to resolve
+them is the next decision, and none of them is authorized for implementation by
+this record.
+
+---
+
 ## 3. Validation before coding (the first task, not a footnote)
 
 1. **Measure the corpus.** On staging: how many finalized VA documents, accepted
@@ -406,7 +568,7 @@ after step 1 can be demonstrated without step 1.
 
 | # | Package | Depends on | Migration | Notes |
 |---|---|---|---|---|
-| 1 | **Canonical crosswalk + reference content** (absorbs #920) — SecureLogic baseline for NIST CSF, SOC 2, GDPR, CCPA/CPRA, NIST AI RMF; customer layer separately identifiable (Ruling 2). **IMPLEMENTED 2026-08-30 — migrations 20261067–69.** The owner review the reconciliation stopped for was given and the new canonical entity approved; `canonical_controls` + `canonical_control_aliases` (20261067), `canonical_framework_versions` + `frameworks.framework_key` + `canonical_control_crosswalk` (20261068) and `control_canonical_identities` (20261069) are built, with the NIST CSF 1.1 proof corpus (45 canonical controls, 57/57 template references) as version-controlled reference content and a governed publisher. **NOT staging verified and NOT complete** — see the two outstanding items in the Notes column | — | **BUILT — 20261067–69** | **No longer the blocker for BUILD; still the blocker for PROOF.** Deployed dark: migrating publishes nothing, so S4 behaviour is unchanged until a human runs `scripts/publish-canonical-controls.ts --apply`. **Outstanding: (a) controlled publication of the NIST CSF proof corpus; (b) the real staging chain — applicable requirement → versioned requirement identity → governed crosswalk → canonical control → tenant control → eligible evidence — then a re-run of the read-only S4 predicate. #920's SOC 2 / NIST CSF re-curation is folded into this step's governed content work (§6) and rides the same crosswalk; its regression-diff requirement (§6 above) still stands** |
+| 1 | **Canonical crosswalk + reference content** (absorbs #920) — SecureLogic baseline for NIST CSF, SOC 2, GDPR, CCPA/CPRA, NIST AI RMF; customer layer separately identifiable (Ruling 2). **IMPLEMENTED 2026-08-30 — migrations 20261067–69.** The owner review the reconciliation stopped for was given and the new canonical entity approved; `canonical_controls` + `canonical_control_aliases` (20261067), `canonical_framework_versions` + `frameworks.framework_key` + `canonical_control_crosswalk` (20261068) and `control_canonical_identities` (20261069) are built, with the NIST CSF 1.1 proof corpus (45 canonical controls, 57/57 template references) as version-controlled reference content and a governed publisher. **STAGING VERIFIED 2026-08-30** (published + chain proven, `docs/validation/VA-S4-canonical-control-publication-2026-08-30.md`). **Still NOT complete**: coverage is NIST CSF 1.1 only, and §2d's three prerequisites are open | — | **BUILT — 20261067–69** | **MECHANISM PROVEN on staging 2026-08-30; CONTENT COVERAGE INCOMPLETE.** (a) the NIST CSF 1.1 corpus was published under a named human — 45 controls / 54 aliases / 75 crosswalk rows, persisted state matching the constraint-backed dry run exactly; (b) the real staging chain was proven end to end — 57 applicable requirements → 57/57 crosswalk → 44 of 45 canonical controls → 34 requirements reaching a tenant control → evidence. **The read-only S4 predicate was re-run and is STILL DEAD** — see §2d, which decomposes the cause into three prerequisites (assurance-eligible evidence; a governed hand-created-control → canonical association, which has NO writer today; crosswalk coverage of the frameworks evidence-bearing orgs actually run). Publication covers **NIST CSF 1.1 only**, deliberately. **Outstanding: #920's SOC 2 / NIST CSF re-curation is folded into this step's governed content work (§6) and rides the same crosswalk; its regression-diff requirement (§6 above) still stands** |
 | 2 | **ADR-0012 subset** — `evidence.valid_from/valid_until` + version chain (20261051), `evidence_links` with per-use confirmation (20261052–53), `evidence_lifecycle_events` (20261054). **Now also carries `evidence.assurance_class`** (owner ruling: normalise in this package, not a second alter of `evidence`) | — | yes (reserved) | Only the subset S4 needs. **Note the corrected finding**: `evidence_type` is NOT unconstrained — it is a closed FORM vocabulary, and what is missing is an orthogonal ASSURANCE-CLASS axis. See the validity proposal §2 |
 | 3 | **Evidence-validity policy** — type/purpose guardrails, customer tightening within bounds (Ruling 3) | 2 | maybe | **Default durations proposed separately for ratification, not chosen here** |
 | 4 | **Auditor-opinion normalisation** — `unmodified / qualified / adverse / disclaimer / not_evaluated`, human-accepted, free text retained beside it (Ruling 4) | — | **DONE — 20261066** | Shipped 2026-08-29 (PR #936). Authority is a CHECK: no opinion without an acceptor. `opinionCoverageGate` returns `conditional` for `qualified` and deliberately cannot resolve it |
@@ -435,6 +597,15 @@ after step 1 can be demonstrated without step 1.
 Re-run the read-only validation of §3. If it still reports zero eligible
 requirements, **stop** — S4 would ship dead a second time, and the cause will be
 step 1's population rather than the predicate.
+
+**The gate FIRED on 2026-08-30 and the answer was STOP.** With the crosswalk
+published and the chain proven, the predicate still returns zero eligible
+requirements, and the cause is population and corpus coverage exactly as
+anticipated — not the predicate. S4 was not wired. See §2d for the hop-isolation
+evidence and the three prerequisites, and
+`docs/validation/VA-S4-canonical-control-publication-2026-08-30.md` for the run
+record. **This gate must be re-run, and must pass, before step 5 is attempted
+again.**
 
 ## Related
 
