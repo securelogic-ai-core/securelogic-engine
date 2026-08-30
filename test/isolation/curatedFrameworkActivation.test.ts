@@ -28,6 +28,8 @@ import {
 } from "../../src/api/lib/vendorRisk/curatedFrameworkTags.js";
 import { SCOPE_TAG_SOURCES } from "../../src/api/lib/vendorRisk/requirementScopeTags.js";
 import { domainForScopeTags } from "../../src/api/lib/vendorRisk/requirementDomain.js";
+import { canonicalFrameworkKeyFor } from "../../src/api/lib/controls/canonicalFrameworkIdentity.js";
+import { FRAMEWORK_TEMPLATES } from "../../src/api/lib/frameworkTemplates.js";
 
 let seed: TestDbSeed;
 let pool: Pool;
@@ -192,5 +194,48 @@ describe("the source vocabulary and the column CHECK move together", () => {
         [frameworkId]
       )
     ).rejects.toMatchObject({ code: "23514" });
+  });
+});
+
+
+// ====================================================================
+// VA-S4 Step 1 — the canonical framework identity
+// ====================================================================
+
+describe("activation persists the CANONICAL framework identity, not just a display name", () => {
+  it("every activatable template writes a framework_key the registry FK accepts", async () => {
+    for (const template of Object.keys(FRAMEWORK_TEMPLATES)) {
+      const res = await activate(seed.orgB.apiKey, template);
+      expect(res.status, `${template}: ${JSON.stringify(res.body)}`).toBe(200);
+
+      const r = await pool.query<{ name: string; version: string; framework_key: string | null }>(
+        `SELECT name, version, framework_key FROM frameworks WHERE id = $1`,
+        [res.body.framework.id]
+      );
+      const row = r.rows[0]!;
+      // Non-null, and exactly what the module resolves — the join key from a
+      // tenant requirement to the global crosswalk. `name` stays a display
+      // string and is never the join key.
+      expect(row.framework_key, template).toBe(canonicalFrameworkKeyFor(row.name, row.version));
+      expect(row.framework_key, template).not.toBeNull();
+    }
+  });
+
+  it("re-activating never nulls a key an earlier activation resolved", async () => {
+    const first = await activate(seed.orgB.apiKey, "soc2");
+    expect(first.status).toBe(200);
+    const id = first.body.framework.id as string;
+
+    await pool.query(`UPDATE frameworks SET name = 'Renamed by the customer' WHERE id = $1`, [id]);
+    const again = await activate(seed.orgB.apiKey, "soc2");
+    expect(again.status).toBe(200);
+
+    const r = await pool.query<{ framework_key: string | null }>(
+      `SELECT framework_key FROM frameworks WHERE id = $1`,
+      [id]
+    );
+    // The rename cannot reach the canonical identity: COALESCE keeps it, and a
+    // renamed row is exactly the case a mutable display string cannot survive.
+    expect(r.rows[0]!.framework_key).toBe("soc2");
   });
 });

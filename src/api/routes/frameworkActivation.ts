@@ -25,6 +25,7 @@ import { requireAdminRole } from "../middleware/requireRole.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import { resolveScopeTags } from "../lib/vendorRisk/curatedFrameworkTags.js";
+import { canonicalFrameworkKeyFor } from "../lib/controls/canonicalFrameworkIdentity.js";
 
 const router = Router();
 
@@ -79,12 +80,23 @@ router.post(
         id: string; organization_id: string; name: string;
         version: string; created_at: string; updated_at: string;
       }>(
-        `INSERT INTO frameworks (organization_id, name, version)
-         VALUES ($1, $2, $3)
+        // VA-S4 Step 1: persist the CANONICAL framework identity alongside the
+        // display name. `name` is a mutable display string and can never be the
+        // join key from a tenant requirement to the global crosswalk; the
+        // (framework_key, version) pair is. COALESCE keeps a re-activation from
+        // nulling a key an earlier write already resolved.
+        `INSERT INTO frameworks (organization_id, name, version, framework_key)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (organization_id, name, version)
-         DO UPDATE SET updated_at = frameworks.updated_at
+         DO UPDATE SET updated_at    = frameworks.updated_at,
+                       framework_key = COALESCE(frameworks.framework_key, EXCLUDED.framework_key)
          RETURNING id, organization_id, name, version, created_at, updated_at`,
-        [organizationId, template.name, template.version]
+        [
+          organizationId,
+          template.name,
+          template.version,
+          canonicalFrameworkKeyFor(template.name, template.version),
+        ]
       );
 
       const framework = frameworkResult.rows[0]!;

@@ -57,6 +57,7 @@ import {
   TemplateLoaderInputError,
 } from "../lib/templateLoader.js";
 import { ALL_INDUSTRIES, TEMPLATES } from "../../templates/index.js";
+import { canonicalFrameworkKeyFor } from "../lib/controls/canonicalFrameworkIdentity.js";
 
 const ORG_UUID = "11111111-1111-4111-8111-111111111111";
 const FRAMEWORK_UUID = "22222222-2222-4222-8222-222222222222";
@@ -74,7 +75,16 @@ beforeEach(() => {
  * Helper: build a query tape for a fully-fresh-org load (every INSERT
  * succeeds with rowCount 1) for the given template. The order matches
  * the loader's pass order: vendors → ai_systems → obligations →
- * frameworks (upsert) → requirements (synthetic) → controls + mappings.
+ * frameworks (upsert) → requirements (synthetic) → controls + mappings +
+ * canonical identity.
+ *
+ * VA-S4 Step 1: every newly-inserted control now issues a THIRD statement —
+ * the `control_canonical_identities` INSERT…SELECT. It is a conditional write
+ * expressed in SQL (the SELECT resolves nothing unless the template slug is a
+ * registered alias of a PUBLISHED canonical control), so the statement is
+ * always issued and its rowCount is legitimately 0 on an environment where the
+ * corpus has never been published. The tape returns 0 rows to model exactly
+ * that: the default, un-published state.
  */
 function buildHappyPathTape(industryId: keyof typeof TEMPLATES): void {
   const t = TEMPLATES[industryId];
@@ -122,6 +132,9 @@ function buildHappyPathTape(industryId: keyof typeof TEMPLATES): void {
     });
     // control_mappings insert
     mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    // control_canonical_identities INSERT…SELECT — resolves nothing until the
+    // canonical corpus is published, so rowCount 0 is the correct default.
+    mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
   }
 
   mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // COMMIT
@@ -341,6 +354,7 @@ describe("loadTemplate — selective load", () => {
       rows: [{ id: NEW_CONTROL_UUID }],
     });
     mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [] });  // mapping
+    mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });  // canonical identity
     mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });  // COMMIT
 
     const result = await loadTemplate(ORG_UUID, "b2b-ai", {
@@ -450,6 +464,78 @@ describe("loadTemplate — synthetic requirement + control_mapping", () => {
       String(c[0]).startsWith("INSERT INTO control_mappings")
     );
     expect(mappingInserts.length).toBe(t.controls.length);
+  });
+});
+
+// ====================================================================
+// VA-S4 Step 1 — canonical identity
+// ====================================================================
+
+describe("loadTemplate — canonical framework + control identity", () => {
+  it("the framework upsert carries the canonical key, resolved from (name, version)", async () => {
+    buildHappyPathTape("b2b-ai");
+    await loadTemplate(ORG_UUID, "b2b-ai");
+
+    const fwInserts = mockClientQuery.mock.calls.filter((c) =>
+      String(c[0]).startsWith("INSERT INTO frameworks")
+    );
+    expect(fwInserts.length).toBeGreaterThan(0);
+    for (const call of fwInserts) {
+      const [, params] = call as [string, unknown[]];
+      const [, name, version, key] = params as [string, string, string, string | null];
+      expect(key, `${name} ${version}`).toBe(canonicalFrameworkKeyFor(name, version));
+      expect(key, `${name} ${version}`).not.toBeNull();
+    }
+    // COALESCE, so a re-load can never null a key an earlier write resolved.
+    expect(String(fwInserts[0]![0])).toContain("COALESCE(frameworks.framework_key");
+  });
+
+  it("every newly-inserted control offers its template slug as an alias, with provenance 'template'", async () => {
+    const t = TEMPLATES["b2b-ai"];
+    buildHappyPathTape("b2b-ai");
+    await loadTemplate(ORG_UUID, "b2b-ai");
+
+    const identityInserts = mockClientQuery.mock.calls.filter((c) =>
+      String(c[0]).startsWith("INSERT INTO control_canonical_identities")
+    );
+    expect(identityInserts.length).toBe(t.controls.length);
+
+    const offeredAliases = identityInserts.map((c) => (c[1] as unknown[])[2]);
+    expect([...offeredAliases].sort()).toEqual(t.controls.map((c) => c.id).sort());
+
+    for (const call of identityInserts) {
+      const [sql, params] = call as [string, unknown[]];
+      expect(params[0]).toBe(ORG_UUID);
+      expect(params[1]).toBe(NEW_CONTROL_UUID);
+      expect(sql).toContain("'template'");
+      // The gate: an alias resolving to nothing, or to a DRAFT canonical
+      // control, writes nothing. That is what keeps a load correct on an
+      // environment where the corpus has never been published.
+      expect(sql).toContain("cc.status = 'published'");
+      expect(sql).toContain("FROM canonical_control_aliases a");
+    }
+  });
+
+  it("a control that already existed gets NO canonical identity — the load is additive only", async () => {
+    const t = TEMPLATES["healthcare-saas"];
+
+    mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // BEGIN
+    for (const _ of t.vendors) mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    for (const _ of t.ai_systems) mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    for (const _ of t.obligations) mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    for (const _ of new Set(t.controls.map((c) => c.framework_ref))) {
+      mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: FRAMEWORK_UUID }] });
+      mockClientQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: REQUIREMENT_UUID }] });
+    }
+    for (const _ of t.controls) mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    mockClientQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] }); // COMMIT
+
+    await loadTemplate(ORG_UUID, "healthcare-saas");
+
+    const identityInserts = mockClientQuery.mock.calls.filter((c) =>
+      String(c[0]).startsWith("INSERT INTO control_canonical_identities")
+    );
+    expect(identityInserts.length).toBe(0);
   });
 });
 
