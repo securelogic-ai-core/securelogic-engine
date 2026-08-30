@@ -1,12 +1,71 @@
 # VA-S4 — wiring `S4.assurance`: implementation plan
 
 **Status:** PLAN ONLY. Not authorized for implementation.
+**COVERAGE ROUTE SUPERSEDED 2026-08-30 — read §0 first.** The CUEC spine is no
+longer the canonical S4 coverage route; the semantics below survive, the routing
+does not.
 **Predicate validated read-only against staging 2026-08-29 — result: DEAD.**
 **Re-validated 2026-08-30 after canonical publication + a proven end-to-end
 chain — result: STILL DEAD. Gate fired, S4 NOT wired. See §2d.**
 Four owner rulings incorporated 2026-08-29 (§2a). VA-Q2 P4 is complete and
 staging verified; S4 remains deliberately outside it.
 **Prerequisite reading:** `docs/design/VA-EVIDENCE-architecture-reconciliation.md`.
+
+---
+
+## 0. OWNER RULING 2026-08-30 — the CUEC spine is NOT the S4 coverage route
+
+**This ruling supersedes the coverage ROUTE assumed everywhere below.** The
+predicate in §2, its clause 4, and the §2d hop chain all route coverage through
+CUEC→control mappings. **That route is retired as the canonical basis for
+assurance coverage.**
+
+Not to be used as the general basis for declaring a requirement sufficiently
+assurance-covered and therefore eligible for depth reduction:
+
+```
+SOC report -> CUEC -> control -> requirement
+```
+
+**Why.** A CUEC is a customer/user-entity responsibility — a
+shared-responsibility condition the report places on the *reader*. It marks the
+boundary of what the auditor did **not** test at the service organisation.
+Routing coverage through it inverts the inference: *"the vendor told us we must
+do X ourselves, therefore we need not ask the vendor about X."* A CUEC mapping
+is **not** equivalent to evidence that the service organisation's relevant
+control was tested and operated effectively.
+
+CUECs remain first-class and keep every use they already have — applicability,
+customer responsibility, follow-up questions, findings, exceptions, and residual
+assurance conclusions. `20261036`'s gap-determination model is unaffected. What
+they may not do is establish assurance coverage.
+
+**The canonical model to evolve toward:**
+
+```
+governed evidence
+  -> tested control / control assertion
+  -> test result / exception state
+  -> control <-> requirement mapping
+  -> requirement assurance coverage
+```
+
+with human/governance gates and a preserved historical decision basis.
+
+**That arm is DESIGN-ONLY and must not be invented inside the current
+predicate.** The canonical evidence → tested-control → requirement arm will be
+recorded in a follow-up design document after the tested-controls inventory and
+opinion-acceptance work are complete.
+
+**What sections below remain valid.** Everything about *semantics* survives: the
+hard boundaries in §1, Rulings 1–4 in §2a, the eligibility clauses in §2 other
+than #4/#6's routing, §2c's "do not build an evidence state machine", and §5b.
+What is retired is the CUEC-shaped path through them.
+
+Forensic evidence for this ruling:
+`docs/validation/VA-S4-dead-hop-forensics-2026-08-30.md`.
+
+---
 
 ## 1. What is being wired, and what is not
 
@@ -164,9 +223,40 @@ governed human judgement, and the same boundary that keeps `ai_extraction` facts
 
 A `LIKE '%Unqualified%'` test returns **TRUE** on that. It is a qualified
 opinion, and under this ruling it can only contribute coverage for controls the
-Section IV exceptions demonstrably do not touch — a determination nothing in the
-current model can make, because the structured `exceptions` array is **empty in
-all five extractions** while the narrative cites them.
+Section IV exceptions demonstrably do not touch.
+
+> **CORRECTED 2026-08-30 (S4-P1).** This paragraph previously closed: *"a
+> determination nothing in the current model can make, because the structured
+> `exceptions` array is **empty in all five extractions** while the narrative
+> cites them."* **That is false against live staging data**, and the correction
+> matters because it changes what is actually blocking Ruling 4.
+>
+> `exceptions` is populated with **2 entries in all 5 extractions**, each
+> carrying a page-3 source span:
+>
+> - *"Exception noted: for 2 of 30 sampled days, failed backup jobs were not
+>   investigated within the organization's documented 24-hour SLA…"*
+> - *"Deviation noted: the Q3 privileged access review was completed 19 days
+>   after the documented due date…"*
+>
+> Every material field except `report_issued_date` (null on 5/5) is populated at
+> confidence 0.99: `report_type` `SOC 2 Type II`, period `2025-01-01` →
+> `2025-12-31`, `trust_services_criteria` `[Security, Availability,
+> Confidentiality]`, **`subservice_method` `Carve-out`**, `cuecs` 3, `controls` 5.
+>
+> So the exception data needed to ask "is this exception unrelated to the mapped
+> control?" **exists in structured form.** Ruling 4's blocker is not missing
+> data — it is that **nothing attributes an exception to a control**. That is a
+> different and considerably smaller problem than the one recorded here, and it
+> is exactly what the tested-controls arm exists to solve.
+>
+> The corpus also contains its own counterexample: the second deviation — a late
+> privileged access review — lands squarely on `Quarterly access reviews`, one of
+> the three controls that carries an *accepted* CUEC mapping. A clean
+> report-level opinion sitting on top of a control-level exception is not a
+> hypothetical here; it is the only assurance report the estate has.
+>
+> Evidence: `docs/validation/VA-S4-dead-hop-forensics-2026-08-30.md` §4.
 
 ---
 
@@ -420,11 +510,47 @@ tenant control → accepted CUEC mapping → approved document → accepted opin
 | 6. approved document | 0 | 0 |
 | 7. human-accepted opinion | 0 | 0 |
 
-**Verdict DEAD, zero synthetic rows.** On StageA hop 5 is empty because that org
-has no assurance documents at all — which prerequisite C would have fixed.
-Estate-wide it is empty because no CUEC has been human-accepted and the only
-accepted mappings are `auto`. Hop 7 is unreachable for everyone until the
-blocker above is built.
+**Verdict DEAD, zero synthetic rows.**
+
+> **CORRECTED 2026-08-30 (S4-P1).** This paragraph previously read: *"Estate-wide
+> it is empty because no CUEC has been human-accepted and the only accepted
+> mappings are `auto`."* **That describes a state that cannot exist**, and it
+> attributes the break to the wrong hop.
+>
+> **The terminal break is DISJOINT TENANCY at h5**, and it was isolated by
+> relaxation rather than inferred. h5 was re-measured with each eligibility
+> clause removed in turn:
+>
+> | h5 variant | Result |
+> |---|---|
+> | `mapping_status='accepted' AND mapping_source <> 'auto'` | **0** |
+> | `mapping_status='accepted'` | **0** |
+> | any mapping, any status, any source | **0** |
+>
+> The bare structural join is empty, so h5 is not failing an eligibility test —
+> there is nothing to test. The estate splits in two and no organisation holds
+> both halves:
+>
+> | Org | identities | VA docs | CUECs | mappings | CSF 1.1 |
+> |---|---|---|---|---|---|
+> | `Enterprise Validation StageA` | **30** | **0** | 0 | 0 | yes |
+> | `Staging Inc` | **0** | **53** | 6 | 10 | no (800-53 Rev 5 only) |
+>
+> A correctly org-scoped predicate **must** return zero against this corpus.
+> That is a corpus fact, not a defect.
+>
+> **h6 carried a defect of its own, independent of the corpus.** The clause
+> `vendor_assurance_cuecs.review_status = 'accepted'` is **unsatisfiable by CHECK
+> constraint** — the live vocabulary is
+> `('pending','not_applicable','satisfied','gap','reviewed_no_match')`, set by
+> migration `20261036`, which replaced acceptance with **determination**. No row
+> can ever hold `'accepted'`, so h6 would have returned zero against a perfect
+> corpus. Fixed in the instrument under S4-P1.
+>
+> Hop 7 sits downstream of both and has never been reached by a single row. It
+> is unreachable for everyone until the acceptance surface (S4-P2) is built.
+>
+> Evidence: `docs/validation/VA-S4-dead-hop-forensics-2026-08-30.md` §§1–3.
 
 ### Prerequisite 2 — governed tenant-control → canonical-control association (missing MECHANISM)
 
