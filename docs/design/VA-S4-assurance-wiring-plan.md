@@ -315,10 +315,16 @@ sufficient:
 So publishing the crosswalk was necessary and is not sufficient. Re-pointing the
 predicate at it is also necessary and still not sufficient.
 
-### Prerequisite 1 — assurance-eligible evidence (missing STAGING STATE)
+### Prerequisite 1 — assurance-eligible evidence (missing STAGING STATE **and, it turns out, a missing MECHANISM**)
 
 Staging corpus at re-validation: **57 VA documents, 0 finalized, 0 accepted
-CUECs, 0 human-accepted opinions** (2 documents `approved`).
+CUECs, 0 human-accepted opinions** (2 documents `approved`, both naming a
+human approver).
+
+**Reclassified 2026-08-30.** This prerequisite was filed as missing staging
+STATE — something an operator could go and create. Attempting it proved
+otherwise: clause 2 has **no writer at all**, so part of this prerequisite is a
+BUILD gap. See the blocker below before planning any population work.
 
 **S4 cannot be proven on non-final, non-accepted evidence.** A predicate that
 reduces question depth on unreviewed extraction output is exactly the
@@ -329,8 +335,8 @@ required, no substitutions:
 
 | # | Required | Why it cannot be relaxed |
 |---|---|---|
-| 1 | The document has reached a **terminal, human-owned state** | Raw extraction is a model output. **Note the §2b correction: the real vocabulary is `pending / extracting / extracted / extraction_failed / finalized / approved / manual_review_requested / rejected`, zero documents ever reach `finalized`, and the terminal state actually in use is `approved`.** The clause must be written against the state the product really produces, or it gates on a value that never occurs and fails closed forever |
-| 2 | The **auditor opinion is human-accepted** — `assurance_opinion_accepted_by_user_id` present (20261066) | Ruling 4. The CHECK already makes an opinion without an acceptor impossible; the predicate must actually read the acceptance, not the extracted string |
+| 1 | The document has reached a **terminal, human-owned state** — **RULED 2026-08-30: that state is `approved`**, and a `finalized` state must NOT be introduced to satisfy the old predicate | Raw extraction is a model output. The real vocabulary is `pending / extracting / extracted / extraction_failed / finalized / approved / manual_review_requested / rejected`; **zero documents ever reach `finalized`**, which is legacy, and the terminal state the product actually produces is `approved`. Verified: `approved` is set only by `POST /vendor-assurance/documents/:id/approve`, only from `extracted`, and never by a worker — the extraction path writes `extracting` / `extracted` / `extraction_failed` and nothing else. **But see finding A: the status alone is not sufficient** |
+| 2 | The **auditor opinion is human-accepted** — `assurance_opinion_accepted_by_user_id` present (20261066) | Ruling 4. The CHECK already makes an opinion without an acceptor impossible; the predicate must actually read the acceptance, not the extracted string. **BLOCKED — nothing can write this field. See the blocker below** |
 | 3 | The opinion resolves through `opinionCoverageGate` to a **covering** verdict | `qualified` returns `conditional` and deliberately cannot self-resolve — it needs a human decision, not a default |
 | 4 | The report period is **in validity at resolve time**, by a Type I / Type II aware rule | Ruling 3. No universal TTL, never `uploaded_at` |
 | 5 | The CUEC→control mapping is **`accepted`**, never `suggested`, never `auto`-only | `auto` is matcher output — AI may propose, not confirm |
@@ -339,7 +345,86 @@ required, no substitutions:
 | 8 | Coverage is **full**, not partial | §2 #11 |
 
 Until at least one document satisfies 1–4 on staging, any S4 acceptance run is
-vacuous regardless of how the other prerequisites land.
+vacuous regardless of how the other prerequisites land. **No document can
+satisfy clause 2 today.**
+
+#### BLOCKER — `assurance_opinion` has no writer
+
+`vendor_assurance_documents.assurance_opinion` is written by **nothing**.
+Verified 2026-08-30 by exhaustive search: the column name appears in exactly two
+files — `db/migrations/20261066_assurance_opinion.sql`, and
+`src/api/lib/vendorAssurance/assuranceOpinion.ts`, the latter only inside a
+comment stating that nothing writes it. **Zero routes, zero services, zero
+scripts.**
+
+VA-S4 Step 4 (PR #936) shipped the closed vocabulary, `opinionCoverageGate`, the
+advisory proposal normalizer and the authority CHECK that makes an opinion
+without a named acceptor structurally impossible — but **no acceptance
+surface**. The governed path stops one step short of the act it governs.
+
+So "obtain a human-accepted opinion" cannot be done through any product or
+governance path. The only way to set the field is direct database manipulation,
+which would make the resulting proof a fabrication — precisely what the §7 gate
+exists to prevent. **An acceptance surface is a prerequisite of the
+prerequisite**, and it is a build item, not an operator task.
+
+This is why prerequisite C was attempted and stopped on 2026-08-30 rather than
+completed. Every other step had a real route — vendor, engagement, document
+upload, approval, CUEC mapping acceptance, and a tenant control already carrying
+canonical identity. Only opinion acceptance had none.
+
+#### Two lifecycle findings the same verification produced
+
+**Finding A — `approved` is human-owned by CONVENTION, not by construction.**
+The approve route's middleware is `requireApiKey + attachOrganizationContext +
+requireEntitlement("premium") + denyContributor()` — **no user session is
+required** — and it writes `approved_by_user_id = req.userId ?? null`. Meanwhile
+`vendor_assurance_documents_approved_consistency` requires only `approved_at IS
+NOT NULL AND processing_status = 'approved'` and says **nothing** about the
+approver. An API-key-only integration can therefore produce an `approved`
+document with a NULL approver. **Any predicate must require
+`approved_by_user_id IS NOT NULL`, never the status alone** — which the
+read-only instrument now does. Whether the CHECK should be tightened to match
+the opinion authority CHECK is a separate decision, and tightening it is a
+migration against live rows.
+
+**Finding B — eligibility, once granted, is irreversible.**
+`vendor_assurance_documents` has no `revoked_at`, no `superseded_by`, no
+soft-delete column and no DELETE route, and field overrides are refused once
+`approved` (a re-open is documented as "out of scope"). Nothing can withdraw an
+approval. Combined with the fact that report periods live in
+`vendor_assurance_extractions.fields` JSONB rather than columns — so Ruling 3
+validity is not expressible in SQL either — **assurance coverage today would be
+permanent and unbounded in time once granted.** That is not acceptable for a
+production predicate, and it is a real dependency on the ADR-0012 subset
+(§7 step 2) rather than a nicety.
+
+#### The instrument
+
+`scripts/validation/va-s4-readonly-predicate.mjs` implements this section's
+semantics: gated on `approved` **plus a named approver**, routed through the
+governed canonical crosswalk rather than `control_mappings`, and reporting any
+`industry-template:*` row as `INVALID_SYNTHETIC` so the NIST CSF 2.0 umbrella
+can never be counted as coverage. It is read-only and imported by nothing.
+
+Result 2026-08-30 — hop by hop, `requirement → crosswalk → canonical control →
+tenant control → accepted CUEC mapping → approved document → accepted opinion`:
+
+| Hop | StageA | Estate-wide |
+|---|---|---|
+| 1. applicable NIST CSF 1.1 requirement | 57 | 114 |
+| 2. governed crosswalk | 57 | 114 |
+| 3. canonical control | 57 | 114 |
+| 4. tenant control | 34 | 34 |
+| 5. accepted CUEC mapping | **0** | **0** |
+| 6. approved document | 0 | 0 |
+| 7. human-accepted opinion | 0 | 0 |
+
+**Verdict DEAD, zero synthetic rows.** On StageA hop 5 is empty because that org
+has no assurance documents at all — which prerequisite C would have fixed.
+Estate-wide it is empty because no CUEC has been human-accepted and the only
+accepted mappings are `auto`. Hop 7 is unreachable for everyone until the
+blocker above is built.
 
 ### Prerequisite 2 — governed tenant-control → canonical-control association (missing MECHANISM)
 
@@ -572,7 +657,8 @@ after step 1 can be demonstrated without step 1.
 | 2 | **ADR-0012 subset** — `evidence.valid_from/valid_until` + version chain (20261051), `evidence_links` with per-use confirmation (20261052–53), `evidence_lifecycle_events` (20261054). **Now also carries `evidence.assurance_class`** (owner ruling: normalise in this package, not a second alter of `evidence`) | — | yes (reserved) | Only the subset S4 needs. **Note the corrected finding**: `evidence_type` is NOT unconstrained — it is a closed FORM vocabulary, and what is missing is an orthogonal ASSURANCE-CLASS axis. See the validity proposal §2 |
 | 3 | **Evidence-validity policy** — type/purpose guardrails, customer tightening within bounds (Ruling 3) | 2 | maybe | **Default durations proposed separately for ratification, not chosen here** |
 | 4 | **Auditor-opinion normalisation** — `unmodified / qualified / adverse / disclaimer / not_evaluated`, human-accepted, free text retained beside it (Ruling 4) | — | **DONE — 20261066** | Shipped 2026-08-29 (PR #936). Authority is a CHECK: no opinion without an acceptor. `opinionCoverageGate` returns `conditional` for `qualified` and deliberately cannot resolve it |
-| 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,4 | no | One module, one call-site change |
+| 4b | **Opinion ACCEPTANCE surface** — a governed route/action that sets `assurance_opinion` + `assurance_opinion_accepted_by_user_id`, consuming `proposeAssuranceOpinion` as a candidate a human confirms. **NEW, discovered 2026-08-30** | 4 | no | Step 4 shipped the vocabulary, the gate, the normalizer and the authority CHECK but **no writer** — see §2d. Without this, predicate clause 2 can never be satisfied and any proof would require direct DB manipulation |
+| 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,**4b** | no | One module, one call-site change |
 | 6 | **Adversarial / security tests** — cross-tenant coverage leakage, forged mapping, expired-at-decision-time, qualified-opinion fail-closed, AI-proposed mapping cannot publish, partial coverage does not reduce | 5 | no | Fail-closed is the assertion, not an aspiration |
 | 7 | **Staging acceptance** on the exact merged SHA | 6 | no | Must show a REAL reduction, not a vacuous pass |
 | 8 | **#925 reassessment** — re-measure Privacy 17/17, AI 16/16, Nth-party 2/2 against live assurance | 7 | no | The ruling becomes decidable only here |
