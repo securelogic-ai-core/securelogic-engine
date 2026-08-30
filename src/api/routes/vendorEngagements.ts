@@ -32,7 +32,7 @@
 
 import { Router, type Request, type Response } from "express";
 
-import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { pg, registerAfterCommit } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
@@ -901,8 +901,15 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
   }
 
   try {
+    // #946. LOCK the row for the rest of the transaction. This — not the
+    // rowCount assertion further down — is the primary serialization
+    // mechanism: a second concurrent issue blocks here until the first commits,
+    // then re-reads `issued` and fails its own transition check. Without it,
+    // check-then-act leaves a window in which two callers both pass
+    // canTransition against the same `scoped` state.
     const eng = await pg.query<{ status: string }>(
-      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      `SELECT status FROM vendor_engagements
+        WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
       [id, organizationId]
     );
     if (eng.rowCount === 0) {
@@ -944,26 +951,21 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       return;
     }
 
-    const invite = mintInviteToken();
-
-    // Elevated: the invite is the credential a not-yet-authenticated external
-    // party will present, and its lookup at exchange time necessarily precedes
-    // org context. Written on the same channel that will read it.
-    await pgElevated.query(
-      `INSERT INTO vendor_engagement_invites
-         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
-    );
-
     // VA-Q1 P2: the content-addressed identity of what is being sent, stamped
     // at the one moment scope freezes and never rewritten (ADR-0013 R3).
     // `GET /vendor-engagements/:id/integrity` recomputes and compares.
+    //
+    // #946: loaded UNDER THE LOCK, so the hash is computed from the exact
+    // question set this transition is freezing. Loading it before the lock
+    // would let the set move between hashing and freezing.
     const set = await loadQuestionSetItems(pg, organizationId, id);
     const setHash = set.unversioned === 0 ? questionSetHash(set.items) : null;
 
-    await pg.query(
+    // #946: THE TRANSITION HAPPENS FIRST, AND IS VERIFIED. The old order wrote
+    // the credential first and never checked whether this UPDATE matched
+    // anything, so a zero-row transition still returned 200 with a usable
+    // invite. Nothing below runs unless exactly one row moved.
+    const moved = await pg.query(
       `UPDATE vendor_engagements
           SET status = 'issued', issued_at = NOW(), updated_at = NOW(),
               question_set_hash = COALESCE($4, question_set_hash),
@@ -971,19 +973,66 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
         WHERE id = $1 AND organization_id = $2 AND status = $3`,
       [id, organizationId, from, setHash]
     );
+    if (moved.rowCount !== 1) {
+      // Unreachable while the FOR UPDATE lock holds — kept as an assertion, not
+      // as the mechanism. If it ever fires, the state moved under a lock we
+      // believed we held, and issuing anyway would mint a credential for an
+      // engagement that was never issued.
+      logger.error(
+        {
+          event: "vendor_engagement_issue_transition_lost",
+          organizationId,
+          engagementId: id,
+          from,
+          rowCount: moved.rowCount,
+        },
+        "Issue transition matched no row while holding FOR UPDATE"
+      );
+      res.status(409).json({
+        error: "issue_conflict",
+        message:
+          "This engagement changed while it was being issued. Nothing was sent — re-read it and try again.",
+      });
+      return;
+    }
 
-    writeAuditEvent({
-      organizationId,
-      actorUserId: userOf(req),
-      eventType: "vendor_engagement.issued",
-      resourceType: "vendor_engagement",
-      resourceId: id,
-      // The token is NEVER in the audit payload. An audit log readable by more
-      // people than the vendor's mailbox must not contain a working credential.
-      payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
-      ipAddress: req.ip ?? null,
-    });
+    // Only now does a credential come into existence. Written on the TENANT
+    // channel so it shares this transaction: if anything after this point
+    // fails, the ROLLBACK takes the invite with it and no usable token
+    // survives. RLS-safe — vendor_engagement_invites carries
+    // `WITH CHECK (organization_id = current_setting('app.current_org_id'))`
+    // and GRANTs INSERT to app_request (20260923_vendor_portal_access.sql).
+    // The ELEVATED channel is still required for the pre-auth READ at exchange
+    // time (vendorPortal.ts), a different operation, and is unchanged.
+    const invite = mintInviteToken();
+    await pg.query(
+      `INSERT INTO vendor_engagement_invites
+         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+          expires_at, created_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
+    );
 
+    // #946: deferred to AFTER COMMIT. writeAuditEvent goes to the elevated
+    // pool, so calling it inline would record an issuance that a later
+    // rollback erased. registerAfterCommit runs only on a durable commit and
+    // is discarded on rollback.
+    registerAfterCommit(() =>
+      writeAuditEvent({
+        organizationId,
+        actorUserId: userOf(req),
+        eventType: "vendor_engagement.issued",
+        resourceType: "vendor_engagement",
+        resourceId: id,
+        // The token is NEVER in the audit payload. An audit log readable by more
+        // people than the vendor's mailbox must not contain a working credential.
+        payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
+        ipAddress: req.ip ?? null,
+      })
+    );
+
+    // Buffered by the asTenant wrap and replayed only after COMMIT, so the raw
+    // credential never reaches the caller ahead of the durable write it names.
     res.status(200).json({
       ok: true,
       status: "issued",
@@ -2424,17 +2473,15 @@ router.post("/vendor-engagements/:id/begin-review", ...chain, asTenant(beginRevi
 router.post("/vendor-engagements/:id/complete-analysis", ...chain, asTenant(completeAnalysis));
 router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonitoring));
 
-// The issue route writes the invite on the ELEVATED channel (the credential is
-// read before org context exists at exchange time), so it manages its own
-// scoping rather than taking the asTenant wrap.
-router.post("/vendor-engagements/:id/issue", ...chain, async (req: Request, res: Response) => {
-  const organizationId = orgOf(req);
-  if (!organizationId) {
-    res.status(403).json({ error: "organization_context_missing" });
-    return;
-  }
-  await withTenant(organizationId, () => issueEngagement(req, res));
-});
+// #946: takes the asTenant wrap like every sibling. It previously managed its
+// own withTenant scope because the invite was written on the ELEVATED channel;
+// the invite now rides the tenant transaction, so there is nothing left to
+// manage. The wrap matters for more than tidiness — it BUFFERS the response and
+// replays it only after COMMIT, which is what stops a raw invite token (and a
+// 200 claiming `status: "issued"`) from reaching the caller before the
+// transition is durable. The pre-auth READ of the invite at exchange time is
+// still elevated; that lives in vendorPortal.ts and is unchanged.
+router.post("/vendor-engagements/:id/issue", ...chain, asTenant(issueEngagement));
 
 
 /* =========================================================
