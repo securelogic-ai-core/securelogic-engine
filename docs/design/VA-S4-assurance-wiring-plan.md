@@ -881,8 +881,8 @@ after step 1 can be demonstrated without step 1.
 | 2 | **ADR-0012 subset** — `evidence.valid_from/valid_until` + version chain (20261051), `evidence_links` with per-use confirmation (20261052–53), `evidence_lifecycle_events` (20261054). **Now also carries `evidence.assurance_class`** (owner ruling: normalise in this package, not a second alter of `evidence`) | — | yes (reserved) | Only the subset S4 needs. **Note the corrected finding**: `evidence_type` is NOT unconstrained — it is a closed FORM vocabulary, and what is missing is an orthogonal ASSURANCE-CLASS axis. See the validity proposal §2 |
 | 3 | **Evidence-validity policy** — type/purpose guardrails, customer tightening within bounds (Ruling 3) | 2 | maybe | **Default durations proposed separately for ratification, not chosen here** |
 | 4 | **Auditor-opinion normalisation** — `unmodified / qualified / adverse / disclaimer / not_evaluated`, human-accepted, free text retained beside it (Ruling 4) | — | **DONE — 20261066** | Shipped 2026-08-29 (PR #936). Authority is a CHECK: no opinion without an acceptor. `opinionCoverageGate` returns `conditional` for `qualified` and deliberately cannot resolve it |
-| 4b | **Opinion ACCEPTANCE surface** — a governed route that sets `assurance_opinion` + `assurance_opinion_accepted_by_user_id`, consuming `proposeAssuranceOpinion` as a candidate a human confirms. **BUILT as VA-S4-P2, 2026-08-30 — migration 20261070** | 4 | **BUILT — 20261070** | Step 4 shipped the vocabulary, the gate, the normalizer and the authority CHECK but **no writer**. `GET`/`POST /api/vendor-assurance/documents/:id/assurance-opinion`; `20261070` adds `assurance_opinion_reviewer_note` + `assurance_opinion_basis` and makes the basis REQUIRED by extending the authority CHECK. Refuses an unattributed caller (403), a non-approved document (409), an approved document with a NULL approver (409), an unexplained departure from the candidate (400) and a silent re-decision (409). Per §0a it establishes **no coverage** |
-| 4c | **Tested-controls arm DESIGN** — the canonical route named by Ruling 5, built on the ACTUAL extraction inventory (`fields.controls`, 5 entries per extraction on staging) constrained by TSC scope. Must state how candidate coverage becomes sufficient coverage, and must address the measured fan-out (one control -> up to FOUR requirements). **DESIGN ONLY, no wiring** | 4b staging verified | no | Owner-directed, 2026-08-30. Produced after S4-P2 is staging verified, not before — the inventory is read from real extractions rather than assumed |
+| 4b | **Opinion ACCEPTANCE surface** — a governed route that sets `assurance_opinion` + `assurance_opinion_accepted_by_user_id`, consuming `proposeAssuranceOpinion` as a candidate a human confirms. **BUILT as VA-S4-P2, 2026-08-30 — migration 20261070** | 4 | **BUILT — 20261070** | Step 4 shipped the vocabulary, the gate, the normalizer and the authority CHECK but **no writer**. `GET`/`POST /api/vendor-assurance/documents/:id/assurance-opinion`; `20261070` adds `assurance_opinion_reviewer_note` + `assurance_opinion_basis` and makes the basis REQUIRED by extending the authority CHECK. Refuses an unattributed caller (403), a non-approved document (409), an approved document with a NULL approver (409), an unexplained departure from the candidate (400) and a silent re-decision (409). Per §0a it establishes **no coverage**. **STAGING VERIFIED 2026-08-30 on `de035043`: 15 PASS / 0 FAIL** — `docs/validation/VA-S4-P2-opinion-acceptance-2026-08-30.md`. Estate-wide accepted opinions went 0 -> 1, the first that has ever existed |
+| 4c | **Tested-controls arm DESIGN** — the canonical route named by Ruling 5, built on the ACTUAL extraction inventory (`fields.controls`, 5 entries per extraction on staging) constrained by TSC scope. Must state how candidate coverage becomes sufficient coverage, and must address the measured fan-out (one control -> up to FOUR requirements). **DESIGN ONLY, no wiring** | 4b staging verified | no | Owner-directed, 2026-08-30. **The inventory is now MEASURED** (§8b): 25 tested-control entries, 4 keys each, `result` is FREE TEXT with no pass/fail; exceptions ARE control-attributed; and the published crosswalk covers **`nist-csf 1.1` only** while every document is SOC 2 TSC — so Ruling 5's chain has a missing link at the hop that matters |
 | 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,**4b**, **and the tested-controls arm design** | no | **NOT one module and one call-site change any more.** §0a Ruling 5 routes coverage through tested controls x TSC scope, and Ruling 6 makes a mapping a CANDIDATE only — so step 5 now depends on a designed sufficiency determination and the twelve vetoes, not on a join |
 | 6 | **Adversarial / security tests** — cross-tenant coverage leakage, forged mapping, expired-at-decision-time, qualified-opinion fail-closed, AI-proposed mapping cannot publish, partial coverage does not reduce | 5 | no | Fail-closed is the assertion, not an aspiration |
 | 7 | **Staging acceptance** on the exact merged SHA | 6 | no | Must show a REAL reduction, not a vacuous pass |
@@ -927,6 +927,65 @@ exercises the canonical path in ONE tenant, keep it clearly identifiable and
 removable, and manufacture no production data. Second, step 4b now exists, so
 the opinion hop is reachable for the first time — but reaching it proves one
 veto passed, not coverage.
+
+## 8b. The tested-controls inventory, MEASURED (2026-08-30, S4-P2)
+
+Read-only on staging, `job-daa7q3hsrm7s73e73qq0`. Five extractions estate-wide,
+**25 tested-control entries** (5 per extraction) and **10 exception entries**
+(2 per extraction). Full record:
+`docs/validation/VA-S4-P2-opinion-acceptance-2026-08-30.md` §7-§8.
+
+**Three findings that change this step's design.**
+
+**1. `controls[].result` is FREE TEXT.** Four keys per entry on 25/25 —
+`control_id`, `description`, `test_procedure`, `result` — and `result` carries
+prose: `"No exception noted."` (15), `"Exception noted: for 2 of 30 sampled
+days …"` (5), `"Deviation noted: …"` (5). No boolean, no enum. **This is the
+auditor-opinion problem a second time**, so the tested-controls arm needs its own
+closed vocabulary, its own deterministic normalizer and its own human acceptance.
+It cannot be a SQL predicate over `result`.
+
+**2. A recorded fact was WRONG: exceptions ARE attributed to a control.**
+Ruling 4's blocker says nothing attributes an exception to a control. Measured:
+all 10 `exceptions[]` entries carry `control_id`, `description` and
+`auditor_assessment`, and `control_id` joins directly to
+`controls[].control_id`. The exception veto is directly expressible today.
+
+**3. The canonical crosswalk does not cover SOC 2 AT ALL.** Published coverage is
+`nist-csf 1.1` only (75 rows). Every assurance document is `SOC 2 Type II` with
+TSC `Security / Availability / Confidentiality`, and every vendor control id is a
+TSC reference (`CC6.1 CC6.2 CC7.2 A1.2 C1.1`). **No SOC 2 TSC -> canonical
+control crosswalk exists**, so Ruling 5's chain breaks at the hop that turns a
+tested vendor control into a requirement. Step 1 is not finished for the
+framework the evidence is actually written in.
+
+### Veto expressibility, measured
+
+Expressible today: report/TSC scope, report period, Type I vs II, control
+exception, carve-out, accepted opinion (built), historical basis.
+**Not expressible: tested-control result** (free text), **mapping authority**
+(`control_canonical_identities` has ONE writer, `templateLoader`; `attestation` /
+`customer_mapped` / `inferred` have no route), contradictory evidence.
+Partial: open findings (expressible on `requirement_id`, not
+`framework_control_id`).
+
+**All five documents are carve-out reports** (`subservice_method = "Carve-out"`,
+3 subservice orgs each). The carve-out veto fires on 100% of the corpus.
+
+### Fan-out, re-measured at the crosswalk grain — the number is 5, not 4
+
+§6 of the forensics record measured fan-out at the TENANT-CONTROL grain and
+reported a maximum of four. At the **crosswalk** grain — the grain coverage would
+actually propagate along — **44 canonical controls, 21 map to more than one
+requirement (48%), and the maximum is FIVE.**
+
+Under Ruling 6 this is decisive. One `"No exception noted."` could silently
+reduce depth on up to five requirements, and 21 of 44 controls would do it to at
+least two. **Sufficiency must therefore be determined at the REQUIREMENT grain,
+not the control grain** — a determination attached to the canonical control
+cannot express "this test supports DE.AE-1 but not DE.CM-5".
+
+---
 
 ## Related
 
