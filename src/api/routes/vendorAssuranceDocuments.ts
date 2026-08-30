@@ -22,6 +22,8 @@
  *   POST   /api/vendor-assurance/documents/:id/approve
  *   POST   /api/vendor-assurance/documents/:id/request-manual-review
  *   POST   /api/vendor-assurance/documents/:id/reject
+ *   GET    /api/vendor-assurance/documents/:id/assurance-opinion
+ *   POST   /api/vendor-assurance/documents/:id/assurance-opinion
  *
  * Append-only review decisions: each POST review-decisions INSERTs new rows.
  * Current decision per field is computed at read time via DISTINCT ON, never
@@ -76,6 +78,18 @@ import { resolveSlaDueDate } from "../lib/findingSlaPolicy.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { buildVendorAssuranceWorkbookBuffer, workbookDownloadFilename } from "../lib/vendorAssuranceExcelExporter.js";
 import { buildVendorAssurancePdf, pdfDownloadFilename } from "../lib/vendorAssurancePdfExporter.js";
+// VA-S4-P2 (step 4b): the governed opinion-acceptance surface. The normalizer
+// and the coverage gate are PURE and ADVISORY — nothing here lets a proposal
+// write itself, and the gate is reported, never acted on.
+import {
+  proposeAssuranceOpinion,
+  opinionCoverageGate,
+  isAssuranceOpinion
+} from "../lib/vendorAssurance/assuranceOpinion.js";
+import {
+  validateAcceptOpinionBody,
+  buildOpinionAcceptanceBasis
+} from "../lib/vendorAssurance/opinionAcceptance.js";
 
 const router = Router();
 
@@ -1182,6 +1196,359 @@ export async function rejectVendorAssuranceDocument(req: Request, res: Response)
 }
 
 /* =========================================================
+   VA-S4-P2 (wiring-plan step 4b) — the governed auditor-opinion ACCEPTANCE
+   surface.
+
+   GET  /api/vendor-assurance/documents/:id/assurance-opinion
+   POST /api/vendor-assurance/documents/:id/assurance-opinion
+
+   20261066 shipped the vocabulary, the coverage gate, the proposal normalizer
+   and an authority CHECK making an opinion without a named acceptor
+   structurally impossible — and then shipped NO WRITER. S4-P1 measured the
+   consequence: `assurance_opinion` appeared in exactly two files, neither of
+   which could set it, and no row has ever reached the opinion hop in any
+   environment. This is the missing writer, and deliberately the only one.
+
+   WHAT ACCEPTANCE DOES NOT DO — owner ruling, 2026-08-30. Accepting the
+   report-level opinion MUST NOT itself establish requirement coverage, reduce
+   questionnaire depth, change residual risk, override a control exception, or
+   override contradictory evidence. It is ONE veto passed out of many (report /
+   TSC scope, report period, Type I vs Type II, tested-control result,
+   exceptions, carve-outs, contradictory evidence, open findings, mapping
+   authority, human acceptance). So this handler computes no coverage, touches
+   no scope, schedules no vendor-score recompute and creates no finding — and
+   the row it writes says so in `establishes_requirement_coverage: false`.
+   ========================================================= */
+
+const OPINION_SELECT = `
+  id,
+  processing_status,
+  approved_at,
+  approved_by_user_id,
+  assurance_opinion,
+  assurance_opinion_note,
+  assurance_opinion_reviewer_note,
+  assurance_opinion_basis,
+  assurance_opinion_accepted_by_user_id,
+  assurance_opinion_accepted_at
+`;
+
+type OpinionDocRow = {
+  id: string;
+  processing_status: string;
+  approved_at: string | null;
+  approved_by_user_id: string | null;
+  assurance_opinion: string | null;
+  assurance_opinion_note: string | null;
+  assurance_opinion_reviewer_note: string | null;
+  assurance_opinion_basis: unknown;
+  assurance_opinion_accepted_by_user_id: string | null;
+  assurance_opinion_accepted_at: string | null;
+};
+
+/**
+ * Resolve the auditor-opinion text a reviewer is actually looking at: the
+ * latest field override if one exists, else the extraction value. Same
+ * precedence recordVendorAssuranceFieldOverride uses when it captures
+ * original_value, and for the same reason — the governed decision must be made
+ * against what is displayed, not against a value the reviewer already corrected.
+ */
+async function loadAuditorOpinionSourceText(
+  documentId: string,
+  organizationId: string
+): Promise<{ text: string | null; origin: "extraction" | "field_override" | "absent"; extractionId: string | null }> {
+  const priorOverride = await pg.query<{ override_value: unknown }>(
+    `SELECT override_value FROM vendor_assurance_field_overrides
+      WHERE document_id = $1 AND organization_id = $2 AND field_name = 'auditor_opinion'
+      ORDER BY overridden_at DESC, id DESC
+      LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((priorOverride.rowCount ?? 0) > 0) {
+    const v = priorOverride.rows[0]!.override_value;
+    return { text: typeof v === "string" ? v : v == null ? null : JSON.stringify(v), origin: "field_override", extractionId: null };
+  }
+
+  const extraction = await pg.query<{ id: string; fields: Record<string, { value?: unknown }> | null }>(
+    `SELECT id, fields FROM vendor_assurance_extractions
+      WHERE document_id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((extraction.rowCount ?? 0) === 0) {
+    return { text: null, origin: "absent", extractionId: null };
+  }
+  const row = extraction.rows[0]!;
+  const raw = (row.fields ?? {})["auditor_opinion"]?.value;
+  return {
+    text: typeof raw === "string" ? raw : raw == null ? null : JSON.stringify(raw),
+    origin: "extraction",
+    extractionId: row.id
+  };
+}
+
+/* GET /api/vendor-assurance/documents/:id/assurance-opinion
+ *
+ * The reviewer's screen: what the report says, what the deterministic
+ * normalizer proposes from those words, and what (if anything) has already been
+ * accepted. The proposal is ADVISORY and is labelled `requires_human: true` at
+ * its source — a caller that acts on it unattended has to ignore a field that
+ * exists to be read.
+ */
+export async function getVendorAssuranceOpinion(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const docResult = await pg.query<OpinionDocRow>(
+    `SELECT ${OPINION_SELECT} FROM vendor_assurance_documents
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docResult.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+  const doc = docResult.rows[0]!;
+
+  const source = await loadAuditorOpinionSourceText(documentId, organizationId);
+  const proposal = proposeAssuranceOpinion(source.text);
+
+  res.status(200).json({
+    document_id: documentId,
+    accepted: doc.assurance_opinion === null
+      ? null
+      : {
+          opinion: doc.assurance_opinion,
+          source_text_at_acceptance: doc.assurance_opinion_note,
+          reviewer_note: doc.assurance_opinion_reviewer_note,
+          accepted_by_user_id: doc.assurance_opinion_accepted_by_user_id,
+          accepted_at: doc.assurance_opinion_accepted_at,
+          basis: doc.assurance_opinion_basis
+        },
+    source: { origin: source.origin, extraction_id: source.extractionId, auditor_opinion_text: source.text },
+    proposal,
+    // Advisory. Reported so a reviewer can see what the coarse gate would read,
+    // never so a caller can treat it as coverage.
+    coverage_gate: opinionCoverageGate(
+      isAssuranceOpinion(doc.assurance_opinion) ? doc.assurance_opinion : null
+    ),
+    establishes_requirement_coverage: false,
+    acceptable: {
+      // Why the POST would refuse right now, computed once so the client does
+      // not have to reimplement the guard order.
+      document_approved: doc.processing_status === "approved",
+      approval_attributed: doc.approved_by_user_id !== null,
+      already_accepted: doc.assurance_opinion !== null
+    }
+  });
+}
+
+/* POST /api/vendor-assurance/documents/:id/assurance-opinion
+ *   { opinion, reviewer_note?, supersede? }
+ *
+ * A REAL AUTHENTICATED HUMAN accepts. The route's guard stack is
+ * requireApiKey-based and does NOT require a user session, so `req.userId` can
+ * legitimately be null for a machine integration. The 20261066 authority CHECK
+ * would turn that into a 500; more importantly, an unattributed governance
+ * decision is not a governance decision. It is refused with a clean 403 before
+ * any write is attempted.
+ *
+ * THE DOCUMENT MUST BE THE VERSION OF RECORD. Owner ruling 1's canonical chain
+ * begins at an APPROVED assurance document, so an opinion cannot be accepted
+ * against one still in review, rejected, or legacy-finalized. And approval
+ * itself must be attributed: the approve route writes
+ * `approved_by_user_id = req.userId ?? null`, and its consistency CHECK does not
+ * mention the approver, so an API-key-only integration can produce an approved
+ * document with a NULL approver. Such a document cannot carry a governed
+ * opinion — refused, rather than silently accepted and later filtered out.
+ *
+ * RE-DECISION IS EXPLICIT. An already-accepted opinion returns 409 unless the
+ * caller passes `supersede: true` AND states why. Precedent:
+ * updateVendorAssuranceCuecReviewStatus refuses to re-decide underneath
+ * downstream work rather than silently overwriting a governed determination.
+ */
+export async function acceptVendorAssuranceOpinion(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+
+  // Fail closed on an unattributed caller BEFORE anything else. This is a
+  // property of the caller, not of the document, so it is checked without
+  // touching the database.
+  const acceptorUserId = req.userId ?? null;
+  if (!acceptorUserId) {
+    res.status(403).json({
+      error: "human_acceptor_required",
+      detail:
+        "Accepting an assurance opinion is a governance decision and must name " +
+        "the person who made it. This request carries no authenticated user."
+    });
+    return;
+  }
+
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const docResult = await pg.query<OpinionDocRow>(
+    `SELECT ${OPINION_SELECT} FROM vendor_assurance_documents
+      WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((docResult.rowCount ?? 0) === 0) {
+    res.status(404).json({ error: "vendor_assurance_document_not_found" });
+    return;
+  }
+  const doc = docResult.rows[0]!;
+
+  if (doc.processing_status !== "approved") {
+    res.status(409).json({
+      error: "vendor_assurance_document_not_approved",
+      status: doc.processing_status,
+      detail:
+        "An assurance opinion is accepted against the version of record. " +
+        "Approve the document first."
+    });
+    return;
+  }
+  if (doc.approved_by_user_id === null) {
+    res.status(409).json({
+      error: "vendor_assurance_document_approval_unattributed",
+      detail:
+        "This document was approved with no named approver, so it cannot carry " +
+        "a governed opinion. Re-approve it as an authenticated user."
+    });
+    return;
+  }
+
+  const source = await loadAuditorOpinionSourceText(documentId, organizationId);
+  const proposal = proposeAssuranceOpinion(source.text);
+
+  const validated = validateAcceptOpinionBody(req.body, proposal.candidate);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const { opinion, reviewer_note, supersede } = validated.input;
+
+  const priorOpinion = doc.assurance_opinion;
+  if (priorOpinion !== null && !supersede) {
+    res.status(409).json({
+      error: "assurance_opinion_already_accepted",
+      accepted: {
+        opinion: priorOpinion,
+        accepted_by_user_id: doc.assurance_opinion_accepted_by_user_id,
+        accepted_at: doc.assurance_opinion_accepted_at
+      },
+      detail:
+        "A governed opinion already stands on this document. Re-deciding it is " +
+        "an explicit act: resend with supersede: true and a reviewer_note saying " +
+        "what changed."
+    });
+    return;
+  }
+
+  const acceptedAt = new Date().toISOString();
+  const basis = buildOpinionAcceptanceBasis({
+    acceptedAt,
+    acceptedByUserId: acceptorUserId,
+    accepted: opinion,
+    proposal,
+    sourceText: source.text,
+    sourceOrigin: source.origin,
+    extractionId: source.extractionId,
+    documentStatus: doc.processing_status,
+    documentApprovedAt: doc.approved_at,
+    documentApprovedByUserId: doc.approved_by_user_id,
+    reviewerNote: reviewer_note,
+    priorAcceptance: priorOpinion === null
+      ? null
+      : {
+          opinion: priorOpinion,
+          accepted_by_user_id: doc.assurance_opinion_accepted_by_user_id,
+          accepted_at: doc.assurance_opinion_accepted_at,
+          reviewer_note: doc.assurance_opinion_reviewer_note
+        }
+  });
+
+  // The preconditions are RE-ASSERTED in the UPDATE, so a concurrent approve
+  // reversal or a second acceptance loses the race cleanly instead of both
+  // writing. `IS NOT DISTINCT FROM` covers the NULL prior case without a second
+  // statement.
+  const upd = await pg.query<OpinionDocRow>(
+    `UPDATE vendor_assurance_documents
+        SET assurance_opinion = $3,
+            assurance_opinion_note = $4,
+            assurance_opinion_reviewer_note = $5,
+            assurance_opinion_basis = $6::jsonb,
+            assurance_opinion_accepted_by_user_id = $7,
+            assurance_opinion_accepted_at = NOW(),
+            updated_at = NOW()
+      WHERE id = $1 AND organization_id = $2
+        AND processing_status = 'approved'
+        AND approved_by_user_id IS NOT NULL
+        AND assurance_opinion IS NOT DISTINCT FROM $8
+      RETURNING ${OPINION_SELECT}`,
+    [
+      documentId,
+      organizationId,
+      opinion,
+      // The report's own words AS AT ACCEPTANCE. Extractions are mutable; this
+      // snapshot is what lets the normalised value be argued back to the report.
+      source.text,
+      reviewer_note,
+      JSON.stringify(basis),
+      acceptorUserId,
+      priorOpinion
+    ]
+  );
+  if ((upd.rowCount ?? 0) === 0) {
+    res.status(409).json({
+      error: "assurance_opinion_acceptance_conflict",
+      detail:
+        "The document changed while this acceptance was being prepared. " +
+        "Re-read the opinion and decide again."
+    });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: acceptorUserId,
+    eventType: priorOpinion === null
+      ? "vendor_assurance.opinion.accepted"
+      : "vendor_assurance.opinion.superseded",
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: {
+      opinion,
+      proposed_candidate: proposal.candidate,
+      human_agreed_with_candidate: opinion === proposal.candidate,
+      normalizer_version: proposal.normalizer_version,
+      ...(reviewer_note ? { reviewer_note } : {}),
+      ...(priorOpinion === null ? {} : { superseded_opinion: priorOpinion }),
+      // Stated in the audit trail too: this event is not a coverage decision.
+      establishes_requirement_coverage: false
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  const row = upd.rows[0]!;
+  res.status(200).json({
+    document_id: documentId,
+    accepted: {
+      opinion: row.assurance_opinion,
+      source_text_at_acceptance: row.assurance_opinion_note,
+      reviewer_note: row.assurance_opinion_reviewer_note,
+      accepted_by_user_id: row.assurance_opinion_accepted_by_user_id,
+      accepted_at: row.assurance_opinion_accepted_at,
+      basis: row.assurance_opinion_basis
+    },
+    proposal,
+    coverage_gate: opinionCoverageGate(opinion),
+    // Owner ruling, restated on every response: one veto passed is not coverage.
+    establishes_requirement_coverage: false
+  });
+}
+
+/* =========================================================
    CUEC matcher package: cuec rows + N:M control mappings
    ========================================================= */
 
@@ -2041,6 +2408,32 @@ router.post(
   requireEntitlement("premium"),
   denyContributor(),
   asTenant(rejectVendorAssuranceDocument)
+);
+
+// ---- VA-S4-P2: governed auditor-opinion acceptance ----
+// Identical guard stack to every other Vendor Assurance write. The route does
+// NOT additionally require a user session at the middleware layer — that is not
+// something this stack can express — so the handler refuses an unattributed
+// caller with a 403 before any write. Accepting an opinion is governance work.
+
+router.get(
+  "/vendor-assurance/documents/:id/assurance-opinion",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(getVendorAssuranceOpinion)
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/assurance-opinion",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(acceptVendorAssuranceOpinion)
 );
 
 // ---- CUEC matcher package routes ----

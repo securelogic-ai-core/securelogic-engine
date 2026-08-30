@@ -1,6 +1,12 @@
 # VA-S4 — wiring `S4.assurance`: implementation plan
 
-**Status:** PLAN ONLY. Not authorized for implementation.
+**Status:** PLAN, PARTLY BUILT. Steps 1 and 4 are built and staging verified;
+**step 4b is built as VA-S4-P2 (this package)**. Step 5 — the S4 wiring itself —
+remains NOT authorized: `assuranceCoveredRequirementIds` still has zero
+production callers.
+**COVERAGE ROUTE NAMED 2026-08-30 — read §0 then §0a.** Rulings 5 and 6 replace
+the retired CUEC route with tested controls x TSC scope, and settle that a
+mapping yields CANDIDATE coverage only.
 **COVERAGE ROUTE SUPERSEDED 2026-08-30 — read §0 first.** The CUEC spine is no
 longer the canonical S4 coverage route; the semantics below survive, the routing
 does not.
@@ -64,6 +70,98 @@ What is retired is the CUEC-shaped path through them.
 
 Forensic evidence for this ruling:
 `docs/validation/VA-S4-dead-hop-forensics-2026-08-30.md`.
+
+---
+
+## 0a. OWNER RULINGS 2026-08-30 (second set) — the canonical route is NAMED, and candidate ≠ covered
+
+§0 retired the CUEC route and left the replacement unnamed, which made every
+remaining build item blocked on a decision. These two rulings unblock it.
+
+### Ruling 5 — TESTED CONTROLS × TSC SCOPE is the canonical S4 coverage direction
+
+The intended inference, in full:
+
+```
+approved assurance document
+  -> applicable report / TSC scope
+  -> tested vendor control
+  -> test result / operating-effectiveness state
+  -> exception / deviation state
+  -> control <-> requirement mapping
+  -> CANDIDATE requirement coverage
+  -> governed sufficiency determination
+  -> assurance-covered requirement
+```
+
+CUECs are **not part of the canonical requirement-coverage route** and are not
+to be repurposed into one. They keep every legitimate use they already have:
+customer / user-entity responsibilities, shared-responsibility analysis,
+customer-side gaps, findings and follow-ups, and the whole `20261036` workflow.
+Nothing there is to be removed or narrowed.
+
+### Ruling 6 — a mapping establishes CANDIDATE coverage only
+
+A tested control mapping to a requirement is a **candidate**, never a
+conclusion. Specifically:
+
+```
+one tested control -> four mapped requirements
+```
+
+must **not** become four assurance-covered requirements. §6 of the forensics
+record measured exactly this shape on live rows: fifteen StageA tenant controls
+each resolve to more than one NIST CSF 1.1 requirement, two of them to four.
+
+The sufficiency determination must establish that the tested control actually
+supports the assurance objective the requirement represents. Many-to-many
+mappings stay **visible** and are never collapsed into implicit full coverage.
+Provenance must be preserved well enough to reconstruct: the tested control, its
+test result, the relevant report scope, the mapped requirement, the mapping
+used, and why coverage was judged sufficient or insufficient.
+
+### The coverage vetoes
+
+Before a candidate may become assurance-covered, the future predicate must
+evaluate at minimum:
+
+| Veto | Why it is not optional |
+|---|---|
+| report / TSC scope | a control outside the report's scope was never tested |
+| report period / validity | assurance is a statement about a window, not forever |
+| Type I vs Type II, where material | design vs operating effectiveness are different claims |
+| tested-control result | a tested control that failed is not coverage |
+| control exception / deviation | the specific matter the auditor carved out |
+| carve-out / subservice implications | the work may have been done by someone else, untested |
+| accepted auditor opinion | report-level, human-accepted — **built, step 4b** |
+| contradictory evidence | other evidence saying the opposite |
+| relevant open findings / exceptions | a live gap on the same control |
+| mapping authority | who asserted the mapping, and may they |
+| human / governed acceptance | the determination itself is a human act |
+| historical decision basis | it must remain explainable after the facts move |
+
+**An exception or a contradiction must not be erased by a clean report-level
+opinion.** This is the single most important line in the ruling: the opinion is
+one veto among twelve, and passing it proves only that this one veto did not
+fire.
+
+### What this means for step 4b, built as S4-P2
+
+Acceptance of the report-level opinion MUST NOT itself:
+
+- establish requirement coverage
+- reduce questionnaire depth
+- change residual risk
+- override a control exception
+- override contradictory evidence
+
+The implementation enforces this by construction: the acceptance handler
+computes no coverage, touches no scope, schedules no vendor-score recompute and
+creates no finding, and the row it writes carries
+`establishes_requirement_coverage: false` as recorded data rather than as a
+comment. A test asserts the absence of every such write, using `unmodified` —
+the most permissive value in the vocabulary — because that is where a leak would
+appear first.
 
 ---
 
@@ -783,8 +881,9 @@ after step 1 can be demonstrated without step 1.
 | 2 | **ADR-0012 subset** — `evidence.valid_from/valid_until` + version chain (20261051), `evidence_links` with per-use confirmation (20261052–53), `evidence_lifecycle_events` (20261054). **Now also carries `evidence.assurance_class`** (owner ruling: normalise in this package, not a second alter of `evidence`) | — | yes (reserved) | Only the subset S4 needs. **Note the corrected finding**: `evidence_type` is NOT unconstrained — it is a closed FORM vocabulary, and what is missing is an orthogonal ASSURANCE-CLASS axis. See the validity proposal §2 |
 | 3 | **Evidence-validity policy** — type/purpose guardrails, customer tightening within bounds (Ruling 3) | 2 | maybe | **Default durations proposed separately for ratification, not chosen here** |
 | 4 | **Auditor-opinion normalisation** — `unmodified / qualified / adverse / disclaimer / not_evaluated`, human-accepted, free text retained beside it (Ruling 4) | — | **DONE — 20261066** | Shipped 2026-08-29 (PR #936). Authority is a CHECK: no opinion without an acceptor. `opinionCoverageGate` returns `conditional` for `qualified` and deliberately cannot resolve it |
-| 4b | **Opinion ACCEPTANCE surface** — a governed route/action that sets `assurance_opinion` + `assurance_opinion_accepted_by_user_id`, consuming `proposeAssuranceOpinion` as a candidate a human confirms. **NEW, discovered 2026-08-30** | 4 | no | Step 4 shipped the vocabulary, the gate, the normalizer and the authority CHECK but **no writer** — see §2d. Without this, predicate clause 2 can never be satisfied and any proof would require direct DB manipulation |
-| 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,**4b** | no | One module, one call-site change |
+| 4b | **Opinion ACCEPTANCE surface** — a governed route that sets `assurance_opinion` + `assurance_opinion_accepted_by_user_id`, consuming `proposeAssuranceOpinion` as a candidate a human confirms. **BUILT as VA-S4-P2, 2026-08-30 — migration 20261070** | 4 | **BUILT — 20261070** | Step 4 shipped the vocabulary, the gate, the normalizer and the authority CHECK but **no writer**. `GET`/`POST /api/vendor-assurance/documents/:id/assurance-opinion`; `20261070` adds `assurance_opinion_reviewer_note` + `assurance_opinion_basis` and makes the basis REQUIRED by extending the authority CHECK. Refuses an unattributed caller (403), a non-approved document (409), an approved document with a NULL approver (409), an unexplained departure from the candidate (400) and a silent re-decision (409). Per §0a it establishes **no coverage** |
+| 4c | **Tested-controls arm DESIGN** — the canonical route named by Ruling 5, built on the ACTUAL extraction inventory (`fields.controls`, 5 entries per extraction on staging) constrained by TSC scope. Must state how candidate coverage becomes sufficient coverage, and must address the measured fan-out (one control -> up to FOUR requirements). **DESIGN ONLY, no wiring** | 4b staging verified | no | Owner-directed, 2026-08-30. Produced after S4-P2 is staging verified, not before — the inventory is read from real extractions rather than assumed |
+| 5 | **S4 wiring** — `assuranceCoveredRequirementIds` computed and passed; decision-basis snapshot written per reduction | 1,2,3,**4b**, **and the tested-controls arm design** | no | **NOT one module and one call-site change any more.** §0a Ruling 5 routes coverage through tested controls x TSC scope, and Ruling 6 makes a mapping a CANDIDATE only — so step 5 now depends on a designed sufficiency determination and the twelve vetoes, not on a join |
 | 6 | **Adversarial / security tests** — cross-tenant coverage leakage, forged mapping, expired-at-decision-time, qualified-opinion fail-closed, AI-proposed mapping cannot publish, partial coverage does not reduce | 5 | no | Fail-closed is the assertion, not an aspiration |
 | 7 | **Staging acceptance** on the exact merged SHA | 6 | no | Must show a REAL reduction, not a vacuous pass |
 | 8 | **#925 reassessment** — re-measure Privacy 17/17, AI 16/16, Nth-party 2/2 against live assurance | 7 | no | The ruling becomes decidable only here |
@@ -818,6 +917,16 @@ evidence and the three prerequisites, and
 `docs/validation/VA-S4-canonical-control-publication-2026-08-30.md` for the run
 record. **This gate must be re-run, and must pass, before step 5 is attempted
 again.**
+
+**Two things changed on 2026-08-30 that the gate must now account for.** First,
+h5 disjoint tenancy is a CORPUS fact: no staging org holds both a canonical
+identity and an assurance document, so a correctly org-scoped predicate returns
+0 no matter what is built. Owner ruling: that is data/setup work and is **never**
+a reason to change the architecture — prepare the minimum controlled corpus that
+exercises the canonical path in ONE tenant, keep it clearly identifiable and
+removable, and manufacture no production data. Second, step 4b now exists, so
+the opinion hop is reachable for the first time — but reaching it proves one
+veto passed, not coverage.
 
 ## Related
 

@@ -49,9 +49,10 @@ const PROF = 'requireEntitlement("professional")';
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
   "vendors.ts": 9,
-  // 20 = 19 routes + 1 header comment reference. VA-1 added the CUEC
-  // promote-to-finding route, which is premium-gated like every sibling.
-  "vendorAssuranceDocuments.ts": 20,
+  // 22 = 21 routes + 1 header comment reference. VA-1 added the CUEC
+  // promote-to-finding route; VA-S4-P2 added the GET and POST assurance-opinion
+  // routes. All three are premium-gated like every sibling.
+  "vendorAssuranceDocuments.ts": 22,
   "vendorAssessments.ts": 3,
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,
