@@ -524,8 +524,15 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
   const ctx = req.portalContext!;
   try {
     const outcome = await withTenant(ctx.organizationId, async () => {
+      // #949: LOCK the engagement row for the rest of this transaction. Submit
+      // is a check-then-act — read the status, decide, then write conditionally
+      // on that same status — and without the lock a concurrent submit (a
+      // double-click is enough) can commit the transition in between, leaving
+      // the second UPDATE matching zero rows. The lock is the mechanism; the
+      // rowCount assertion below is the backstop, not the control.
       const eng = await pg.query<{ status: string }>(
-        `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        `SELECT status FROM vendor_engagements
+          WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
         [ctx.engagementId, ctx.organizationId]
       );
       const from = eng.rows[0]?.status as EngagementState | undefined;
@@ -553,12 +560,35 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       const remaining = Number(unanswered.rows[0]?.n ?? "0");
       if (remaining > 0) return { code: 422 as const, remaining };
 
-      await pg.query(
+      // #949: THE TRANSITION IS VERIFIED. This UPDATE is conditional on the
+      // status we read, and its rowCount used to be discarded — so a zero-row
+      // transition still returned 200 and the vendor was told their
+      // questionnaire had been submitted when it had not, with a
+      // `vendor_portal.submitted` audit event to match. Nothing downstream runs
+      // unless exactly one row moved.
+      const moved = await pg.query(
         `UPDATE vendor_engagements
             SET status = 'submitted', submitted_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND organization_id = $2 AND status = $3`,
         [ctx.engagementId, ctx.organizationId, from]
       );
+      if (moved.rowCount !== 1) {
+        // Unreachable while the FOR UPDATE lock holds. Kept as an assertion: if
+        // it fires, the state moved under a lock we believed we held, and
+        // answering 200 would tell a vendor their obligation is discharged when
+        // the authoritative record says otherwise.
+        logger.error(
+          {
+            event: "portal_submit_transition_lost",
+            organizationId: ctx.organizationId,
+            engagementId: ctx.engagementId,
+            from,
+            rowCount: moved.rowCount,
+          },
+          "Submit transition matched no row while holding FOR UPDATE"
+        );
+        return { code: 409 as const, conflict: true as const };
+      }
       return { code: 200 as const };
     });
 
@@ -567,9 +597,17 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       return;
     }
     if (outcome.code === 409) {
+      // Two distinguishable refusals. `cannot_submit` is the ordinary one — the
+      // state machine says a portal actor may not make this transition from
+      // here. `submit_conflict` means the engagement moved while this
+      // submission was being prepared; the vendor's answers are intact and
+      // re-submitting is the right next step, so the message says so.
+      const conflict = "conflict" in outcome && outcome.conflict === true;
       res.status(409).json({
-        error: "cannot_submit",
-        message: "This questionnaire is not currently open for submission.",
+        error: conflict ? "submit_conflict" : "cannot_submit",
+        message: conflict
+          ? "This questionnaire changed while your submission was being recorded. Nothing was lost — please try again."
+          : "This questionnaire is not currently open for submission.",
       });
       return;
     }
