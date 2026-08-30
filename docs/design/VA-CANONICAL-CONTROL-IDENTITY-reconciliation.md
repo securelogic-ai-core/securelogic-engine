@@ -1,10 +1,39 @@
 # VA — canonical control identity: reconciliation
 
-**Status:** RECONCILIATION ONLY. **Nothing implemented, no migration slot
-consumed.** Produced under the owner ruling of 2026-08-29, which approved the
-architectural principle (global mappings must reference a global canonical
-control identity) but explicitly forbade assuming `controls.canonical_control_key`
-is the right implementation until the existing identity model is inventoried.
+**Status: SUPERSEDED BY IMPLEMENTATION, 2026-08-30.** The owner review this
+report stopped for was given, the new canonical entity approved, and §4.1 built
+as migrations **20261067–69**. The body below is retained UNCHANGED as the
+record of why the entity exists and what was rejected; only this header is new.
+Where the two differ, the code and the migrations are authoritative.
+
+**What was built, against §6's four decisions:**
+
+1. a new canonical control entity (§4.1) rather than a `controls.canonical_control_key`
+   column — `canonical_controls` + `canonical_control_aliases` (20261067);
+2. the `securelogic:` key namespace, with the `{industry}:control:*` template
+   slugs registered as ALIASES and never adopted as canonical keys;
+3. the crosswalk keyed on `(framework_key, framework_version, requirement_reference)`
+   — which required a fourth object the report did not anticipate:
+   `canonical_framework_versions` plus `frameworks.framework_key`, because
+   inspection found the approved requirement identity was **not** resolvable
+   from the schema as it stood (`frameworks.name` is a mutable display string
+   and no framework key was persisted at all);
+4. materialising tenant `control_mappings` from published crosswalk rows is
+   **not** in this step, as required.
+
+**What is NOT done, and must not be reported as done:** no canonical content is
+published in any environment — the tables ship EMPTY and a migration cannot fill
+them (publication requires a named human, structurally). The staging chain is
+therefore unproven. See `VA-S4-assurance-wiring-plan.md` §7 step 1.
+
+---
+
+**Original status (2026-08-29):** RECONCILIATION ONLY. **Nothing implemented, no
+migration slot consumed.** Produced under the owner ruling of 2026-08-29, which
+approved the architectural principle (global mappings must reference a global
+canonical control identity) but explicitly forbade assuming
+`controls.canonical_control_key` is the right implementation until the existing
+identity model is inventoried.
 
 **Verdict up front: a suitable canonical control identity does NOT exist, but a
 directly reusable PATTERN does — `canonical_products`. This report recommends

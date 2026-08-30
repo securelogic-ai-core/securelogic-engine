@@ -192,7 +192,16 @@ org-FK CASCADE never fires).
 **`canonical_products`** + **`canonical_product_aliases`** +
 **`canonical_product_external_ids`** + **`canonical_product_versions`** (new — the
 GLOBAL, org-neutral Canonical Product reference; ERG convergence C1b; no
-organization_id, no RLS, no PII), plus the special-handling tables below.
+organization_id, no RLS, no PII),
+**`canonical_controls`** + **`canonical_control_aliases`** +
+**`canonical_framework_versions`** + **`canonical_control_crosswalk`** (new — the
+GLOBAL, org-neutral canonical CONTROL reference and its governed crosswalk;
+VA-S4 Step 1, migrations 20261067–68; no organization_id, no RLS, no PII.
+`published_by_user_id` / `approved_by_user_id` are governance ACTORS, not PII:
+their FKs are ON DELETE RESTRICT because a published decision must keep naming
+the human who made it, and the tenant-side link lives in
+`control_canonical_identities`, which is org-scoped and RLS-enabled),
+plus the special-handling tables below.
 
 ### F — Billing / financial
 `api_keys` — carries legacy Stripe mirror fields (`stripe_customer_id`,
