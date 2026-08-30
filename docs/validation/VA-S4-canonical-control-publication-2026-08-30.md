@@ -176,6 +176,10 @@ chain-resolved control, and one `evidence` row
 - `control_assessments.id` = `b78aa6c5-82b4-422c-8297-d8bb752c29d1`
 - `evidence.id` = `817adcb6-d1aa-4ca3-9ea3-9baa4b0f306d`
 
+**These two rows were deleted on 2026-08-30 — see §7.** The result recorded here
+is what the run produced and is not amended; §7 records the removal and what is
+still reproducible without them.
+
 The full chain then resolves live:
 
 ```
@@ -258,13 +262,21 @@ orgs holding assurance evidence actually run.
 
 ---
 
-## 7. Fixture ledger — SYNTHETIC, TEST-ONLY, TEMPORARY
+## 7. Fixture ledger — SYNTHETIC, TEST-ONLY, TEMPORARY — **REMOVED 2026-08-30**
 
-The two rows the chain proof created are **synthetic validation fixtures**. They
-are **not** canonical proof data, **not** customer assurance evidence, and they
-are **not** a permanent artefact of the platform. They exist only so the
-2026-08-30 result stays reproducible while the three prerequisites in
-`VA-S4-assurance-wiring-plan.md` §2d are being resolved.
+The two rows the chain proof created were **synthetic validation fixtures**.
+They were **not** canonical proof data, **not** customer assurance evidence, and
+**not** a permanent artefact of the platform.
+
+**Both were deleted on 2026-08-30, immediately after PR #939 merged
+(`245fcf1a`)** — by owner decision, rather than being retained until the §2d
+prerequisites were resolved. Deletion was two scoped `DELETE`s by primary key
+inside one transaction, evidence first and then the control assessment,
+following the FK direction. A scope check first confirmed these were the only
+two `[VA-S4 CHAIN PROOF]`-labelled rows in the database.
+
+This section is kept, not deleted: the fact that the 2026-08-30 end-to-end
+result rested on fixtures is part of the result.
 
 | | |
 |---|---|
@@ -274,18 +286,30 @@ are **not** a permanent artefact of the platform. They exist only so the
 | **Purpose** | Populate the terminal hop of the chain — `tenant control → eligible evidence` — so the end-to-end join returns rows instead of proving only the first five hops |
 | **Status** | **SYNTHETIC / TEST-ONLY.** Fabricated for validation. Asserts nothing about any real control, vendor, auditor or customer |
 | **Label** | Both titled `[VA-S4 CHAIN PROOF]` so they are greppable and removable |
+| **Removed** | **2026-08-30**, after PR #939 merged (`245fcf1a`). Two `DELETE`s by primary key in one transaction, verified 0 rows remaining |
 
 ### Exact identifiers
 
-| Table | id | Detail |
-|---|---|---|
-| `control_assessments` | `b78aa6c5-82b4-422c-8297-d8bb752c29d1` | `status='passed'`, control `108f720d-97bb-4ebb-b637-f6c3c2510bab` ("File integrity monitoring on ePHI repositories") |
-| `evidence` | `817adcb6-d1aa-4ca3-9ea3-9baa4b0f306d` | `source_type='control_test'`, `source_id` = the row above, `evidence_type='test_result'`, `requirement_id=e355f6d9-d741-4586-b946-eb223dc7e217` (`DE.AE-1`) |
+Struck rather than removed, so the record of what was created stays legible.
 
-Also created on the same org by the same job, and subject to the same caveat:
-**30 controls** and **30 `control_canonical_identities`** rows from the
-whitelisted `healthcare-saas` template load, plus the **30
-`control_mappings`** rows that load wrote (taking staging from 3 to 33).
+| Table | id | Detail | Status |
+|---|---|---|---|
+| `control_assessments` | ~~`b78aa6c5-82b4-422c-8297-d8bb752c29d1`~~ | `status='passed'`, control `108f720d-97bb-4ebb-b637-f6c3c2510bab` ("File integrity monitoring on ePHI repositories") | **DELETED 2026-08-30** |
+| `evidence` | ~~`817adcb6-d1aa-4ca3-9ea3-9baa4b0f306d`~~ | `source_type='control_test'`, `source_id` = the row above, `evidence_type='test_result'`, `requirement_id=e355f6d9-d741-4586-b946-eb223dc7e217` (`DE.AE-1`) | **DELETED 2026-08-30** |
+
+### Retained by owner decision — the template-loaded data
+
+Also created on the same org by the same job: **30 controls**, **30
+`control_canonical_identities`** rows from the whitelisted `healthcare-saas`
+template load, and the **30 `control_mappings`** rows that load wrote (taking
+staging from 3 to 33).
+
+**These were deliberately RETAINED**, and the distinction is the point: they
+were not fabricated. They were written by the **real `templateLoader` code
+path** on a staging validation org — the same path a real tenant runs — so they
+are ordinary template data rather than a fixture, and they are what keeps hops
+1–5 of the chain reproducible against live rows. They remain staging-only and
+are still not customer data.
 
 ### Handling rules
 
@@ -298,17 +322,38 @@ whitelisted `healthcare-saas` template load, plus the **30
    excluded. A staging metric that includes them is measuring a fabrication.
 3. **Staging only.** Nothing here exists in production, and nothing here may be
    copied, promoted or seeded into production.
-4. **Cleanup is REQUIRED, not optional.** These rows are retained *temporarily*.
-   They must be deleted once the §2d prerequisites are resolved and the chain
-   can be demonstrated from genuinely governed state — at the latest, before
-   S4 staging acceptance (wiring-plan §7 step 7), because an acceptance run that
-   passes on fixture evidence is a vacuous pass, the exact failure mode the
-   plan's gate exists to prevent.
+4. **Cleanup is REQUIRED, not optional. — DISCHARGED 2026-08-30.** Both rows
+   were deleted, earlier than the deadline this rule set (before S4 staging
+   acceptance, wiring-plan §7 step 7). The reasoning stands for anything that
+   replaces them: an acceptance run that passes on fixture evidence is a vacuous
+   pass, the exact failure mode the plan's gate exists to prevent. **No fixture
+   evidence may be created to satisfy that acceptance.** This rule no longer
+   describes an outstanding obligation for the two deleted rows; it does still
+   govern the retained template data if that is ever to be reversed.
 5. **Cleanup order** follows the FK direction: `evidence` → `control_assessments`
    → (if the template load is also being reversed) `control_canonical_identities`
    → `control_mappings` → `controls`. `control_canonical_identities.control_id`
    is `ON DELETE RESTRICT`, so a control cannot be removed while its identity
    row stands.
-6. **This ledger is the record of what to remove.** If these ids are deleted,
-   strike them here rather than deleting the section — the fact that the
-   2026-08-30 result rested on fixtures is itself part of the result.
+6. **This ledger is the record of what to remove. — EXECUTED 2026-08-30.** The
+   ids are struck above rather than removed, and this section is kept, exactly
+   as this rule required.
+
+### Post-deletion verification (2026-08-30)
+
+Re-measured against staging after the two `DELETE`s, so this record describes
+the state a reader will actually find:
+
+| Hop | Before | After |
+|---|---|---|
+| 1. applicable requirements (NIST CSF 1.1) | 57 | **57** |
+| 5. requirements reaching a tenant control | 34 | **34** |
+| 5. distinct tenant controls reached | 30 | **30** |
+| `control_canonical_identities` on the org | 30 | **30** |
+| **6. eligible evidence** | 1 | **0** |
+
+**Hops 1–5 remain reproducible on demand against live rows.** The end-to-end
+row is not, and will not be until prerequisite C (§2d of the wiring plan) lands
+genuinely governed assurance state on this org. That is the intended trade: the
+chain's mechanism stays provable, and the terminus waits for real evidence
+rather than a fabrication.
