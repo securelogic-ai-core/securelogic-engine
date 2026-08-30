@@ -101,6 +101,30 @@ const issuedAuditCount = async (engagementId: string) =>
     [engagementId]
   )).rows[0]!.n);
 
+/**
+ * Audit writes are FIRE-AND-FORGET — `writeAuditEvent` is not awaited, and on
+ * the issue path it is deferred to after commit. Asserting the count the
+ * instant a response lands is therefore a race: it passes file-by-file and
+ * fails intermittently under full-suite load, which is exactly the flake class
+ * this package exists to remove. Wait for the expected count instead.
+ *
+ * For an expected count of 0 there is nothing to wait FOR, so settle briefly
+ * and then read — enough for a stray write to have landed if one were coming.
+ */
+async function awaitAuditCount(id: string, expected: number): Promise<number> {
+  if (expected === 0) {
+    await new Promise((r) => setTimeout(r, 300));
+    return issuedAuditCount(id);
+  }
+  let n = 0;
+  for (let i = 0; i < 120; i += 1) {
+    n = await issuedAuditCount(id);
+    if (n >= expected) return n;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return n;
+}
+
 beforeAll(async () => {
   seed = await bootstrapTestDb();
   const url = process.env["TEST_DATABASE_URL"];
@@ -138,7 +162,7 @@ describe("#946 · the happy path, and what it must leave behind", () => {
     expect(after.question_set_hash).toEqual(expect.any(String));
 
     expect(await invitesFor(id)).toHaveLength(1);
-    expect(await issuedAuditCount(id)).toBe(1);
+    expect(await awaitAuditCount(id, 1)).toBe(1);
   });
 
   it("the 200 is not sent until the transition is durable — no polling required", async () => {
@@ -185,7 +209,7 @@ describe("#946 · a failed transition leaves nothing behind", () => {
 
     // Exactly one credential, one audit event, and the stamp is untouched.
     expect(await invitesFor(id)).toHaveLength(1);
-    expect(await issuedAuditCount(id)).toBe(1);
+    expect(await awaitAuditCount(id, 1)).toBe(1);
     expect((await engagementRow(id)).question_set_hash).toBe(hashAfterFirst);
   });
 
@@ -202,7 +226,7 @@ describe("#946 · a failed transition leaves nothing behind", () => {
     expect(r.body.error).toBe("cannot_issue");
 
     expect(await invitesFor(id)).toHaveLength(0);
-    expect(await issuedAuditCount(id)).toBe(0);
+    expect(await awaitAuditCount(id, 0)).toBe(0);
     expect((await engagementRow(id)).question_set_hash).toBeNull();
 
     // Still resolvable — the scope was never frozen.
@@ -221,7 +245,7 @@ describe("#946 · a failed transition leaves nothing behind", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(422);
     expect(r.body.error).toBe("empty_scope");
     expect(await invitesFor(id)).toHaveLength(0);
-    expect(await issuedAuditCount(id)).toBe(0);
+    expect(await awaitAuditCount(id, 0)).toBe(0);
   });
 });
 
@@ -292,7 +316,7 @@ describe("#946 · the race, forced deterministically", () => {
 
     // THE INVARIANT: the loser minted nothing.
     expect(await invitesFor(id)).toHaveLength(0);
-    expect(await issuedAuditCount(id)).toBe(0);
+    expect(await awaitAuditCount(id, 0)).toBe(0);
   });
 
   it("two concurrent issues produce exactly ONE issuance, ONE invite, ONE audit event", async () => {
@@ -314,7 +338,7 @@ describe("#946 · the race, forced deterministically", () => {
     // Exactly one credential exists, and it is the winner's.
     const invites = await invitesFor(id);
     expect(invites).toHaveLength(1);
-    expect(await issuedAuditCount(id)).toBe(1);
+    expect(await awaitAuditCount(id, 1)).toBe(1);
     expect((await engagementRow(id)).status).toBe("issued");
   });
 
@@ -344,7 +368,7 @@ describe("#946 · tenant boundary", () => {
     expect(r.body.invite_token).toBeUndefined();
 
     expect(await invitesFor(id)).toHaveLength(0);
-    expect(await issuedAuditCount(id)).toBe(0);
+    expect(await awaitAuditCount(id, 0)).toBe(0);
     expect((await engagementRow(id)).status).toBe("scoped");
   });
 
@@ -401,7 +425,7 @@ describe("#946 · rollback removes every issuance-side effect", () => {
     expect(row.issued_at).toBeNull();
     expect(row.question_set_hash).toBeNull();
     expect(await invitesFor(id)).toHaveLength(0);
-    expect(await issuedAuditCount(id)).toBe(0);
+    expect(await awaitAuditCount(id, 0)).toBe(0);
 
     // And the engagement is still usable afterwards.
     const scoped = await asA("post", `/api/vendor-engagements/${id}/scope`).send({});

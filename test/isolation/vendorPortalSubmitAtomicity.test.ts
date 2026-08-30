@@ -131,6 +131,30 @@ const submittedAuditCount = async (id: string) =>
       WHERE resource_id = $1 AND event_type = 'vendor_portal.submitted'`, [id]
   )).rows[0]!.n);
 
+/**
+ * Audit writes are FIRE-AND-FORGET — `writeAuditEvent` is not awaited, and on
+ * the issue path it is deferred to after commit. Asserting the count the
+ * instant a response lands is therefore a race: it passes file-by-file and
+ * fails intermittently under full-suite load, which is exactly the flake class
+ * this package exists to remove. Wait for the expected count instead.
+ *
+ * For an expected count of 0 there is nothing to wait FOR, so settle briefly
+ * and then read — enough for a stray write to have landed if one were coming.
+ */
+async function awaitAuditCount(id: string, expected: number): Promise<number> {
+  if (expected === 0) {
+    await new Promise((r) => setTimeout(r, 300));
+    return submittedAuditCount(id);
+  }
+  let n = 0;
+  for (let i = 0; i < 120; i += 1) {
+    n = await submittedAuditCount(id);
+    if (n >= expected) return n;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return n;
+}
+
 /** Block until a backend is parked on a lock — makes the race deterministic. */
 async function waitUntilBlockedOnLock(): Promise<void> {
   for (let i = 0; i < 200; i += 1) {
@@ -176,7 +200,7 @@ describe("#949 · a successful submit means the transition committed", () => {
     const row = await statusOf(fx.engagementId);
     expect(row.status).toBe("submitted");
     expect(row.submitted_at).not.toBeNull();
-    expect(await submittedAuditCount(fx.engagementId)).toBe(1);
+    expect(await awaitAuditCount(fx.engagementId, 1)).toBe(1);
   });
 
   it("a second submit is refused and writes no second audit event", async () => {
@@ -190,7 +214,7 @@ describe("#949 · a successful submit means the transition committed", () => {
     const second = await request(app).post("/api/vendor-portal/submit").set("Cookie", cookie).send({});
     expect(second.status, JSON.stringify(second.body)).toBe(409);
     expect(second.body.ok).toBeUndefined();
-    expect(await submittedAuditCount(fx.engagementId)).toBe(1);
+    expect(await awaitAuditCount(fx.engagementId, 1)).toBe(1);
   });
 
   it("an incomplete questionnaire is refused with 422 and does not transition", async () => {
@@ -203,7 +227,7 @@ describe("#949 · a successful submit means the transition committed", () => {
     expect(r.body.error).toBe("incomplete");
 
     expect((await statusOf(fx.engagementId)).status).toBe("in_progress");
-    expect(await submittedAuditCount(fx.engagementId)).toBe(0);
+    expect(await awaitAuditCount(fx.engagementId, 0)).toBe(0);
   });
 
   it("submitting from a stale state is refused and writes nothing", async () => {
@@ -219,7 +243,7 @@ describe("#949 · a successful submit means the transition committed", () => {
     expect(r.body.error).toBe("cannot_submit");
 
     expect((await statusOf(fx.engagementId)).status).toBe("in_review");
-    expect(await submittedAuditCount(fx.engagementId)).toBe(0);
+    expect(await awaitAuditCount(fx.engagementId, 0)).toBe(0);
   });
 });
 
@@ -263,7 +287,7 @@ describe("#949 · the race, forced deterministically", () => {
 
     // Exactly one authoritative transition, and the loser audited nothing.
     expect((await statusOf(fx.engagementId)).status).toBe("submitted");
-    expect(await submittedAuditCount(fx.engagementId)).toBe(0);
+    expect(await awaitAuditCount(fx.engagementId, 0)).toBe(0);
   });
 
   it("two concurrent submits produce exactly ONE success and ONE audit event", async () => {
@@ -283,7 +307,7 @@ describe("#949 · the race, forced deterministically", () => {
     expect(loser.body.ok).toBeUndefined();
 
     expect((await statusOf(fx.engagementId)).status).toBe("submitted");
-    expect(await submittedAuditCount(fx.engagementId)).toBe(1);
+    expect(await awaitAuditCount(fx.engagementId, 1)).toBe(1);
   });
 });
 
@@ -317,7 +341,7 @@ describe("#949 · the external portal authorization boundary", () => {
     expect((await statusOf(mine.engagementId)).status).toBe("submitted");
     // Org B's engagement never left `issued`, and audited nothing.
     expect((await statusOf(theirs.engagementId)).status).toBe("issued");
-    expect(await submittedAuditCount(theirs.engagementId)).toBe(0);
+    expect(await awaitAuditCount(theirs.engagementId, 0)).toBe(0);
   });
 
   it("org B's session cannot submit using org A's cookie value", async () => {
@@ -333,6 +357,6 @@ describe("#949 · the external portal authorization boundary", () => {
 
     expect((await statusOf(b.engagementId)).status).toBe("submitted");
     expect((await statusOf(a.engagementId)).status).toBe("issued");
-    expect(await submittedAuditCount(a.engagementId)).toBe(0);
+    expect(await awaitAuditCount(a.engagementId, 0)).toBe(0);
   });
 });

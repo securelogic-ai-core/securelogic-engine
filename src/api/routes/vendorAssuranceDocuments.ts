@@ -930,6 +930,36 @@ async function transitionExtractedDocument(
     res.status(403).json({ error: "organization_context_missing" });
     return;
   }
+
+  // #947: AN APPROVAL MUST NAME THE PERSON WHO MADE IT.
+  //
+  // `req.userId` is populated on exactly ONE code path — the JWT-bridge branch
+  // of requireApiKey.ts, i.e. a Bearer SESSION token. A raw API key sets
+  // req.apiKey and leaves req.userId undefined. This route's guard stack does
+  // not require a user session, so before this check an API-key-only
+  // integration could produce an `approved` document — the version of record —
+  // with `approved_by_user_id = null`, and the approved-consistency CHECK,
+  // which says nothing about the approver, would allow it.
+  //
+  // Refused here, before any query, so an unattributed caller gets a clean 403
+  // rather than the database trigger's 500. Scoped to the APPROVAL: reject and
+  // request-manual-review are review actions that record no approver and are
+  // deliberately unchanged.
+  //
+  // The product path is unaffected — the app's approveDocument server action
+  // sends the signed-in user's session token
+  // (app/src/app/actions/vendorAssurance.ts).
+  const approverUserId = req.userId ?? null;
+  if (opts.setApproved && !approverUserId) {
+    res.status(403).json({
+      error: "human_approver_required",
+      detail:
+        "Approving a document is a governance decision and must name the person " +
+        "who made it. This request carries no authenticated user."
+    });
+    return;
+  }
+
   const documentId = String(req.params["id"] ?? "").trim();
   if (!isUuid(documentId)) {
     res.status(400).json({ error: "document_id_must_be_uuid" });
@@ -964,7 +994,10 @@ async function transitionExtractedDocument(
           WHERE id = $1 AND organization_id = $2
             AND processing_status = 'extracted'
           RETURNING ${DOC_SELECT}`,
-        [documentId, organizationId, opts.targetStatus, req.userId ?? null]
+        // #947: the VERIFIED approver, never `req.userId ?? null`. The guard
+        // above has already refused an unattributed caller, so this cannot be
+        // null on the approval path.
+        [documentId, organizationId, opts.targetStatus, approverUserId]
       )
     : await pg.query(
         `UPDATE vendor_assurance_documents
@@ -984,7 +1017,10 @@ async function transitionExtractedDocument(
   writeAuditEvent({
     organizationId,
     actorApiKeyId: getApiKeyId(req),
-    actorUserId: req.userId ?? null,
+    // #947: the SAME actor the row was attributed to. On the approval path the
+    // guard above guarantees a real user id, so the audit trail and
+    // `approved_by_user_id` can never name different people — or nobody.
+    actorUserId: approverUserId,
     eventType: opts.eventType,
     resourceType: "vendor_assurance_document",
     resourceId: documentId,
