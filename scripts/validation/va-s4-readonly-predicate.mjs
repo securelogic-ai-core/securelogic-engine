@@ -7,7 +7,31 @@
  * covered, and where does the chain break?" — so the wiring-plan §7 gate can be
  * re-run without touching the product.
  *
- * ── Two corrections against the earlier predicate ──────────────────────────
+ * ── OWNER RULING 2026-08-30: this route is NOT canonical ───────────────────
+ *
+ * The CUEC spine is **not** the canonical S4 assurance-coverage route, and this
+ * script must never be read as measuring one. A CUEC is a customer/user-entity
+ * responsibility — a shared-responsibility condition the report places on the
+ * READER. It is not evidence that the service organisation's control was tested
+ * and operated effectively, and mapping one to a tenant control does not make
+ * the vendor's control assured.
+ *
+ * The canonical model is instead:
+ *
+ *   governed evidence -> tested control / control assertion
+ *     -> test result / exception state -> control <-> requirement mapping
+ *     -> requirement assurance coverage
+ *
+ * with human gates and a preserved historical decision basis. That arm is
+ * DESIGN-ONLY and is deliberately not built here.
+ *
+ * This script therefore survives as a **corpus diagnostic**, not a coverage
+ * oracle: it measures the topology of the estate along the legacy route so the
+ * shape of the gap stays visible. Its verdict is reported as
+ * `NON_CANONICAL_ROUTE` whenever the chain resolves, precisely so a nonzero
+ * count can never be mistaken for an S4 coverage claim.
+ *
+ * ── Three corrections against the earlier predicate ────────────────────────
  *
  * 1. LIFECYCLE. The old clause gated on `processing_status='finalized'`. Owner
  *    ruling 2026-08-30: **`approved` is the terminal assurance-eligible state**,
@@ -34,6 +58,22 @@
  *    is not a real framework requirement and must never be counted as coverage.
  *    The crosswalk reaches real NIST CSF 1.1 requirements.
  *
+ * 3. CUEC VOCABULARY. The clause this script previously carried at h6 —
+ *    `vendor_assurance_cuecs.review_status = 'accepted'` — is **unsatisfiable
+ *    by CHECK constraint**. Verified live 2026-08-30:
+ *
+ *      vendor_assurance_cuecs_review_status_check
+ *        CHECK (review_status = ANY (ARRAY['pending','not_applicable',
+ *                                          'satisfied','gap','reviewed_no_match']))
+ *
+ *    `'accepted'` is not in the vocabulary and no row can ever hold it, so the
+ *    hop returned zero **independently of the corpus** and would have done so
+ *    against a perfect one. Migration `20261036` replaced the CUEC model with a
+ *    DETERMINATION model — a CUEC is determined `satisfied` / `gap` /
+ *    `not_applicable`, never "accepted" — and this predicate had been written
+ *    against the vocabulary that migration retired. It now requires a genuine
+ *    human determination plus a named determiner.
+ *
  * ── What it deliberately does NOT assert ───────────────────────────────────
  *
  * Evidence VALIDITY (Ruling 3). Report periods live in
@@ -46,21 +86,54 @@
  * Eligibility once granted is currently irreversible; there is nothing to
  * subtract, and this comment is the record of that gap.
  *
- * ── Why h7 cannot be nonzero today, and it is not this predicate's fault ───
+ * ── The terminal break is DISJOINT TENANCY, at h5 ──────────────────────────
  *
- * `vendor_assurance_documents.assurance_opinion` has **no writer anywhere in
- * the codebase**. Verified 2026-08-30 by exhaustive search: the column name
- * appears in exactly two files — `db/migrations/20261066_assurance_opinion.sql`
- * and `src/api/lib/vendorAssurance/assuranceOpinion.ts`, the latter only in a
- * comment saying so. VA-S4 Step 4 shipped the closed vocabulary,
- * `opinionCoverageGate`, the advisory proposal normalizer and the authority
- * CHECK that makes an opinion without a named acceptor impossible — but no
- * ACCEPTANCE SURFACE. So the final hop is unreachable through any product or
- * governance path, and the only way to satisfy it would be direct database
- * manipulation, which would make the whole run a fabrication.
+ * Measured 2026-08-30, and it supersedes the earlier reading that the chain
+ * died at the opinion hop. It does not: **no row has ever reached the opinion
+ * hop.** The estate splits into two halves that never meet, and no organisation
+ * holds both:
  *
- * That is a BUILD gap, not a predicate defect. This script is written to report
- * it as a zero at h7 rather than to work around it.
+ *   Enterprise Validation StageA  f70267ce   30 identities   0 VA documents
+ *   Staging Inc                   fe2ede61    0 identities  53 VA documents
+ *
+ * StageA carries every `control_canonical_identities` row and NIST CSF 1.1, and
+ * has no assurance evidence at all. Staging Inc carries every assurance
+ * document, every CUEC and every mapping — against HAND-CREATED controls with no
+ * canonical identity, under NIST SP 800-53 Rev 5, which the published corpus does
+ * not cover.
+ *
+ * This was isolated by RELAXATION rather than inferred. h5 was re-measured with
+ * each eligibility clause removed in turn:
+ *
+ *   mapping_status='accepted' AND mapping_source <> 'auto'   ->  0
+ *   mapping_status='accepted'                                ->  0
+ *   any mapping, any status, any source                      ->  0
+ *
+ * The bare structural join is empty. h5 is not failing an eligibility test;
+ * there is nothing there to test, and a correctly org-scoped predicate MUST
+ * return zero against this corpus. That is a corpus fact, not a defect.
+ * `org_halves` below reports it on every run so the cause travels with the
+ * numbers.
+ *
+ * ── h6 and h7 are dead too, for their own reasons ──────────────────────────
+ *
+ * Both sit downstream of an already-empty set, so neither can be blamed for the
+ * result — but each would independently return zero even if h5 were populated:
+ *
+ *   h6  the retired-vocabulary defect, correction 3 above (now fixed).
+ *
+ *   h7  `vendor_assurance_documents.assurance_opinion` had **no writer anywhere
+ *       in the codebase** when this script was written. VA-S4 Step 4 shipped the
+ *       closed vocabulary, `opinionCoverageGate`, the advisory normalizer and the
+ *       authority CHECK that makes an opinion without a named acceptor
+ *       impossible — but no ACCEPTANCE SURFACE. Extraction DOES populate the
+ *       source field (`auditor_opinion` non-null on 5/5 extractions at
+ *       confidence 0.99, with page-1 spans), and the normalizer resolves the
+ *       live string correctly to `qualified`; what was missing is the governed
+ *       act. S4-P2 builds that surface. Until a document carries a
+ *       human-accepted opinion, h7 stays zero, and this script reports it as a
+ *       zero rather than working around it — the only alternative would be
+ *       direct database manipulation, which would make the run a fabrication.
  *
  * Run:  node scripts/validation/va-s4-readonly-predicate.mjs [--org <uuid>]
  */
@@ -119,7 +192,13 @@ WITH h1 AS (   -- applicable NIST CSF 1.1 requirement
     FROM h5
     JOIN vendor_assurance_cuecs cu
       ON cu.id = h5.cuec_id AND cu.organization_id = h5.organization_id
-     AND cu.review_status = 'accepted'
+     -- A CUEC is DETERMINED, never "accepted". See correction 3 in the header:
+     -- 'accepted' is not in the CHECK and no row can ever hold it. 'pending'
+     -- means nobody has looked; 'reviewed_no_match' is the deprecated value
+     -- that conflates "does not apply" with "we do not do it", and is excluded
+     -- for exactly that reason.
+     AND cu.review_status IN ('not_applicable', 'satisfied', 'gap')
+     AND cu.review_status_updated_by_user_id IS NOT NULL
     JOIN vendor_assurance_documents d
       ON d.id = cu.document_id AND d.organization_id = h5.organization_id
      AND d.processing_status = 'approved'
@@ -152,18 +231,55 @@ SELECT (SELECT count(*) FROM vendor_assurance_documents WHERE organization_id ${
        (SELECT count(*) FROM vendor_assurance_cuecs WHERE organization_id ${orgFilter} AND review_status='accepted') AS accepted_cuecs,
        (SELECT count(*) FROM vendor_assurance_cuec_control_mappings WHERE organization_id ${orgFilter} AND mapping_status='accepted' AND mapping_source <> 'auto') AS accepted_manual_mappings`, P);
 
+// The terminal break, reported alongside the numbers so the cause travels with
+// them: which organisation holds which half of the chain. An empty h5 with the
+// halves disjoint is a CORPUS fact; an empty h5 with a single org holding both
+// would be something else entirely, and the reader must be able to tell.
+const orgHalves = await q(`
+SELECT o.name,
+       (SELECT count(*) FROM control_canonical_identities i WHERE i.organization_id = o.id)::int AS identities,
+       (SELECT count(*) FROM vendor_assurance_documents d  WHERE d.organization_id = o.id)::int AS va_documents,
+       (SELECT count(*) FROM vendor_assurance_cuec_control_mappings m WHERE m.organization_id = o.id)::int AS mappings
+  FROM organizations o
+ WHERE o.id ${ORG ? "= $1" : "IS NOT NULL"}
+   AND (EXISTS (SELECT 1 FROM control_canonical_identities i WHERE i.organization_id = o.id)
+     OR EXISTS (SELECT 1 FROM vendor_assurance_documents d  WHERE d.organization_id = o.id))
+ ORDER BY 2 DESC, 3 DESC`, P);
+const holdsBothHalves = orgHalves.filter((r) => r.identities > 0 && r.va_documents > 0);
+
 // Any nonzero result must be a REAL requirement, never the synthetic umbrella.
 const covered = await q(`${CHAIN}
 SELECT DISTINCT reference_id, canonical_key, mapping_version, document_id::text
   FROM h7 ORDER BY reference_id`, P);
 const synthetic = covered.filter((r) => String(r.reference_id).startsWith("industry-template:"));
 
+// VERDICT VOCABULARY. `NON_CANONICAL_ROUTE` exists because of the 2026-08-30
+// owner ruling: a chain that RESOLVES along this route still proves nothing
+// about assurance coverage, so "LIVE" would be an actively misleading label.
+// There is deliberately no verdict value that asserts coverage.
+const verdict =
+  covered.length === 0
+    ? "DEAD"
+    : synthetic.length > 0
+      ? "INVALID_SYNTHETIC"
+      : "NON_CANONICAL_ROUTE";
+
 console.log("S4PREDICATE " + JSON.stringify({
   org: ORG ?? "ALL",
   hops: hops[0],
   corpus: corpus[0],
+  org_halves: orgHalves,
+  orgs_holding_both_halves: holdsBothHalves.length,
+  terminal_break:
+    holdsBothHalves.length === 0
+      ? "h5_disjoint_tenancy: no organisation holds both a canonical identity and an assurance document"
+      : "h5_populated_check_eligibility_clauses",
   covered_requirements: covered,
   synthetic_umbrella_rows: synthetic.length,
-  verdict: covered.length === 0 ? "DEAD" : synthetic.length > 0 ? "INVALID_SYNTHETIC" : "LIVE",
+  verdict,
+  verdict_note:
+    "NON_CANONICAL_ROUTE is not coverage. Owner ruling 2026-08-30: the CUEC " +
+    "spine is not the canonical S4 assurance-coverage route. This script is a " +
+    "corpus diagnostic only and no value it can emit authorises depth reduction.",
 }));
 await pool.end();
