@@ -42,6 +42,7 @@ import { Pool } from "pg";
 import { bootstrapTestDb, seedUser, seedVendor, type TestDbSeed } from "./testDb.js";
 import { signJwt } from "../../src/api/lib/jwt.js";
 import { recordAllCurrentConsents } from "../../src/api/lib/legalConsent.js";
+import { ASSURANCE_BEARING_FIELD_NAMES } from "../../src/api/lib/vendorAssuranceValidation.js";
 
 let app: Express;
 let seed: TestDbSeed;
@@ -53,8 +54,22 @@ let jwtB = "";
 let vendorA = "";
 let vendorB = "";
 
-/** An `extracted` document with an extraction — the only approvable state. */
-async function extractedDoc(orgId: string, vendorId: string, label: string): Promise<string> {
+/**
+ * An `extracted` document with an extraction — the only approvable state.
+ *
+ * S4-4C-0 added a review-authority gate in front of approval, so a document is
+ * only approvable once its assurance-bearing fields and every tested control
+ * carry a current review decision. These tests are about ATTRIBUTION (#947),
+ * not about review, so `reviewed` defaults to satisfying that gate. The tests
+ * that assert a REFUSAL do not depend on it — the human-approver check and the
+ * tenant check both run before the gate.
+ */
+async function extractedDoc(
+  orgId: string,
+  vendorId: string,
+  label: string,
+  opts: { reviewed?: boolean } = {}
+): Promise<string> {
   const d = await pool.query<{ id: string }>(
     `INSERT INTO vendor_assurance_documents
        (organization_id, vendor_id, original_filename, byte_size, sha256,
@@ -63,7 +78,38 @@ async function extractedDoc(orgId: string, vendorId: string, label: string): Pro
      RETURNING id`,
     [orgId, vendorId, `${label}.pdf`, label.padEnd(64, "0").slice(0, 64), `k/${label}.pdf`]
   );
-  return d.rows[0]!.id;
+  const documentId = d.rows[0]!.id;
+
+  const controls = [{ control_id: "CC6.1", result: "No exception noted." }];
+  const fields: Record<string, unknown> = { controls: { value: controls, confidence: 0.99, status: "extracted" } };
+  for (const f of ASSURANCE_BEARING_FIELD_NAMES) {
+    if (f !== "controls") fields[f] = { value: "x", confidence: 0.9, status: "extracted" };
+  }
+  const e = await pool.query<{ id: string }>(
+    `INSERT INTO vendor_assurance_extractions (organization_id, document_id, model_id, prompt_version, fields)
+     VALUES ($1,$2,'test-model','v1',$3::jsonb) RETURNING id`,
+    [orgId, documentId, JSON.stringify(fields)]
+  );
+  const extractionId = e.rows[0]!.id;
+
+  if (opts.reviewed !== false) {
+    for (const field of ASSURANCE_BEARING_FIELD_NAMES) {
+      await pool.query(
+        `INSERT INTO vendor_assurance_review_decisions
+           (organization_id, extraction_id, field_name, decision, decided_by_user_id)
+         VALUES ($1,$2,$3,'accept',$4)`,
+        [orgId, extractionId, field, orgId === seed.orgA.id ? userA : userB]
+      );
+    }
+    await pool.query(
+      `INSERT INTO vendor_assurance_review_decisions
+         (organization_id, extraction_id, field_name, decision, decided_by_user_id,
+          element_key, element_snapshot)
+       VALUES ($1,$2,'controls','accept',$3,'CC6.1',$4::jsonb)`,
+      [orgId, extractionId, orgId === seed.orgA.id ? userA : userB, JSON.stringify(controls[0])]
+    );
+  }
+  return documentId;
 }
 
 const docRow = async (id: string) =>

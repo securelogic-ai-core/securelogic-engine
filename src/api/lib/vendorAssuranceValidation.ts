@@ -36,6 +36,8 @@ export const MAX_FILENAME = 255;
 export const MAX_REVIEWER_NOTE = 2000;
 export const MAX_OVERRIDE_REASON = 1000;
 export const MAX_MANUAL_REVIEW_COMMENT = 1000;
+/** A TSC criterion identifier such as `CC6.1`; generous, not a grammar. */
+export const MAX_ELEMENT_KEY = 128;
 
 export type UploadMetadata = {
   vendor_id: string;
@@ -49,6 +51,13 @@ export type ReviewDecisionInput = {
   /** Required iff decision === 'edit'. */
   reviewed_value: unknown;
   reviewer_note: string | null;
+  /**
+   * S4-4C-0. NULL for a whole-field decision — today's behaviour, unchanged.
+   * For `controls`, the EXTRACTED control identifier this decision is about,
+   * so five tested controls are five governance decisions rather than one
+   * indivisible acceptance of the array.
+   */
+  element_key: string | null;
 };
 
 export type ReviewDecisionsInput = {
@@ -188,11 +197,38 @@ export function validateReviewDecisions(
       reviewerNote = cleaned.length === 0 ? null : cleaned;
     }
 
+    // S4-4C-0: an OPTIONAL element key. Absent means a whole-field decision,
+    // which is what every non-`controls` field uses and what this route did
+    // before. Present, it scopes the decision to ONE tested control — and it is
+    // refused on any other field, because `controls` is the only structure
+    // whose elements become individually authoritative.
+    let elementKey: string | null = null;
+    const rawElementKey = d["element_key"];
+    if (rawElementKey !== undefined && rawElementKey !== null) {
+      if (typeof rawElementKey !== "string") {
+        return { error: "element_key_must_be_string", detail: `decisions[${i}]` };
+      }
+      const cleaned = sanitizeString(rawElementKey.trim(), MAX_ELEMENT_KEY);
+      if (cleaned.length === 0) {
+        return { error: "element_key_must_not_be_blank", detail: `decisions[${i}]` };
+      }
+      if (fieldName !== "controls") {
+        return {
+          error: "element_key_not_supported_for_field",
+          detail:
+            `decisions[${i}]: element-level review is scoped to 'controls', the only ` +
+            `extracted structure whose individual elements carry assurance authority.`
+        };
+      }
+      elementKey = cleaned;
+    }
+
     out.push({
       field_name: fieldName,
       decision: decision as ReviewDecisionInput["decision"],
       reviewed_value: reviewedValue,
-      reviewer_note: reviewerNote
+      reviewer_note: reviewerNote,
+      element_key: elementKey
     });
   }
 
@@ -204,6 +240,105 @@ export function validateReviewDecisions(
  * already computed in SQL), return the names of material fields that lack
  * a current decision. An empty array means finalize is permitted.
  */
+/**
+ * S4-4C-0: the fields whose review state an ASSURANCE-ELIGIBLE approval
+ * depends on.
+ *
+ * Deliberately NARROWER than MATERIAL_FIELD_NAMES. The legacy `finalize` gate
+ * demanded a decision on all fourteen material fields; restoring that verbatim
+ * would block approval on fields the coverage chain never reads, which is a
+ * different (and unargued) product decision. These are the ones an assurance
+ * determination actually consumes:
+ *
+ *   report_type              Type I vs Type II — different claims entirely
+ *   report_period_start/end  currency of the assurance
+ *   trust_services_criteria  the report's scope
+ *   auditor_opinion          the report-level opinion the governed acceptance
+ *                            (20261066/20261070) is proposed from
+ *   controls                 the tested controls — the coverage route itself
+ *   exceptions               the exception veto; control-attributed
+ *   subservice_method        carve-out materiality. Measured: 100% of the
+ *   subservice_organizations corpus is `Carve-out`, so this is not hypothetical
+ *
+ * Deliberately OUT: vendor_name, report_issued_date, auditor_name (identifying,
+ * not assurance-bearing), cuecs (the CUEC spine is outside the coverage route
+ * by owner ruling), management_responses (the vendor's reply to an exception,
+ * not the exception).
+ */
+export const ASSURANCE_BEARING_FIELD_NAMES: readonly string[] = [
+  "report_type",
+  "report_period_start",
+  "report_period_end",
+  "trust_services_criteria",
+  "auditor_opinion",
+  "controls",
+  "exceptions",
+  "subservice_method",
+  "subservice_organizations",
+] as const;
+
+export type ApprovalReviewState = {
+  /** Current decision per field, from the DISTINCT ON (field_name) projection. */
+  fieldDecisions: Record<string, { decision: "accept" | "edit" | "reject" } | null | undefined>;
+  /** Every tested-control identifier present in the extraction. */
+  testedControlKeys: readonly string[];
+  /** Tested-control identifiers carrying a current element-grain decision. */
+  reviewedTestedControlKeys: readonly string[];
+};
+
+/**
+ * S4-4C-0. May this document enter the assurance-eligible `approved` state?
+ *
+ * The invariant: an assurance document cannot enter an assurance-eligible
+ * approved state without the required governed review state. Two conditions,
+ * and the second is the one the old gate could not express at all:
+ *
+ *   1. every assurance-bearing FIELD carries a current review decision;
+ *   2. every tested CONTROL carries its own current element-grain decision.
+ *
+ * A document with no tested controls satisfies (2) vacuously — that is a report
+ * with nothing to reason about, not a bypass, and it still fails (1) unless the
+ * `controls` field itself was reviewed.
+ */
+export function computeApprovalReviewPrecondition(
+  state: ApprovalReviewState
+): { ok: true } | { ok: false; missing_field_names: string[]; unreviewed_control_keys: string[] } {
+  const missing: string[] = [];
+  for (const name of ASSURANCE_BEARING_FIELD_NAMES) {
+    const d = state.fieldDecisions[name];
+    if (!d || (d.decision !== "accept" && d.decision !== "edit" && d.decision !== "reject")) {
+      missing.push(name);
+    }
+  }
+  const reviewed = new Set(state.reviewedTestedControlKeys);
+  const unreviewed = state.testedControlKeys.filter((k) => !reviewed.has(k));
+
+  if (missing.length === 0 && unreviewed.length === 0) return { ok: true };
+  return { ok: false, missing_field_names: missing, unreviewed_control_keys: unreviewed };
+}
+
+/**
+ * The tested-control identifiers in an extraction's `controls` value, in order,
+ * de-duplicated. An entry with no usable identifier is reported as such by the
+ * caller rather than silently skipped — an unidentifiable tested control cannot
+ * be reviewed, so it must not be approvable either.
+ */
+export function testedControlKeysOf(controlsValue: unknown): { keys: string[]; unidentified: number } {
+  if (!Array.isArray(controlsValue)) return { keys: [], unidentified: 0 };
+  const keys: string[] = [];
+  let unidentified = 0;
+  for (const entry of controlsValue) {
+    const id = isPlainObject(entry) ? entry["control_id"] : null;
+    if (typeof id === "string" && id.trim().length > 0) {
+      const k = id.trim();
+      if (!keys.includes(k)) keys.push(k);
+    } else {
+      unidentified += 1;
+    }
+  }
+  return { keys, unidentified };
+}
+
 export function computeFinalizePrecondition(
   currentDecisionsByField: Record<string, { decision: "accept" | "edit" | "reject" } | null | undefined>
 ): { ok: true } | { ok: false; missing_field_names: string[] } {
