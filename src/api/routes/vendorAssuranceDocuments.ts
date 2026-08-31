@@ -55,6 +55,9 @@ import {
   validateUpdateCuecMappingBody,
   validateUpdateCuecReviewStatusBody,
   computeFinalizePrecondition,
+  computeApprovalReviewPrecondition,
+  testedControlKeysOf,
+  ASSURANCE_BEARING_FIELD_NAMES,
   isUuid,
   MAX_BYTE_SIZE,
   MAX_ORG_STORAGE_BYTES
@@ -559,6 +562,7 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
       extraction: null,
       spans: [],
       current_decisions: {},
+      current_control_decisions: {},
       field_overrides: fieldOverrides,
       material_field_names: MATERIAL_FIELD_NAMES
     });
@@ -577,6 +581,7 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
 
   const decisionsResult = await pg.query<{
     field_name: string;
+    element_key: string | null;
     decision: "accept" | "edit" | "reject";
     reviewed_value: unknown;
     reviewer_note: string | null;
@@ -584,12 +589,13 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
     decided_at: string;
     id: string;
   }>(
-    `SELECT DISTINCT ON (field_name)
-            field_name, decision, reviewed_value, reviewer_note,
+    // S4-4C-0: per (field, element). See the note on the write path.
+    `SELECT DISTINCT ON (field_name, element_key)
+            field_name, element_key, decision, reviewed_value, reviewer_note,
             decided_by_user_id, decided_at, id
        FROM vendor_assurance_review_decisions
       WHERE extraction_id = $1 AND organization_id = $2
-      ORDER BY field_name, decided_at DESC, id DESC`,
+      ORDER BY field_name, element_key, decided_at DESC, id DESC`,
     [extraction.id, organizationId]
   );
 
@@ -600,20 +606,26 @@ export async function getVendorAssuranceExtraction(req: Request, res: Response):
     decided_by_user_id: string | null;
     decided_at: string;
   }> = {};
+  /** S4-4C-0: element-grain decisions, keyed by tested-control identifier. */
+  const currentControlDecisions: Record<string, unknown> = {};
   for (const row of decisionsResult.rows) {
-    currentDecisions[row.field_name] = {
+    const entry = {
       decision: row.decision,
       reviewed_value: row.reviewed_value,
       reviewer_note: row.reviewer_note,
       decided_by_user_id: row.decided_by_user_id,
       decided_at: row.decided_at
     };
+    // Nullish, not strict-null — see the note on the write path.
+    if (row.element_key == null) currentDecisions[row.field_name] = entry;
+    else currentControlDecisions[row.element_key] = entry;
   }
 
   res.status(200).json({
     extraction,
     spans: spansResult.rows,
     current_decisions: currentDecisions,
+    current_control_decisions: currentControlDecisions,
     field_overrides: fieldOverrides,
     material_field_names: MATERIAL_FIELD_NAMES
   });
@@ -728,12 +740,50 @@ export async function recordVendorAssuranceReviewDecisions(req: Request, res: Re
   const client = await pg.connect();
   try {
     await client.query("BEGIN");
+    // S4-4C-0: an element decision snapshots the ORIGINAL extracted control BY
+    // VALUE. Extractions are mutable through field overrides, so a governance
+    // decision must stay explainable against what the reviewer actually saw —
+    // the same discipline as assurance_opinion_basis and gap_basis.
+    let controlsByKey: Map<string, unknown> | null = null;
+    if (decisions.some((d) => d.element_key !== null)) {
+      const ext = await client.query<{ fields: Record<string, { value?: unknown }> | null }>(
+        `SELECT fields FROM vendor_assurance_extractions
+          WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [extractionId, organizationId]
+      );
+      const raw = (ext.rows[0]?.fields ?? {})["controls"]?.value;
+      controlsByKey = new Map<string, unknown>();
+      if (Array.isArray(raw)) {
+        for (const entry of raw) {
+          const id = entry && typeof entry === "object" ? (entry as Record<string, unknown>)["control_id"] : null;
+          if (typeof id === "string" && id.trim().length > 0) controlsByKey.set(id.trim(), entry);
+        }
+      }
+      for (const d of decisions) {
+        if (d.element_key !== null && !controlsByKey.has(d.element_key)) {
+          // Reviewing a control this extraction does not contain would record a
+          // decision about nothing, and would satisfy the approval gate without
+          // anyone having looked at a real tested control.
+          await client.query("ROLLBACK");
+          client.release();
+          res.status(409).json({
+            error: "tested_control_not_in_extraction",
+            element_key: d.element_key,
+            available: [...controlsByKey.keys()]
+          });
+          return;
+        }
+      }
+    }
+
     for (const d of decisions) {
+      const snapshot = d.element_key === null ? null : controlsByKey?.get(d.element_key) ?? null;
       const ins = await client.query<{ id: string }>(
         `INSERT INTO vendor_assurance_review_decisions
            (organization_id, extraction_id, field_name, decision,
-            reviewed_value, reviewer_note, decided_by_user_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+            reviewed_value, reviewer_note, decided_by_user_id,
+            element_key, element_snapshot)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb)
          RETURNING id`,
         [
           organizationId,
@@ -742,7 +792,9 @@ export async function recordVendorAssuranceReviewDecisions(req: Request, res: Re
           d.decision,
           d.reviewed_value === null ? null : JSON.stringify(d.reviewed_value),
           d.reviewer_note,
-          req.userId ?? null
+          req.userId ?? null,
+          d.element_key,
+          snapshot === null ? null : JSON.stringify(snapshot)
         ]
       );
       insertedIds.push(ins.rows[0]!.id);
@@ -771,7 +823,9 @@ export async function recordVendorAssuranceReviewDecisions(req: Request, res: Re
       payload: {
         document_id: documentId,
         field_name: d.field_name,
-        decision: d.decision
+        decision: d.decision,
+        // S4-4C-0: which tested control, when the decision is element-grained.
+        ...(d.element_key === null ? {} : { element_key: d.element_key })
       },
       ipAddress: req.ip ?? null
     });
@@ -780,27 +834,43 @@ export async function recordVendorAssuranceReviewDecisions(req: Request, res: Re
   // Read back the recomputed current-decision-per-field projection.
   const projection = await pg.query<{
     field_name: string;
+    element_key: string | null;
     decision: "accept" | "edit" | "reject";
     reviewed_value: unknown;
     reviewer_note: string | null;
     decided_by_user_id: string | null;
     decided_at: string;
   }>(
-    `SELECT DISTINCT ON (field_name)
-            field_name, decision, reviewed_value, reviewer_note,
+    // S4-4C-0: DISTINCT ON (field_name, element_key). A whole-field decision
+    // (element_key NULL) and each element decision are separate current
+    // decisions; collapsing them by field alone would hide element review.
+    `SELECT DISTINCT ON (field_name, element_key)
+            field_name, element_key, decision, reviewed_value, reviewer_note,
             decided_by_user_id, decided_at
        FROM vendor_assurance_review_decisions
       WHERE extraction_id = $1 AND organization_id = $2
-      ORDER BY field_name, decided_at DESC, id DESC`,
+      ORDER BY field_name, element_key, decided_at DESC, id DESC`,
     [extractionId, organizationId]
   );
+  // S4-4C-0: the two grains are reported SEPARATELY. Keying one map by
+  // field_name alone would let an element decision on `controls` overwrite the
+  // whole-field `controls` entry, so a client could not see that both exist —
+  // and the field map would appear to say something about the array that only
+  // a single control was decided about.
   const currentDecisions: Record<string, unknown> = {};
+  const currentControlDecisions: Record<string, unknown> = {};
   for (const row of projection.rows) {
-    currentDecisions[row.field_name] = row;
+    // Nullish, not strict-null: a projection that omits the column yields
+    // `undefined`, and treating that as an element decision would file a
+    // whole-field decision under the key `undefined`. Same trap the CUEC
+    // promotion check documents.
+    if (row.element_key == null) currentDecisions[row.field_name] = row;
+    else currentControlDecisions[row.element_key] = row;
   }
 
   res.status(200).json({
     inserted_ids: insertedIds,
+    current_control_decisions: currentControlDecisions,
     current_decisions: currentDecisions
   });
 }
@@ -915,6 +985,87 @@ export async function finalizeVendorAssuranceDocument(req: Request, res: Respons
    processing_status = 'extracted' so a lost race returns 409 rather than a
    double transition.
    ========================================================= */
+
+/**
+ * S4-4C-0. Is this document's governed review state sufficient for it to enter
+ * the assurance-eligible `approved` state?
+ *
+ * Reads the current-decision projection at BOTH grains — per field and per
+ * tested control — and compares them against what an assurance determination
+ * actually consumes.
+ *
+ * A document with no extraction cannot be approved at all: there is nothing to
+ * have reviewed, and approving it would create an assurance-eligible record
+ * asserting something nobody has read.
+ */
+async function evaluateApprovalReviewGate(
+  documentId: string,
+  organizationId: string
+): Promise<{ ok: true } | { ok: false; detail: Record<string, unknown> }> {
+  const ext = await pg.query<{ id: string; fields: Record<string, { value?: unknown }> | null }>(
+    `SELECT id, fields FROM vendor_assurance_extractions
+      WHERE document_id = $1 AND organization_id = $2 LIMIT 1`,
+    [documentId, organizationId]
+  );
+  if ((ext.rowCount ?? 0) === 0) {
+    return { ok: false, detail: { reason: "no_extraction", missing_field_names: [...ASSURANCE_BEARING_FIELD_NAMES] } };
+  }
+  const extractionId = ext.rows[0]!.id;
+  const controlsValue = (ext.rows[0]!.fields ?? {})["controls"]?.value;
+  const { keys, unidentified } = testedControlKeysOf(controlsValue);
+
+  // An extracted control with no usable identifier cannot be reviewed, so it
+  // must not be approvable either — otherwise the gate is satisfiable by
+  // producing unidentifiable controls.
+  if (unidentified > 0) {
+    return {
+      ok: false,
+      detail: {
+        reason: "unidentified_tested_controls",
+        unidentified_tested_control_count: unidentified,
+        message:
+          "Some extracted controls carry no control identifier, so they cannot be " +
+          "individually reviewed. Correct the extraction before approving."
+      }
+    };
+  }
+
+  const decisions = await pg.query<{ field_name: string; element_key: string | null; decision: "accept" | "edit" | "reject" }>(
+    `SELECT DISTINCT ON (field_name, element_key) field_name, element_key, decision
+       FROM vendor_assurance_review_decisions
+      WHERE extraction_id = $1 AND organization_id = $2
+      ORDER BY field_name, element_key, decided_at DESC, id DESC`,
+    [extractionId, organizationId]
+  );
+
+  const fieldDecisions: Record<string, { decision: "accept" | "edit" | "reject" }> = {};
+  const reviewedControlKeys: string[] = [];
+  for (const row of decisions.rows) {
+    // Nullish, not strict-null — a row without the column is a whole-field
+    // decision, and mis-filing it would make the gate unsatisfiable.
+    if (row.element_key == null) fieldDecisions[row.field_name] = { decision: row.decision };
+    else if (row.field_name === "controls") reviewedControlKeys.push(row.element_key);
+  }
+
+  const precondition = computeApprovalReviewPrecondition({
+    fieldDecisions,
+    testedControlKeys: keys,
+    reviewedTestedControlKeys: reviewedControlKeys,
+  });
+  if (precondition.ok) return { ok: true };
+  return {
+    ok: false,
+    detail: {
+      reason: "review_incomplete",
+      missing_field_names: precondition.missing_field_names,
+      unreviewed_control_keys: precondition.unreviewed_control_keys,
+      message:
+        "An assurance document cannot become the version of record until its " +
+        "assurance-bearing fields and each tested control have been reviewed."
+    }
+  };
+}
+
 async function transitionExtractedDocument(
   req: Request,
   res: Response,
@@ -982,6 +1133,34 @@ async function transitionExtractedDocument(
       status: doc.processing_status
     });
     return;
+  }
+
+  // S4-4C-0: THE APPROVAL AUTHORITY GATE.
+  //
+  // `approved` is the terminal assurance-eligible state and the one the S4
+  // predicate keys on. The LEGACY `finalize` route required a current review
+  // decision on every material field; `approve` replaced it and required none,
+  // so the newer state asserted LESS than the one it replaced while S4 treated
+  // it as authoritative. Measured before this change: zero review decisions
+  // existed anywhere in the estate.
+  //
+  // The gate is NOT a verbatim restore of computeFinalizePrecondition — that
+  // demanded review of fields the coverage chain never reads. It requires the
+  // ASSURANCE-BEARING fields, plus a decision on each tested control
+  // individually, because S4 reasons about each control separately.
+  //
+  // Reject and request-manual-review are untouched: neither claims assurance
+  // eligibility, and gating them would block the very workflow a reviewer uses
+  // to deal with a bad extraction.
+  if (opts.setApproved) {
+    const gate = await evaluateApprovalReviewGate(documentId, organizationId);
+    if (!gate.ok) {
+      res.status(409).json({
+        error: "vendor_assurance_approval_review_incomplete",
+        ...gate.detail
+      });
+      return;
+    }
   }
 
   const update = opts.setApproved
