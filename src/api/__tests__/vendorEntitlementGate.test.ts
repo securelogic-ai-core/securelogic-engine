@@ -49,13 +49,15 @@ const PROF = 'requireEntitlement("professional")';
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
   "vendors.ts": 9,
-  // 25 = 24 routes + 1 header comment reference. VA-1 added the CUEC
+  // 27 = 26 routes + 1 header comment reference. VA-1 added the CUEC
   // promote-to-finding route; VA-S4-P2 added the GET and POST assurance-opinion
   // routes; VA-S4-4C-3 added the assurance-outcomes read plus the two governed
-  // acceptance routes (tested-control effectiveness, exception effect). All are
-  // premium-gated like every sibling; the two 4C-3 WRITES additionally carry
-  // requireCapability("assurance:review"), which this census does not count.
-  "vendorAssuranceDocuments.ts": 25,
+  // acceptance routes (tested-control effectiveness, exception effect);
+  // VA-S4-4C-4 added the sufficiency-candidates read and the sufficiency
+  // determination write. All are premium-gated like every sibling; the 4C-3 and
+  // 4C-4 WRITES additionally carry requireCapability("assurance:review"), which
+  // this census does not count.
+  "vendorAssuranceDocuments.ts": 27,
   "vendorAssessments.ts": 3,
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,

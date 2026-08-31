@@ -40,6 +40,17 @@ import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { materializeTestedControlResolutions } from "../lib/vendorAssurance/testedControlResolution.js";
 import { materializeTestedControlOutcomes } from "../lib/vendorAssurance/outcomeMaterializer.js";
+import { loadSufficiencyCandidates } from "../lib/vendorAssurance/sufficiencyCandidates.js";
+import {
+  VETO_EVALUATOR_VERSION,
+  SUFFICIENCY_DETERMINATIONS,
+  SUFFICIENCY_INDETERMINATE_REASONS,
+  isSufficiencyDetermination,
+  isSufficiencyIndeterminateReason,
+  determinationPrecondition,
+  buildDeterminationBasis,
+} from "../lib/vendorAssurance/sufficiencyVetoes.js";
+import { MAX_REVIEWER_NOTE } from "../lib/vendorAssurance/testedControlOutcome.js";
 import {
   suggestEffectiveness,
   validateAcceptEffectiveness,
@@ -3124,6 +3135,260 @@ export async function acceptExceptionEffect(req: Request, res: Response): Promis
   });
 }
 
+/* ===========================================================================
+ * VA-S4-4C-4 - the governed sufficiency determination
+ * =========================================================================*/
+
+/* GET /api/vendor-assurance/documents/:id/sufficiency-candidates
+ *
+ * Every (organisation requirement x tested control) candidate this document
+ * produces, each with its twelve-veto evaluation and any determination already
+ * recorded against it.
+ *
+ * THE FAN-OUT IS RETURNED, NOT COLLAPSED. Ruling 6: one tested control mapping
+ * to eight requirements is eight candidates to be judged separately, never one
+ * conclusion. A caller that wants a count of covered requirements will not find
+ * one here, because this surface establishes no coverage at all.
+ */
+export async function getSufficiencyCandidates(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const doc = await loadOutcomeDoc(documentId, organizationId);
+  if (doc === null) { res.status(404).json({ error: "vendor_assurance_document_not_found" }); return; }
+
+  const candidates = doc.extraction_id === null ? [] : await loadSufficiencyCandidates(pg, {
+    organizationId,
+    documentId,
+    extractionId: doc.extraction_id,
+    acceptedOpinion: doc.assurance_opinion ?? null
+  });
+
+  res.status(200).json({
+    document_id: documentId,
+    evaluator_version: VETO_EVALUATOR_VERSION,
+    candidates,
+    // Restated on every response, as 4C-3's are. The whole surface is a
+    // determination ABOUT assurance, never an assertion OF coverage.
+    establishes_requirement_coverage: false
+  });
+}
+
+/* POST /api/vendor-assurance/documents/:id/candidates/:resolutionId/sufficiency
+ *
+ * Body: { requirement_framework_key, requirement_framework_version,
+ *         requirement_reference, determination, indeterminate_reason?,
+ *         reviewer_note?, supersede? }
+ *
+ * A named human records whether this assurance supports this requirement.
+ *
+ * SUFFICIENT HARD-REFUSES while any evaluated veto is FIRED or NOT_EVALUABLE,
+ * per the owner ruling of 2026-08-31. There is no override parameter, and
+ * adding one would not help: 20261079 refuses the row by CHECK as well.
+ *
+ * WHAT THIS DOES NOT DO, and each is a test:
+ *   - it does not write, update or supersede any Layer-1, Layer-2 or Layer-3
+ *     row, so a determination cannot launder an exception or an effectiveness;
+ *   - it does not touch the risk register or any risk acceptance. Accepting a
+ *     risk is a different act at a different layer and must never rewrite an
+ *     INDETERMINATE assurance basis into SUFFICIENT;
+ *   - it computes and stores no requirement coverage.
+ */
+export async function recordSufficiencyDetermination(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+
+  const reviewerUserId = requireHumanReviewer(req, res, "Determining requirement sufficiency");
+  if (!reviewerUserId) return;
+
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+  const resolutionId = String(req.params["resolutionId"] ?? "").trim();
+  if (!isUuid(resolutionId)) { res.status(400).json({ error: "resolution_id_must_be_uuid" }); return; }
+
+  const doc = await loadOutcomeDoc(documentId, organizationId);
+  if (doc === null) { res.status(404).json({ error: "vendor_assurance_document_not_found" }); return; }
+
+  // The same two preconditions Layer 2 enforces, for the same reason: a
+  // governed determination cannot rest on a document nobody approved.
+  if (doc.processing_status !== "approved") {
+    res.status(409).json({
+      error: "vendor_assurance_document_not_approved",
+      status: doc.processing_status,
+      detail: "Sufficiency is determined against the version of record. Approve the document first."
+    });
+    return;
+  }
+  if (doc.approved_by_user_id === null) {
+    res.status(409).json({
+      error: "vendor_assurance_document_approval_unattributed",
+      detail: "This document was approved with no named approver, so it cannot carry a governed determination."
+    });
+    return;
+  }
+  if (doc.extraction_id === null) { res.status(409).json({ error: "vendor_assurance_extraction_missing" }); return; }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const frameworkKey = typeof body["requirement_framework_key"] === "string" ? body["requirement_framework_key"].trim() : "";
+  const frameworkVersion = typeof body["requirement_framework_version"] === "string" ? body["requirement_framework_version"].trim() : "";
+  const requirementReference = typeof body["requirement_reference"] === "string" ? body["requirement_reference"].trim() : "";
+  if (frameworkKey === "" || frameworkVersion === "" || requirementReference === "") {
+    res.status(400).json({ error: "requirement_identity_required",
+      detail: "requirement_framework_key, requirement_framework_version and requirement_reference are all required." });
+    return;
+  }
+  const requested = body["determination"];
+  if (!isSufficiencyDetermination(requested)) {
+    res.status(400).json({ error: "determination_invalid", allowed: SUFFICIENCY_DETERMINATIONS });
+    return;
+  }
+  const indeterminateReason = body["indeterminate_reason"] ?? null;
+  if (requested === "INDETERMINATE") {
+    if (!isSufficiencyIndeterminateReason(indeterminateReason)) {
+      res.status(400).json({ error: "indeterminate_reason_required", allowed: SUFFICIENCY_INDETERMINATE_REASONS });
+      return;
+    }
+  } else if (indeterminateReason !== null && indeterminateReason !== undefined) {
+    res.status(400).json({ error: "indeterminate_reason_not_allowed",
+      detail: "Only an INDETERMINATE determination carries a reason." });
+    return;
+  }
+  const reviewerNoteRaw = body["reviewer_note"];
+  if (reviewerNoteRaw !== undefined && reviewerNoteRaw !== null && typeof reviewerNoteRaw !== "string") {
+    res.status(400).json({ error: "reviewer_note_invalid" }); return;
+  }
+  if (typeof reviewerNoteRaw === "string" && reviewerNoteRaw.length > MAX_REVIEWER_NOTE) {
+    res.status(400).json({ error: "reviewer_note_too_long", max: MAX_REVIEWER_NOTE }); return;
+  }
+  const reviewerNote = typeof reviewerNoteRaw === "string" && reviewerNoteRaw.trim() !== "" ? reviewerNoteRaw : null;
+
+  // The evaluation is recomputed HERE, at the moment of decision, and never
+  // taken from the caller. A basis supplied by the client would be a basis the
+  // client could weaken.
+  const candidates = await loadSufficiencyCandidates(pg, {
+    organizationId,
+    documentId,
+    extractionId: doc.extraction_id,
+    acceptedOpinion: doc.assurance_opinion ?? null
+  });
+  const candidate = candidates.find(
+    (c) => c.resolution_id === resolutionId
+      && c.requirement_framework_key === frameworkKey
+      && c.requirement_framework_version === frameworkVersion
+      && c.requirement_reference === requirementReference
+  );
+  if (candidate === undefined) {
+    res.status(404).json({ error: "sufficiency_candidate_not_found",
+      detail: "This document produces no candidate for that resolution and requirement." });
+    return;
+  }
+
+  const precondition = determinationPrecondition(requested, candidate.vetoes);
+  if (!precondition.ok) {
+    res.status(409).json({
+      error: "sufficiency_blocked_by_vetoes",
+      blocking: precondition.blocking,
+      detail: "A coverage veto that fired, or that could not be evaluated, blocks a SUFFICIENT "
+        + "determination. There is no override: record INSUFFICIENT or INDETERMINATE instead. "
+        + "Tolerating a gap is a risk decision made elsewhere, not an assurance determination."
+    });
+    return;
+  }
+
+  const prior = await pg.query<{ id: string; determination: string }>(
+    `SELECT id, determination
+       FROM vendor_requirement_sufficiency_determinations
+      WHERE resolution_id = $1 AND organization_id = $2
+        AND requirement_framework_key = $3 AND requirement_framework_version = $4
+        AND requirement_reference = $5 AND superseded_at IS NULL
+      LIMIT 1`,
+    [resolutionId, organizationId, frameworkKey, frameworkVersion, requirementReference]
+  );
+  const existing = prior.rows[0];
+  if (existing !== undefined && body["supersede"] !== true) {
+    res.status(409).json({
+      error: "sufficiency_determination_already_recorded",
+      current: existing.determination,
+      detail: "A determination already stands for this candidate. Send supersede:true to replace it; "
+        + "the superseded row is retained."
+    });
+    return;
+  }
+
+  const basis = buildDeterminationBasis(candidate.vetoes, {
+    element_key: candidate.element_key,
+    tested_control_reference: candidate.tested_control_reference,
+    canonical_control_id: candidate.canonical_control_id,
+    crosswalk_id: candidate.crosswalk_id,
+    requirement_id: candidate.requirement_id,
+    document_id: documentId,
+    extraction_id: doc.extraction_id,
+    superseded_determination_id: existing?.id ?? null
+  });
+
+  // Two statements, not one data-modifying CTE.
+  //
+  // A `WITH superseded AS (UPDATE ...) INSERT ...` reads the same snapshot for
+  // both arms, so the partial unique index still sees the OLD live row and the
+  // insert dies on a duplicate key. The isolation suite caught exactly that.
+  // `asTenant` already wraps this handler in a transaction, so the pair is
+  // atomic without a CTE.
+  if (existing !== undefined) {
+    await pg.query(
+      `UPDATE vendor_requirement_sufficiency_determinations
+          SET superseded_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND superseded_at IS NULL`,
+      [existing.id, organizationId]
+    );
+  }
+
+  const inserted = await pg.query(
+    `INSERT INTO vendor_requirement_sufficiency_determinations
+       (organization_id, document_id, extraction_id, resolution_id, element_key,
+        canonical_control_id, requirement_framework_key, requirement_framework_version,
+        requirement_reference, determination, indeterminate_reason,
+        determined_by_user_id, reviewer_note, basis, evaluator_version)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)
+     RETURNING id, determination, indeterminate_reason, determined_by_user_id,
+               determined_at, reviewer_note, evaluator_version`,
+    [
+      organizationId, documentId, doc.extraction_id, resolutionId, candidate.element_key,
+      candidate.canonical_control_id, frameworkKey, frameworkVersion, requirementReference,
+      requested, requested === "INDETERMINATE" ? indeterminateReason : null,
+      reviewerUserId, reviewerNote, JSON.stringify(basis), VETO_EVALUATOR_VERSION
+    ]
+  );
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: reviewerUserId,
+    eventType: "vendor_assurance.requirement_sufficiency.determined",
+    resourceType: "vendor_requirement_sufficiency_determination",
+    resourceId: inserted.rows[0]?.id ?? null,
+    payload: {
+      document_id: documentId,
+      resolution_id: resolutionId,
+      element_key: candidate.element_key,
+      requirement: `${frameworkKey}/${frameworkVersion}/${requirementReference}`,
+      determination: requested,
+      indeterminate_reason: requested === "INDETERMINATE" ? indeterminateReason : null,
+      veto_counts: (basis as { counts?: unknown }).counts ?? null,
+      superseded_determination_id: existing?.id ?? null,
+      establishes_requirement_coverage: false
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(200).json({
+    determined: inserted.rows[0],
+    vetoes: candidate.vetoes,
+    establishes_requirement_coverage: false
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring
 // ---------------------------------------------------------------------------
@@ -3397,6 +3662,34 @@ router.post(
   denyContributor(),
   requireCapability("assurance:review"),
   asTenant(acceptExceptionEffect)
+);
+
+// ---- VA-S4-4C-4: the governed sufficiency determination ----
+//
+// Same guard stack as 4C-3, for the same reasons. The write route additionally
+// carries requireHumanReviewer inside the handler and 20261079's INSERT trigger
+// beneath it: capability, human attribution and the database are three
+// independent axes, and a determination needs all three.
+
+router.get(
+  "/vendor-assurance/documents/:id/sufficiency-candidates",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(getSufficiencyCandidates)
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/candidates/:resolutionId/sufficiency",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  requireCapability("assurance:review"),
+  asTenant(recordSufficiencyDetermination)
 );
 
 export default router;

@@ -145,6 +145,7 @@ tables once the `app_request` flip lands).
 | `vendor_assurance_review_decisions` | decided_by_user_id | high | pending |
 | `vendor_tested_control_effectiveness` | accepted_by_user_id | low | **enabled** |
 | `vendor_assurance_exceptions` | effect_accepted_by_user_id | low | **enabled** |
+| `vendor_requirement_sufficiency_determinations` | determined_by_user_id | low | **enabled** |
 | `vendor_assurance_field_overrides` | overridden_by_user_id | high | pending |
 | `ai_systems` | owner_user_id | high | pending |
 | `ai_governance_assessments` | reviewer_uuid, *reviewer_id (TEXT)* | high | pending |
