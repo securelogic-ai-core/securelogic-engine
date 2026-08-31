@@ -14,7 +14,7 @@
 
 import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
-import { pg } from "../infra/postgres.js";
+import { pg, registerAfterCommit } from "../infra/postgres.js";
 import { asTenant } from "../middleware/asTenant.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
@@ -250,31 +250,51 @@ router.delete(
     if (!keyId) { res.status(400).json({ error: "key_id_required" }); return; }
 
     try {
-      // Load the key first to verify ownership and get label for audit
-      const keyCheck = await pg.query<{ id: string; label: string; status: string }>(
+      // Ownership, current state, and the last-active-key count — read ONCE,
+      // UNDER LOCK. This route is asTenant-wrapped, so everything below is
+      // already one transaction that answers only after COMMIT; what was
+      // missing is serialization between concurrent revocations.
+      //
+      // The lock covers the org's ACTIVE keys as well as the target, because
+      // this handler asserts TWO things and both were racy:
+      //
+      //   1. this key is active  — two revocations of the SAME key both read
+      //      `active`, one commits, the other's guarded UPDATE matched zero
+      //      rows, and the caller was still told `{ok: true}` with a second
+      //      `api_key.revoked` audit event. An operator would believe a
+      //      credential was dead on the strength of a response that had
+      //      changed nothing.
+      //
+      //   2. this is not the last active key — two revocations of DIFFERENT
+      //      keys both read a count of 2, both passed, and both committed,
+      //      leaving the organisation with ZERO active keys and locked out of
+      //      its own API. Locking only the target row would leave that open,
+      //      because the two transactions touch different rows and never
+      //      contend.
+      //
+      // ORDER BY id makes the lock acquisition order deterministic, so two
+      // concurrent revocations in the same org queue rather than deadlock.
+      const locked = await pg.query<{ id: string; label: string; status: string }>(
         `SELECT id, label, status FROM api_keys
-         WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+          WHERE organization_id = $2 AND (status = 'active' OR id = $1)
+          ORDER BY id
+          FOR UPDATE`,
         [keyId, orgId]
       );
 
-      if (keyCheck.rows.length === 0) {
+      const target = locked.rows.find((r) => r.id === keyId);
+      if (!target) {
         res.status(404).json({ error: "key_not_found" });
         return;
       }
-
-      const target = keyCheck.rows[0]!;
       if (target.status !== "active") {
         res.status(409).json({ error: "key_already_revoked" });
         return;
       }
 
-      // Prevent revoking the last active key
-      const activeCount = await pg.query<{ count: string }>(
-        `SELECT COUNT(*)::bigint AS count FROM api_keys
-         WHERE organization_id = $1 AND status = 'active'`,
-        [orgId]
-      );
-      if (Number(activeCount.rows[0]?.count ?? 0) <= 1) {
+      // Counted from the LOCKED set, so it cannot move underneath the decision.
+      const activeCount = locked.rows.filter((r) => r.status === "active").length;
+      if (activeCount <= 1) {
         res.status(409).json({
           error: "last_active_key",
           detail: "Cannot revoke the last active API key. Create a replacement key first.",
@@ -282,21 +302,41 @@ router.delete(
         return;
       }
 
-      await pg.query(
+      const revoked = await pg.query(
         `UPDATE api_keys
          SET status = 'revoked', revoked_at = NOW()
          WHERE id = $1 AND organization_id = $2 AND status = 'active'`,
         [keyId, orgId]
       );
+      if (revoked.rowCount !== 1) {
+        // Unreachable while the lock holds — an assertion, not the mechanism.
+        // Reporting success here would tell an operator a credential is dead
+        // when it is still accepted at the door.
+        logger.error(
+          { event: "customer_key_revoke_transition_lost", orgId, keyId, rowCount: revoked.rowCount },
+          "Revocation matched no row while holding FOR UPDATE"
+        );
+        res.status(409).json({
+          error: "revoke_conflict",
+          detail: "This key changed while it was being revoked. Nothing was changed — re-read it and try again.",
+        });
+        return;
+      }
 
-      writeAuditEvent({
-        organizationId: orgId,
-        actorUserId: userId,
-        eventType: "api_key.revoked",
-        resourceType: "api_key",
-        resourceId: keyId,
-        payload: { label: target.label },
-      });
+      // Deferred to AFTER COMMIT. writeAuditEvent writes on the elevated pool,
+      // so calling it inline would record a revocation that a failed COMMIT
+      // erased — an audit trail claiming a credential was revoked when it was
+      // not is worse than no entry at all.
+      registerAfterCommit(() =>
+        writeAuditEvent({
+          organizationId: orgId,
+          actorUserId: userId,
+          eventType: "api_key.revoked",
+          resourceType: "api_key",
+          resourceId: keyId,
+          payload: { label: target.label },
+        })
+      );
 
       res.status(200).json({ ok: true });
     } catch (err) {
