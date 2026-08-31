@@ -39,8 +39,15 @@ import { createHash } from "node:crypto";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { materializeTestedControlResolutions } from "../lib/vendorAssurance/testedControlResolution.js";
+import { materializeTestedControlOutcomes } from "../lib/vendorAssurance/outcomeMaterializer.js";
+import {
+  suggestEffectiveness,
+  validateAcceptEffectiveness,
+  validateAcceptExceptionEffect,
+  type AuditorAssertion
+} from "../lib/vendorAssurance/testedControlOutcome.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
-import { denyContributor } from "../middleware/requireSeat.js";
+import { denyContributor, requireCapability } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { asTenant } from "../middleware/asTenant.js";
@@ -1228,6 +1235,21 @@ async function transitionExtractedDocument(
       logger.info(
         { event: "vendor_tested_controls_resolved", organizationId, documentId, outcome },
         "Vendor tested-control resolution materialised"
+      );
+
+      // VA-S4-4C-3: Layer 1 (what the auditor asserted) and Layer 3 (the
+      // exceptions and which controls they reach), materialised at the same
+      // moment and under the same non-blocking discipline.
+      //
+      // LAYER 2 IS NOT MATERIALISED HERE OR ANYWHERE. Governed effectiveness is
+      // a human determination with its own route; seeding it with any value
+      // would mean the platform held an effectiveness nobody decided.
+      const outcomes = await withTenant(organizationId, () =>
+        materializeTestedControlOutcomes(pg, { organizationId, documentId })
+      );
+      logger.info(
+        { event: "vendor_tested_control_outcomes_materialised", organizationId, documentId, outcomes },
+        "Vendor tested-control assertions and exceptions materialised"
       );
     } catch (err) {
       logger.error(
@@ -2519,6 +2541,589 @@ function multerErrorHandler(
   next(err);
 }
 
+/* =========================================================
+   VA-S4-4C-3 — the three-layer assurance outcome surface.
+
+   LAYER 1 (auditor assertion) is machine-produced and read-only here.
+   LAYER 2 (governed effectiveness) and LAYER 3 (exception effect) are HUMAN
+   determinations, and each is a DISTINCT authority action with its own audit
+   event. Owner ruling: the same person may hold authority for tested-control
+   review, effectiveness acceptance and document approval, but performing one
+   must never implicitly perform another. Nothing in these handlers approves a
+   document, records a review decision, or establishes requirement coverage.
+   ========================================================= */
+
+/**
+ * Fail closed on a caller who is permitted but not human.
+ *
+ * `requireCapability("assurance:review")` on the route answers "is this
+ * identity permitted to review assurance". It CANNOT answer "is this a human":
+ * `scopeForApiKey()` resolves an API key to a full/admin seat, so a machine
+ * caller holds every capability a tenant-write identity holds, including this
+ * one. Human authority is a separate axis, and this is where it is checked at
+ * the request layer — before any read, so an unattributed caller cannot even
+ * learn the shape of the record it is not entitled to decide.
+ *
+ * The database refuses the same thing independently (20261076, 20261077). Two
+ * layers, because the route is not the boundary.
+ */
+function requireHumanReviewer(req: Request, res: Response, action: string): string | null {
+  const userId = req.userId ?? null;
+  if (!userId) {
+    res.status(403).json({
+      error: "human_reviewer_required",
+      detail:
+        `${action} is a governance determination and must name the person who made it. ` +
+        "This request carries no authenticated user; an API key alone establishes " +
+        "permission, never human authority."
+    });
+    return null;
+  }
+  return userId;
+}
+
+type OutcomeDocRow = {
+  id: string;
+  processing_status: string;
+  approved_by_user_id: string | null;
+  approved_at: string | null;
+  assurance_opinion: string | null;
+  extraction_id: string | null;
+};
+
+const OUTCOME_DOC_SQL = `
+  SELECT d.id, d.processing_status, d.approved_by_user_id, d.approved_at,
+         d.assurance_opinion, e.id AS extraction_id
+    FROM vendor_assurance_documents d
+    LEFT JOIN vendor_assurance_extractions e ON e.document_id = d.id
+   WHERE d.id = $1 AND d.organization_id = $2
+   LIMIT 1`;
+
+async function loadOutcomeDoc(documentId: string, organizationId: string): Promise<OutcomeDocRow | null> {
+  const r = await pg.query<OutcomeDocRow>(OUTCOME_DOC_SQL, [documentId, organizationId]);
+  return r.rows[0] ?? null;
+}
+
+/* GET /api/vendor-assurance/documents/:id/assurance-outcomes
+ *
+ * The reviewer's screen, and the read model for all three layers at once.
+ *
+ * The three are returned SEPARATELY and are never merged into a single verdict
+ * field. That is the whole point of the shape: a caller that wants "is this
+ * control fine" has to look at what the auditor said, what SecureLogic
+ * determined, and what exceptions stand — because those are three different
+ * questions and the answers legitimately differ.
+ */
+export async function getVendorAssuranceOutcomes(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+
+  const doc = await loadOutcomeDoc(documentId, organizationId);
+  if (doc === null) { res.status(404).json({ error: "vendor_assurance_document_not_found" }); return; }
+
+  const assertions = doc.extraction_id === null ? { rows: [] } : await pg.query(
+    `SELECT element_key, auditor_assertion, source_text, source_term, effective_source,
+            override_id, normalizer_version, normalizer_rule, normalizer_reason, asserted_at
+       FROM vendor_tested_control_assertions
+      WHERE extraction_id = $1 AND organization_id = $2 AND superseded_at IS NULL
+      ORDER BY element_key`,
+    [doc.extraction_id, organizationId]
+  );
+
+  const effectiveness = doc.extraction_id === null ? { rows: [] } : await pg.query(
+    `SELECT f.element_key, f.decision, f.governed_effectiveness, f.indeterminate_reason,
+            f.reviewer_note, f.accepted_by_user_id, f.accepted_at, f.basis,
+            u.name AS accepted_by_name
+       FROM vendor_tested_control_effectiveness f
+       LEFT JOIN users u ON u.id = f.accepted_by_user_id
+      WHERE f.extraction_id = $1 AND f.organization_id = $2 AND f.superseded_at IS NULL
+      ORDER BY f.element_key`,
+    [doc.extraction_id, organizationId]
+  );
+
+  const exceptions = doc.extraction_id === null ? { rows: [] } : await pg.query(
+    `SELECT e.id, e.exception_ref, e.source_ordinal, e.description, e.auditor_assessment,
+            e.source_term, e.governed_effect, e.effect_reviewer_note,
+            e.effect_accepted_by_user_id, e.effect_accepted_at,
+            u.name AS effect_accepted_by_name,
+            COALESCE(
+              json_agg(json_build_object(
+                'element_key',  l.element_key,
+                'link_source',  l.link_source,
+                'source_value', l.source_value
+              ) ORDER BY l.element_key) FILTER (WHERE l.id IS NOT NULL),
+              '[]'::json
+            ) AS controls
+       FROM vendor_assurance_exceptions e
+       LEFT JOIN vendor_assurance_exception_controls l ON l.exception_id = e.id
+       LEFT JOIN users u ON u.id = e.effect_accepted_by_user_id
+      WHERE e.extraction_id = $1 AND e.organization_id = $2 AND e.superseded_at IS NULL
+      GROUP BY e.id, u.name
+      ORDER BY e.source_ordinal`,
+    [doc.extraction_id, organizationId]
+  );
+
+  const effectivenessByKey = new Map(effectiveness.rows.map((r: any) => [r.element_key, r]));
+  const exceptionKeys = new Set<string>();
+  for (const e of exceptions.rows as any[]) {
+    for (const c of e.controls as Array<{ element_key: string }>) exceptionKeys.add(c.element_key);
+  }
+
+  res.status(200).json({
+    document_id: documentId,
+    document_status: doc.processing_status,
+
+    // LAYER 1. What the source asserted.
+    auditor_assertions: (assertions.rows as any[]).map((a) => ({
+      element_key: a.element_key,
+      assertion: a.auditor_assertion,
+      source_text: a.source_text,
+      source_term: a.source_term,
+      effective_source: a.effective_source,
+      override_id: a.override_id,
+      normalizer: {
+        version: a.normalizer_version,
+        rule: a.normalizer_rule,
+        reason: a.normalizer_reason
+      },
+      asserted_at: a.asserted_at,
+      // Restated on every row, because this is the field a caller in a hurry
+      // will misread as an outcome.
+      establishes_governed_effectiveness: false,
+      // The advisory bridge, computed fresh and labelled requires_human at its
+      // source. Never persisted as a determination.
+      suggested_effectiveness: suggestEffectiveness(a.auditor_assertion),
+      // Present so the two layers are visibly independent on the same row: a
+      // control may be EFFECTIVE and still carry an exception.
+      has_exception: exceptionKeys.has(a.element_key),
+      governed_effectiveness:
+        effectivenessByKey.get(a.element_key)?.governed_effectiveness ?? null
+    })),
+
+    // LAYER 2. What SecureLogic governs.
+    governed_effectiveness: (effectiveness.rows as any[]).map((f) => ({
+      element_key: f.element_key,
+      decision: f.decision,
+      effectiveness: f.governed_effectiveness,
+      indeterminate_reason: f.indeterminate_reason,
+      reviewer_note: f.reviewer_note,
+      accepted_by_user_id: f.accepted_by_user_id,
+      accepted_by_name: f.accepted_by_name,
+      accepted_at: f.accepted_at,
+      basis: f.basis
+    })),
+
+    // LAYER 3. What the exceptions mean.
+    exceptions: (exceptions.rows as any[]).map((e) => ({
+      id: e.id,
+      exception_ref: e.exception_ref,
+      source_ordinal: e.source_ordinal,
+      description: e.description,
+      auditor_assessment: e.auditor_assessment,
+      // TERMINOLOGY, not severity. Restated at the API boundary because this is
+      // where a consumer is most likely to sort by it.
+      source_term: e.source_term,
+      source_term_carries_no_severity: true,
+      governed_effect: e.governed_effect,
+      effect_reviewer_note: e.effect_reviewer_note,
+      effect_accepted_by_user_id: e.effect_accepted_by_user_id,
+      effect_accepted_by_name: e.effect_accepted_by_name,
+      effect_accepted_at: e.effect_accepted_at,
+      controls: e.controls
+    })),
+
+    // Reported because it is a live gap, not because anything consumes it: a
+    // control with an assertion and no governed effectiveness is NOT effective,
+    // it is undetermined.
+    unresolved: {
+      controls_without_governed_effectiveness: (assertions.rows as any[])
+        .map((a) => a.element_key)
+        .filter((k) => !effectivenessByKey.has(k)),
+      exceptions_without_governed_effect: (exceptions.rows as any[])
+        .filter((e) => e.governed_effect === null)
+        .map((e) => e.id)
+    },
+
+    // Owner ruling, restated on every response: none of this is coverage.
+    establishes_requirement_coverage: false
+  });
+}
+
+/* POST /api/vendor-assurance/documents/:id/tested-controls/:elementKey/effectiveness
+ *   { decision?: "accepted"|"rejected", effectiveness?, indeterminate_reason?, reviewer_note?, supersede? }
+ *
+ * LAYER 2. A named human accepts, edits or rejects the governed effectiveness of
+ * ONE tested control.
+ *
+ * WHAT THIS DOES NOT DO, and each of these is a test in the suite:
+ *   - it does not touch any Layer-3 exception, so accepting EFFECTIVE cannot
+ *     erase, hide, or downgrade an exception that stands against the control;
+ *   - it does not read the document-level `assurance_opinion`, so a clean
+ *     report-level opinion cannot overwrite control-level state;
+ *   - it does not record a tested-control review decision (20261072) and it does
+ *     not approve anything. Distinct authority actions, distinct audit events.
+ */
+export async function acceptTestedControlEffectiveness(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+
+  const reviewerUserId = requireHumanReviewer(req, res, "Determining governed control effectiveness");
+  if (!reviewerUserId) return;
+
+  const documentId = String(req.params["id"] ?? "").trim();
+  if (!isUuid(documentId)) { res.status(400).json({ error: "document_id_must_be_uuid" }); return; }
+  const elementKey = String(req.params["elementKey"] ?? "").trim();
+  if (elementKey.length === 0) { res.status(400).json({ error: "element_key_required" }); return; }
+
+  const doc = await loadOutcomeDoc(documentId, organizationId);
+  if (doc === null) { res.status(404).json({ error: "vendor_assurance_document_not_found" }); return; }
+
+  // The document must be the version of record, and its approval must itself be
+  // attributed — the same two preconditions the opinion surface enforces, for
+  // the same reason: a governed determination cannot rest on a document nobody
+  // approved.
+  if (doc.processing_status !== "approved") {
+    res.status(409).json({
+      error: "vendor_assurance_document_not_approved",
+      status: doc.processing_status,
+      detail: "Governed effectiveness is determined against the version of record. Approve the document first."
+    });
+    return;
+  }
+  if (doc.approved_by_user_id === null) {
+    res.status(409).json({
+      error: "vendor_assurance_document_approval_unattributed",
+      detail: "This document was approved with no named approver, so it cannot carry a governed determination."
+    });
+    return;
+  }
+  if (doc.extraction_id === null) {
+    res.status(409).json({ error: "vendor_assurance_extraction_missing" });
+    return;
+  }
+
+  // The Layer-1 assertion is the evidence this decision is made against. Its
+  // absence is a refusal rather than a blank basis: deciding effectiveness for a
+  // control the document does not test is not a determination, it is a typo.
+  const assertionRes = await pg.query<{
+    auditor_assertion: string; source_text: string | null; source_term: string | null;
+    normalizer_version: string; normalizer_rule: string; normalizer_reason: string;
+    effective_source: string;
+  }>(
+    `SELECT auditor_assertion, source_text, source_term, normalizer_version,
+            normalizer_rule, normalizer_reason, effective_source
+       FROM vendor_tested_control_assertions
+      WHERE extraction_id = $1 AND organization_id = $2 AND element_key = $3
+        AND superseded_at IS NULL
+      LIMIT 1`,
+    [doc.extraction_id, organizationId, elementKey]
+  );
+  const assertion = assertionRes.rows[0];
+  if (assertion === undefined) {
+    res.status(404).json({
+      error: "tested_control_assertion_not_found",
+      detail: "This document records no tested control with that identifier."
+    });
+    return;
+  }
+
+  const suggestion = suggestEffectiveness(assertion.auditor_assertion as AuditorAssertion);
+  const validated = validateAcceptEffectiveness(req.body, suggestion);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const { decision, effectiveness, indeterminate_reason, reviewer_note, supersede } = validated.input;
+
+  const priorRes = await pg.query<{
+    id: string; decision: string; governed_effectiveness: string | null;
+    indeterminate_reason: string | null; accepted_by_user_id: string | null; accepted_at: string;
+  }>(
+    `SELECT id, decision, governed_effectiveness, indeterminate_reason, accepted_by_user_id, accepted_at
+       FROM vendor_tested_control_effectiveness
+      WHERE extraction_id = $1 AND organization_id = $2 AND element_key = $3
+        AND superseded_at IS NULL
+      LIMIT 1`,
+    [doc.extraction_id, organizationId, elementKey]
+  );
+  const prior = priorRes.rows[0] ?? null;
+
+  if (prior !== null && !supersede) {
+    res.status(409).json({
+      error: "governed_effectiveness_already_decided",
+      standing: {
+        decision: prior.decision,
+        effectiveness: prior.governed_effectiveness,
+        indeterminate_reason: prior.indeterminate_reason,
+        accepted_by_user_id: prior.accepted_by_user_id,
+        accepted_at: prior.accepted_at
+      },
+      detail:
+        "A governed determination already stands for this control. Re-deciding it is an " +
+        "explicit act: resend with supersede: true and a reviewer_note saying what changed."
+    });
+    return;
+  }
+
+  const decidedAt = new Date().toISOString();
+  const basis = {
+    decided_at: decidedAt,
+    decided_by_user_id: reviewerUserId,
+    element_key: elementKey,
+    // The Layer-1 reading AS AT the decision. Assertions are re-materialized on
+    // re-approval; the determination must stay explainable against what the
+    // reviewer actually saw.
+    layer1: {
+      auditor_assertion: assertion.auditor_assertion,
+      source_text: assertion.source_text,
+      source_term: assertion.source_term,
+      effective_source: assertion.effective_source,
+      normalizer_version: assertion.normalizer_version,
+      normalizer_rule: assertion.normalizer_rule,
+      normalizer_reason: assertion.normalizer_reason
+    },
+    suggestion,
+    human_agreed_with_suggestion:
+      suggestion.candidate !== null && suggestion.candidate === effectiveness,
+    decision,
+    governed_effectiveness: effectiveness,
+    indeterminate_reason,
+    reviewer_note,
+    document: {
+      status: doc.processing_status,
+      approved_at: doc.approved_at,
+      approved_by_user_id: doc.approved_by_user_id
+    },
+    superseded_prior: prior === null ? null : {
+      decision: prior.decision,
+      effectiveness: prior.governed_effectiveness,
+      indeterminate_reason: prior.indeterminate_reason,
+      accepted_by_user_id: prior.accepted_by_user_id,
+      accepted_at: prior.accepted_at
+    },
+    establishes_requirement_coverage: false
+  };
+
+  // The route is asTenant-wrapped, so the whole handler is ALREADY one
+  // transaction on the tenant client with `app.current_org_id` set. Supersede
+  // and insert are therefore atomic without opening anything: a nested
+  // withTenant here would check out a SECOND pool connection with a SECOND
+  // transaction that cannot see this one's writes.
+  let inserted: Record<string, unknown> | null = null;
+  if (prior !== null) {
+    // The precondition is RE-ASSERTED in the UPDATE, so two concurrent
+    // supersessions cannot both win — the loser writes nothing and 409s.
+    const sup = await pg.query(
+      `UPDATE vendor_tested_control_effectiveness
+          SET superseded_at = NOW()
+        WHERE id = $1 AND organization_id = $2 AND superseded_at IS NULL`,
+      [prior.id, organizationId]
+    );
+    if ((sup.rowCount ?? 0) === 0) {
+      res.status(409).json({
+        error: "governed_effectiveness_conflict",
+        detail:
+          "The determination changed while this decision was being prepared. " +
+          "Re-read it and decide again."
+      });
+      return;
+    }
+  }
+  const ins = await pg.query(
+    `INSERT INTO vendor_tested_control_effectiveness
+       (organization_id, document_id, extraction_id, element_key, decision,
+        governed_effectiveness, indeterminate_reason, accepted_by_user_id,
+        reviewer_note, basis)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+     RETURNING id, decision, governed_effectiveness, indeterminate_reason,
+               accepted_by_user_id, accepted_at, reviewer_note, basis`,
+    [
+      organizationId, documentId, doc.extraction_id, elementKey, decision,
+      effectiveness, indeterminate_reason, reviewerUserId, reviewer_note,
+      JSON.stringify(basis)
+    ]
+  );
+  inserted = ins.rows[0] ?? null;
+
+  if (inserted === null) {
+    res.status(409).json({
+      error: "governed_effectiveness_conflict",
+      detail: "The determination changed while this decision was being prepared. Re-read it and decide again."
+    });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: reviewerUserId,
+    // A DISTINCT event type from tested-control review and from document
+    // approval. One action, one event; none of the three implies another.
+    eventType: prior === null
+      ? "vendor_assurance.control_effectiveness.decided"
+      : "vendor_assurance.control_effectiveness.superseded",
+    resourceType: "vendor_assurance_document",
+    resourceId: documentId,
+    payload: {
+      element_key: elementKey,
+      decision,
+      governed_effectiveness: effectiveness,
+      indeterminate_reason,
+      auditor_assertion: assertion.auditor_assertion,
+      suggested_effectiveness: suggestion.candidate,
+      human_agreed_with_suggestion: basis.human_agreed_with_suggestion,
+      normalizer_version: suggestion.normalizer_version,
+      ...(reviewer_note ? { reviewer_note } : {}),
+      ...(prior === null ? {} : { superseded_effectiveness: prior.governed_effectiveness }),
+      establishes_requirement_coverage: false
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(200).json({
+    document_id: documentId,
+    element_key: elementKey,
+    decided: inserted,
+    suggestion,
+    establishes_requirement_coverage: false
+  });
+}
+
+/* POST /api/vendor-assurance/exceptions/:exceptionId/effect
+ *   { governed_effect, reviewer_note?, supersede? }
+ *
+ * LAYER 3. A named human states what an exception ACTUALLY MEANS.
+ *
+ * The vocabulary is two values and neither is a severity. In particular a
+ * `scope_limitation` is NOT a lesser `control_deficiency`: it says assurance was
+ * not obtainable, which is a different claim from the control having failed, and
+ * nothing here ranks one against the other.
+ *
+ * The auditor's own word ("exception" / "deviation") is never an input to this
+ * decision and is never consulted by it. It is preserved untouched on the row.
+ */
+export async function acceptExceptionEffect(req: Request, res: Response): Promise<void> {
+  const organizationId = getOrgId(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+
+  const reviewerUserId = requireHumanReviewer(req, res, "Interpreting an assurance exception");
+  if (!reviewerUserId) return;
+
+  const exceptionId = String(req.params["exceptionId"] ?? "").trim();
+  if (!isUuid(exceptionId)) { res.status(400).json({ error: "exception_id_must_be_uuid" }); return; }
+
+  const validated = validateAcceptExceptionEffect(req.body);
+  if ("error" in validated) { res.status(400).json(validated); return; }
+  const { governed_effect, reviewer_note, supersede } = validated.input;
+
+  const exRes = await pg.query<{
+    id: string; document_id: string; exception_ref: string | null; source_ordinal: number;
+    description: string; auditor_assessment: string | null; source_term: string | null;
+    governed_effect: string | null; effect_accepted_by_user_id: string | null;
+    effect_accepted_at: string | null;
+  }>(
+    `SELECT id, document_id, exception_ref, source_ordinal, description, auditor_assessment,
+            source_term, governed_effect, effect_accepted_by_user_id, effect_accepted_at
+       FROM vendor_assurance_exceptions
+      WHERE id = $1 AND organization_id = $2 AND superseded_at IS NULL
+      LIMIT 1`,
+    [exceptionId, organizationId]
+  );
+  const ex = exRes.rows[0];
+  if (ex === undefined) { res.status(404).json({ error: "vendor_assurance_exception_not_found" }); return; }
+
+  if (ex.governed_effect !== null && !supersede) {
+    res.status(409).json({
+      error: "exception_effect_already_decided",
+      standing: {
+        governed_effect: ex.governed_effect,
+        accepted_by_user_id: ex.effect_accepted_by_user_id,
+        accepted_at: ex.effect_accepted_at
+      },
+      detail:
+        "A governed effect already stands on this exception. Re-deciding it is an explicit " +
+        "act: resend with supersede: true and a reviewer_note saying what changed."
+    });
+    return;
+  }
+
+  const decidedAt = new Date().toISOString();
+  const basis = {
+    decided_at: decidedAt,
+    decided_by_user_id: reviewerUserId,
+    governed_effect,
+    reviewer_note,
+    source: {
+      exception_ref: ex.exception_ref,
+      source_ordinal: ex.source_ordinal,
+      description: ex.description,
+      auditor_assessment: ex.auditor_assessment,
+      // Recorded so a later reader can confirm the effect was NOT derived from
+      // the auditor's choice of word.
+      source_term: ex.source_term,
+      source_term_carries_no_severity: true
+    },
+    superseded_prior: ex.governed_effect === null ? null : {
+      governed_effect: ex.governed_effect,
+      accepted_by_user_id: ex.effect_accepted_by_user_id,
+      accepted_at: ex.effect_accepted_at
+    }
+  };
+
+  // asTenant already holds the transaction and the tenant GUC; `pg.query` routes
+  // to that client. The prior effect is re-asserted in the WHERE clause so a
+  // concurrent decision loses cleanly rather than both writing.
+  const upd = await pg.query(
+    `UPDATE vendor_assurance_exceptions
+        SET governed_effect = $3,
+            effect_reviewer_note = $4,
+            effect_accepted_by_user_id = $5,
+            effect_accepted_at = NOW(),
+            effect_basis = $6::jsonb
+      WHERE id = $1 AND organization_id = $2
+        AND superseded_at IS NULL
+        AND governed_effect IS NOT DISTINCT FROM $7
+      RETURNING id, governed_effect, effect_reviewer_note, effect_accepted_by_user_id,
+                effect_accepted_at, effect_basis`,
+    [exceptionId, organizationId, governed_effect, reviewer_note, reviewerUserId,
+     JSON.stringify(basis), ex.governed_effect]
+  );
+  if ((upd.rowCount ?? 0) === 0) {
+    res.status(409).json({
+      error: "exception_effect_conflict",
+      detail: "The exception changed while this decision was being prepared. Re-read it and decide again."
+    });
+    return;
+  }
+
+  writeAuditEvent({
+    organizationId,
+    actorApiKeyId: getApiKeyId(req),
+    actorUserId: reviewerUserId,
+    eventType: ex.governed_effect === null
+      ? "vendor_assurance.exception_effect.decided"
+      : "vendor_assurance.exception_effect.superseded",
+    resourceType: "vendor_assurance_document",
+    resourceId: ex.document_id,
+    payload: {
+      exception_id: exceptionId,
+      exception_ref: ex.exception_ref,
+      governed_effect,
+      source_term: ex.source_term,
+      source_term_carries_no_severity: true,
+      ...(reviewer_note ? { reviewer_note } : {}),
+      ...(ex.governed_effect === null ? {} : { superseded_effect: ex.governed_effect }),
+      establishes_requirement_coverage: false
+    },
+    ipAddress: req.ip ?? null
+  });
+
+  res.status(200).json({
+    exception_id: exceptionId,
+    decided: upd.rows[0],
+    establishes_requirement_coverage: false
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring
 // ---------------------------------------------------------------------------
@@ -2745,6 +3350,53 @@ router.patch(
   requireEntitlement("premium"),
   denyContributor(),
   asTenant(updateVendorAssuranceCuecMapping)
+);
+
+// ---- VA-S4-4C-3: the three-layer assurance outcome surface ----
+//
+// The read route carries the SAME guard stack as every other Vendor Assurance
+// read. The two WRITE routes additionally carry requireCapability("assurance:review"):
+// the AUTHORIZED ASSURANCE REVIEWER capability, added to the existing seat model
+// rather than to a parallel authorization system.
+//
+// The capability is necessary and NOT sufficient. It answers "is this identity
+// permitted"; it cannot answer "is this a human", because scopeForApiKey()
+// resolves an API key to a full/admin seat and therefore grants it. Human
+// authority is enforced twice more, on axes the capability system does not
+// reach: `requireHumanReviewer` refuses an unattributed caller with a 403 before
+// any write, and 20261076/20261077 refuse an unattributed governed decision at
+// the database.
+
+router.get(
+  "/vendor-assurance/documents/:id/assurance-outcomes",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(getVendorAssuranceOutcomes)
+);
+
+router.post(
+  "/vendor-assurance/documents/:id/tested-controls/:elementKey/effectiveness",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  requireCapability("assurance:review"),
+  asTenant(acceptTestedControlEffectiveness)
+);
+
+router.post(
+  "/vendor-assurance/exceptions/:exceptionId/effect",
+  vendorAssuranceFeatureFlag,
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  requireCapability("assurance:review"),
+  asTenant(acceptExceptionEffect)
 );
 
 export default router;

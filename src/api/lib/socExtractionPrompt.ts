@@ -16,7 +16,56 @@
  * Naming uses "extracted" only — never "verified" or "validated".
  */
 
-export const PROMPT_VERSION = "soc-extraction-v2";
+/**
+ * ── v3, and why the contract changed (VA-S4-4C-3) ──────────────────────────
+ *
+ * v2 asked for `management_responses[].exception_ref` while giving an exception
+ * NO IDENTITY of its own — only a `control_id`. A response therefore had
+ * nothing to reference except a control, and the field's name invited the other
+ * reading. Measured in the corpus on 2026-08-31, the model does BOTH: most
+ * responses carry a TSC criterion, and one carries the report's own label,
+ * "Exception 1". One field, two meanings, no way to tell which.
+ *
+ * v2 also gave `exceptions[].control_id` a single scalar, so an exception
+ * spanning several controls has nowhere to say so. The corpus contains
+ * `"CC6.1, CC6.2, CC6.3"` — three identifiers in one string, matching no tested
+ * control, invisible to every consumer that keys on the control identifier.
+ *
+ * v3 corrects both with three keys rather than a rename:
+ *   exceptions[].exception_ref            — the report's OWN label
+ *   exceptions[].control_refs             — EVERY control the exception affects
+ *   management_responses[].control_refs   — the control(s) the response is about
+ * and `management_responses[].exception_ref` keeps its name and finally means
+ * only what it says.
+ *
+ * HISTORICAL COMPATIBILITY. v2 extractions are never rewritten. The reader
+ * (`parseExceptions` in vendorAssurance/testedControlOutcome.ts) is
+ * shape-tolerant and reads both key sets unconditionally, recording on every
+ * link which key it came from. `prompt_version` is stored per extraction and is
+ * preserved so a past result stays reproducible against the prompt that
+ * produced it.
+ */
+export const PROMPT_VERSION = "soc-extraction-v3";
+
+/**
+ * Every extraction contract this system has produced, newest first. Retained so
+ * a historical `prompt_version` resolves to a documented shape rather than to a
+ * guess, and so a reader can prove it still handles what it claims to.
+ */
+export const EXTRACTION_CONTRACT_HISTORY = [
+  {
+    version: "soc-extraction-v3",
+    exception_keys: ["exception_ref", "control_refs", "description", "auditor_assessment"],
+    management_response_keys: ["exception_ref", "control_refs", "response"],
+    note: "exception_ref means an EXCEPTION LABEL on both sides. Control linkage is control_refs, an array.",
+  },
+  {
+    version: "soc-extraction-v2",
+    exception_keys: ["control_id", "description", "auditor_assessment"],
+    management_response_keys: ["exception_ref", "response"],
+    note: "AMBIGUOUS: management_responses[].exception_ref holds a control id OR an exception label, and exceptions[].control_id is a scalar that sometimes packed several identifiers. Read, never rewritten.",
+  },
+] as const;
 export const MODEL_ID = "claude-sonnet-4-6";
 
 /** Field shape: scalar value vs array-of-strings vs array-of-objects. */
@@ -118,10 +167,18 @@ For "controls" array elements, each object SHOULD include:
   { "control_id": string|null, "description": string, "test_procedure": string|null, "result": string|null }
 
 For "exceptions" array elements, each object SHOULD include:
-  { "control_id": string|null, "description": string, "auditor_assessment": string|null }
+  { "exception_ref": string|null, "control_refs": [string], "description": string, "auditor_assessment": string|null }
+
+  - "exception_ref" is the REPORT'S OWN LABEL for this exception, exactly as printed — for example "Exception 1", "Deviation 3", "Finding 2". If the report does not label its exceptions, return null. This is NEVER a control identifier.
+  - "control_refs" is the list of EVERY tested control identifier this exception affects, one identifier per array element — for example ["CC6.1", "CC6.2", "CC6.3"]. Never join several identifiers into one string. If the report does not say which controls are affected, return an empty array rather than guessing.
 
 For "management_responses" array elements, each object SHOULD include:
-  { "exception_ref": string|null, "response": string }
+  { "exception_ref": string|null, "control_refs": [string], "response": string }
+
+  - "exception_ref" is the label of the EXCEPTION this response addresses, matching an "exception_ref" you returned above. It is NOT a control identifier. Return null if the response names no exception.
+  - "control_refs" is the list of tested control identifiers this response is about, one per array element. Return an empty array if the response names none.
+
+Do not infer a link that the report does not state. An empty array is a correct answer; a guessed identifier is not.
 
 Also return a "source_spans" array on the top-level object. Each span:
   { "field_name": string, "page_number": int|null, "char_start": int, "char_end": int, "quote": string (≤ 800 chars) }

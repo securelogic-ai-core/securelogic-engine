@@ -94,13 +94,15 @@ function finalHandlerName(block: string): string | null {
 
 describe("vendor-assurance routes — A04-G1 tenant-wrap coverage", () => {
   it("parses every route registration in the file", () => {
-    // 21 routes: 18 from the Phase 0 audit, plus VA-1's
+    // 24 routes: 18 from the Phase 0 audit, plus VA-1's
     // POST /vendor-assurance/cuecs/:cuecId/promote-to-finding, plus VA-S4-P2's
-    // GET and POST /vendor-assurance/documents/:id/assurance-opinion. If this
-    // number changes, the new route must also satisfy the coverage assertion
-    // below — that is the point, and all three later routes are asTenant-wrapped
-    // like the rest.
-    expect(REGISTRATIONS.length).toBe(21);
+    // GET and POST /vendor-assurance/documents/:id/assurance-opinion, plus
+    // VA-S4-4C-3's three-layer outcome surface: GET assurance-outcomes,
+    // POST tested-controls/:elementKey/effectiveness, POST exceptions/:id/effect.
+    // If this number changes, the new route must also satisfy the coverage
+    // assertion below — that is the point, and every later route is
+    // asTenant-wrapped like the rest.
+    expect(REGISTRATIONS.length).toBe(24);
   });
 
   it("EVERY route is tenant-scoped — by asTenant, or by a justified explicit withTenant", () => {

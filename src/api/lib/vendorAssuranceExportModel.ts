@@ -82,10 +82,30 @@ export interface FieldOverrideEntry {
 }
 
 export interface ExceptionEntry {
+  /**
+   * The FIRST linked tested control, kept so existing exporters that render a
+   * single control keep rendering one. `controlRefs` is the complete answer and
+   * is what a reader should use — an exception legitimately spans several
+   * controls, and the corpus contains one that spans three.
+   */
   controlId: string | null;
+  /** Every tested control this exception concerns. May be empty. */
+  controlRefs: string[];
+  /** The report's own label for the exception ("Exception 1"), when it has one. */
+  exceptionRef: string | null;
   description: string;
   auditorAssessment: string | null;
   managementResponse: string | null;
+  /**
+   * HOW the management response was attached — `exception_ref` (the response
+   * names this exception's label), `control_refs` (identical control scope), or
+   * `unlinked` (no authoritative linkage; `managementResponse` is null).
+   *
+   * Present so an unpaired response is VISIBLE. This export used to fall back to
+   * attaching `responses[i]` to `exceptions[i]` by array position whenever the
+   * ref did not match, silently and with nothing recorded. That fallback is gone.
+   */
+  managementResponseLink: "exception_ref" | "control_refs" | "unlinked";
 }
 
 export interface ControlEntry {

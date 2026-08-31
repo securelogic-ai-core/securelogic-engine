@@ -143,6 +143,8 @@ tables once the `app_request` flip lands).
 | `vendor_assurance_cuecs` | review_status_updated_by_user_id | high | pending |
 | `vendor_assurance_cuec_control_mappings` | created_by_user_id, updated_by_user_id | none | pending |
 | `vendor_assurance_review_decisions` | decided_by_user_id | high | pending |
+| `vendor_tested_control_effectiveness` | accepted_by_user_id | low | **enabled** |
+| `vendor_assurance_exceptions` | effect_accepted_by_user_id | low | **enabled** |
 | `vendor_assurance_field_overrides` | overridden_by_user_id | high | pending |
 | `ai_systems` | owner_user_id | high | pending |
 | `ai_governance_assessments` | reviewer_uuid, *reviewer_id (TEXT)* | high | pending |
@@ -170,6 +172,15 @@ tables once the `app_request` flip lands).
 ### D — Org data not user-tied (leave alone)
 `organizations` (ROOT-TENANT; see Special handling), `vendor_assurance_extractions`,
 `vendor_assurance_extraction_spans`,
+`vendor_tested_control_assertions` (**RLS enabled**; VA-S4-4C-3, migration 20261075 —
+LAYER 1 of the assurance outcome model: what the AUDITOR asserted about one tested control,
+normalized into a closed vocabulary with the verbatim result kept in `source_text`. Category D
+and the absence of a user column is deliberate — Layer 1 is machine-produced and carries no
+human authority; disagreement is expressed in Layer 2. Superseded, never mutated),
+`vendor_assurance_exception_controls` (**RLS enabled**; VA-S4-4C-3, migration 20261077 —
+the many-to-many link from an exception to the tested control(s) it concerns. `linked_by_user_id`
+is NULL for every extracted link and is set only on the `human` link source, which no route
+writes today. Every link carries `link_source` and the verbatim `source_value`),
 `vendor_tested_control_resolutions` (**RLS enabled**; VA-S4-4C-2, migration 20261073 —
 the record of a vendor tested control resolved against the governed canonical crosswalk at
 approval: original extraction + governed effective value side by side, with the crosswalk row

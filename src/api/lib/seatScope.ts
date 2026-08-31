@@ -38,7 +38,31 @@ export type Capability =
   | "security:configure" // SSO, connectors, webhooks-as-integration
   | "audit:read"
   | "risk:accept" // participate in risk acceptance (SoD still applies)
-  | "export:data"; // bulk export of tenant data
+  | "export:data" // bulk export of tenant data
+  /**
+   * AUTHORIZED ASSURANCE REVIEWER (VA-S4-4C-3). Accept, edit or reject a
+   * GOVERNED assurance interpretation: a tested control's effectiveness, or an
+   * exception's effect.
+   *
+   * WHAT THIS CAPABILITY DOES NOT ESTABLISH, and the reason it is safe to grant
+   * it the same way `risk:accept` is granted: it answers "is this identity
+   * PERMITTED to review assurance". It does not, and structurally cannot,
+   * answer "is this a HUMAN". `scopeForApiKey()` resolves an API key to a
+   * full/admin seat, so a machine caller holds every capability a tenant-write
+   * identity holds — including this one.
+   *
+   * Human authority is a SEPARATE, ORTHOGONAL axis enforced in two places that
+   * the capability system does not reach: the routes refuse an unattributed
+   * caller with a 403 before any write, and 20261076/20261077 refuse an
+   * unattributed governed decision at the database. Both are required. Adding a
+   * second authorization system to express "human" was considered and rejected
+   * — the repository already has this pattern, established by 20261071.
+   *
+   * It is also NOT the same authority as approving a document or reviewing a
+   * tested control. Those are distinct actions with distinct audit events; one
+   * human may hold all three, but holding this one performs none of the others.
+   */
+  | "assurance:review";
 
 export interface SeatScope {
   seatType: SeatType;
@@ -124,10 +148,17 @@ export function resolveScope(
     caps.add("audit:read");
   }
   // Full-governance identities (tenant write) may accept risk (SoD enforced
-  // separately) and bulk-export.
+  // separately), bulk-export, and review assurance interpretations.
+  //
+  // `assurance:review` sits with `risk:accept` deliberately: both are governance
+  // determinations that a Full/analyst identity makes routinely, neither is an
+  // administrative act, and gating assurance review behind `isAdmin` would mean
+  // only Org Admins could ever review a SOC 2 report. Viewer and Contributor
+  // seats do NOT reach tenant write and therefore do not hold it.
   if (writeScope === "tenant") {
     caps.add("risk:accept");
     caps.add("export:data");
+    caps.add("assurance:review");
   } else if (effectiveRole === "viewer" && opts.viewerExportEnabled === true) {
     // Read-only identities export only when the org explicitly grants it.
     caps.add("export:data");
