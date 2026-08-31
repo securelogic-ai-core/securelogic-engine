@@ -44,6 +44,26 @@
 export const NIST_CSF_FRAMEWORK_KEY = "nist-csf";
 export const NIST_CSF_FRAMEWORK_VERSION = "1.1";
 
+/**
+ * VA-S4-4C-1 (owner ruling): the canonical framework UNIVERSE and the shipped
+ * tenant TEMPLATE are separate concerns. A vendor assurance report may
+ * legitimately cite a criterion the template does not ask about.
+ *
+ *   template_represented — the shipped FRAMEWORK_TEMPLATES entry for this
+ *                          framework creates this reference. Both sides of the
+ *                          crosswalk are live.
+ *   vendor_side_only     — a valid canonical criterion of the SAME framework
+ *                          version that the template does NOT create. Read from
+ *                          the VENDOR side; it resolves to canonical controls,
+ *                          and from there to whatever requirements a tenant
+ *                          does have.
+ *
+ * This is a general classification, NOT a per-family exception. The publisher
+ * enforces it in both directions and fails closed, so absence from the template
+ * is explicit and observable rather than silently treated as an error.
+ */
+export type CrosswalkScope = "template_represented" | "vendor_side_only";
+
 export type CrosswalkEntry = {
   /** `requirements.reference_id`, verbatim. */
   readonly requirement_reference: string;
@@ -51,6 +71,15 @@ export type CrosswalkEntry = {
   readonly canonical_control_slugs: readonly string[];
   /** Why this requirement is satisfied by these controls - for the next reviewer. */
   readonly rationale: string;
+  /** Defaults to `template_represented` when absent. */
+  readonly scope?: CrosswalkScope;
+  /**
+   * REQUIRED for `vendor_side_only`, and refused otherwise: the criterion's
+   * authoritative title. A template-represented reference carries its title on
+   * the tenant `requirements` row; a vendor-side-only one has no such row, so
+   * without this the published identity would be an unexplained string.
+   */
+  readonly criterion_title?: string;
 };
 
 export const NIST_CSF_1_1_CROSSWALK: readonly CrosswalkEntry[] = [
