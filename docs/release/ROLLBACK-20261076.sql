@@ -1,0 +1,65 @@
+-- ROLLBACK for 20261076_tested_control_effectiveness.sql
+--
+-- Purely additive: one new table, its indexes, its RLS policy, its grant, and
+-- one trigger function that exists only for this table.
+--
+-- ── The distinction this rollback turns on ─────────────────────────────────
+--
+-- Owner clarification, 2026-08-31. Two different claims were being run together
+-- in the previous wording, and only one of them is true:
+--
+--   IT IS ACCEPTABLE that a deleted human judgment cannot be COMPUTATIONALLY
+--   RECREATED. Nothing can recompute a person's determination, and this
+--   repository must never pretend to. Layer 1 is derivable — the normalizer is
+--   deterministic and versioned. Layer 2 is not, and no rollback procedure
+--   should imply otherwise.
+--
+--   IT IS NOT ACCEPTABLE for SecureLogic to LOSE THE HISTORICAL DECISION BASIS.
+--   That is a different thing from recreating the judgment: it is the record of
+--   what was decided, by whom, when, against what evidence, and whether they
+--   agreed with the deterministic reading. That record is data, it is retained,
+--   and it must survive.
+--
+-- Every Layer-2 row carries its basis by value in `basis` (JSONB), snapshotted
+-- at the moment of the decision, and answers all nine questions without
+-- consulting anything else — which matters because every input to the decision
+-- is mutable:
+--
+--   what tested control was decided ....... element_key, document_id, extraction_id
+--   the Layer-1 assertion considered ...... basis.layer1.auditor_assertion
+--   the auditor's verbatim source ......... basis.layer1.source_text
+--   assertion/normalizer version .......... basis.layer1.normalizer_version
+--                                           (+ normalizer_rule, normalizer_reason)
+--   the proposed value, if any ............ basis.suggestion.candidate
+--                                           (+ basis.human_agreed_with_suggestion)
+--   the accepted/edited final value ....... decision, governed_effectiveness,
+--                                           indeterminate_reason
+--   the reason where required ............. reviewer_note
+--   the human actor ....................... accepted_by_user_id
+--   the timestamp ......................... accepted_at
+--   source/provenance identifiers ......... document_id, extraction_id,
+--                                           basis.document.approved_by_user_id,
+--                                           basis.document.approved_at,
+--                                           basis.superseded_prior
+--
+-- A SUPERSEDED row keeps its own basis untouched, so an edited or rejected
+-- determination remains answerable as the answer that WAS given.
+--
+-- ── Therefore ──────────────────────────────────────────────────────────────
+--
+-- Dropping this table destroys the decision BASIS, not merely the judgment.
+-- Take a copy BEFORE rolling back, without exception:
+--
+--   CREATE TABLE vendor_tested_control_effectiveness_backup_20261076 AS
+--     SELECT * FROM vendor_tested_control_effectiveness;
+--
+-- The corresponding `vendor_assurance.control_effectiveness.*` events in
+-- security_audit_log survive this rollback independently and carry the actor,
+-- the timestamp, the element key, the assertion, the proposal, whether the human
+-- agreed with it, and the final value — so the trail is not single-homed.
+--
+-- 4C-4 will snapshot the broader requirement-sufficiency decision basis by value
+-- on the same principle; nothing here anticipates it.
+
+DROP TABLE IF EXISTS vendor_tested_control_effectiveness;
+DROP FUNCTION IF EXISTS vendor_assurance_require_human_effectiveness();

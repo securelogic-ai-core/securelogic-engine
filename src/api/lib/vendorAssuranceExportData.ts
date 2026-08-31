@@ -39,6 +39,11 @@ import {
   type VendorAssuranceExportBundle
 } from "./vendorAssuranceExportModel.js";
 import { MATERIAL_FIELDS } from "./socExtractionPrompt.js";
+import {
+  parseExceptions,
+  parseManagementResponses,
+  pairResponsesToExceptions
+} from "./vendorAssurance/testedControlOutcome.js";
 
 // Re-export the pure model surface so a route can grab the formatters here too.
 export * from "./vendorAssuranceExportModel.js";
@@ -255,28 +260,39 @@ export async function buildExportBundle(
   const rawResponses = Array.isArray(currentValue("management_responses"))
     ? (currentValue("management_responses") as unknown[])
     : [];
-  const exceptions: ExceptionEntry[] = rawExceptions.map((e, i) => {
-    const obj = (e && typeof e === "object" ? (e as Record<string, unknown>) : {}) as Record<string, unknown>;
-    const controlId = asNullableString(obj["control_id"]);
-    // Match a management response by exception_ref == control_id, else fall back to index alignment.
-    let response: string | null = null;
-    if (controlId) {
-      const matched = rawResponses.find((r) => {
-        const ro = (r && typeof r === "object" ? (r as Record<string, unknown>) : {});
-        const ref = asNullableString(ro["exception_ref"]);
-        return ref !== null && ref.toLowerCase() === controlId.toLowerCase();
-      });
-      if (matched && typeof matched === "object") response = asNullableString((matched as Record<string, unknown>)["response"]);
-    }
-    if (response === null) {
-      const byIndex = rawResponses[i];
-      if (byIndex && typeof byIndex === "object") response = asNullableString((byIndex as Record<string, unknown>)["response"]);
-    }
+  //
+  // VA-S4-4C-3. The silent index-alignment fallback that used to live here is
+  // GONE. It matched `exception_ref == control_id` and, failing that, attached
+  // `rawResponses[i]` to `rawExceptions[i]` BY ARRAY POSITION — with nothing
+  // recorded to say it had guessed.
+  //
+  // In the corpus that fallback fires on the document whose response is labelled
+  // "Exception 1", because an exception label matches no control identifier. It
+  // happened to attach correctly there, with one response in the array. With two
+  // it would not have, and no reader could have told.
+  //
+  // Pairing is now authoritative-only (label, then identical control scope) and
+  // an unpaired response is reported as `unlinked` rather than invented.
+  const parsedExceptions = parseExceptions(rawExceptions);
+  const parsedResponses = parseManagementResponses(rawResponses);
+  const { pairings } = pairResponsesToExceptions(parsedExceptions, parsedResponses);
+  const pairingByOrdinal = new Map(pairings.map((p) => [p.exception_ordinal, p]));
+
+  const exceptions: ExceptionEntry[] = parsedExceptions.map((ex) => {
+    const pairing = pairingByOrdinal.get(ex.ordinal);
+    const response =
+      pairing && pairing.response_ordinal !== null
+        ? (parsedResponses.find((r) => r.ordinal === pairing.response_ordinal)?.response ?? null)
+        : null;
+    const controlRefs = ex.links.map((l) => l.control_ref);
     return {
-      controlId,
-      description: asNullableString(obj["description"]) ?? "",
-      auditorAssessment: asNullableString(obj["auditor_assessment"]),
-      managementResponse: response
+      controlId: controlRefs[0] ?? null,
+      controlRefs,
+      exceptionRef: ex.exception_ref,
+      description: ex.description,
+      auditorAssessment: ex.auditor_assessment,
+      managementResponse: response,
+      managementResponseLink: pairing?.link ?? "unlinked"
     };
   });
 

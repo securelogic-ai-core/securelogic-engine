@@ -79,6 +79,8 @@ export function makeExportBundle(overrides: Partial<VendorAssuranceExportBundle>
         },
         management_responses: {
           value: [
+            // Deliberately the LEGACY v2 shape: exception_ref holding a control id.
+            // Retained so the fixture keeps exercising the historical contract.
             { exception_ref: "CC7.2", response: "Management implemented an enforced approval gate in the deployment pipeline on 2025-04-01; no further deviations observed." }
           ],
           confidence: 0.8
@@ -115,9 +117,15 @@ export function makeExportBundle(overrides: Partial<VendorAssuranceExportBundle>
     exceptions: [
       {
         controlId: "CC7.2",
+        controlRefs: ["CC7.2"],
+        exceptionRef: null,
         description: "For 2 of 25 changes sampled, evidence of approval prior to deployment could not be located.",
         auditorAssessment: "Deviation noted; management remediated mid-period.",
-        managementResponse: "Management implemented an enforced approval gate in the deployment pipeline on 2025-04-01; no further deviations observed."
+        managementResponse: "Management implemented an enforced approval gate in the deployment pipeline on 2025-04-01; no further deviations observed.",
+        // VA-S4-4C-3: the response was attached through the exception's own
+        // control scope, not by array position. `unlinked` here would mean the
+        // response is genuinely unattributable, and would render as such.
+        managementResponseLink: "control_refs"
       }
     ],
     cuecs: [
