@@ -26,9 +26,10 @@
  * -- Completeness, stated honestly -----------------------------------------
  *
  * This covers all 57 NIST CSF 1.1 references in the shipped template, and it is
- * NOT the completed crosswalk corpus. SOC 2, GDPR, CCPA/CPRA and NIST AI RMF
- * are the remaining priority frameworks under Ruling 1 and have no content
- * here. `nistCsfCrosswalk.test.ts` asserts the coverage claim against
+ * NOT the completed crosswalk corpus. SOC 2 / 2017 is curated separately in
+ * `soc2TscCrosswalk.ts` (VA-S4-4C-1); GDPR, CCPA/CPRA and NIST AI RMF remain
+ * priority frameworks under Ruling 1 with no content anywhere yet.
+ * `nistCsfCrosswalk.test.ts` asserts the coverage claim against
  * FRAMEWORK_TEMPLATES so the claim cannot rot.
  *
  * -- Governance ------------------------------------------------------------

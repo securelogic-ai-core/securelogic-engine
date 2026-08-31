@@ -28,7 +28,13 @@ import {
   publishCanonicalControls,
   validateCorpusContent,
 } from "../lib/controls/canonicalControlPublisher.js";
+import { CROSSWALK_CORPORA } from "../lib/controls/crosswalkCorpora.js";
 import { NIST_CSF_1_1_CROSSWALK } from "../lib/controls/nistCsfCrosswalk.js";
+
+/** Every curated entry across every corpus in the registry, by reference. */
+const ALL_CROSSWALK_ENTRIES = CROSSWALK_CORPORA.flatMap((c) => [...c.entries]);
+const entryFor = (reference: string) =>
+  ALL_CROSSWALK_ENTRIES.find((e) => e.requirement_reference === reference)!;
 
 const PUBLISHER = "99999999-9999-4999-8999-999999999999";
 
@@ -115,7 +121,7 @@ function makeHarness(b: Behaviour = {}) {
 
       if (sql.includes("FROM canonical_control_crosswalk")) {
         const reference = String(params[2]);
-        const entry = NIST_CSF_1_1_CROSSWALK.find((e) => e.requirement_reference === reference)!;
+        const entry = entryFor(reference);
         return {
           rows: [
             b.liveCrosswalk?.(reference) ?? {
@@ -145,7 +151,9 @@ function makeHarness(b: Behaviour = {}) {
   };
 }
 
-const EXPECTED_CROSSWALK_ROWS = NIST_CSF_1_1_CROSSWALK.reduce(
+// Every corpus in the registry, not just the first one: the publisher
+// publishes them all in one governed act.
+const EXPECTED_CROSSWALK_ROWS = ALL_CROSSWALK_ENTRIES.reduce(
   (n, e) => n + e.canonical_control_slugs.length,
   0
 );
@@ -455,8 +463,7 @@ describe("a live mapping cannot silently acquire a different meaning", () => {
     const h = makeHarness({
       crosswalkInsert: () => "conflict",
       liveCrosswalk: (ref) => ({
-        mapping_rationale: NIST_CSF_1_1_CROSSWALK.find((e) => e.requirement_reference === ref)!
-          .rationale,
+        mapping_rationale: entryFor(ref).rationale,
         mapping_source: "securelogic",
         status: "published",
       }),

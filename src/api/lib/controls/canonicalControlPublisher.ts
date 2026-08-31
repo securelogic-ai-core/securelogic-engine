@@ -44,11 +44,7 @@ import {
 } from "./canonicalControlCorpus.js";
 import { canonicalControlKey, isLegalAliasKey } from "./canonicalControlIdentity.js";
 import { CANONICAL_FRAMEWORK_VERSIONS } from "./canonicalFrameworkIdentity.js";
-import {
-  NIST_CSF_1_1_CROSSWALK,
-  NIST_CSF_FRAMEWORK_KEY,
-  NIST_CSF_FRAMEWORK_VERSION,
-} from "./nistCsfCrosswalk.js";
+import { CROSSWALK_CORPORA } from "./crosswalkCorpora.js";
 
 type Row = Record<string, unknown>;
 type QueryResult = { rows: Row[]; rowCount: number | null };
@@ -156,25 +152,43 @@ export function validateCorpusContent(): void {
     }
   }
 
-  for (const entry of NIST_CSF_1_1_CROSSWALK) {
-    for (const slug of entry.canonical_control_slugs) {
-      if (!slugs.has(slug)) {
+  for (const corpus of CROSSWALK_CORPORA) {
+    const seen = new Set<string>();
+    for (const entry of corpus.entries) {
+      // A duplicated reference inside one corpus is an authoring error that
+      // would publish two rationales for the same criterion and let ON CONFLICT
+      // silently pick one.
+      if (seen.has(entry.requirement_reference)) {
         throw new CanonicalPublicationError(
-          `crosswalk ${entry.requirement_reference} references unknown canonical slug ${slug}`
+          `crosswalk ${corpus.framework_key} ${corpus.framework_version} lists ${entry.requirement_reference} twice`
         );
       }
-    }
-  }
+      seen.add(entry.requirement_reference);
 
-  const known = CANONICAL_FRAMEWORK_VERSIONS.some(
-    (f) =>
-      f.framework_key === NIST_CSF_FRAMEWORK_KEY &&
-      f.framework_version === NIST_CSF_FRAMEWORK_VERSION
-  );
-  if (!known) {
-    throw new CanonicalPublicationError(
-      `crosswalk framework ${NIST_CSF_FRAMEWORK_KEY} ${NIST_CSF_FRAMEWORK_VERSION} is not in the canonical framework registry`
+      if (entry.canonical_control_slugs.length === 0) {
+        throw new CanonicalPublicationError(
+          `crosswalk ${corpus.framework_key} ${entry.requirement_reference} maps to no canonical control`
+        );
+      }
+      for (const slug of entry.canonical_control_slugs) {
+        if (!slugs.has(slug)) {
+          throw new CanonicalPublicationError(
+            `crosswalk ${entry.requirement_reference} references unknown canonical slug ${slug}`
+          );
+        }
+      }
+    }
+
+    const known = CANONICAL_FRAMEWORK_VERSIONS.some(
+      (f) =>
+        f.framework_key === corpus.framework_key &&
+        f.framework_version === corpus.framework_version
     );
+    if (!known) {
+      throw new CanonicalPublicationError(
+        `crosswalk framework ${corpus.framework_key} ${corpus.framework_version} is not in the canonical framework registry`
+      );
+    }
   }
 }
 
@@ -321,74 +335,76 @@ export async function publishCanonicalControls(
     //    `mapping_source = 'securelogic'` and a curator actor kind, because
     //    this content is curated, not model-proposed. ON CONFLICT names the
     //    partial index predicate so it infers the LIVE-row unique index.
-    for (const entry of NIST_CSF_1_1_CROSSWALK) {
-      for (const slug of entry.canonical_control_slugs) {
-        const r = await client.query(
-          `INSERT INTO canonical_control_crosswalk
-             (framework_key, framework_version, requirement_reference,
-              canonical_control_id, mapping_source, mapping_rationale,
-              mapping_version, status, proposed_by_actor_kind,
-              proposed_by_actor_ref, approved_by_user_id, approved_at)
-           VALUES ($1, $2, $3, $4, 'securelogic', $5, $6, 'published',
-                   'securelogic_curator', $7, $8, NOW())
-           ON CONFLICT (framework_key, framework_version, requirement_reference,
-                        canonical_control_id)
-             WHERE superseded_at IS NULL
-           DO NOTHING`,
-          [
-            NIST_CSF_FRAMEWORK_KEY,
-            NIST_CSF_FRAMEWORK_VERSION,
-            entry.requirement_reference,
-            idBySlug.get(slug)!,
-            entry.rationale,
-            CANONICAL_CONTROL_CORPUS_VERSION,
-            `corpus:${CANONICAL_CONTROL_CORPUS_VERSION}`,
-            opts.publishedByUserId,
-          ]
-        );
-        if ((r.rowCount ?? 0) > 0) {
-          crosswalkPublished += 1;
-          continue;
-        }
+    for (const corpus of CROSSWALK_CORPORA) {
+      for (const entry of corpus.entries) {
+        for (const slug of entry.canonical_control_slugs) {
+          const r = await client.query(
+            `INSERT INTO canonical_control_crosswalk
+               (framework_key, framework_version, requirement_reference,
+                canonical_control_id, mapping_source, mapping_rationale,
+                mapping_version, status, proposed_by_actor_kind,
+                proposed_by_actor_ref, approved_by_user_id, approved_at)
+             VALUES ($1, $2, $3, $4, 'securelogic', $5, $6, 'published',
+                     'securelogic_curator', $7, $8, NOW())
+             ON CONFLICT (framework_key, framework_version, requirement_reference,
+                          canonical_control_id)
+               WHERE superseded_at IS NULL
+             DO NOTHING`,
+            [
+              corpus.framework_key,
+              corpus.framework_version,
+              entry.requirement_reference,
+              idBySlug.get(slug)!,
+              entry.rationale,
+              CANONICAL_CONTROL_CORPUS_VERSION,
+              `corpus:${CANONICAL_CONTROL_CORPUS_VERSION}`,
+              opts.publishedByUserId,
+            ]
+          );
+          if ((r.rowCount ?? 0) > 0) {
+            crosswalkPublished += 1;
+            continue;
+          }
 
-        // The row is already live. ON CONFLICT DO NOTHING means a CHANGED
-        // rationale would otherwise be a silent no-op: the module would claim
-        // one justification while the database held another, and the mapping
-        // a human approved would no longer be the mapping the corpus
-        // describes. Read it back and say so.
-        crosswalkAlreadyPresent += 1;
-        const live = await client.query(
-          `SELECT mapping_rationale, mapping_source, status
-             FROM canonical_control_crosswalk
-            WHERE framework_key = $1 AND framework_version = $2
-              AND requirement_reference = $3 AND canonical_control_id = $4
-              AND superseded_at IS NULL`,
-          [
-            NIST_CSF_FRAMEWORK_KEY,
-            NIST_CSF_FRAMEWORK_VERSION,
-            entry.requirement_reference,
-            idBySlug.get(slug)!,
-          ]
-        );
-        const liveRow = live.rows[0];
-        if (liveRow !== undefined) {
-          const expected: ReadonlyArray<[CrosswalkDrift["field"], string | null]> = [
-            ["mapping_rationale", entry.rationale],
-            ["mapping_source", "securelogic"],
-            ["status", "published"],
-          ];
-          for (const [field, corpusValue] of expected) {
-            const publishedValue = (liveRow[field] ?? null) as string | null;
-            if (publishedValue !== corpusValue) {
-              crosswalkDrift.push({
-                framework_key: NIST_CSF_FRAMEWORK_KEY,
-                framework_version: NIST_CSF_FRAMEWORK_VERSION,
-                requirement_reference: entry.requirement_reference,
-                canonical_key: canonicalControlKey(slug),
-                field,
-                published: publishedValue,
-                corpus: corpusValue,
-              });
+          // The row is already live. ON CONFLICT DO NOTHING means a CHANGED
+          // rationale would otherwise be a silent no-op: the module would claim
+          // one justification while the database held another, and the mapping
+          // a human approved would no longer be the mapping the corpus
+          // describes. Read it back and say so.
+          crosswalkAlreadyPresent += 1;
+          const live = await client.query(
+            `SELECT mapping_rationale, mapping_source, status
+               FROM canonical_control_crosswalk
+              WHERE framework_key = $1 AND framework_version = $2
+                AND requirement_reference = $3 AND canonical_control_id = $4
+                AND superseded_at IS NULL`,
+            [
+              corpus.framework_key,
+              corpus.framework_version,
+              entry.requirement_reference,
+              idBySlug.get(slug)!,
+            ]
+          );
+          const liveRow = live.rows[0];
+          if (liveRow !== undefined) {
+            const expected: ReadonlyArray<[CrosswalkDrift["field"], string | null]> = [
+              ["mapping_rationale", entry.rationale],
+              ["mapping_source", "securelogic"],
+              ["status", "published"],
+            ];
+            for (const [field, corpusValue] of expected) {
+              const publishedValue = (liveRow[field] ?? null) as string | null;
+              if (publishedValue !== corpusValue) {
+                crosswalkDrift.push({
+                  framework_key: corpus.framework_key,
+                  framework_version: corpus.framework_version,
+                  requirement_reference: entry.requirement_reference,
+                  canonical_key: canonicalControlKey(slug),
+                  field,
+                  published: publishedValue,
+                  corpus: corpusValue,
+                });
+              }
             }
           }
         }
