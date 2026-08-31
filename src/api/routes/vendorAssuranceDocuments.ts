@@ -38,6 +38,7 @@ import multer from "multer";
 import { createHash } from "node:crypto";
 import { pg, withTenant } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
+import { materializeTestedControlResolutions } from "../lib/vendorAssurance/testedControlResolution.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { denyContributor } from "../middleware/requireSeat.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
@@ -1206,6 +1207,35 @@ async function transitionExtractedDocument(
     payload: opts.auditPayload,
     ipAddress: req.ip ?? null
   });
+
+  // VA-S4-4C-2: approval is the moment the document becomes the version of
+  // record, so it is the moment its tested controls are resolved against the
+  // governed crosswalk. This is NOT S4 coverage wiring — it records vendor-side
+  // canonical identity and mapping provenance, and asserts nothing about
+  // applicability, sufficiency or effectiveness.
+  //
+  // Deliberately AFTER the transition and NON-BLOCKING. A resolution failure
+  // must never un-approve or fail an approval a human already made and that the
+  // database has already committed; the materializer is idempotent by
+  // supersession, so a failed run is recoverable by re-running it. The failure
+  // is logged loudly rather than swallowed, because a document approved with no
+  // resolution record is a gap somebody has to see.
+  if (opts.setApproved) {
+    try {
+      const outcome = await withTenant(organizationId, () =>
+        materializeTestedControlResolutions(pg, { organizationId, documentId })
+      );
+      logger.info(
+        { event: "vendor_tested_controls_resolved", organizationId, documentId, outcome },
+        "Vendor tested-control resolution materialised"
+      );
+    } catch (err) {
+      logger.error(
+        { event: "vendor_tested_control_resolution_failed", organizationId, documentId, err },
+        "Vendor tested-control resolution failed — the document is approved but has NO resolution record"
+      );
+    }
+  }
 
   res.status(200).json({ document: update.rows[0] });
 }

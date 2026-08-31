@@ -169,7 +169,13 @@ tables once the `app_request` flip lands).
 
 ### D — Org data not user-tied (leave alone)
 `organizations` (ROOT-TENANT; see Special handling), `vendor_assurance_extractions`,
-`vendor_assurance_extraction_spans`, `frameworks`, `requirements`, `policies`,
+`vendor_assurance_extraction_spans`,
+`vendor_tested_control_resolutions` (**RLS enabled**; VA-S4-4C-2, migration 20261073 —
+the record of a vendor tested control resolved against the governed canonical crosswalk at
+approval: original extraction + governed effective value side by side, with the crosswalk row
+consulted. No user ref — the human act lives in `vendor_assurance_field_overrides` (C) and is
+referenced by `override_id`, not duplicated. Superseded by `superseded_at`, never mutated),
+`frameworks`, `requirements`, `policies`,
 `policy_control_links`, `control_mappings`, `obligation_mappings`, `dependencies`,
 `evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7),
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
