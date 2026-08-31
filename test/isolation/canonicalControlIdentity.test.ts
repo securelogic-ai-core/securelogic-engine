@@ -27,14 +27,18 @@ import { Pool } from "pg";
 import { bootstrapTestDb, type TestDbSeed } from "./testDb.js";
 import { CANONICAL_CONTROL_CORPUS } from "../../src/api/lib/controls/canonicalControlCorpus.js";
 import { publishCanonicalControls } from "../../src/api/lib/controls/canonicalControlPublisher.js";
+import { CROSSWALK_CORPORA } from "../../src/api/lib/controls/crosswalkCorpora.js";
 import { NIST_CSF_1_1_CROSSWALK } from "../../src/api/lib/controls/nistCsfCrosswalk.js";
 
 let seed: TestDbSeed;
 let pool: Pool;
 let publisherA: string;
 
-const CROSSWALK_ROWS = NIST_CSF_1_1_CROSSWALK.reduce(
-  (n, e) => n + e.canonical_control_slugs.length,
+// Every corpus in the registry — the publisher publishes them all in one
+// governed act, so a per-framework count would under-assert the row total.
+const CROSSWALK_ROWS = CROSSWALK_CORPORA.reduce(
+  (n, corpus) =>
+    n + corpus.entries.reduce((m, e) => m + e.canonical_control_slugs.length, 0),
   0
 );
 
