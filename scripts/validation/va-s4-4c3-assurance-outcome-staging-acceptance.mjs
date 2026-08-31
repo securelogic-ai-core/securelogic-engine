@@ -23,7 +23,7 @@
  * `[S4-4C-3 ACCEPTANCE]` and deleted at the end. Exits non-zero on any failure.
  */
 import pg from "pg";
-import { createHmac } from "node:crypto";
+import { createHmac, createHash, randomBytes } from "node:crypto";
 
 const BASE = "https://securelogic-engine-staging.onrender.com/api";
 const LABEL = "[S4-4C-3 ACCEPTANCE]";
@@ -106,7 +106,7 @@ const ctrl = (id, result) => ({
   result,
 });
 
-const created = { documents: [], users: [] };
+const created = { documents: [], users: [], apiKeys: [] };
 
 async function fixture(org, vendor, user, name, { controls, exceptions = [], responses = [], promptVersion = "soc-extraction-v3" }) {
   const d = await q(
@@ -197,10 +197,21 @@ async function main() {
   console.log(`database=${db}`);
 
   /* ---- 0. the migrations are actually applied ---- */
+  // Named explicitly rather than pattern-matched: Postgres LIKE has no character
+  // classes, so `LIKE '2026107[4-7]%'` matches nothing and the check could never
+  // have passed. An always-red check is as useless as an always-green one.
+  const EXPECTED_MIGRATIONS = [
+    "20261074_organization_tenant_class.sql",
+    "20261075_tested_control_assertion.sql",
+    "20261076_tested_control_effectiveness.sql",
+    "20261077_assurance_exception_effect.sql",
+  ];
   const applied = (await q(
-    `SELECT filename FROM schema_migrations
-      WHERE filename LIKE '2026107[4-7]%' ORDER BY filename`)).rows.map((r) => r.filename);
-  check(0, "MIGRATION", "20261074-77 are applied on this database", applied.length === 4, applied);
+    `SELECT filename, applied_at FROM schema_migrations
+      WHERE filename = ANY($1::text[]) ORDER BY filename`, [EXPECTED_MIGRATIONS])).rows;
+  check(0, "MIGRATION", "20261074-77 are ALL applied on this database",
+    applied.length === EXPECTED_MIGRATIONS.length,
+    applied.map((r) => `${r.filename} @ ${r.applied_at}`));
 
   const orgs = await q(
     `SELECT o.id, o.name, o.tenant_class,
@@ -241,8 +252,32 @@ async function main() {
     [A.id, `s4-4c3-acceptance-viewer-${Date.now()}@example.com`, `${LABEL} viewer`]);
   const VIEWER_ID = viewer.rows[0]?.id ?? null;
   created.users.push(VIEWER_ID);
+  // Consent must be recorded, or `requireConsent` refuses this user with 403
+  // `consent_required` BEFORE the seat and capability gates ever run — and the
+  // unauthorized-human proof would be vacuous, refusing for the wrong reason.
+  for (const doc of ["terms_of_service", "privacy_policy", "ai_transparency_policy"]) {
+    await q(
+      `INSERT INTO legal_consents (user_id, organization_id, document_type, document_version, consent_method)
+       VALUES ($1,$2,$3,'1.0','admin_recorded') ON CONFLICT DO NOTHING`,
+      [VIEWER_ID, A.id, doc]);
+  }
   const TOKEN_VIEWER = VIEWER_ID ? signJwt(VIEWER_ID, A.id, "viewer", Number(viewer.rows[0]?.session_epoch ?? 0)) : null;
   note(0, "SETUP", "an unauthorized HUMAN (viewer seat) exists in the fixture tenant", { present: Boolean(VIEWER_ID) });
+
+  // THE MACHINE ADVERSARY. A REAL, VALID, ACTIVE, PREMIUM API key for the
+  // fixture tenant — not a placeholder. The proof required is that a caller who
+  // AUTHENTICATES SUCCESSFULLY and HOLDS the capability is still refused for
+  // want of a human; a bogus key would be turned away by requireApiKey and
+  // would prove nothing at all.
+  const RAW_KEY = `sl_${randomBytes(24).toString("hex")}`;
+  const keyIns = await q(
+    `INSERT INTO api_keys (organization_id, label, key_hash, entitlement_level, status)
+     VALUES ($1,$2,$3,'premium','active') RETURNING id`,
+    [A.id, `${LABEL} machine adversary`, createHash("sha256").update(RAW_KEY).digest("hex")]);
+  const API_KEY = keyIns.ok ? RAW_KEY : null;
+  created.apiKeys.push(keyIns.rows[0]?.id);
+  note(0.1, "SETUP", "a REAL active premium API key exists for the fixture tenant (the machine adversary)",
+    { created: Boolean(API_KEY) });
 
   /* ═══════════════ LAYER 1 ═══════════════ */
 
@@ -337,13 +372,24 @@ async function main() {
   check(12, "LAYER 2", "the database has NO DEFAULT that could ever supply an effectiveness",
     noDefaultCol?.column_default === null, noDefaultCol);
 
-  const machine = keyRow
-    ? await api("POST", `/vendor-assurance/documents/${l1.documentId}/tested-controls/CC6.1/effectiveness`,
-        { apiKey: process.env.ACCEPTANCE_API_KEY ?? "not-a-real-key", body: { effectiveness: "EFFECTIVE", reviewer_note: "machine" } })
+  // First prove the key genuinely AUTHENTICATES and is entitled, by reading a
+  // route it is allowed to read. Without this the 403 below could be an auth
+  // failure wearing a governance failure's clothes.
+  const machineRead = API_KEY
+    ? await api("GET", `/vendor-assurance/documents/${l1.documentId}`, { apiKey: API_KEY })
     : null;
-  check(13, "LAYER 2", "a caller with NO authenticated human cannot establish effectiveness",
-    machine !== null && machine.status === 403 &&
-    ["human_reviewer_required", "invalid_api_key", "unauthorized"].includes(machine.json?.error),
+  check(12.1, "LAYER 2", "the machine adversary AUTHENTICATES and is entitled — the refusal below is not an auth failure",
+    machineRead !== null && machineRead.status === 200, machineRead?.status);
+
+  const machine = API_KEY
+    ? await api("POST", `/vendor-assurance/documents/${l1.documentId}/tested-controls/CC6.1/effectiveness`,
+        { apiKey: API_KEY, body: { effectiveness: "EFFECTIVE", reviewer_note: "a machine asserting effectiveness" } })
+    : null;
+  check(13, "LAYER 2", "A GENERIC API KEY ALONE CANNOT ESTABLISH HUMAN EFFECTIVENESS AUTHORITY",
+    machine !== null && machine.status === 403 && machine.json?.error === "human_reviewer_required",
+    { status: machine?.status, error: machine?.json?.error });
+  check(13.1, "AUTHZ", "and it is refused on the HUMAN axis, NOT the capability axis — it HOLDS assurance:review",
+    machine?.json?.error === "human_reviewer_required" && machine?.json?.error !== "capability_required",
     machine?.json?.error);
   check(14, "LAYER 2", "and the DATABASE refuses an unattributed acceptance independently of the route",
     !(await q(
@@ -384,8 +430,11 @@ async function main() {
     ? await api("POST", `/vendor-assurance/documents/${l1.documentId}/tested-controls/CC6.1/effectiveness`,
         { token: TOKEN_VIEWER, body: { effectiveness: "EFFECTIVE", reviewer_note: "an unauthorized human" } })
     : null;
-  check(18.1, "AUTHZ", "AN UNAUTHORIZED HUMAN IS REFUSED — authenticated, real, and without assurance-review authority",
+  check(18.1, "AUTHZ", "AN UNAUTHORIZED HUMAN IS REFUSED — authenticated, consented, and without assurance-review authority",
     viewerAttempt !== null && viewerAttempt.status === 403 &&
+    // consent_required would mean an UNRELATED gate refused first and this
+    // proved nothing about assurance authority. It is a FAIL, not a pass.
+    viewerAttempt.json?.error !== "consent_required" &&
     ["read_only_access", "capability_required", "seat_not_permitted"].includes(viewerAttempt.json?.error),
     { status: viewerAttempt?.status, error: viewerAttempt?.json?.error });
   check(18.2, "AUTHZ", "and the unauthorized human wrote NOTHING",
@@ -483,10 +532,14 @@ async function main() {
   check(24, "LAYER 3", "a materialised exception is UNINTERPRETED until a human says otherwise",
     l3ex.length === 1 && l3ex[0].governed_effect === null && l3ex[0].effect_accepted_by_user_id === null);
 
-  const machineEffect = await api("POST", `/vendor-assurance/exceptions/${l3ex[0]?.id}/effect`,
-    { apiKey: process.env.ACCEPTANCE_API_KEY ?? "not-a-real-key", body: { governed_effect: "control_deficiency" } });
-  check(25, "LAYER 3", "a caller with no authenticated human cannot interpret an exception",
-    machineEffect.status === 403, machineEffect.json?.error);
+  const machineEffect = API_KEY
+    ? await api("POST", `/vendor-assurance/exceptions/${l3ex[0]?.id}/effect`,
+        { apiKey: API_KEY, body: { governed_effect: "control_deficiency" } })
+    : null;
+  check(25, "LAYER 3", "the same real API key cannot interpret an exception either — human_reviewer_required",
+    machineEffect !== null && machineEffect.status === 403 &&
+    machineEffect.json?.error === "human_reviewer_required",
+    { status: machineEffect?.status, error: machineEffect?.json?.error });
 
   const effect = await api("POST", `/vendor-assurance/exceptions/${l3ex[0]?.id}/effect`,
     { token: TOKEN_A, body: { governed_effect: "scope_limitation", reviewer_note: "The auditor could not obtain evidence; the control was not shown to fail." } });
@@ -730,6 +783,24 @@ async function main() {
 }
 
 async function cleanup() {
+  const keys = created.apiKeys.filter(Boolean);
+  if (keys.length > 0) {
+    // REVOKED, not deleted, and this is forced rather than chosen. The
+    // adversary key appears in `security_audit_log` the moment it makes a
+    // request, and that table's WORM guard REFUSES the `ON DELETE SET NULL`
+    // cascade that a DELETE would trigger:
+    //   "security_audit_log is append-only: UPDATE is not permitted"
+    // So an API key that has ever been used cannot be deleted at all. Revocation
+    // is the product's own disposal mechanism and is the correct one here; a
+    // DELETE fails silently and leaves a LIVE credential behind, which is how
+    // the first two runs of this harness leaked two active premium keys.
+    const revoked = await q(
+      `UPDATE api_keys SET status='revoked', revoked_at=NOW()
+        WHERE id = ANY($1::uuid[]) AND status='active'`, [keys]);
+    const stillActive = await q(
+      `SELECT count(*)::int AS n FROM api_keys WHERE id = ANY($1::uuid[]) AND status='active'`, [keys]);
+    console.log(`cleanup: revoked ${revoked.rowCount ?? 0}/${keys.length} acceptance API keys; ${stillActive.rows[0]?.n} still ACTIVE`);
+  }
   if (created.users.length > 0) {
     // The unauthorized-human fixture. Deleted, not tombstoned: it never
     // authored a governance decision (that is the whole point of it), so
