@@ -16,24 +16,43 @@
  * `soc2TscCrosswalk.test.ts` asserts that claim against FRAMEWORK_TEMPLATES so
  * it cannot rot into a crosswalk that is correct and joins to nothing.
  *
- * ── What this deliberately does NOT cover ──────────────────────────────────
+ * ── TEMPLATE-REPRESENTED vs VENDOR-SIDE-ONLY ──────────────────────────────
  *
- * The 2017 TSC contains criteria the shipped template does not: the
- * confidentiality series (C1.1, C1.2), processing integrity (PI1.x) and the
- * privacy series (P1–P8). They are absent here ON PURPOSE, and their absence is
- * a live gap rather than an oversight:
+ * Owner ruling, 2026-08-31: the canonical framework UNIVERSE (what legitimately
+ * exists in TSC) and the shipped tenant TEMPLATE (what SecureLogic currently
+ * chooses to ask) are separate concerns. A published criterion is NOT required
+ * to exist in the template.
  *
- *   A vendor's SOC 2 report can test a control against C1.1, and the S4
- *   coverage chain reads the VENDOR side of this table. A tested control keyed
- *   `C1.1` therefore resolves to no canonical control today, and the hop dies
- *   there — measured in the staging corpus, where the tested-control
- *   identifiers are CC6.1, CC6.2, CC7.2, A1.2 and C1.1.
+ * The 36 above are `template_represented`. One entry below is
+ * `vendor_side_only`: **C1.1**. It is a valid TSC 2017 confidentiality
+ * criterion, the shipped template creates no C1.x requirement, and the live
+ * extraction corpus tests controls against it in all five extractions — every
+ * one of those reports declares Confidentiality in its trust services criteria,
+ * so the identity is the report's, not a model's invention.
  *
- * Adding them is not a content chore: the crosswalk is keyed on a GLOBAL
- * framework identity and does not require a tenant to have activated the
- * reference, so vendor-side-only criteria are representable — but publishing
- * references no shipped template contains is an authority decision about what
- * this table asserts, and it is owed to the owner rather than taken here.
+ * This is a GENERAL classification, not a C1.x exception. The publisher
+ * enforces it in both directions and fails closed: an entry claiming
+ * template_represented that the template does not create, and an entry claiming
+ * vendor_side_only that it DOES create, both abort publication.
+ *
+ * ── What a vendor-side-only row does and does NOT establish ───────────────
+ *
+ * It establishes a VALID CANONICAL IDENTITY and the POSSIBILITY of a crosswalk
+ * hop. It establishes NOTHING about tenant applicability, requirement
+ * applicability, evidence sufficiency, control effectiveness, questionnaire
+ * suppression or residual risk. Those are downstream governed determinations.
+ *
+ *   valid:   report cites C1.1 -> canonical C1.1 -> canonical controls ->
+ *            CANDIDATE mapped requirements
+ *   INVALID: report cites C1.1 -> therefore those requirements are assured
+ *
+ * ── Not populated speculatively ───────────────────────────────────────────
+ *
+ * The rest of the confidentiality series (C1.2), processing integrity (PI1.x)
+ * and privacy (P1–P8) are NOT published. They are valid TSC families, but no
+ * observed vendor extraction cites them, and the schema being able to represent
+ * a criterion is not a reason to publish it. They are reported as unsupported
+ * rather than curated ahead of need.
  *
  * ── Mapping discipline ─────────────────────────────────────────────────────
  *
@@ -306,5 +325,19 @@ export const SOC2_TSC_2017_CROSSWALK: readonly CrosswalkEntry[] = [
     canonical_control_slugs: ["disaster-recovery-execution", "business-continuity-plan"],
     rationale:
       "Testing the recovery plan is a distinct criterion from having one: the test is an execution of the recovery procedure against the documented plan.",
+  },
+
+  // ---- C1: Confidentiality — VENDOR-SIDE-ONLY ------------------------------
+  // Published because the measured corpus cites it, not because the family
+  // exists. C1.2 (disposal of confidential information) is equally valid and is
+  // deliberately NOT here: nothing observed tests against it.
+  {
+    requirement_reference: "C1.1",
+    scope: "vendor_side_only",
+    criterion_title:
+      "The entity identifies and maintains confidential information to meet the entity's objectives related to confidentiality.",
+    canonical_control_slugs: ["asset-criticality-classification", "backup-and-restore"],
+    rationale:
+      "Mapped to the criterion's two points of focus and no further. 'Identifies Confidential Information' is the classification control; 'Protects Confidential Information from Destruction' — protection from erasure or destruction through the retention period — is backup and restore. Deliberately NOT data-loss-prevention or encryption-in-transit: restricting the transmission and movement of information is CC6.7, and folding it in here would make one criterion assert another's coverage.",
   },
 ] as const;

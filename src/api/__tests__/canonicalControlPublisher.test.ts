@@ -27,6 +27,7 @@ import {
   CanonicalPublicationError,
   publishCanonicalControls,
   validateCorpusContent,
+  publishedRationale,
 } from "../lib/controls/canonicalControlPublisher.js";
 import { CROSSWALK_CORPORA } from "../lib/controls/crosswalkCorpora.js";
 import { NIST_CSF_1_1_CROSSWALK } from "../lib/controls/nistCsfCrosswalk.js";
@@ -125,7 +126,7 @@ function makeHarness(b: Behaviour = {}) {
         return {
           rows: [
             b.liveCrosswalk?.(reference) ?? {
-              mapping_rationale: entry.rationale,
+              mapping_rationale: publishedRationale(entry),
               mapping_source: "securelogic",
               status: "published",
             },
@@ -463,7 +464,7 @@ describe("a live mapping cannot silently acquire a different meaning", () => {
     const h = makeHarness({
       crosswalkInsert: () => "conflict",
       liveCrosswalk: (ref) => ({
-        mapping_rationale: entryFor(ref).rationale,
+        mapping_rationale: publishedRationale(entryFor(ref)),
         mapping_source: "securelogic",
         status: "published",
       }),

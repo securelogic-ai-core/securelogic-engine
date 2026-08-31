@@ -44,7 +44,9 @@ import {
 } from "./canonicalControlCorpus.js";
 import { canonicalControlKey, isLegalAliasKey } from "./canonicalControlIdentity.js";
 import { CANONICAL_FRAMEWORK_VERSIONS } from "./canonicalFrameworkIdentity.js";
-import { CROSSWALK_CORPORA } from "./crosswalkCorpora.js";
+import { CROSSWALK_CORPORA, scopeOf, templateReferencesFor } from "./crosswalkCorpora.js";
+import type { CrosswalkCorpus } from "./crosswalkCorpora.js";
+import type { CrosswalkEntry } from "./nistCsfCrosswalk.js";
 
 type Row = Record<string, unknown>;
 type QueryResult = { rows: Row[]; rowCount: number | null };
@@ -189,6 +191,8 @@ export function validateCorpusContent(): void {
         `crosswalk framework ${corpus.framework_key} ${corpus.framework_version} is not in the canonical framework registry`
       );
     }
+
+    assertCrosswalkClassification(corpus);
   }
 }
 
@@ -199,6 +203,89 @@ export function validateCorpusContent(): void {
  * reported counts are what a real run would do, proven against real
  * constraints.
  */
+/**
+ * VA-S4-4C-1. The rationale as PUBLISHED.
+ *
+ * A vendor-side-only criterion has no tenant `requirements` row to carry its
+ * title, so in the database its reference would be an unexplained string. The
+ * published rationale therefore leads with the classification and the
+ * authoritative title, making the distinction observable in the DATA and not
+ * only in the corpus module.
+ *
+ * It is a legible marker, not a parse target — nothing reads it back
+ * structurally; 4C-2's resolution record carries the structured provenance.
+ * Composition is deterministic and is used by the INSERT and the drift
+ * comparison alike, so a published row can never look like drift against
+ * itself.
+ */
+/**
+ * VA-S4-4C-1. The TEMPLATE-REPRESENTED / VENDOR-SIDE-ONLY classification guard,
+ * exported so it can be proven to BITE rather than only to pass against the
+ * shipped corpus.
+ */
+export function assertCrosswalkClassification(corpus: CrosswalkCorpus): void {
+  // VA-S4-4C-1: the TEMPLATE-REPRESENTED / VENDOR-SIDE-ONLY classification,
+  // enforced in BOTH directions and fail-closed. The canonical framework
+  // universe and the shipped questionnaire template are separate concerns, so
+  // a criterion the template does not ask about is publishable — but only
+  // when the corpus SAYS SO. Silence is not permission in either direction:
+  //
+  //   claimed template_represented but absent from the template -> a typo, a
+  //     retired reference, or a mapping that will join to nothing;
+  //   claimed vendor_side_only but PRESENT in the template -> a stale claim
+  //     that would hide a live join behind a caveat.
+  //
+  // Both abort publication rather than publishing something whose meaning
+  // nobody has stated.
+  const templateRefs = templateReferencesFor(corpus.framework_key, corpus.framework_version);
+  for (const entry of corpus.entries) {
+    const scope = scopeOf(entry);
+    const title = entry.criterion_title?.trim() ?? "";
+
+    if (scope === "vendor_side_only" && title.length === 0) {
+      throw new CanonicalPublicationError(
+        `crosswalk ${corpus.framework_key} ${entry.requirement_reference} is vendor_side_only and must carry criterion_title: ` +
+          `it has no tenant requirement row to carry its title, so without one the published identity is an unexplained string`
+      );
+    }
+    if (scope === "template_represented" && title.length > 0) {
+      throw new CanonicalPublicationError(
+        `crosswalk ${corpus.framework_key} ${entry.requirement_reference} is template_represented and must not restate criterion_title: ` +
+          `the tenant requirement row is the authority for it`
+      );
+    }
+
+    // No shipped template for this framework at all: every entry is
+    // necessarily vendor-side, and the corpus must say so.
+    if (templateRefs === null) {
+      if (scope !== "vendor_side_only") {
+        throw new CanonicalPublicationError(
+          `crosswalk ${corpus.framework_key} ${corpus.framework_version} has no shipped template, so ` +
+            `${entry.requirement_reference} cannot be template_represented`
+        );
+      }
+      continue;
+    }
+
+    const inTemplate = templateRefs.has(entry.requirement_reference);
+    if (scope === "template_represented" && !inTemplate) {
+      throw new CanonicalPublicationError(
+        `crosswalk ${corpus.framework_key} ${entry.requirement_reference} is declared template_represented but the shipped template does not create it`
+      );
+    }
+    if (scope === "vendor_side_only" && inTemplate) {
+      throw new CanonicalPublicationError(
+        `crosswalk ${corpus.framework_key} ${entry.requirement_reference} is declared vendor_side_only but the shipped template DOES create it`
+      );
+    }
+  }
+}
+
+export function publishedRationale(entry: CrosswalkEntry): string {
+  if (scopeOf(entry) !== "vendor_side_only") return entry.rationale;
+  return `[VENDOR-SIDE-ONLY] ${entry.requirement_reference}: ${entry.criterion_title!.trim()} — ${entry.rationale}`;
+}
+
 export async function publishCanonicalControls(
   pool: PoolLike,
   opts: { publishedByUserId: string; apply?: boolean }
@@ -355,7 +442,7 @@ export async function publishCanonicalControls(
               corpus.framework_version,
               entry.requirement_reference,
               idBySlug.get(slug)!,
-              entry.rationale,
+              publishedRationale(entry),
               CANONICAL_CONTROL_CORPUS_VERSION,
               `corpus:${CANONICAL_CONTROL_CORPUS_VERSION}`,
               opts.publishedByUserId,
@@ -388,7 +475,7 @@ export async function publishCanonicalControls(
           const liveRow = live.rows[0];
           if (liveRow !== undefined) {
             const expected: ReadonlyArray<[CrosswalkDrift["field"], string | null]> = [
-              ["mapping_rationale", entry.rationale],
+              ["mapping_rationale", publishedRationale(entry)],
               ["mapping_source", "securelogic"],
               ["status", "published"],
             ];
