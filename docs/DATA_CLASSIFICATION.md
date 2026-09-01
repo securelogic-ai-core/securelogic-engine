@@ -125,6 +125,7 @@ tables once the `app_request` flip lands).
 ### C — Org content authored by a user (anonymize actor)
 | Table | userRef | PII | RLS |
 |---|---|---|---|
+| `evidence_links` | linked_by_user_id, confirmed_by_user_id, detached_by_user_id | low | **enabled** | <!-- ADR-0012 Step 2, 20261081: WHERE an artifact COUNTS (origin stays on evidence.source_type/source_id). Counts only on a live, human-confirmed link, confirmed per context and write-once. No DELETE grant; column-limited UPDATE; identity frozen by trigger; evidence_id RESTRICT; cross-org linking refused by trigger. Empty by construction — no writer, no fabricated origin backfill. -->
 | `risks` | owner_user_id | high | **enabled** |
 | `risk_treatments` | reviewer_uuid, owner_user_id, *reviewer_id (TEXT, deprecated)* | high | pending |
 | `risk_control_links` | created_by_user_id | low | pending |
@@ -189,7 +190,11 @@ consulted. No user ref — the human act lives in `vendor_assurance_field_overri
 referenced by `override_id`, not duplicated. Superseded by `superseded_at`, never mutated),
 `frameworks`, `requirements`, `policies`,
 `policy_control_links`, `control_mappings`, `obligation_mappings`, `dependencies`,
-`evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7),
+`evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7;
+ADR-0012 Step 2 / 20261080 added `valid_from`/`valid_until`/`validity_basis`,
+`supersedes_evidence_id` and `assurance_class`. No backfill: every pre-existing row is
+`validity_basis='not_established'` + `assurance_class='unclassified'`, so an unknown history
+fails closed rather than being inferred),
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
 `organization_risk_scales`, `webhook_endpoints`, `webhook_deliveries`,
 `org_sso_configs`, `api_usage_daily`,
@@ -202,6 +207,11 @@ role — the reaper must never attempt to mutate these; org deletion is tombston
 org-FK CASCADE never fires).
 
 ### E — System-wide / operational (leave alone)
+**`evidence_lifecycle_events`** (new — ADR-0012 Step 2, migration 20261082; **RLS enabled**,
+**WORM/append-only** via the SHARED `worm_guard_mutation`; SELECT+INSERT only. What happened to an
+evidence artifact and to each of its uses. `evidence_id`/`link_id` are held BY VALUE with no FK so the
+stream outlives its subject; `actor_user_id` ON DELETE SET NULL matches the lifecycle family.
+`expiry_observed` is a NOTICE and flips nothing. Empty on arrival — no writer, no fabricated history),
 `signals`, `insights`, `trends`, `trend_signals`, `cyber_signals`,
 `intelligence_briefs`, `intelligence_brief_items`, `intelligence_brief_sends`,
 `intelligence_brief_sources`, `newsletter_issues`, `newsletter_issue_insights`,
