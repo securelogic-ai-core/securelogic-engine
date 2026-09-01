@@ -409,6 +409,41 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-09-01 — VA-S4 intelligent assurance COMPLETE and ACTIVE ON
+> STAGING (this file only; no application code changed by this sync).**
+>
+> The S4 chain is finished end to end and **staging-verified through product
+> paths**: 4C-0..4C-4 (evidence authority → crosswalk → tested-control
+> resolution → three-layer outcomes → the twelve-veto sufficiency
+> determination), Step 1 canonical control identity, Step 2 ADR-0012 evidence
+> lifecycle (20261080–82, dark), Step 3 ratified evidence-validity policy
+> (20261083; owner ratified D0/D1/D15/D16 2026-09-01), the governed evidence
+> writer (20261084: link/confirm/detach, write-once curation, D15 surface,
+> SECURITY-DEFINER withdrawal per owner ruling), and **Step 5 runtime wiring**
+> (counting predicate `assurance-coverage-1.0`, evaluator
+> `sufficiency-veto-1.1`, ADR-0012 §5 dual-read, reviewer coverage surface,
+> depth-only questionnaire reduction with a decision-basis snapshot).
+>
+> **Evidence (VERIFIED):** PRs #964/#965/#968 (4C-4, staging 45/45), #969
+> (Step 2, merge `49b28875`), #970 (Step 3, `bb028172`), #971 (writer,
+> `aa317b5b`), #972/#973 (Step 5 + read-time conflict guard, develop
+> `dd25073f`), #974 (gate record). Staging acceptance **dark 22/0**
+> (`job-dabig0ou01pc73b4daug`, SHA `0fb5b58a`) and **active 19/0**
+> (`job-dabjdbfavr4c738j62h0`, SHA `dd25073f`) —
+> `docs/validation/VA-S4-step5-wiring-2026-09-01.md`. The acceptance itself
+> found and fixed one product gap (conflicting governed judgements at read
+> time, #973) and exercised the remediation workflow live (action → finding →
+> closure gate → sufficiency).
+>
+> **Activation state:** `SECURELOGIC_EVIDENCE_LIFECYCLE_V2` is ON for the
+> STAGING engine only, undeclared in IaC, OFF and untouched in production and
+> demo. The kill switch is the flag; the dark phase is the proven kill-switch
+> state (byte-identical composition). **No production change, no promotion to
+> main, no Blueprint sync** is authorized by this record. Remaining owner
+> items, unchanged: R2 and Redis staging separation (environment isolation,
+> independent of S4); D2–D14 validity durations unratified (their classes
+> simply never count).
+
 > **DOC-SYNC 2026-08-21 — active governing program restated (this file only; no
 > application code, no feature flag, no merge, no promotion).**
 >
