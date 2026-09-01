@@ -616,10 +616,11 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # Cloudflare R2 — STAGING ONLY. Vendor-assurance-intelligence Phase 0
-      # ships the blob primitive against R2; production engine is intentionally
-      # left unconfigured in this package. Populate R2_* in the staging
-      # dashboard before running scripts/blob-storage-smoke.ts.
+      # Cloudflare R2 — configured in BOTH environments (dashboard values).
+      # Production uses the `securelogic-ai` bucket; staging uses the dedicated
+      # `securelogic-ai-staging` bucket with a bucket-scoped token (staging
+      # credentials cannot read or write production objects, verified
+      # 2026-09-01). Never point staging R2_* at the production bucket.
       # Per TENANT_ISOLATION_STANDARD.md §5: every object key MUST be prefixed
       # with org/{organizationId}/; pre-signed URLs are single-org and clamped
       # to <=120s TTL by src/api/lib/blobStorage.ts.
@@ -1285,10 +1286,10 @@ services:
   # Polls every 15s, single-flight, drains SIGTERM. Workers do NOT
   # auto-migrate — the engine startCommand owns migrations.
   #
-  # PROD R2 NOTE: production R2 is intentionally unconfigured today
-  # (see the engine block — Phase 0 shipped R2 to staging only).
-  # This worker is INERT in prod until R2_* is populated AND the
-  # data-rights intake (PR #5) begins enqueuing jobs. Declared here
+  # PROD R2 NOTE: production R2_* IS populated in the dashboard (bucket
+  # `securelogic-ai`); the earlier "intentionally unconfigured" note is
+  # obsolete. This worker is inert in prod only until the data-rights
+  # intake (PR #5) begins enqueuing jobs. Declared here
   # so the IaC is complete and the flip-set (docs/A04-G1-rls-rollout
   # -plan.md §4a) records it as a DATABASE_URL holder.
   #
@@ -1335,8 +1336,8 @@ services:
         sync: false
 
       # Cloudflare R2 — destination for export bundles
-      # (org/{orgId}/data-exports/{exportId}.zip). Populate in the dashboard;
-      # prod enablement is a pending platform decision (see PROD R2 NOTE).
+      # (org/{orgId}/data-exports/{exportId}.zip). Populated in the dashboard
+      # (production bucket `securelogic-ai`; see PROD R2 NOTE).
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1417,8 +1418,8 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
 
-      # Cloudflare R2 — STAGING. Same bucket the engine-staging block uses for
-      # vendor-assurance blobs; export bundles land under data-exports/.
+      # Cloudflare R2 — STAGING. Same `securelogic-ai-staging` bucket the
+      # engine-staging block uses; export bundles land under data-exports/.
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1525,8 +1526,8 @@ services:
         sync: false
 
       # Cloudflare R2 — source of the uploaded SOC PDFs the worker
-      # extracts (org/{orgId}/vendor-assurance/...). Populate in the
-      # dashboard; prod enablement is a separate Part-2 decision.
+      # extracts (org/{orgId}/vendor-assurance/...). Populated in the
+      # dashboard (production bucket `securelogic-ai`).
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1600,8 +1601,8 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
 
-      # Cloudflare R2 — STAGING. Same bucket engine-staging uses for
-      # vendor-assurance blobs.
+      # Cloudflare R2 — STAGING. Same `securelogic-ai-staging` bucket
+      # engine-staging uses for vendor-assurance blobs.
       - key: R2_ACCOUNT_ID
         sync: false
 
