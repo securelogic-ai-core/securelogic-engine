@@ -83,7 +83,11 @@ function checkVocabulary(sql: string, constraintName: string): string[] {
 
 describe("closed vocabularies stay in lockstep with the migrations", () => {
   it("evidence.validity_basis", () => {
-    const sql = migration("20261080_evidence_validity_and_supersession.sql");
+    // 20261080 introduced this constraint with three values; 20261083
+    // REDEFINES it to add 'policy_default' once D1 was ratified. Read the
+    // migration that owns the constraint now, or this test would assert a
+    // vocabulary the database no longer has.
+    const sql = migration("20261083_evidence_validity_policy.sql");
     expect(checkVocabulary(sql, "evidence_validity_basis_check").sort())
       .toEqual([...EVIDENCE_VALIDITY_BASES].sort());
   });
@@ -119,11 +123,23 @@ describe("closed vocabularies stay in lockstep with the migrations", () => {
   });
 });
 
-describe("the validity vocabulary carries no unratified policy", () => {
-  it("has no 'policy_default' basis — Step 3 durations are NOT ratified", () => {
-    // A value only a ratified policy could produce would imply a policy exists.
-    // Step 3 adds it in its own migration, on the day it is approved.
-    expect(EVIDENCE_VALIDITY_BASES).not.toContain("policy_default" as never);
+describe("the validity vocabulary tracks what is actually ratified", () => {
+  it("HAS a 'policy_default' basis — D1 was ratified 2026-09-01", () => {
+    // This assertion was the inverse until Step 3 landed: a value only a
+    // ratified policy could produce would have implied a policy existed. D0,
+    // D1, D15 and D16 were ratified on 2026-09-01 and 20261083 adds both the
+    // value and the policy that produces it, so the vocabulary now carries it.
+    expect(EVIDENCE_VALIDITY_BASES).toContain("policy_default" as never);
+  });
+
+  it("still carries NO value that would imply an unratified default", () => {
+    // D2-D14 are not ratified. There is deliberately no 'policy_fallback',
+    // 'default_ttl' or similar — a default for unknown artifacts would be a
+    // universal TTL wearing a different name.
+    for (const basis of EVIDENCE_VALIDITY_BASES) {
+      expect(basis).not.toMatch(/fallback|ttl|catch_all/);
+    }
+    expect(EVIDENCE_VALIDITY_BASES).toHaveLength(4);
   });
 
   it("'unclassified' is the assurance class every legacy row lands on", () => {
@@ -203,8 +219,12 @@ describe("nothing consumes the contract yet (Step 2 ships dark)", () => {
     // deliberate act which needs its own package, a curation path for legacy
     // evidence, and a zero-divergence dual-read proof (ADR-0012 §5) — not a
     // quiet import. Update this test when that package lands.
+    // Match real IMPORTS, not any textual mention: a module that merely
+    // explains in a comment why it does not import this one is not a consumer,
+    // and a grep that cannot tell the difference produces false alarms that get
+    // silenced — which is how a guard stops guarding.
     const out = execSync(
-      "grep -rl 'evidenceLifecycleContract' src --include=*.ts || true",
+      "grep -rlE \"(from|require\\()\\s*['\\\"][^'\\\"]*evidenceLifecycleContract\" src --include=*.ts || true",
       { encoding: "utf8" }
     )
       .split("\n")
@@ -212,7 +232,12 @@ describe("nothing consumes the contract yet (Step 2 ships dark)", () => {
       .filter(Boolean)
       // the module itself and this test are not consumers
       .filter((f) => !f.endsWith("lib/evidenceLifecycleContract.ts"))
-      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"));
+      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"))
+      // Step 3's test imports both contracts to assert the vocabularies agree.
+      // A lockstep cross-check is not a consumer of the counting predicate —
+      // and `evidenceValidityPolicy.ts` itself deliberately imports nothing,
+      // precisely so this guard keeps its meaning.
+      .filter((f) => !f.endsWith("__tests__/evidenceValidityPolicy.test.ts"));
     expect(out).toEqual([]);
   });
 });

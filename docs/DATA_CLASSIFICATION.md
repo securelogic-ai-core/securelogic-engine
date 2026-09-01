@@ -125,6 +125,7 @@ tables once the `app_request` flip lands).
 ### C — Org content authored by a user (anonymize actor)
 | Table | userRef | PII | RLS |
 |---|---|---|---|
+| `organization_evidence_validity_settings` | set_by_user_id | low | **enabled** | <!-- VA-S4 step 3, 20261083: a customer's own validity position per assurance class (D15). Tighten freely; loosen only to the live platform ceiling, enforced by trigger. Append-and-supersede — identity/value frozen, UPDATE column-limited to superseded_at, no DELETE grant. Empty on arrival; D16 ratified no backfill. -->
 | `evidence_links` | linked_by_user_id, confirmed_by_user_id, detached_by_user_id | low | **enabled** | <!-- ADR-0012 Step 2, 20261081: WHERE an artifact COUNTS (origin stays on evidence.source_type/source_id). Counts only on a live, human-confirmed link, confirmed per context and write-once. No DELETE grant; column-limited UPDATE; identity frozen by trigger; evidence_id RESTRICT; cross-org linking refused by trigger. Empty by construction — no writer, no fabricated origin backfill. -->
 | `risks` | owner_user_id | high | **enabled** |
 | `risk_treatments` | reviewer_uuid, owner_user_id, *reviewer_id (TEXT, deprecated)* | high | pending |
@@ -207,6 +208,15 @@ role — the reaper must never attempt to mutate these; org deletion is tombston
 org-FK CASCADE never fires).
 
 ### E — System-wide / operational (leave alone)
+**`evidence_validity_policy`** (new — VA-S4 step 3, migration 20261083; **RLS not
+applicable** — global governed reference content with no org dimension, like the canonical
+crosswalk. `app_request` holds SELECT only; the table changes by migration, never by the
+application, because a duration is a ratified product decision and not a runtime setting.
+Append-only versions, one live row per class. Seeded with **D1 only** — `soc1` and
+`soc2_type2` at 12 months from report period end (customer range 3..15), and `soc2_type1`
+with **no duration at all**, because D1 ratified that a Type I needs its own rule and named
+no number for it. Classes D2-D14 are unratified and have no row: absence yields
+`not_established`, which is the fail-closed default and deliberately not a catch-all TTL),
 **`evidence_lifecycle_events`** (new — ADR-0012 Step 2, migration 20261082; **RLS enabled**,
 **WORM/append-only** via the SHARED `worm_guard_mutation`; SELECT+INSERT only. What happened to an
 evidence artifact and to each of its uses. `evidence_id`/`link_id` are held BY VALUE with no FK so the

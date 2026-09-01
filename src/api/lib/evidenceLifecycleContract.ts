@@ -39,11 +39,19 @@
  * customer's existing proofs on the floor.
  */
 
-/** `evidence.validity_basis` — mirrors evidence_validity_basis_check (20261080). */
+/**
+ * `evidence.validity_basis` — mirrors evidence_validity_basis_check.
+ *
+ * Defined by 20261080 with three values and REDEFINED by 20261083, which adds
+ * `policy_default` now that D1's durations are ratified. The lockstep test
+ * reads 20261083 because that migration owns the constraint today.
+ */
 export const EVIDENCE_VALIDITY_BASES = [
   "not_established",
   "artifact_dates",
   "perpetual",
+  /** A window this platform COMPUTED from a ratified policy (step 3). */
+  "policy_default",
 ] as const;
 export type EvidenceValidityBasis = (typeof EVIDENCE_VALIDITY_BASES)[number];
 
