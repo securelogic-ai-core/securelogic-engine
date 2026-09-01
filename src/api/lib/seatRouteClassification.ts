@@ -40,6 +40,13 @@ export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
 /** Class A deny-all for Contributors. */
 export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "aiGovernanceAssessments.ts",
+  // VA-S4 governed evidence writer. Deny-all, not read-scoped: confirming that
+  // an artifact assures a requirement, establishing what it is and how long it
+  // is good for, and withdrawing it are all governance acts, and there is no
+  // "my evidence links" scope to grant a contributor. Reading the surface would
+  // also expose what the org has judged sufficient, which is the assessment
+  // policy itself.
+  "evidenceLifecycle.ts",
   // VA-Q1. The curated question library is governance content: what an org
   // asks its vendors, and which requirements that evidences. Deny-all for
   // contributors — there is no "my questions" scope to grant, and a

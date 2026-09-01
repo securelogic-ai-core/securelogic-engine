@@ -71,6 +71,7 @@ import obligationsExportRouter from "./obligationsExport.js";
 import obligationMappingsRouter from "./obligationMappings.js";
 import obligationAssessmentsRouter from "./obligationAssessments.js";
 import evidenceRouter from "./evidence.js";
+import evidenceLifecycleRouter from "./evidenceLifecycle.js";
 import dependenciesRouter from "./dependencies.js";
 import dependencyAssessmentsRouter from "./dependencyAssessments.js";
 import vendorReviewsRouter from "./vendorReviews.js";
@@ -532,6 +533,9 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", obligationMappingsRouter);
   router.use("/api", obligationAssessmentsRouter);
   router.use("/api", evidenceRouter);
+  // VA-S4 governed evidence writer. Every route inside is behind
+  // SECURELOGIC_EVIDENCE_LIFECYCLE_V2 and 404s while the flag is off.
+  router.use("/api", evidenceLifecycleRouter);
   router.use("/api", dependenciesRouter);
   router.use("/api", dependencyAssessmentsRouter);
   // risksExportRouter MUST mount before risksRouter: its literal path

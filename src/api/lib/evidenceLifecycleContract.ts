@@ -115,6 +115,13 @@ export const EVIDENCE_LIFECYCLE_EVENT_TYPES = [
   "validity_established",
   "assurance_class_established",
   "expiry_observed",
+  /**
+   * The ARTIFACT itself was destroyed (20261084, owner ruling 2026-09-01).
+   * Not the same as "detached": detaching ends a USE, withdrawing ends the
+   * artifact. After a withdrawal this stream is the ONLY surviving record that
+   * the file existed, which is why it is a distinct event type.
+   */
+  "withdrawn",
 ] as const;
 export type EvidenceLifecycleEventType = (typeof EVIDENCE_LIFECYCLE_EVENT_TYPES)[number];
 
