@@ -3,8 +3,25 @@
 **To:** the product owner
 **From:** the platform build
 **Date:** 2026-09-01
-**Decision type:** ratification. **Nothing here is implemented, and nothing will
-be implemented until this memo is answered.**
+**Decision type:** ratification.
+
+> **STATUS 2026-09-01 — D0, D1, D15 and D16 RATIFIED as recommended and
+> IMPLEMENTED as migration `20261083`.** D2-D14 remain OPEN and are deliberately
+> not implemented: a class with no ratified policy row establishes no validity,
+> which is the fail-closed default rather than a decision. Two things the
+> ratification did NOT settle, recorded so approval is not mistaken for
+> completeness: (a) **D1 named no Type I duration**, so `soc2_type1` is seeded
+> with none at all and establishes no operating-effectiveness window — a
+> ratified number would arrive as policy version 2; (b) **D15's versioning
+> requirement is implemented at the data layer only** — the customer-facing
+> surface that would let anyone actually set a value does not exist yet, and is
+> a CUSTOMER-OPERABILITY GAP owed behind the governed writer package.
+>
+> The measurements below were also corrected after the memo was written:
+> **production holds zero evidence rows, zero assurance documents, zero policies
+> and zero pen tests**, so the "244 days stale" pressure describes STAGING
+> FIXTURES only. D1 was ratified on the annual-audit-cycle merit, and D16's
+> legacy-curation problem turned out not to exist.
 **Companion (the full analysis, unchanged):** `docs/design/VA-EVIDENCE-validity-policy-proposal.md`
 **Blocked by this memo:** wiring-plan §7 step 3, and therefore step 5.
 
