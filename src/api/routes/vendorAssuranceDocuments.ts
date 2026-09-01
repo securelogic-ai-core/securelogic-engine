@@ -48,6 +48,7 @@ import {
   isSufficiencyDetermination,
   isSufficiencyIndeterminateReason,
   determinationPrecondition,
+  evaluateContradictionVeto,
   buildDeterminationBasis,
 } from "../lib/vendorAssurance/sufficiencyVetoes.js";
 import { MAX_REVIEWER_NOTE } from "../lib/vendorAssurance/testedControlOutcome.js";
@@ -3258,7 +3259,38 @@ export async function recordSufficiencyDetermination(req: Request, res: Response
     return;
   }
 
-  const precondition = determinationPrecondition(requested, candidate.vetoes);
+  // Veto 8 (contradictory_evidence) is a REQUIREMENT-GRAIN veto and this is
+  // the first moment the grain exists — the candidate level records it
+  // NOT_EVALUABLE with exactly that reason. Count live conflicting governed
+  // judgements on the same requirement identity for the same vendor and
+  // replace that one entry with the real evaluation. When superseding an
+  // existing row on THIS resolution, that row is excluded — replacing your own
+  // prior judgement is supersession, not a contradiction.
+  const conflictRes = await pg.query<{ conflicting: number; examined: number }>(
+    `SELECT count(*) FILTER (WHERE d.determination = 'INSUFFICIENT')::int AS conflicting,
+            count(*)::int AS examined
+       FROM vendor_requirement_sufficiency_determinations d
+       JOIN vendor_assurance_documents cdoc
+         ON cdoc.id = d.document_id AND cdoc.organization_id = d.organization_id
+      WHERE d.organization_id = $1
+        AND d.superseded_at IS NULL
+        AND d.requirement_framework_key = $2
+        AND d.requirement_framework_version = $3
+        AND d.requirement_reference = $4
+        AND d.resolution_id <> $5
+        AND cdoc.vendor_id = (SELECT vendor_id FROM vendor_assurance_documents
+                               WHERE id = $6 AND organization_id = $1)`,
+    [organizationId, frameworkKey, frameworkVersion, requirementReference, resolutionId, documentId]
+  );
+  const contradiction = evaluateContradictionVeto({
+    conflictingInsufficient: conflictRes.rows[0]?.conflicting ?? 0,
+    examined: conflictRes.rows[0]?.examined ?? 0,
+  });
+  const vetoes = candidate.vetoes.map((v) =>
+    v.veto === "contradictory_evidence" ? contradiction : v
+  );
+
+  const precondition = determinationPrecondition(requested, vetoes);
   if (!precondition.ok) {
     res.status(409).json({
       error: "sufficiency_blocked_by_vetoes",
@@ -3290,7 +3322,7 @@ export async function recordSufficiencyDetermination(req: Request, res: Response
     return;
   }
 
-  const basis = buildDeterminationBasis(candidate.vetoes, {
+  const basis = buildDeterminationBasis(vetoes, {
     element_key: candidate.element_key,
     tested_control_reference: candidate.tested_control_reference,
     canonical_control_id: candidate.canonical_control_id,
@@ -3357,7 +3389,7 @@ export async function recordSufficiencyDetermination(req: Request, res: Response
 
   res.status(200).json({
     determined: inserted.rows[0],
-    vetoes: candidate.vetoes,
+    vetoes,
     establishes_requirement_coverage: false
   });
 }

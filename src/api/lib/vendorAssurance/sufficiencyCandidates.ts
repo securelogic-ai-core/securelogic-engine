@@ -14,6 +14,9 @@
  * This module reads. It writes nothing and it concludes nothing.
  */
 
+import { resolveValidityWindow, isWindowCurrent } from "../evidenceValidityPolicy.js";
+import { loadEffectivePolicy } from "../evidenceLinkWriter.js";
+import { assuranceClassForReportType } from "./assuranceCoverage.js";
 import { evaluateVetoes, type VetoEvaluation, type VetoInput } from "./sufficiencyVetoes.js";
 
 type ClientLike = {
@@ -108,6 +111,40 @@ export async function loadSufficiencyCandidates(
   const reportType = asString(effective("report_type"));
   const reportPeriodStart = asString(effective("report_period_start"));
   const reportPeriodEnd = asString(effective("report_period_end"));
+
+  // Step 3 (ratified 2026-09-01) made the report's validity a COMPUTED fact.
+  // One computation per document, through the SAME resolveValidityWindow the
+  // curation path and the counting predicate use — never a re-implementation.
+  // Every unresolvable arm stays not_establishable: an absent rule, an
+  // unclassifiable report_type or an unparseable period is never a pass.
+  const validityAssessment = await (async (): Promise<VetoInput["validityAssessment"]> => {
+    const assuranceClass = assuranceClassForReportType(reportType);
+    if (assuranceClass === null) {
+      return { state: "not_establishable", validUntil: null,
+        reason: "report_type_unclassifiable", assuranceClass: null };
+    }
+    const end = (reportPeriodEnd ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return { state: "not_establishable", validUntil: null,
+        reason: "period_end_unparseable", assuranceClass };
+    }
+    const eff = await loadEffectivePolicy(args.organizationId, assuranceClass);
+    const window = resolveValidityWindow({
+      policy: eff.policy, orgDurationMonths: eff.orgDurationMonths,
+      anchorDate: end, artifactAssertedUntil: null,
+    });
+    if (window.basis !== "policy_default") {
+      return { state: "not_establishable", validUntil: null,
+        reason: window.reason, assuranceClass };
+    }
+    const asOfDate = asOf.toISOString().slice(0, 10);
+    return {
+      state: isWindowCurrent(window, asOfDate) ? "current" : "expired",
+      validUntil: window.validUntil,
+      reason: window.reason,
+      assuranceClass,
+    };
+  })();
   const trustServicesCriteria = asStringArray(effective("trust_services_criteria"));
   const subserviceMethod = asString(effective("subservice_method"));
   const exceptionsFieldPresent = Object.prototype.hasOwnProperty.call(fields, "exceptions");
@@ -186,14 +223,25 @@ export async function loadSufficiencyCandidates(
   // NOT "this control is clean" - so we pass null and the veto records
   // NOT_EVALUABLE instead of a vacuous PASSED.
   const dimensionRes = await client.query(
-    `SELECT COUNT(*)::int AS dimensioned
+    `SELECT COUNT(*) FILTER (WHERE framework_control_id IS NOT NULL)::int AS dimensioned,
+            COUNT(*)::int AS open_total
        FROM findings
       WHERE organization_id = $1
-        AND status IN ('open', 'in_progress')
-        AND framework_control_id IS NOT NULL`,
+        AND status IN ('open', 'in_progress')`,
     [args.organizationId]
   );
-  const dimensionPopulated = (dimensionRes.rows[0]?.dimensioned ?? 0) > 0;
+  // The dimension is EVALUABLE in exactly two cases, and the distinction is
+  // load-bearing (evaluator 1.1):
+  //   - open findings exist AND at least one carries framework_control_id —
+  //     the column is populated, a join count means what it says;
+  //   - NO open finding exists at all — zero on this control is then a TRUE
+  //     fact about an empty set, not a blind join. An org with nothing open
+  //     cannot have something open on this control.
+  // The one unobservable case stays null: open findings exist and none is
+  // dimensioned, where a zero from the join would mean "nothing writes this
+  // column" — the 4C-4 trap, measured estate-wide on staging.
+  const openTotal = dimensionRes.rows[0]?.open_total ?? 0;
+  const dimensionPopulated = (dimensionRes.rows[0]?.dimensioned ?? 0) > 0 || openTotal === 0;
 
   const findingCounts = new Map<string, number>();
   if (dimensionPopulated) {
@@ -275,7 +323,11 @@ export async function loadSufficiencyCandidates(
       openFindingsOnCanonicalControl: dimensionPopulated
         ? findingCounts.get(row.canonical_control_id) ?? 0
         : null,
-      contradictoryEvidenceQueryable: false,
+      // The link substrate exists (20261081); the veto stays NOT_EVALUABLE at
+      // candidate level because the requirement grain is not chosen yet, and is
+      // re-evaluated at determination time — see evaluateContradictionVeto.
+      contradictoryEvidenceQueryable: true,
+      validityAssessment,
       asOf,
     };
     return {

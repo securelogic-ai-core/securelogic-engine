@@ -22,6 +22,7 @@ import {
   type VetoInput,
   type VetoEvaluation,
   type CoverageVeto,
+  evaluateContradictionVeto,
 } from "../lib/vendorAssurance/sufficiencyVetoes.js";
 
 /** A candidate on which every computable veto passes. Deliberately artificial. */
@@ -43,6 +44,9 @@ function cleanInput(over: Partial<VetoInput> = {}): VetoInput {
     mappingApproved: true,
     openFindingsOnCanonicalControl: 0,
     contradictoryEvidenceQueryable: true,
+    // Null = the 1.0 shape: no policy machinery consulted. Tests that exercise
+    // the 1.1 computable window pass an explicit assessment.
+    validityAssessment: null,
     asOf: new Date("2026-08-31T00:00:00Z"),
     ...over,
   };
@@ -179,7 +183,7 @@ describe("the invariant: absent substrate never reads PASSED", () => {
     expect(stateOf(e, "report_scope")).toBe("NOT_EVALUABLE");
   });
 
-  it("report_period is NEVER PASSED — there is no ratified validity policy", () => {
+  it("report_period stays NOT_EVALUABLE when no validity assessment was supplied", () => {
     const e = evaluateVetoes(cleanInput());
     expect(stateOf(e, "report_period")).toBe("NOT_EVALUABLE");
     expect(reasonOf(e, "report_period")).toBe("no_ratified_validity_policy");
@@ -199,10 +203,26 @@ describe("the invariant: absent substrate never reads PASSED", () => {
     expect(stateOf(e, "carve_out")).toBe("NOT_EVALUABLE");
   });
 
-  it("contradictory_evidence is NOT_EVALUABLE until ADR-0012 exists", () => {
+  it("contradictory_evidence stays NOT_EVALUABLE at candidate level — the grain is not chosen yet", () => {
     const e = evaluateVetoes(cleanInput({ contradictoryEvidenceQueryable: false }));
     expect(stateOf(e, "contradictory_evidence")).toBe("NOT_EVALUABLE");
     expect(reasonOf(e, "contradictory_evidence")).toBe("no_evidence_link_substrate");
+
+    // With the substrate present (post-20261081) it is STILL not evaluable
+    // here: the requirement identity is named at determination time, and the
+    // write path replaces this entry via evaluateContradictionVeto.
+    const e2 = evaluateVetoes(cleanInput());
+    expect(stateOf(e2, "contradictory_evidence")).toBe("NOT_EVALUABLE");
+    expect(reasonOf(e2, "contradictory_evidence")).toBe("requirement_grain_not_yet_chosen");
+  });
+
+  it("evaluateContradictionVeto: a conflicting live INSUFFICIENT judgement FIRES it", () => {
+    const fired = evaluateContradictionVeto({ conflictingInsufficient: 1, examined: 3 });
+    expect(fired.state).toBe("FIRED");
+    expect(fired.reason).toBe("conflicting_governed_judgement");
+    const passed = evaluateContradictionVeto({ conflictingInsufficient: 0, examined: 3 });
+    expect(passed.state).toBe("PASSED");
+    expect(passed.observed?.["live_determinations_examined"]).toBe(3);
   });
 
   it("open_findings is NOT_EVALUABLE on a null count, NEVER passed-by-zero", () => {
@@ -322,8 +342,9 @@ describe("determinationPrecondition — the owner ruling, in code", () => {
 
   it("SUFFICIENT is reachable only when EVERY veto passed", () => {
     const evals = evaluateVetoes(cleanInput());
-    // Even the deliberately clean fixture cannot pass: report_period has no
-    // ratified policy, so it is NOT_EVALUABLE by construction.
+    // Even the deliberately clean fixture cannot pass here: with a null
+    // validity assessment report_period is NOT_EVALUABLE, and
+    // contradictory_evidence awaits the requirement grain.
     expect(determinationPrecondition("SUFFICIENT", evals).ok).toBe(false);
 
     const allPassed: VetoEvaluation[] = EVALUATED_VETOES.map((veto) => ({
@@ -335,10 +356,65 @@ describe("determinationPrecondition — the owner ruling, in code", () => {
   });
 });
 
+describe("report_period 1.1 — the window is a computed fact now (D1 ratified)", () => {
+  const current = {
+    state: "current" as const, validUntil: "2026-12-31",
+    reason: "policy_window", assuranceClass: "soc2_type2",
+  };
+
+  it("PASSES inside the ratified window", () => {
+    const e = evaluateVetoes(cleanInput({ validityAssessment: current }));
+    expect(stateOf(e, "report_period")).toBe("PASSED");
+    expect(reasonOf(e, "report_period")).toBe("within_ratified_validity_window");
+  });
+
+  it("FIRES when the window has expired — stale assurance is refused, not decayed silently", () => {
+    const e = evaluateVetoes(cleanInput({
+      validityAssessment: { ...current, state: "expired" },
+    }));
+    expect(stateOf(e, "report_period")).toBe("FIRED");
+    expect(reasonOf(e, "report_period")).toBe("validity_window_expired");
+  });
+
+  it("stays NOT_EVALUABLE for a class the policy establishes no window for — a Type I, an unratified class", () => {
+    const e = evaluateVetoes(cleanInput({
+      validityAssessment: {
+        state: "not_establishable", validUntil: null,
+        reason: "policy_establishes_no_window", assuranceClass: "soc2_type1",
+      },
+    }));
+    expect(stateOf(e, "report_period")).toBe("NOT_EVALUABLE");
+    expect(reasonOf(e, "report_period")).toBe("policy_establishes_no_window");
+  });
+
+  it("an unparseable period end wins over any assessment — dates come first", () => {
+    const e = evaluateVetoes(cleanInput({ reportPeriodEnd: "31/12/2025", validityAssessment: current }));
+    expect(stateOf(e, "report_period")).toBe("NOT_EVALUABLE");
+    expect(reasonOf(e, "report_period")).toBe("period_end_unparseable");
+  });
+
+  it("with a current window AND the grain-time contradiction check, SUFFICIENT becomes REACHABLE", () => {
+    // The moment this codebase has been building toward: every veto evaluable,
+    // every veto passed, no override anywhere in the path.
+    const evals = evaluateVetoes(cleanInput({ validityAssessment: current }))
+      .map((v) => v.veto === "contradictory_evidence"
+        ? evaluateContradictionVeto({ conflictingInsufficient: 0, examined: 1 })
+        : v);
+    expect(determinationPrecondition("SUFFICIENT", evals).ok).toBe(true);
+
+    // And one conflicting judgement takes it away again.
+    const conflicted = evals.map((v) => v.veto === "contradictory_evidence"
+      ? evaluateContradictionVeto({ conflictingInsufficient: 1, examined: 2 })
+      : v);
+    expect(determinationPrecondition("SUFFICIENT", conflicted).ok).toBe(false);
+  });
+});
+
 describe("the platform's honest state today", () => {
-  it("NO candidate can reach SUFFICIENT while ADR-0012 is unbuilt", () => {
-    // Owner ruling: acceptable and expected. This test exists so that the day
-    // it stops being true, somebody has to change it deliberately.
+  it("NO candidate can reach SUFFICIENT from the evaluator alone", () => {
+    // Deliberate, still: report_period needs a validity assessment the assembly
+    // computes, and contradictory_evidence needs the requirement grain the
+    // write path supplies. The evaluator by itself can never mint a SUFFICIENT.
     const evals = evaluateVetoes(cleanInput({ contradictoryEvidenceQueryable: false }));
     const blocked = evals.filter((e) => e.state !== "PASSED").map((e) => e.veto);
     expect(blocked).toContain("contradictory_evidence");
