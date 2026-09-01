@@ -34,10 +34,13 @@ const BASE = "https://securelogic-engine-staging.onrender.com/api";
 const LABEL = "[S4-STEP5 ACCEPTANCE]";
 const PHASE = (process.env.PHASE ?? "dark").trim(); // dark | active
 const SYNTHETIC_FIXTURE_ORG = "b1a3da2d-5045-47c6-bd02-dec206c790fe";
+// Copied from 4C-4's PROVEN harness (which mirrors ASSURANCE_BEARING_FIELD_NAMES
+// in vendorAssuranceValidation.ts). Getting this list wrong makes approval 409
+// with review_incomplete — learned live on the first dark-phase run.
 const ASSURANCE_BEARING = [
   "report_type", "report_period_start", "report_period_end",
-  "trust_services_criteria", "subservice_method", "auditor_opinion",
-  "carve_outs", "cuecs",
+  "trust_services_criteria", "auditor_opinion", "controls", "exceptions",
+  "subservice_method", "subservice_organizations",
 ];
 
 function ssl() {
@@ -132,11 +135,24 @@ async function main() {
   /* ── phase-shared: one governed chain, built ONCE (dark), reused (active) ── */
   const tag = `${LABEL} chain`;
   let documentId, extractionId;
+  // extraction_id is NOT a column of vendor_assurance_documents — it lives on
+  // the extractions table. The first version of this query selected it anyway,
+  // q() swallowed the error, rows came back EMPTY, and the active phase built
+  // a second chain — which is how the read-time conflict gap was found. The
+  // lesson q() teaches every time: a fixture that failed to build is a failed
+  // proof, so REUSE must be asserted, not assumed.
   const existing = await q(
-    `SELECT d.id, d.extraction_id FROM vendor_assurance_documents d
-      WHERE d.organization_id=$1 AND d.original_filename LIKE $2 ORDER BY d.created_at DESC LIMIT 1`,
+    `SELECT d.id, e.id AS extraction_id
+       FROM vendor_assurance_documents d
+       JOIN vendor_assurance_extractions e
+         ON e.document_id = d.id AND e.organization_id = d.organization_id
+      WHERE d.organization_id=$1 AND d.original_filename LIKE $2
+      ORDER BY d.created_at DESC LIMIT 1`,
     [org, "s4-step5-%"]);
-  if (PHASE === "active" && existing.rows[0]) {
+  if (PHASE === "active") {
+    check("3a", "chain", "the dark-phase chain EXISTS to reuse (a failed lookup is a failed proof)",
+      !!existing.rows[0], existing.ok ? undefined : existing.message);
+    if (!existing.rows[0]) return;
     documentId = existing.rows[0].id; extractionId = existing.rows[0].extraction_id;
     note(4, "chain", "reusing the dark-phase document", { documentId });
   } else {
@@ -225,6 +241,45 @@ async function main() {
     // fixture hygiene: stray live rows on this identity from older runs
     await q(`UPDATE vendor_requirement_sufficiency_determinations
         SET superseded_at = NOW() WHERE organization_id=$1 AND superseded_at IS NULL`, [org]);
+
+    // The org carries stray OPEN findings with no control attribution — fixture
+    // debris from earlier validation runs. The 1.1 open_findings veto correctly
+    // refuses SUFFICIENT while they exist (an unattributed open finding makes
+    // the dimension unobservable). The CUSTOMER-OPERABLE resolution is a
+    // reviewer dealing with each finding through the product, and that is what
+    // happens here: PATCH through the route, never SQL. This is success
+    // criterion 9 in the flesh — an unresolved-findings case required work
+    // BEFORE assurance could be declared.
+    const strays = await q(
+      `SELECT id FROM findings WHERE organization_id=$1
+        AND status IN ('open','in_progress') AND framework_control_id IS NULL`, [org]);
+    for (const f of strays.rows) {
+      // The closure gate demands remediation completion first — so the
+      // remediation ACTIONS are completed through the product too. Finding ->
+      // action -> close action -> close finding: the tracked-remediation
+      // workflow, exercised rather than bypassed.
+      // Actions link to findings as source_type/source_id, not a finding_id
+      // column — the closure gate's own query (findingClosureService.ts:172)
+      // is the authority on the linkage.
+      const acts = await q(
+        `SELECT id FROM actions WHERE organization_id=$1
+          AND source_type='finding' AND source_id=$2
+          AND status IN ('open','in_progress','blocked')`, [org, f.id]);
+      for (const a of acts.rows) {
+        const done = await api("PATCH", `/actions/${a.id}`, { token: jwt, body: {
+          status: "closed",
+          note: `${LABEL} remediation completed for the validation fixture.`,
+        } });
+        check("11a", "findings", `remediation action ${a.id.slice(0, 8)} completed THROUGH THE PRODUCT`,
+          done.status === 200, { status: done.status, body: done.json ?? done.text });
+      }
+      const closed = await api("PATCH", `/findings/${f.id}`, { token: jwt, body: {
+        status: "closed",
+        decision_note: `${LABEL} validation fixture reviewed and closed before sufficiency determination.`,
+      } });
+      check("11b", "findings", `open finding ${f.id.slice(0, 8)} resolved THROUGH THE PRODUCT`,
+        closed.status === 200, { status: closed.status, body: closed.json ?? closed.text });
+    }
     const det = await api("POST",
       `/vendor-assurance/documents/${documentId}/candidates/${c.resolution_id}/sufficiency`,
       { token: jwt, body: {
@@ -236,9 +291,19 @@ async function main() {
     const allPassed = (det.json?.vetoes ?? []).every((v) => v.state === "PASSED");
     check(12, "determine", "the FIRST staging SUFFICIENT records — twelve vetoes, all PASSED",
       det.status === 200 && det.json?.determined?.determination === "SUFFICIENT" && allPassed,
-      { status: det.status, vetoes: (det.json?.vetoes ?? []).map((v) => `${v.veto}:${v.state}`) });
+      { status: det.status,
+        vetoes: (det.json?.vetoes ?? []).map((v) => `${v.veto}:${v.state}`),
+        blocking: (det.json?.blocking ?? []).map((b) => `${b.veto}:${b.state}:${b.reason}`) });
     determinationId = det.json?.determined?.id ?? null;
   } else {
+    // Fixture hygiene: the flawed 2026-09-01 active run left a live
+    // INSUFFICIENT on a second, accidental chain. Conflicting judgements now
+    // suppress coverage AT READ TIME (the product fix that run produced), so
+    // stray conflicts must be superseded for this phase to demonstrate the
+    // clean-path reduction; its own conflict/withdrawal proof follows below.
+    await q(`UPDATE vendor_requirement_sufficiency_determinations
+        SET superseded_at = NOW()
+      WHERE organization_id=$1 AND determination='INSUFFICIENT' AND superseded_at IS NULL`, [org]);
     const live = await q(`SELECT id FROM vendor_requirement_sufficiency_determinations
         WHERE organization_id=$1 AND determination='SUFFICIENT' AND superseded_at IS NULL LIMIT 1`, [org]);
     determinationId = live.rows[0]?.id ?? null;

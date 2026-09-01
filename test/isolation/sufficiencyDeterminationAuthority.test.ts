@@ -930,6 +930,50 @@ describe("step 5 — sufficient assurance reduces question depth, end to end", (
     }
   }, 120_000);
 
+  it("a live CONFLICTING INSUFFICIENT (different resolution) suppresses coverage at READ time", async () => {
+    // The gap the staging active-phase acceptance found: SUFFICIENT recorded
+    // first, INSUFFICIENT later from ANOTHER document/resolution — both live.
+    // The write-time veto cannot catch that order; the predicate must.
+    const { documentId: doc2, extractionId: ex2 } = await extractedDoc(seed.orgA.id, vendorA, "s5-conflict");
+    expect((await approve(doc2, jwtA)).status).toBe(200);
+    await request(app).post(`/api/vendor-assurance/documents/${doc2}/assurance-opinion`)
+      .set("Authorization", `Bearer ${jwtA}`)
+      .send({ opinion: "unmodified", reviewer_note: "conflict fixture" });
+    const res2 = await awaitResolutions(ex2, 1);
+    expect(res2.length).toBeGreaterThan(0);
+    // The determine route matches (resolution, requirement) against the
+    // document's own candidate list — take the pair from there, not by
+    // assuming the first resolution carries the target reference.
+    const cand2 = await candidates(doc2, jwtA);
+    const c2 = (cand2.body.candidates ?? []).find(
+      (x: { requirement_reference: string | null }) => x.requirement_reference === coveredRequirementRef
+    );
+    expect(c2, "the conflict document must produce the same requirement candidate").toBeTruthy();
+    const det2 = await determine(doc2, c2.resolution_id, jwtA, {
+      requirement_framework_key: frameworkKey,
+      requirement_framework_version: frameworkVersion,
+      requirement_reference: coveredRequirementRef,
+      determination: "INSUFFICIENT",
+    });
+    expect(det2.status, JSON.stringify(det2.body)).toBe(200);
+
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+    await pool.query("SELECT set_config('app.current_org_id', $1, false)", [seed.orgA.id]);
+    const cov = await resolveAssuranceCoverage({
+      organizationId: seed.orgA.id, engagementId: engagement,
+    });
+    expect(cov.covered).toHaveLength(0);
+    expect(cov.gaps.some((g) => g.reason === "conflicting_governed_judgement")).toBe(true);
+
+    // Clean up the conflict so the withdrawal test below exercises ITS path.
+    await pool.query(
+      `UPDATE vendor_requirement_sufficiency_determinations
+          SET superseded_at = NOW()
+        WHERE organization_id=$1 AND determination='INSUFFICIENT' AND superseded_at IS NULL`,
+      [seed.orgA.id]
+    );
+  }, 120_000);
+
   it("a SUPERSEDING INSUFFICIENT withdraws the coverage — and the historical basis survives", async () => {
     // The reviewer changes their mind: supersede with INSUFFICIENT.
     const doc = await pool.query<{ document_id: string; resolution_id: string }>(
