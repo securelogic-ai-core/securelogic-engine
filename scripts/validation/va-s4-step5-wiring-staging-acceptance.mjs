@@ -135,25 +135,24 @@ async function main() {
   /* ── phase-shared: one governed chain, built ONCE (dark), reused (active) ── */
   const tag = `${LABEL} chain`;
   let documentId, extractionId;
-  // extraction_id is NOT a column of vendor_assurance_documents — it lives on
-  // the extractions table. The first version of this query selected it anyway,
-  // q() swallowed the error, rows came back EMPTY, and the active phase built
-  // a second chain — which is how the read-time conflict gap was found. The
-  // lesson q() teaches every time: a fixture that failed to build is a failed
-  // proof, so REUSE must be asserted, not assumed.
-  const existing = await q(
-    `SELECT d.id, e.id AS extraction_id
-       FROM vendor_assurance_documents d
-       JOIN vendor_assurance_extractions e
-         ON e.document_id = d.id AND e.organization_id = d.organization_id
-      WHERE d.organization_id=$1 AND d.original_filename LIKE $2
-      ORDER BY d.created_at DESC LIMIT 1`,
-    [org, "s4-step5-%"]);
+  // ACTIVE reuses the chain THAT CARRIES the live SUFFICIENT — anchored on the
+  // determination row itself, never on filename ordering. The first rerun
+  // ordered by filename, picked a stray document from the flawed run, and its
+  // superseding INSUFFICIENT landed on the WRONG resolution. The product still
+  // behaved correctly (the read-time conflict guard withdrew coverage), but
+  // the supersession proof needs the right chain.
+  let liveSufficient = null;
   if (PHASE === "active") {
-    check("3a", "chain", "the dark-phase chain EXISTS to reuse (a failed lookup is a failed proof)",
-      !!existing.rows[0], existing.ok ? undefined : existing.message);
-    if (!existing.rows[0]) return;
-    documentId = existing.rows[0].id; extractionId = existing.rows[0].extraction_id;
+    const live = await q(
+      `SELECT id, document_id, extraction_id
+         FROM vendor_requirement_sufficiency_determinations
+        WHERE organization_id=$1 AND determination='SUFFICIENT' AND superseded_at IS NULL
+        ORDER BY determined_at DESC LIMIT 1`, [org]);
+    check("3a", "chain", "a live SUFFICIENT exists to anchor on (a failed lookup is a failed proof)",
+      !!live.rows[0], live.ok ? undefined : live.message);
+    if (!live.rows[0]) return;
+    liveSufficient = live.rows[0];
+    documentId = liveSufficient.document_id; extractionId = liveSufficient.extraction_id;
     note(4, "chain", "reusing the dark-phase document", { documentId });
   } else {
     const sha = createHash("sha256").update(`s5-${Date.now()}`).digest("hex");
@@ -304,9 +303,7 @@ async function main() {
     await q(`UPDATE vendor_requirement_sufficiency_determinations
         SET superseded_at = NOW()
       WHERE organization_id=$1 AND determination='INSUFFICIENT' AND superseded_at IS NULL`, [org]);
-    const live = await q(`SELECT id FROM vendor_requirement_sufficiency_determinations
-        WHERE organization_id=$1 AND determination='SUFFICIENT' AND superseded_at IS NULL LIMIT 1`, [org]);
-    determinationId = live.rows[0]?.id ?? null;
+    determinationId = liveSufficient?.id ?? null;
     check(12, "determine", "the dark-phase SUFFICIENT is still live", determinationId !== null);
   }
   if (!determinationId) return;
