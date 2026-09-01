@@ -30,7 +30,11 @@ const WRAPPED_FILES: Record<string, { endpoints: number; unwrapped: string[] }> 
   "controlAssessments.ts": { endpoints: 4, unwrapped: [] },
   "obligationAssessments.ts": { endpoints: 4, unwrapped: [] },
   "governanceReviews.ts": { endpoints: 3, unwrapped: [] },
-  "vendorReviews.ts": { endpoints: 4, unwrapped: [] }
+  "vendorReviews.ts": { endpoints: 4, unwrapped: [] },
+  // VA-S4 governed evidence writer: 8 endpoints — link, list links, confirm,
+  // detach, establish assurance, withdraw, and the D15 read/write pair. All
+  // asTenant-wrapped; the file uses no explicit withTenant at all.
+  "evidenceLifecycle.ts": { endpoints: 8, unwrapped: [] }
 };
 
 describe("EAR P8 — asTenant wrap coverage", () => {

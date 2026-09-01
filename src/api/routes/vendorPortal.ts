@@ -1001,6 +1001,28 @@ export async function deletePortalEvidence(req: PortalRequest, res: Response): P
       if (!win) return { code: 401 as const };
       if (!isPortalRespondable(win.state)) return { code: 409 as const };
 
+      // VA-S4: an artifact that is IN USE is not the vendor's to destroy.
+      //
+      // 20261081 made evidence_links.evidence_id ON DELETE RESTRICT, so once a
+      // reviewer has linked this file the DELETE below would fail on the
+      // constraint and surface as a 500. Refuse first, with a reason.
+      //
+      // This is also an authorization boundary, not just an error-shape fix. A
+      // vendor able to delete evidence a reviewer already confirmed could
+      // remove inconvenient proof after the fact. Destroying a linked artifact
+      // is a governed WITHDRAWAL (owner ruling 2026-09-01) performed by an
+      // attributed reviewer in the OWNING organization — POST
+      // /api/evidence/:id/withdraw — never by the vendor.
+      //
+      // Today this changes nothing: no links exist estate-wide. It is
+      // fail-closed from the moment linking starts.
+      const inUse = await pg.query(
+        `SELECT 1 FROM evidence_links
+          WHERE evidence_id = $1 AND organization_id = $2 LIMIT 1`,
+        [evidenceId, ctx.organizationId]
+      );
+      if ((inUse.rowCount ?? 0) > 0) return { code: 423 as const };
+
       // Row first, blob second. The reverse order can leave a row pointing at a
       // blob that no longer exists, which is a broken record; this order can at
       // worst leave an unreferenced blob, which is inert.
@@ -1028,6 +1050,19 @@ export async function deletePortalEvidence(req: PortalRequest, res: Response): P
       res.status(409).json({
         error: "responses_closed",
         message: "This request is no longer accepting changes.",
+      });
+      return;
+    }
+    // A DIFFERENT refusal from "responses closed", and it must say so. Two 409s
+    // that render the same message is the defect family this codebase has hit
+    // three times: a check that proves something by observing a refusal has to
+    // pin down WHY the refusal happened.
+    if (outcome.code === 423) {
+      res.status(409).json({
+        error: "evidence_in_use",
+        message:
+          "This file has been used as evidence in a review and can no longer be " +
+          "removed here. Ask your contact at the reviewing organization to withdraw it.",
       });
       return;
     }

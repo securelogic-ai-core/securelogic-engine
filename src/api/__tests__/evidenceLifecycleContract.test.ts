@@ -117,7 +117,10 @@ describe("closed vocabularies stay in lockstep with the migrations", () => {
   });
 
   it("evidence_lifecycle_events.event_type", () => {
-    const sql = migration("20261082_evidence_lifecycle_events.sql");
+    // 20261082 introduced this constraint with seven values; 20261084
+    // REDEFINES it to add 'withdrawn'. Read the migration that owns the
+    // constraint now — same reason as validity_basis above.
+    const sql = migration("20261084_evidence_governed_withdrawal.sql");
     expect(checkVocabulary(sql, "evidence_lifecycle_event_type_check").sort())
       .toEqual([...EVIDENCE_LIFECYCLE_EVENT_TYPES].sort());
   });
@@ -213,31 +216,37 @@ describe("the lifecycle flag is dark", () => {
   });
 });
 
-describe("nothing consumes the contract yet (Step 2 ships dark)", () => {
-  it("is imported by no counting path", () => {
-    // The moment this fails, someone has wired the predicate. That is a
-    // deliberate act which needs its own package, a curation path for legacy
-    // evidence, and a zero-divergence dual-read proof (ADR-0012 §5) — not a
-    // quiet import. Update this test when that package lands.
-    // Match real IMPORTS, not any textual mention: a module that merely
-    // explains in a comment why it does not import this one is not a consumer,
-    // and a grep that cannot tell the difference produces false alarms that get
-    // silenced — which is how a guard stops guarding.
+describe("the COUNTING PREDICATE is still not wired", () => {
+  it("nothing outside this module imports SQL_EVIDENCE_COUNTING or SQL_EVIDENCE_SUPERSEDED", () => {
+    // This guard was originally "nothing imports the module at all", because
+    // Step 2 shipped with no writer whatsoever. The governed writer package has
+    // now landed and legitimately imports the module's VOCABULARIES — target
+    // types, link kinds, assurance classes. That is not the thing the guard
+    // protects.
+    //
+    // What it protects is the PREDICATE. Wiring SQL_EVIDENCE_COUNTING into the
+    // closure gate, the effectiveness ladder or posture is the act that changes
+    // what counts as assured estate-wide, and it still needs its own package
+    // and ADR-0012 §5's zero-divergence dual-read proof — not a quiet import.
+    // So the guard now names the predicate rather than the file.
     const out = execSync(
-      "grep -rlE \"(from|require\\()\\s*['\\\"][^'\\\"]*evidenceLifecycleContract\" src --include=*.ts || true",
+      "grep -rlE 'SQL_EVIDENCE_(COUNTING|SUPERSEDED)' src --include=*.ts || true",
       { encoding: "utf8" }
     )
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean)
-      // the module itself and this test are not consumers
       .filter((f) => !f.endsWith("lib/evidenceLifecycleContract.ts"))
-      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"))
-      // Step 3's test imports both contracts to assert the vocabularies agree.
-      // A lockstep cross-check is not a consumer of the counting predicate —
-      // and `evidenceValidityPolicy.ts` itself deliberately imports nothing,
-      // precisely so this guard keeps its meaning.
-      .filter((f) => !f.endsWith("__tests__/evidenceValidityPolicy.test.ts"));
+      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"));
     expect(out).toEqual([]);
   });
-});
+
+  it("the writer imports vocabularies only — never the predicate", () => {
+    const writer = readFileSync(
+      resolve(__dirname, "../lib/evidenceLinkWriter.ts"),
+      "utf8"
+    );
+    expect(writer).toContain("evidenceLifecycleContract");
+    expect(writer).not.toMatch(/SQL_EVIDENCE_(COUNTING|SUPERSEDED)/);
+  });
+});;
