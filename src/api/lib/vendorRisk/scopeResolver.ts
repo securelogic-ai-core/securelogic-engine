@@ -122,6 +122,12 @@ export type ScopeResolverInput = {
    */
   assuranceCoveredRequirementIds?: string[];
   /**
+   * Per-requirement decision basis for the S4 offset, keyed by requirement id.
+   * Supplied by the step-5 wiring alongside the covered set; embedded into the
+   * S4 reason so the snapshot rides the scope item's own immutable record.
+   */
+  assuranceCoverageBasis?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /**
    * The ONE fact surface (VA-Q2). Defaults to the 13 inherent inputs mirrored
    * as `core.*` intake facts. S2 reads its `core.*` view; S5 reads all of it.
    */
@@ -140,6 +146,15 @@ export type ScopeInclusionReason = {
   rule_id: string;
   rule_family: ScopeRuleFamily;
   rationale: string;
+  /**
+   * S4 only: the decision basis for a depth reduction — which determination,
+   * which document, the window it stays good until, and the predicate version
+   * that computed it. Persisted with the scope item so a historical reduction
+   * stays explainable from its own record even after the evidence, its
+   * validity, or the determination later changes. Written by the resolver,
+   * never by a caller directly.
+   */
+  basis?: Readonly<Record<string, unknown>>;
 };
 
 export type ScopeItem = {
@@ -877,12 +892,18 @@ function resolveInternal(
   for (const item of chosen.values()) {
     if (!covered.has(item.requirement_id)) continue;
     item.depth = "confirm";
+    // The decision-basis snapshot (step 5). A reduction whose basis is
+    // missing is still a reduction the covered set demanded — the set is the
+    // authority and the basis is the record — but the wiring always supplies
+    // both together.
+    const s4Basis = input.assuranceCoverageBasis?.[item.requirement_id];
     item.reasons.push({
       rule_id: "S4.assurance",
       rule_family: "S4",
       rationale:
         "Covered by an approved, in-validity independent assurance report — asked as a " +
         "confirmation rather than in full.",
+      ...(s4Basis !== undefined ? { basis: s4Basis } : {}),
     });
   }
 

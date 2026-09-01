@@ -27,7 +27,13 @@
  */
 
 /** Bumped whenever a rule below changes, so a stored basis stays explainable. */
-export const VETO_EVALUATOR_VERSION = "sufficiency-veto-1.0";
+// 1.0 -> 1.1 (2026-09-01): report_period became COMPUTABLE (step 3 ratified
+// D1, so the assembly now supplies a validity assessment through the same
+// resolveValidityWindow machinery the curation path uses), and
+// contradictory_evidence became computable AT DETERMINATION TIME as a
+// conflicting-governed-judgement check (see evaluateContradictionVeto). The
+// stored evaluator_version is what makes an old basis readable as old.
+export const VETO_EVALUATOR_VERSION = "sufficiency-veto-1.1";
 
 export const COVERAGE_VETOES = [
   "report_scope",
@@ -232,6 +238,20 @@ export type VetoInput = {
    */
   contradictoryEvidenceQueryable: boolean;
 
+  /**
+   * Step 3's ratified validity verdict for THIS report, computed by the
+   * assembly through resolveValidityWindow — the SAME machinery the curation
+   * path and the counting predicate use, never a re-implementation here.
+   * Null = the caller consulted no policy machinery (a pre-step-3 basis), and
+   * the veto stays NOT_EVALUABLE exactly as it always was.
+   */
+  validityAssessment: {
+    state: "current" | "expired" | "not_establishable";
+    validUntil: string | null;
+    reason: string;
+    assuranceClass: string | null;
+  } | null;
+
   asOf: Date;
 };
 
@@ -295,7 +315,9 @@ export function evaluateVetoes(input: VetoInput): VetoEvaluation[] {
         reason: "period_end_unparseable",
         observed: { report_period_end: end },
       });
-    } else {
+    } else if (input.validityAssessment == null) { // null OR undefined — a caller that omitted the field consulted no policy either
+      // A caller that consulted no policy machinery gets exactly the pre-1.1
+      // outcome. The veto never invents a verdict the assembly did not compute.
       const endDate = new Date(`${end.trim()}T00:00:00Z`);
       out.push({
         veto: "report_period",
@@ -305,9 +327,34 @@ export function evaluateVetoes(input: VetoInput): VetoEvaluation[] {
           report_period_start: input.reportPeriodStart,
           report_period_end: end,
           days_since_period_end: daysBetween(endDate, input.asOf),
-          blocked_on: "ADR-0012 evidence validity (step 2) and the validity policy (step 3)",
+          blocked_on: "validity assessment not supplied by the caller",
         },
       });
+    } else {
+      // Step 3 ratified D1 (2026-09-01), so the window is now a COMPUTED fact.
+      // current -> PASSED; expired -> FIRED; a class the policy establishes no
+      // window for (a Type I, an unclassifiable report_type) stays
+      // NOT_EVALUABLE — an absent rule is never a pass.
+      const va = input.validityAssessment;
+      const endDate = new Date(`${end.trim()}T00:00:00Z`);
+      const observed = {
+        report_period_start: input.reportPeriodStart,
+        report_period_end: end,
+        days_since_period_end: daysBetween(endDate, input.asOf),
+        assurance_class: va.assuranceClass,
+        valid_until: va.validUntil,
+        window_reason: va.reason,
+      };
+      if (va.state === "current") {
+        out.push({ veto: "report_period", state: "PASSED",
+          reason: "within_ratified_validity_window", observed });
+      } else if (va.state === "expired") {
+        out.push({ veto: "report_period", state: "FIRED",
+          reason: "validity_window_expired", observed });
+      } else {
+        out.push({ veto: "report_period", state: "NOT_EVALUABLE",
+          reason: va.reason, observed });
+      }
     }
   }
 
@@ -439,16 +486,25 @@ export function evaluateVetoes(input: VetoInput): VetoEvaluation[] {
     }
   }
 
-  // 8. contradictory evidence — other evidence saying the opposite.
+  // 8. contradictory evidence — another governed judgement saying the opposite.
   //
-  // NO SUBSTRATE. `evidence_links` does not exist and `evidence` carries no
-  // validity columns; ADR-0012 is step 2 and is not built. Permanently
-  // NOT_EVALUABLE until it is, which is precisely why no candidate can reach
-  // SUFFICIENT today — see the design doc.
+  // A REQUIREMENT-GRAIN veto, and the candidate level has no requirement grain:
+  // the org-side requirement is named at DETERMINATION time, not here. So the
+  // candidate view stays NOT_EVALUABLE with the reason that is actually true,
+  // and the write path re-evaluates this one veto with the grain known — see
+  // evaluateContradictionVeto. The 1.0 substrate reason is kept for callers
+  // that report the substrate absent.
   {
     out.push(
       input.contradictoryEvidenceQueryable
-        ? { veto: "contradictory_evidence", state: "PASSED", reason: "no_contradictory_evidence_linked" }
+        ? {
+            veto: "contradictory_evidence",
+            state: "NOT_EVALUABLE",
+            reason: "requirement_grain_not_yet_chosen",
+            observed: {
+              note: "Evaluated at determination time, when the requirement identity exists.",
+            },
+          }
         : {
             veto: "contradictory_evidence",
             state: "NOT_EVALUABLE",
@@ -575,6 +631,54 @@ export type DeterminationPrecondition =
  * `INSUFFICIENT` and `INDETERMINATE` are always recordable — refusing to let a
  * reviewer say "no" or "cannot tell" would be the wrong direction of caution.
  */
+/**
+ * The write-time evaluation of veto 8 (contradictory_evidence), 1.1.
+ *
+ * "Contradictory evidence" is judged from GOVERNED HUMAN JUDGEMENTS: a live
+ * INSUFFICIENT determination on the SAME requirement identity for the SAME
+ * vendor is another reviewer (or the same one, earlier) saying the opposite,
+ * and a SUFFICIENT must not walk past it silently. This is deterministic and
+ * human-authored — no AI, no inference.
+ *
+ * KNOWN LIMIT, stated rather than papered over: link-level contradiction has no
+ * vocabulary yet — evidence_links.link_kind is only origin|reuse, so an
+ * artifact cannot be RECORDED as contradicting anything. When such a vocabulary
+ * is ratified this helper is where it is read. Until then the determinations
+ * dimension is the one contradiction source that actually exists, and it is
+ * never vacuous here: the dimension being consulted is the very table the
+ * determination is about to be written into.
+ *
+ * `conflictingInsufficient` must be a COUNT the caller actually took. There is
+ * no null arm: a caller that cannot count must not call this, and the
+ * candidate-level NOT_EVALUABLE stands instead.
+ */
+export function evaluateContradictionVeto(args: {
+  conflictingInsufficient: number;
+  examined: number;
+}): VetoEvaluation {
+  if (args.conflictingInsufficient > 0) {
+    return {
+      veto: "contradictory_evidence",
+      state: "FIRED",
+      reason: "conflicting_governed_judgement",
+      observed: {
+        conflicting_insufficient: args.conflictingInsufficient,
+        live_determinations_examined: args.examined,
+      },
+    };
+  }
+  return {
+    veto: "contradictory_evidence",
+    state: "PASSED",
+    reason: "no_conflicting_governed_judgement",
+    observed: {
+      conflicting_insufficient: 0,
+      live_determinations_examined: args.examined,
+      source: "vendor_requirement_sufficiency_determinations (live rows, same requirement identity, same vendor)",
+    },
+  };
+}
+
 export function determinationPrecondition(
   requested: SufficiencyDetermination,
   evaluations: readonly VetoEvaluation[]

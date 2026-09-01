@@ -64,6 +64,8 @@ import {
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
 import { resolveEngagementScopeWithApplicability } from "../lib/vendorRisk/scopeResolver.js";
+import { resolveAssuranceCoverage, type AssuranceCoverage } from "../lib/vendorAssurance/assuranceCoverage.js";
+import { evidenceLifecycleV2Enabled } from "../lib/evidenceLifecycleFlag.js";
 import { recordApplicability } from "../lib/vendorRisk/applicabilityStore.js";
 import { summarizeDomains } from "../lib/vendorRisk/requirementDomain.js";
 import { resolveFacts } from "../lib/vendorRisk/factResolver.js";
@@ -763,6 +765,55 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
     await mirrorSubjectFacts(pg, organizationId, subject, inherent);
     const factRows = await loadFactRows(pg, organizationId, subject, { statuses: ["accepted"] });
 
+    // ── VA-S4 step 5 — governed assurance coverage ─────────────────────────
+    //
+    // DUAL-READ FIRST, AUTHORITY SECOND (ADR-0012 §5). The predicate is
+    // computed on EVERY resolve and logged; it is APPLIED only behind
+    // SECURELOGIC_EVIDENCE_LIFECYCLE_V2. While the flag is off the resolution
+    // is byte-identical to pre-step-5 output — the legacy coverage source was
+    // the empty set, so zero divergence means the log shows covered_count 0
+    // until a human has actually curated, linked and determined sufficiency.
+    // The audit event below persists the comparison, so the divergence record
+    // survives log retention.
+    //
+    // FAIL-CLOSED, in the safe direction: a coverage failure yields NO
+    // reduction — the vendor is asked in full, which is the pre-S4 behaviour,
+    // never a crash and never a silent pass.
+    let s4Coverage: AssuranceCoverage | null = null;
+    try {
+      s4Coverage = await resolveAssuranceCoverage({ organizationId, engagementId: id });
+    } catch (err) {
+      logger.error({ event: "s4_coverage_failed", engagementId: id, err },
+        "S4 assurance coverage computation failed — resolving with no reduction");
+    }
+    const s4Applied = evidenceLifecycleV2Enabled(process.env) && s4Coverage !== null;
+    if (s4Coverage) {
+      logger.info({
+        event: "s4_coverage_dual_read",
+        engagementId: id,
+        applied: s4Applied,
+        covered_count: s4Coverage.covered.length,
+        gap_count: s4Coverage.gaps.length,
+        coverage_version: s4Coverage.version,
+        as_of: s4Coverage.asOf,
+      }, "S4 coverage dual-read");
+    }
+    const s4BasisByRequirement: Record<string, Record<string, unknown>> = {};
+    if (s4Applied && s4Coverage) {
+      for (const c of s4Coverage.covered) {
+        s4BasisByRequirement[c.requirementId] = {
+          determination_id: c.determinationId,
+          document_id: c.documentId,
+          valid_until: c.validUntil,
+          validity_source: c.validitySource,
+          report_period_end: c.reportPeriodEnd,
+          assurance_class: c.assuranceClass,
+          coverage_version: s4Coverage.version,
+          as_of: s4Coverage.asOf,
+        };
+      }
+    }
+
     const { resolution, applicability } = resolveEngagementScopeWithApplicability({
       tier: row.assessment_tier as never,
       inherent,
@@ -774,6 +825,12 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       scopeRuleVersion: typeof row.scope_rule_version === "string" ? row.scope_rule_version : "1.0.0",
       requirements: requirements.rows,
       obligationEdges: edges.rows,
+      ...(s4Applied && s4Coverage
+        ? {
+            assuranceCoveredRequirementIds: s4Coverage.covered.map((c) => c.requirementId),
+            assuranceCoverageBasis: s4BasisByRequirement,
+          }
+        : {}),
     });
 
     // Freeze. Delete-then-insert inside the one tenant transaction the asTenant
@@ -848,6 +905,17 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       payload: {
         item_count: resolution.items.length,
         excluded_count: resolution.excluded.length,
+        // ADR-0012 §5: the dual-read comparison, PERSISTED — the divergence
+        // evidence must outlive log retention. applied=false with a nonzero
+        // covered_count is a divergence candidate to investigate before flip.
+        s4_assurance: s4Coverage === null ? { computed: false } : {
+          computed: true,
+          applied: s4Applied,
+          covered_count: s4Coverage.covered.length,
+          gap_count: s4Coverage.gaps.length,
+          coverage_version: s4Coverage.version,
+          as_of: s4Coverage.asOf,
+        },
         scope_rule_version: resolution.scope_rule_version,
         tier: resolution.tier,
       },
@@ -2451,9 +2519,63 @@ const chain = [
 
 router.post("/vendor-engagements", ...chain, asTenant(createEngagement));
 router.get("/vendor-engagements", ...chain, asTenant(listEngagements));
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/assurance-coverage
+
+   The assurance-gap view: which of this engagement's requirements already
+   carry sufficient, current, governed assurance — and, just as importantly,
+   which SUFFICIENT determinations do NOT count right now and exactly why
+   (identity unresolved, class unclassifiable, no ratified policy, window
+   expired). Read-only, computed by the same counting predicate the scope
+   resolver applies, so what the reviewer sees is what the composition will do.
+   ========================================================= */
+export async function getAssuranceCoverage(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query(
+      `SELECT 1 FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) { res.status(404).json({ error: "engagement_not_found" }); return; }
+
+    const coverage = await resolveAssuranceCoverage({ organizationId, engagementId: id });
+    res.status(200).json({
+      engagement_id: id,
+      coverage_version: coverage.version,
+      as_of: coverage.asOf,
+      applied_at_composition: evidenceLifecycleV2Enabled(process.env),
+      covered: coverage.covered.map((c) => ({
+        requirement_id: c.requirementId,
+        requirement_reference: c.requirementReference,
+        determination_id: c.determinationId,
+        document_id: c.documentId,
+        valid_until: c.validUntil,
+        validity_source: c.validitySource,
+        assurance_class: c.assuranceClass,
+      })),
+      gaps: coverage.gaps.map((g) => ({
+        determination_id: g.determinationId,
+        requirement_reference: g.requirementReference,
+        requirement_id: g.requirementId,
+        reason: g.reason,
+        detail: g.detail,
+      })),
+    });
+  } catch (err) {
+    logger.error({ event: "assurance_coverage_read_failed", engagementId: id, err },
+      "Assurance coverage read failed");
+    res.status(500).json({ error: "assurance_coverage_unavailable" });
+  }
+}
+
 router.get("/vendor-engagements/:id", ...chain, asTenant(getEngagement));
 router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInherent));
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
+router.get("/vendor-engagements/:id/assurance-coverage", ...chain, asTenant(getAssuranceCoverage));
 router.get("/vendor-engagements/:id/facts", ...chain, asTenant(getEngagementFacts));
 router.put("/vendor-engagements/:id/facts", ...chain, asTenant(putEngagementFacts));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));

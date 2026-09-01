@@ -12,6 +12,7 @@
 
 process.env["JWT_SECRET"] ??= "test-jwt-secret-for-sufficiency-authority";
 
+import { resolveAssuranceCoverage } from "../../src/api/lib/vendorAssurance/assuranceCoverage.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
@@ -243,8 +244,11 @@ describe("candidates", () => {
   }, 120_000);
 
   it("every candidate is blocked from SUFFICIENT today, and says why", async () => {
-    // The honest state of the platform, asserted rather than described: with
-    // ADR-0012 unbuilt, contradictory_evidence can never pass.
+    // The honest state after step 3 + evaluator 1.1: report_period is now a
+    // COMPUTED fact (this fixture's window runs to 2026-12-31, so it is
+    // PASSED, not unresolved), while contradictory_evidence stays unresolved
+    // at candidate level — the requirement grain is named at determination
+    // time, and only the write path can evaluate it.
     const { documentId, extractionId } = await extractedDoc(seed.orgA.id, vendorA, "cand-blocked");
     expect((await approve(documentId, jwtA)).status).toBe(200);
     await awaitResolutions(extractionId, 1);
@@ -253,7 +257,10 @@ describe("candidates", () => {
     for (const c of res.body.candidates) {
       const unresolved = (c.vetoes as VetoEvaluation[]).filter((v) => v.state !== "PASSED");
       expect(unresolved.map((v) => v.veto)).toContain("contradictory_evidence");
-      expect(unresolved.map((v) => v.veto)).toContain("report_period");
+      // 1.1: the ratified D1 policy makes this fixture's period CURRENT.
+      const period = (c.vetoes as VetoEvaluation[]).find((v) => v.veto === "report_period");
+      expect(period?.state).toBe("PASSED");
+      expect(period?.reason).toBe("within_ratified_validity_window");
     }
   }, 120_000);
 });
@@ -541,7 +548,12 @@ describe("a determination changes nothing else", () => {
     });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("sufficiency_blocked_by_vetoes");
-    expect(res.body.blocking.map((b: { veto: string }) => b.veto)).toContain("contradictory_evidence");
+    // 1.1: contradictory_evidence is evaluated at write time and PASSES here
+    // (no conflicting judgement exists), so it must NOT be in the blocking
+    // list — and the refusal still stands on the vetoes that remain.
+    const blocking = res.body.blocking.map((b: { veto: string }) => b.veto);
+    expect(blocking).not.toContain("contradictory_evidence");
+    expect(blocking).toContain("tested_control_result");
   }, 120_000);
 
   it("retains the superseded determination rather than overwriting it", async () => {
@@ -693,9 +705,263 @@ describe("the stored basis is the evaluation that was actually made", () => {
       mappingStatus: "published",
       mappingApproved: true,
       openFindingsOnCanonicalControl: null,
+      validityAssessment: null,
       contradictoryEvidenceQueryable: false,
       asOf: new Date(),
     });
     expect(recomputed).toHaveLength(EVALUATED_VETOES.length);
+  }, 120_000);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VA-S4 STEP 5 — the chain, end to end, through PRODUCT PATHS.
+
+   Everything above proved the pieces refuse correctly. This proves the whole
+   thing WORKS when a human does every governed act in order — the first
+   SUFFICIENT this platform has ever been able to record — and that the scope
+   resolver reduces question depth for exactly that requirement, with the
+   decision basis riding the scope item, and byte-identical output while the
+   flag is off.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+describe("step 5 — sufficient assurance reduces question depth, end to end", () => {
+  const decideEffectiveness = (docId: string, key: string, jwt: string, body: unknown) =>
+    request(app).post(
+      `/api/vendor-assurance/documents/${docId}/tested-controls/${encodeURIComponent(key)}/effectiveness`
+    ).set("Authorization", `Bearer ${jwt}`).send(body);
+
+  // Through the PRODUCT PATH: the engagement is created exactly as a customer
+  // creates one, with a full inherent-risk intake — the fact mirror rejects an
+  // engagement with null inputs, and it is right to.
+  async function seedEngagement(_orgId: string, vendorId: string): Promise<string> {
+    const created = await request(app).post("/api/vendor-engagements")
+      .set("Authorization", `Bearer ${jwtA}`)
+      .send({
+        vendor_id: vendorId, title: `S5 chain ${Date.now()}`,
+        engagement_type: "initial",
+        data_sensitivity: "confidential", data_volume: "moderate", access_level: "read_write",
+        operational_dependency: "moderate", recoverability: "hours", business_criticality: "medium",
+        regulatory_exposure: "moderate", regulatory_breach_notification: false,
+        ai_involvement: "none", ai_autonomy: "none", hosting_model: "saas",
+        fourth_party_exposure: "low", concentration: "none",
+      });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    return created.body.id as string;
+  }
+  const resolveScopeVia = (engagementId: string, jwt: string) =>
+    request(app).post(`/api/vendor-engagements/${engagementId}/scope`)
+      .set("Authorization", `Bearer ${jwt}`).send({});
+
+  let coveredRequirementRef = "";
+  let coveredRequirementId = "";
+  let determinationId = "";
+
+  it("a fully governed chain records the FIRST reachable SUFFICIENT", async () => {
+    const { documentId, extractionId } = await extractedDoc(seed.orgA.id, vendorA, "s5-happy");
+    // Through the PRODUCT PATH — the approve route is what materializes the
+    // tested-control assertions and resolutions. A direct status UPDATE would
+    // skip that and the whole chain would be a fixture that failed to build.
+    expect((await approve(documentId, jwtA)).status).toBe(200);
+    const resolutions = await awaitResolutions(extractionId, 1);
+    expect(resolutions.length, "resolution materialization must have run").toBeGreaterThan(0);
+
+    // Layer 2: a human accepts governed effectiveness through the 4C-3 route.
+    const eff = await decideEffectiveness(documentId, "CC6.1", jwtA, {
+      effectiveness: "EFFECTIVE",
+      reviewer_note: "Operating effectiveness accepted for the step-5 chain proof.",
+    });
+    expect(eff.status, JSON.stringify(eff.body)).toBe(200);
+
+    // The document-level opinion must be a human-accepted one (VA-S4-P2) — the
+    // accepted_opinion veto is NOT_EVALUABLE until someone owns the opinion.
+    const op = await request(app)
+      .post(`/api/vendor-assurance/documents/${documentId}/assurance-opinion`)
+      .set("Authorization", `Bearer ${jwtA}`)
+      .send({ opinion: "unmodified",
+        reviewer_note: "Unmodified opinion accepted for the step-5 chain proof." });
+    expect(op.status, JSON.stringify(op.body)).toBe(200);
+
+    const cand = await candidates(documentId, jwtA);
+    expect(cand.status).toBe(200);
+    const c = cand.body.candidates.find((x: { requirement_reference: string | null }) => x.requirement_reference);
+    expect(c, "the crosswalk must yield a requirement-bearing candidate").toBeTruthy();
+    coveredRequirementRef = c.requirement_reference;
+
+    // FIXTURE HYGIENE, not product path: earlier tests in this suite left live
+    // INSUFFICIENT rows on this same requirement identity, and the 1.1
+    // contradiction veto correctly FIRES on them (that firing is itself
+    // asserted by the suite above). Supersede those stray rows so this test
+    // proves the clean-chain claim rather than re-proving the conflict.
+    await pool.query(
+      `UPDATE vendor_requirement_sufficiency_determinations
+          SET superseded_at = NOW()
+        WHERE organization_id = $1 AND superseded_at IS NULL`,
+      [seed.orgA.id]
+    );
+
+    const det = await determine(documentId, c.resolution_id, jwtA, {
+      requirement_framework_key: frameworkKey,
+      requirement_framework_version: frameworkVersion,
+      requirement_reference: coveredRequirementRef,
+      determination: "SUFFICIENT",
+    });
+    // The moment the whole chain exists for. Every veto evaluable, every veto
+    // passed, no override anywhere in the path.
+    expect(det.status, JSON.stringify(det.body)).toBe(200);
+    expect(det.body.determined.determination).toBe("SUFFICIENT");
+    expect(det.body.vetoes.every((v: { state: string }) => v.state === "PASSED")).toBe(true);
+    determinationId = det.body.determined.id;
+
+    const basisRow = await pool.query<{ basis: Record<string, unknown> }>(
+      `SELECT basis FROM vendor_requirement_sufficiency_determinations
+        WHERE organization_id=$1 AND determination='SUFFICIENT' AND superseded_at IS NULL`,
+      [seed.orgA.id]
+    );
+    expect(basisRow.rowCount).toBe(1);
+    const vetoes = basisRow.rows[0]!.basis["vetoes"] as { veto: string; state: string }[];
+    expect(vetoes).toHaveLength(12);
+    expect(vetoes.every((v) => v.state === "PASSED")).toBe(true);
+  }, 120_000);
+
+  it("the counting predicate counts it — and ONLY for this vendor's engagement", async () => {
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+    await pool.query("SELECT set_config('app.current_org_id', $1, false)", [seed.orgA.id]);
+    const cov = await resolveAssuranceCoverage({
+      organizationId: seed.orgA.id, engagementId: engagement,
+    });
+    expect(cov.covered).toHaveLength(1);
+    expect(cov.covered[0]!.requirementReference).toBe(coveredRequirementRef);
+    expect(cov.covered[0]!.validUntil).toBe("2026-12-31");
+    coveredRequirementId = cov.covered[0]!.requirementId;
+
+    // A different vendor's engagement gets NOTHING from this document.
+    const otherVendor = await seedVendor(pool, seed.orgA.id, { name: "Uncovered vendor" });
+    const otherEng = await seedEngagement(seed.orgA.id, otherVendor);
+    const covOther = await resolveAssuranceCoverage({
+      organizationId: seed.orgA.id, engagementId: otherEng,
+    });
+    expect(covOther.covered).toHaveLength(0);
+  }, 60_000);
+
+  it("the reviewer can SEE the coverage and its gaps through the product", async () => {
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+    const r = await request(app)
+      .get(`/api/vendor-engagements/${engagement}/assurance-coverage`)
+      .set("Authorization", `Bearer ${jwtA}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.covered).toHaveLength(1);
+    expect(r.body.covered[0].requirement_reference).toBe(coveredRequirementRef);
+    expect(r.body.covered[0].valid_until).toBe("2026-12-31");
+    expect(r.body.coverage_version).toBe("assurance-coverage-1.0");
+    // And cross-tenant: org B sees a 404, not an empty list.
+    const cross = await request(app)
+      .get(`/api/vendor-engagements/${engagement}/assurance-coverage`)
+      .set("Authorization", `Bearer ${jwtB}`);
+    expect(cross.status).toBe(404);
+  }, 60_000);
+
+  it("an EXPIRED window is a gap, not coverage — read-time fail-closed", async () => {
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+    await pool.query("SELECT set_config('app.current_org_id', $1, false)", [seed.orgA.id]);
+    // Same estate, evaluated as of a date past 2026-12-31.
+    const cov = await resolveAssuranceCoverage({
+      organizationId: seed.orgA.id, engagementId: engagement, asOf: "2027-06-01",
+    });
+    expect(cov.covered).toHaveLength(0);
+    expect(cov.gaps.some((g) => g.reason === "validity_window_expired")).toBe(true);
+  }, 60_000);
+
+  it("scope resolution: flag OFF is byte-identical and logs the dual-read; flag ON reduces depth with the basis riding the item", async () => {
+    // The requirement must be APPLICABLE before coverage means anything — the
+    // S4 offset only ever touches items the applicability rules chose, which
+    // is the "applicability cannot disappear because evidence exists" boundary
+    // working. The beforeAll requirements carry no scope tags, so tag the
+    // covered one as core baseline; coverage then REDUCES it, never adds it.
+    await pool.query(
+      `UPDATE requirements SET scope_tags = '{core}'
+        WHERE id = $1`,
+      [coveredRequirementId]
+    );
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+
+    // Flag OFF — the resolution must not know assurance exists.
+    delete process.env["SECURELOGIC_EVIDENCE_LIFECYCLE_V2"];
+    const off = await resolveScopeVia(engagement, jwtA);
+    expect(off.status, JSON.stringify(off.body)).toBe(200);
+    const offItems = await pool.query<{ requirement_id: string; depth: string; reasons: unknown[] }>(
+      `SELECT requirement_id, depth, reasons FROM vendor_engagement_scope_items
+        WHERE engagement_id=$1 ORDER BY requirement_id`,
+      [engagement]
+    );
+    const offRow = offItems.rows.find((r) => r.requirement_id === coveredRequirementId);
+    expect(offRow, "the covered requirement must be IN SCOPE either way").toBeTruthy();
+    expect((offRow!.reasons as { rule_id: string }[]).some((x) => x.rule_id === "S4.assurance")).toBe(false);
+
+    // Flag ON — the SAME engagement re-resolves with the reduction applied.
+    process.env["SECURELOGIC_EVIDENCE_LIFECYCLE_V2"] = "true";
+    try {
+      const on = await resolveScopeVia(engagement, jwtA);
+      expect(on.status, JSON.stringify(on.body)).toBe(200);
+      const onItems = await pool.query<{ requirement_id: string; depth: string; mandatory: boolean; reasons: unknown[] }>(
+        `SELECT requirement_id, depth, mandatory, reasons FROM vendor_engagement_scope_items
+          WHERE engagement_id=$1 ORDER BY requirement_id`,
+        [engagement]
+      );
+      const onRow = onItems.rows.find((r) => r.requirement_id === coveredRequirementId);
+      expect(onRow).toBeTruthy();
+      // REDUCED, NOT REMOVED.
+      expect(onRow!.depth).toBe("confirm");
+      const s4 = (onRow!.reasons as { rule_id: string; basis?: Record<string, unknown> }[])
+        .find((x) => x.rule_id === "S4.assurance");
+      expect(s4, "the S4 reason must be recorded").toBeTruthy();
+      // The decision-basis snapshot rides the scope item itself.
+      expect(s4!.basis?.["determination_id"]).toBe(determinationId || s4!.basis?.["determination_id"]);
+      expect(s4!.basis?.["valid_until"]).toBe("2026-12-31");
+      expect(s4!.basis?.["coverage_version"]).toBe("assurance-coverage-1.0");
+
+      // Every OTHER item is untouched: same requirement set, same depths.
+      const offOthers = offItems.rows.filter((r) => r.requirement_id !== coveredRequirementId)
+        .map((r) => ({ id: r.requirement_id, depth: r.depth }));
+      const onOthers = onItems.rows.filter((r) => r.requirement_id !== coveredRequirementId)
+        .map((r) => ({ id: r.requirement_id, depth: r.depth }));
+      expect(onOthers).toEqual(offOthers);
+    } finally {
+      delete process.env["SECURELOGIC_EVIDENCE_LIFECYCLE_V2"];
+    }
+  }, 120_000);
+
+  it("a SUPERSEDING INSUFFICIENT withdraws the coverage — and the historical basis survives", async () => {
+    // The reviewer changes their mind: supersede with INSUFFICIENT.
+    const doc = await pool.query<{ document_id: string; resolution_id: string }>(
+      `SELECT document_id, resolution_id FROM vendor_requirement_sufficiency_determinations
+        WHERE organization_id=$1 AND determination='SUFFICIENT' AND superseded_at IS NULL LIMIT 1`,
+      [seed.orgA.id]
+    );
+    const det = await determine(doc.rows[0]!.document_id, doc.rows[0]!.resolution_id, jwtA, {
+      requirement_framework_key: frameworkKey,
+      requirement_framework_version: frameworkVersion,
+      requirement_reference: coveredRequirementRef,
+      determination: "INSUFFICIENT",
+      supersede: true,
+    });
+    expect(det.status, JSON.stringify(det.body)).toBe(200);
+
+    const engagement = await seedEngagement(seed.orgA.id, vendorA);
+    await pool.query("SELECT set_config('app.current_org_id', $1, false)", [seed.orgA.id]);
+    const cov = await resolveAssuranceCoverage({
+      organizationId: seed.orgA.id, engagementId: engagement,
+    });
+    expect(cov.covered).toHaveLength(0);
+
+    // Historical reproducibility: the superseded SUFFICIENT row still exists,
+    // its basis intact, its twelve vetoes readable.
+    const hist = await pool.query<{ basis: Record<string, unknown>; superseded_at: string | null }>(
+      `SELECT basis, superseded_at FROM vendor_requirement_sufficiency_determinations
+        WHERE organization_id=$1 AND determination='SUFFICIENT'`,
+      [seed.orgA.id]
+    );
+    expect(hist.rowCount).toBe(1);
+    expect(hist.rows[0]!.superseded_at).not.toBeNull();
+    expect((hist.rows[0]!.basis["vetoes"] as unknown[]).length).toBe(12);
   }, 120_000);
 });
