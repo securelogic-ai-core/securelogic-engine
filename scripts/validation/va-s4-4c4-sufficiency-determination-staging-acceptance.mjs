@@ -524,28 +524,44 @@ async function main() {
   // refusal below is demonstrably about humanity and not about auth.
   const rawKey = `sl_${randomBytes(24).toString("hex")}`;
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
+  // The column is `label`, not `name`, and there is no `key_prefix`. The first
+  // run of this harness got that wrong, the INSERT failed silently through the
+  // error-swallowing `q()`, and the two proofs below degraded to 401s.
   const keyIns = await q(
-    `INSERT INTO api_keys (organization_id, name, key_hash, key_prefix, status)
-     VALUES ($1,$2,$3,$4,'active') RETURNING id`,
-    [org, `${LABEL} machine adversary`, keyHash, rawKey.slice(0, 12)]
+    `INSERT INTO api_keys (organization_id, label, key_hash, entitlement_level, status)
+     VALUES ($1,$2,$3,'premium','active') RETURNING id`,
+    [org, `${LABEL} machine adversary`, keyHash]
   );
   if (keyIns.rows[0]) created.apiKeys.push(keyIns.rows[0].id);
+  // A fixture that failed to build is a FAILED PROOF, not a skipped one. Assert
+  // it before relying on it, or every check downstream reports on nothing.
+  check(41, "authority", "the adversary API key fixture was actually created",
+    keyIns.ok === true && keyIns.rows.length === 1, keyIns.message ?? null);
 
   const keyRead = await api("GET", `/vendor-assurance/documents/${documentId}/sufficiency-candidates`,
     { apiKey: rawKey });
-  check(41, "authority", "the machine adversary IS authenticated and entitled (200 on a read)",
+  check(42, "authority", "the machine adversary IS authenticated and entitled (200 on a read)",
     keyRead.status === 200, { status: keyRead.status });
 
   const keyWrite = await api(
     "POST", `/vendor-assurance/documents/${documentId}/candidates/${first.resolution_id}/sufficiency`,
     { apiKey: rawKey, body: { ...reqBody, determination: "INSUFFICIENT", supersede: true } }
   );
-  check(42, "authority", "an API key holding the capability is STILL refused as non-human",
+  check(43, "authority", "an API key holding the capability is STILL refused as non-human",
     keyWrite.status === 403 && keyWrite.json?.error === "human_reviewer_required",
     { status: keyWrite.status, error: keyWrite.json?.error });
-  check(43, "authority", "and the refusal is not a consent or capability failure wearing its clothes",
-    keyWrite.json?.error !== "consent_required" && keyWrite.json?.error !== "capability_required",
-    keyWrite.json?.error);
+  // GATED on the read above. On the first run this passed while the key was
+  // invalid: the error was `invalid_api_key`, which is neither of the two values
+  // it excluded, so a refusal for entirely the wrong reason read as a proof.
+  // That is the defect class #963 fixed for 4C-3, reproduced here. An auth
+  // failure must FAIL this check, never satisfy it.
+  check(44, "authority", "and the refusal is not an auth, consent or capability failure wearing its clothes",
+    keyRead.status === 200
+      && keyWrite.json?.error !== "invalid_api_key"
+      && keyWrite.json?.error !== "no_active_api_key"
+      && keyWrite.json?.error !== "consent_required"
+      && keyWrite.json?.error !== "capability_required",
+    { read: keyRead.status, write_error: keyWrite.json?.error });
 
   /* ── 7. tenant isolation ────────────────────────────────────────────── */
   const other = await q(
@@ -561,16 +577,16 @@ async function main() {
       other.rows[0].session_epoch ?? 0);
     const cross = await api("GET", `/vendor-assurance/documents/${documentId}/sufficiency-candidates`,
       { token: otherJwt });
-    check(44, "isolation", "another tenant cannot read these candidates",
+    check(45, "isolation", "another tenant cannot read these candidates",
       cross.status === 404, { status: cross.status });
     const crossWrite = await api(
       "POST", `/vendor-assurance/documents/${documentId}/candidates/${first.resolution_id}/sufficiency`,
       { token: otherJwt, body: { ...reqBody, determination: "INSUFFICIENT" } }
     );
-    check(45, "isolation", "another tenant cannot determine on this candidate",
+    check(46, "isolation", "another tenant cannot determine on this candidate",
       crossWrite.status === 404, { status: crossWrite.status });
   } else {
-    note(44, "isolation", "no second premium tenant available on this database - NOT PROVEN HERE");
+    note(45, "isolation", "no second premium tenant available on this database - NOT PROVEN HERE");
   }
 
   /* ── 8. corpus notes, REAL and SYNTHETIC reported separately ────────── */
@@ -581,20 +597,20 @@ async function main() {
        JOIN vendor_assurance_extractions e ON e.document_id = d.id
       GROUP BY 1 ORDER BY 1`
   );
-  note(46, "corpus", "extractions by tenant class", corpus.rows);
+  note(47, "corpus", "extractions by tenant class", corpus.rows);
 
   const determinations = await q(
     `SELECT determination, COUNT(*)::int n
        FROM vendor_requirement_sufficiency_determinations
       WHERE superseded_at IS NULL GROUP BY 1 ORDER BY 1`
   );
-  note(47, "corpus", "live determinations estate-wide", determinations.rows);
+  note(48, "corpus", "live determinations estate-wide", determinations.rows);
 
   const anySufficient = await q(
     `SELECT COUNT(*)::int n FROM vendor_requirement_sufficiency_determinations
       WHERE determination = 'SUFFICIENT'`
   );
-  check(48, "corpus", "ZERO SUFFICIENT determinations exist - the expected, ruled state",
+  check(49, "corpus", "ZERO SUFFICIENT determinations exist - the expected, ruled state",
     anySufficient.rows[0]?.n === 0, anySufficient.rows[0] ?? null);
 }
 
@@ -615,17 +631,22 @@ async function cleanup() {
   for (const id of created.apiKeys) {
     await q(`UPDATE api_keys SET status = 'revoked', revoked_at = NOW() WHERE id = $1`, [id]);
   }
+  // Queried by `label`. The first run asked for a column that does not exist, so
+  // the query errored, `rows[0]` was undefined, and the check reported FAIL with
+  // a null detail — right answer, wrong reason. `ok` is asserted too, so a broken
+  // query can never be mistaken for a clean estate.
   const stillActive = await q(
-    `SELECT COUNT(*)::int n FROM api_keys WHERE name LIKE $1 AND status = 'active'`, [`${LABEL}%`]
+    `SELECT COUNT(*)::int n FROM api_keys WHERE label LIKE $1 AND status = 'active'`, [`${LABEL}%`]
   );
-  check(49, "cleanup", "no acceptance API key is left active",
-    stillActive.rows[0]?.n === 0, stillActive.rows[0] ?? null);
+  check(50, "cleanup", "no acceptance API key is left active",
+    stillActive.ok === true && stillActive.rows[0]?.n === 0,
+    stillActive.ok ? stillActive.rows[0] : stillActive.message);
 
   const leftovers = await q(
     `SELECT COUNT(*)::int n FROM vendor_assurance_documents WHERE original_filename LIKE $1`,
     [`${LABEL}%`]
   );
-  check(50, "cleanup", "no acceptance document remains", leftovers.rows[0]?.n === 0,
+  check(51, "cleanup", "no acceptance document remains", leftovers.rows[0]?.n === 0,
     leftovers.rows[0] ?? null);
 }
 
