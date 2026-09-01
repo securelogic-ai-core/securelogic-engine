@@ -51,6 +51,7 @@ import { loadEffectivePolicy } from "../evidenceLinkWriter.js";
 export const ASSURANCE_COVERAGE_VERSION = "assurance-coverage-1.0";
 
 export type CoverageExclusionReason =
+  | "conflicting_governed_judgement"
   | "requirement_identity_unresolved"
   | "report_type_unclassifiable"
   | "report_period_end_unparseable"
@@ -153,12 +154,71 @@ export async function resolveAssuranceCoverage(args: {
       WHERE d.organization_id = $1
         AND d.superseded_at IS NULL
         AND d.determination = 'SUFFICIENT'
+        -- READ-TIME CONTRADICTION GUARD. The write-time veto blocks a
+        -- SUFFICIENT from walking past a live INSUFFICIENT — but the reverse
+        -- order (SUFFICIENT first, INSUFFICIENT recorded later from another
+        -- resolution) leaves both live, and a requirement whose governed
+        -- judgements CONFLICT must not count. Found live on staging by the
+        -- step-5 active-phase acceptance, not by inspection: the harness
+        -- accidentally built a second chain and the predicate kept counting.
+        AND NOT EXISTS (
+          SELECT 1
+            FROM vendor_requirement_sufficiency_determinations x
+            JOIN vendor_assurance_documents xdoc
+              ON xdoc.id = x.document_id AND xdoc.organization_id = x.organization_id
+           WHERE x.organization_id = d.organization_id
+             AND x.superseded_at IS NULL
+             AND x.determination = 'INSUFFICIENT'
+             AND x.requirement_framework_key = d.requirement_framework_key
+             AND x.requirement_framework_version = d.requirement_framework_version
+             AND x.requirement_reference = d.requirement_reference
+             AND xdoc.vendor_id = doc.vendor_id
+        )
       ORDER BY d.determined_at DESC`,
     [organizationId, engagementId]
   );
 
   const covered: CoveredRequirement[] = [];
   const gaps: CoverageGap[] = [];
+
+  // The conflicted requirements the WHERE above excluded, surfaced as GAPS —
+  // a conflict is the most important thing a reviewer can be shown, not a row
+  // to quietly drop.
+  const conflicted = await pg.query<{ determination_id: string; requirement_reference: string }>(
+    `SELECT d.id AS determination_id, d.requirement_reference
+       FROM vendor_requirement_sufficiency_determinations d
+       JOIN vendor_assurance_documents doc
+         ON doc.id = d.document_id AND doc.organization_id = d.organization_id
+       JOIN vendor_engagements ve
+         ON ve.id = $2 AND ve.organization_id = d.organization_id
+        AND ve.vendor_id = doc.vendor_id
+      WHERE d.organization_id = $1
+        AND d.superseded_at IS NULL
+        AND d.determination = 'SUFFICIENT'
+        AND EXISTS (
+          SELECT 1
+            FROM vendor_requirement_sufficiency_determinations x
+            JOIN vendor_assurance_documents xdoc
+              ON xdoc.id = x.document_id AND xdoc.organization_id = x.organization_id
+           WHERE x.organization_id = d.organization_id
+             AND x.superseded_at IS NULL
+             AND x.determination = 'INSUFFICIENT'
+             AND x.requirement_framework_key = d.requirement_framework_key
+             AND x.requirement_framework_version = d.requirement_framework_version
+             AND x.requirement_reference = d.requirement_reference
+             AND xdoc.vendor_id = doc.vendor_id
+        )`,
+    [organizationId, engagementId]
+  );
+  for (const row of conflicted.rows) {
+    gaps.push({
+      determinationId: row.determination_id,
+      requirementReference: row.requirement_reference,
+      requirementId: null,
+      reason: "conflicting_governed_judgement",
+      detail: { note: "A live INSUFFICIENT stands on the same requirement identity for this vendor. Conflicting governed judgements never count; resolve the conflict by superseding one of them." },
+    });
+  }
   /** One requirement counts once; the newest current determination wins. */
   const seen = new Set<string>();
 
