@@ -125,6 +125,8 @@ tables once the `app_request` flip lands).
 ### C — Org content authored by a user (anonymize actor)
 | Table | userRef | PII | RLS |
 |---|---|---|---|
+| `organization_evidence_validity_settings` | set_by_user_id | low | **enabled** | <!-- VA-S4 step 3, 20261083: a customer's own validity position per assurance class (D15). Tighten freely; loosen only to the live platform ceiling, enforced by trigger. Append-and-supersede — identity/value frozen, UPDATE column-limited to superseded_at, no DELETE grant. Empty on arrival; D16 ratified no backfill. -->
+| `evidence_links` | linked_by_user_id, confirmed_by_user_id, detached_by_user_id | low | **enabled** | <!-- ADR-0012 Step 2, 20261081: WHERE an artifact COUNTS (origin stays on evidence.source_type/source_id). Counts only on a live, human-confirmed link, confirmed per context and write-once. No DELETE grant; column-limited UPDATE; identity frozen by trigger; evidence_id RESTRICT; cross-org linking refused by trigger. Empty by construction — no writer, no fabricated origin backfill. -->
 | `risks` | owner_user_id | high | **enabled** |
 | `risk_treatments` | reviewer_uuid, owner_user_id, *reviewer_id (TEXT, deprecated)* | high | pending |
 | `risk_control_links` | created_by_user_id | low | pending |
@@ -171,7 +173,11 @@ tables once the `app_request` flip lands).
 `organizations` (ROOT-TENANT; see Special handling), `vendor_assurance_extractions`,
 `vendor_assurance_extraction_spans`, `frameworks`, `requirements`, `policies`,
 `policy_control_links`, `control_mappings`, `obligation_mappings`, `dependencies`,
-`evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7),
+`evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7;
+ADR-0012 Step 2 / 20261080 added `valid_from`/`valid_until`/`validity_basis`,
+`supersedes_evidence_id` and `assurance_class`. No backfill: every pre-existing row is
+`validity_basis='not_established'` + `assurance_class='unclassified'`, so an unknown history
+fails closed rather than being inferred),
 `reports`, `posture_snapshots` (**RLS enabled**), `domain_scores`,
 `organization_risk_scales`, `webhook_endpoints`, `webhook_deliveries`,
 `org_sso_configs`, `api_usage_daily`,
@@ -184,6 +190,23 @@ role — the reaper must never attempt to mutate these; org deletion is tombston
 org-FK CASCADE never fires).
 
 ### E — System-wide / operational (leave alone)
+**`evidence_validity_policy`** (new — VA-S4 step 3, migration 20261083; **RLS not
+applicable** — global governed reference content with no org dimension, like the canonical
+crosswalk. `app_request` holds SELECT only; the table changes by migration, never by the
+application, because a duration is a ratified product decision and not a runtime setting.
+Append-only versions, one live row per class. D1 seeded `soc1`/`soc2_type2` at 12 months from
+report period end (customer range 3..15) and `soc2_type1` with **no duration at all**, because
+D1 ratified that a Type I needs its own rule and named no number for it. **D2–D14 were ratified
+2026-09-02 and seeded by migration 20261085**, which also amends the two SOC rows to carry D2's
+bridge condition (`bridge_required_above_months = 12`, the 15-month ceiling unchanged).
+`contract` and `other_assurance_report` remain deliberately UNSEEDED by explicit ruling — their
+currency comes from a human-committed artifact basis, and a row would be the catch-all TTL those
+rulings forbid. Absence still yields `not_established`, the fail-closed default),
+**`evidence_lifecycle_events`** (new — ADR-0012 Step 2, migration 20261082; **RLS enabled**,
+**WORM/append-only** via the SHARED `worm_guard_mutation`; SELECT+INSERT only. What happened to an
+evidence artifact and to each of its uses. `evidence_id`/`link_id` are held BY VALUE with no FK so the
+stream outlives its subject; `actor_user_id` ON DELETE SET NULL matches the lifecycle family.
+`expiry_observed` is a NOTICE and flips nothing. Empty on arrival — no writer, no fabricated history),
 `signals`, `insights`, `trends`, `trend_signals`, `cyber_signals`,
 `intelligence_briefs`, `intelligence_brief_items`, `intelligence_brief_sends`,
 `intelligence_brief_sources`, `newsletter_issues`, `newsletter_issue_insights`,
