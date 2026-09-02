@@ -40,6 +40,13 @@ export const WIRED_SCOPED_ROUTE_FILES: readonly string[] = [
 /** Class A deny-all for Contributors. */
 export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   "aiGovernanceAssessments.ts",
+  // VA-S4 governed evidence writer. Deny-all, not read-scoped: confirming that
+  // an artifact assures a requirement, establishing what it is and how long it
+  // is good for, and withdrawing it are all governance acts, and there is no
+  // "my evidence links" scope to grant a contributor. Reading the surface would
+  // also expose what the org has judged sufficient, which is the assessment
+  // policy itself.
+  "evidenceLifecycle.ts",
   // SL-RISK-LINK. Deny-all, not read-scoped: deciding that a finding belongs on
   // the Risk Register is a governance act, and the reverse read
   // (/risks/:id/findings) is a cross-tenant-shaped roll-up with no trustworthy
