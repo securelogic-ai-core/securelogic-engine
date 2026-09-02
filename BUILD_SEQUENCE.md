@@ -440,9 +440,16 @@ Billing note:
 > demo. The kill switch is the flag; the dark phase is the proven kill-switch
 > state (byte-identical composition). **No production change, no promotion to
 > main, no Blueprint sync** is authorized by this record. Remaining owner
-> items, unchanged: R2 and Redis staging separation (environment isolation,
-> independent of S4); D2–D14 validity durations unratified (their classes
+> item, unchanged: D2–D14 validity durations unratified (their classes
 > simply never count).
+>
+> **Environment-isolation correction (2026-09-02, docs-only):** the R2 and
+> Redis staging separation previously listed here as remaining owner work was
+> CLOSED on 2026-09-01, independent of S4. Proven state: staging and demo
+> Redis / Key Value are separated from production through Render environment
+> isolation with dedicated staging and demo stores; staging R2 uses its own
+> dedicated bucket-scoped credential, and negative access to the production
+> bucket from staging was proven `AccessDenied`.
 
 > **DOC-SYNC 2026-08-21 — active governing program restated (this file only; no
 > application code, no feature flag, no merge, no promotion).**
