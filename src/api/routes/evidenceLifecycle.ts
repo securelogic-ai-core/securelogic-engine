@@ -91,6 +91,12 @@ const FAILURE_STATUS: Record<WriterFailure, number> = {
   no_anchor_date: 422,
   customer_duration_exceeds_ceiling: 400,
   customer_duration_invalid: 400,
+  // D13 / D14: committing the artifact's own dates is a different act from
+  // accepting the platform window, and it is refused where a ratified policy
+  // governs the class.
+  artifact_basis_not_permitted: 409,
+  artifact_dates_require_end: 400,
+  perpetual_requires_assertion: 400,
 };
 
 const GATE = [requireApiKey, attachOrganizationContext, requirePremiumOrCorePlatform, denyContributor(), requireLifecycleV2] as const;
@@ -259,10 +265,28 @@ router.post("/evidence/:id/assurance", ...GATE, asTenant(async (req, res) => {
   const artifactAssertedUntil =
     typeof assertedRaw === "string" && ISO_DATE.test(assertedRaw.trim()) ? assertedRaw.trim() : null;
 
+  // D13 / D14 / D11: which KIND of basis is being committed. Defaults to the
+  // platform policy. 'perpetual' is never inferred — a missing end date is not
+  // an assertion that the artifact has no end, and the caller must say so
+  // explicitly and say why.
+  const basisRaw = body["basis"];
+  const basis =
+    basisRaw === "artifact_dates" || basisRaw === "perpetual" || basisRaw === "policy"
+      ? basisRaw
+      : basisRaw === undefined || basisRaw === null
+        ? "policy"
+        : null;
+  if (basis === null) {
+    res.status(400).json({ error: "basis_invalid", allowed: ["policy", "artifact_dates", "perpetual"] });
+    return;
+  }
+  const perpetualAssertion =
+    typeof body["perpetual_assertion"] === "string" ? (body["perpetual_assertion"] as string) : null;
+
   try {
     const out = await establishAssurance({
       organizationId, evidenceId, assuranceClass: body["assurance_class"],
-      anchorDate, artifactAssertedUntil, actorUserId: actor,
+      anchorDate, artifactAssertedUntil, basis, perpetualAssertion, actorUserId: actor,
     });
     if (!out.ok) { res.status(FAILURE_STATUS[out.reason]).json({ error: out.reason, detail: out.detail }); return; }
     res.status(200).json({

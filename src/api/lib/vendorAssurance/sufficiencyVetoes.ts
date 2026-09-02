@@ -33,7 +33,7 @@
 // contradictory_evidence became computable AT DETERMINATION TIME as a
 // conflicting-governed-judgement check (see evaluateContradictionVeto). The
 // stored evaluator_version is what makes an old basis readable as old.
-export const VETO_EVALUATOR_VERSION = "sufficiency-veto-1.1";
+export const VETO_EVALUATOR_VERSION = "sufficiency-veto-1.2";
 
 export const COVERAGE_VETOES = [
   "report_scope",

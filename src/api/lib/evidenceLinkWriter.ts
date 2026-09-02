@@ -77,7 +77,10 @@ export type WriterFailure =
   | "policy_establishes_no_window"
   | "no_anchor_date"
   | "customer_duration_exceeds_ceiling"
-  | "customer_duration_invalid";
+  | "customer_duration_invalid"
+  | "artifact_basis_not_permitted"
+  | "artifact_dates_require_end"
+  | "perpetual_requires_assertion";
 
 export type WriterResult<T> = { ok: true; value: T } | { ok: false; reason: WriterFailure; detail?: string };
 
@@ -237,13 +240,23 @@ export async function detachLink(args: {
 export async function loadEffectivePolicy(
   organizationId: string,
   assuranceClass: string
-): Promise<{ policy: ValidityPolicyRow | null; orgDurationMonths: number | null }> {
+): Promise<{
+  policy: ValidityPolicyRow | null;
+  orgDurationMonths: number | null;
+  /** The LIVE policy version used, so a decision basis can name it (D15). */
+  policyVersion: number | null;
+}> {
   const p = await pg.query<{
     assurance_class: string; default_duration_months: number | null;
     max_duration_months: number | null; min_duration_months: number | null; anchor: string;
+    requires_artifact_end: boolean; artifact_basis_permitted: boolean;
+    bridge_required_above_months: number | null; no_window_reason: string | null;
+    version: number;
   }>(
     `SELECT assurance_class, default_duration_months, max_duration_months,
-            min_duration_months, anchor
+            min_duration_months, anchor, requires_artifact_end,
+            artifact_basis_permitted, bridge_required_above_months,
+            no_window_reason, version
        FROM evidence_validity_policy
       WHERE assurance_class = $1 AND superseded_at IS NULL`,
     [assuranceClass]
@@ -262,10 +275,108 @@ export async function loadEffectivePolicy(
           maxDurationMonths: row.max_duration_months,
           minDurationMonths: row.min_duration_months,
           anchor: row.anchor as ValidityPolicyRow["anchor"],
+          requiresArtifactEnd: row.requires_artifact_end === true,
+          artifactBasisPermitted: row.artifact_basis_permitted === true,
+          bridgeRequiredAboveMonths: row.bridge_required_above_months ?? null,
+          noWindowReason: row.no_window_reason ?? null,
         }
       : null,
     orgDurationMonths: o.rows[0]?.duration_months ?? null,
+    policyVersion: row?.version ?? null,
   };
+}
+
+/* =========================================================
+   Governed anchor resolution (D9, D10)
+
+   The owner ruled that the writer must DERIVE the anchor from governed evidence
+   state and must not let a caller manufacture freshness with an arbitrary
+   supplied date. That ruling does not apply uniformly, and the line is precise:
+
+     collected_at    the observation date is a FACT ON THE EVIDENCE ROW. The
+                     caller is ignored entirely. uploaded_at never substitutes.
+     object_cadence  the cadence belongs to a LINKED GOVERNED OBJECT. The caller
+                     is ignored entirely; missing linkage fails closed.
+     report_period_end / artifact_term
+                     the date is STATED BY THE ARTIFACT and a human reads it off
+                     the document. That reading IS the governed act under D0/D16,
+                     so the curator's value is the authority — there is nowhere
+                     else it could come from.
+   ========================================================= */
+
+type GovernedAnchor =
+  | { ok: true; anchorDate: string | null; linkedCadenceUntil: string | null }
+  | { ok: false; reason: string };
+
+async function resolveGovernedAnchor(args: {
+  organizationId: string;
+  evidenceId: string;
+  assuranceClass: string;
+  anchor: ValidityPolicyRow["anchor"];
+  sourceType: string;
+  sourceId: string;
+  /** The engagement this artifact was collected by, when it was. */
+  engagementId: string | null;
+  collectedAt: string | null;
+  callerAnchorDate: string | null;
+}): Promise<GovernedAnchor> {
+  const {
+    organizationId, assuranceClass, anchor, sourceType, sourceId, engagementId,
+    collectedAt, callerAnchorDate,
+  } = args;
+
+  if (anchor === "collected_at") {
+    // D9: required, and taken from the row. A caller-supplied date is not a
+    // weaker source, it is the wrong source.
+    if (!collectedAt) return { ok: false, reason: "collected_at_required" };
+    return { ok: true, anchorDate: collectedAt, linkedCadenceUntil: null };
+  }
+
+  if (anchor === "object_cadence") {
+    // The class decides which object it must follow. A policy document may not
+    // borrow an engagement's cadence, or the linkage would prove nothing.
+    if (assuranceClass === "policy_document") {
+      if (sourceType !== "policy_review") return { ok: false, reason: "no_linked_object_cadence" };
+      const r = await pg.query<{ last_reviewed_at: string | null; next_review_at: string | null }>(
+        `SELECT to_char(last_reviewed_at, 'YYYY-MM-DD') AS last_reviewed_at,
+                to_char(next_review_at,   'YYYY-MM-DD') AS next_review_at
+           FROM policies WHERE id = $1 AND organization_id = $2`,
+        [sourceId, organizationId]
+      );
+      const row = r.rows[0];
+      if (!row || !row.last_reviewed_at || !row.next_review_at) {
+        return { ok: false, reason: "no_linked_object_cadence" };
+      }
+      return { ok: true, anchorDate: row.last_reviewed_at, linkedCadenceUntil: row.next_review_at };
+    }
+
+    if (assuranceClass === "vendor_attestation") {
+      // The cadence comes from evidence.engagement_id — the CONSTRAINED column
+      // (evidence_engagement_source_consistent, 20260925), which the vendor
+      // portal already populates for every artifact a vendor supplies against
+      // an engagement. A legacy 'vendor_review' row points at
+      // vendor_assessments, which carries NO engagement column and no cadence,
+      // so it fails closed rather than guessing at a join that does not exist.
+      if (engagementId === null) return { ok: false, reason: "no_linked_object_cadence" };
+      const r = await pg.query<{ decided_at: string | null; next_review_due: string | null }>(
+        `SELECT to_char(decided_at, 'YYYY-MM-DD')      AS decided_at,
+                to_char(next_review_due, 'YYYY-MM-DD') AS next_review_due
+           FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+        [engagementId, organizationId]
+      );
+      const row = r.rows[0];
+      if (!row || !row.decided_at || !row.next_review_due) {
+        return { ok: false, reason: "no_linked_object_cadence" };
+      }
+      return { ok: true, anchorDate: row.decided_at, linkedCadenceUntil: row.next_review_due };
+    }
+
+    return { ok: false, reason: "no_linked_object_cadence" };
+  }
+
+  // report_period_end / artifact_term / none — the artifact states it, a human
+  // reads it. There is no governed alternative source.
+  return { ok: true, anchorDate: callerAnchorDate, linkedCadenceUntil: null };
 }
 
 /**
@@ -281,16 +392,46 @@ export async function establishAssurance(args: {
   organizationId: string;
   evidenceId: string;
   assuranceClass: EvidenceAssuranceClass;
-  /** ISO date the window measures from, per the policy's anchor. */
+  /**
+   * ISO date the window measures from. Honoured ONLY for artifact-stated
+   * anchors (report_period_end / artifact_term). For collected_at and
+   * object_cadence classes the writer derives the anchor from governed state
+   * and this value is ignored — see resolveGovernedAnchor.
+   */
   anchorDate: string | null;
   /** What the artifact ITSELF asserts as its end, if the curator read one. */
   artifactAssertedUntil: string | null;
+  /**
+   * D13 / D14 / D11 / D3: what KIND of basis the curator is committing.
+   *
+   *   'policy'         compute the window from the ratified policy (default).
+   *   'artifact_dates' commit the end the ARTIFACT states, with no platform
+   *                    duration. The only mechanism for contract and
+   *                    other_assurance_report, which are ratified to carry NO
+   *                    policy row.
+   *   'perpetual'      commit that the artifact asserts NO end. Explicit only:
+   *                    a missing end date must never imply perpetual.
+   */
+  basis?: "policy" | "artifact_dates" | "perpetual";
+  /** Required for 'perpetual'. Says who asserted it and on what reading. */
+  perpetualAssertion?: string | null;
   actorUserId: string;
 }): Promise<WriterResult<{ validityBasis: string; validUntil: string | null; reason: string }>> {
-  const { organizationId, evidenceId, assuranceClass, anchorDate, artifactAssertedUntil, actorUserId } = args;
+  const {
+    organizationId, evidenceId, assuranceClass, anchorDate, artifactAssertedUntil,
+    actorUserId,
+  } = args;
+  const basisRequest = args.basis ?? "policy";
 
-  const cur = await pg.query<{ assurance_class: string; validity_basis: string }>(
-    `SELECT assurance_class, validity_basis FROM evidence
+  const cur = await pg.query<{
+    assurance_class: string; validity_basis: string;
+    source_type: string; source_id: string; engagement_id: string | null;
+    collected_at: string | null;
+  }>(
+    `SELECT assurance_class, validity_basis, source_type, source_id::text AS source_id,
+            engagement_id::text AS engagement_id,
+            to_char(collected_at, 'YYYY-MM-DD') AS collected_at
+       FROM evidence
       WHERE id = $1 AND organization_id = $2`,
     [evidenceId, organizationId]
   );
@@ -302,17 +443,124 @@ export async function establishAssurance(args: {
   if (cur.rows[0]!.validity_basis !== "not_established") {
     return { ok: false, reason: "validity_already_established" };
   }
+  const evRow = cur.rows[0]!;
 
-  const { policy, orgDurationMonths } = await loadEffectivePolicy(organizationId, assuranceClass);
-  const window = resolveValidityWindow({ policy, orgDurationMonths, anchorDate, artifactAssertedUntil });
+  const { policy, orgDurationMonths, policyVersion } = await loadEffectivePolicy(organizationId, assuranceClass);
+
+  // ── The human-committed artifact basis (D13 / D14) ────────────────────────
+  //
+  // Permitted ONLY where the live policy row bears no duration. Where a
+  // duration-bearing policy exists, an artifact's asserted end may CAP the
+  // computed window (rule 3) and nothing more: letting a curator commit
+  // artifact dates directly there would be a route around D4's re-evidence
+  // cadence and D10's 24-month ceiling, which global principle 4 forbids —
+  // customer configuration may tighten freely but may never defeat a platform
+  // epistemic ceiling.
+  if (basisRequest !== "policy") {
+    // A class with NO policy row permits the artifact basis by absence — that
+    // is the only mechanism D13 (contract) and D14 (other_assurance_report)
+    // have. A class that DOES carry a ratified policy permits it only when the
+    // ratified policy SAYS so, so the decision lives in versioned policy
+    // content rather than being inferred here.
+    if (policy && !policy.artifactBasisPermitted) {
+      return { ok: false, reason: "artifact_basis_not_permitted",
+        detail: `The ratified policy for ${assuranceClass} does not permit committing the artifact's own dates in place of the platform window; an artifact end can only narrow that window, never replace it.` };
+    }
+    const asserted =
+      typeof artifactAssertedUntil === "string" && /^\d{4}-\d{2}-\d{2}$/.test(artifactAssertedUntil.trim())
+        ? artifactAssertedUntil.trim()
+        : null;
+
+    if (basisRequest === "artifact_dates" && asserted === null) {
+      return { ok: false, reason: "artifact_dates_require_end" };
+    }
+    const assertion = (args.perpetualAssertion ?? "").trim();
+    if (basisRequest === "perpetual" && assertion === "") {
+      return { ok: false, reason: "perpetual_requires_assertion",
+        detail: "A missing end date is not an assertion of perpetuity. State what the artifact says." };
+    }
+
+    // ONE statement establishes class AND validity together. Two statements
+    // could commit the class while the validity write refused, and the
+    // 20261084 write-once trigger would then make the artifact permanently
+    // un-curatable: class set, validity not_established, both frozen. The
+    // route commits on a normal return (asTenant flushes after COMMIT), so a
+    // RETURNED failure between the two would have persisted exactly that.
+    const est0 = await pg.query(
+      `UPDATE evidence
+          SET assurance_class = $3,
+              validity_basis  = $4,
+              valid_from      = $5::date,
+              valid_until     = $6::date
+        WHERE id = $1 AND organization_id = $2
+          AND assurance_class = 'unclassified'
+          AND validity_basis  = 'not_established'`,
+      [evidenceId, organizationId, assuranceClass, basisRequest, anchorDate,
+       basisRequest === "artifact_dates" ? asserted : null]
+    );
+    if ((est0.rowCount ?? 0) === 0) return { ok: false, reason: "assurance_class_already_established" };
+    await recordEvent(organizationId, evidenceId, null, "assurance_class_established", actorUserId, {
+      assurance_class: assuranceClass,
+    });
+
+    await recordEvent(organizationId, evidenceId, null, "validity_established", actorUserId, {
+      validity_basis: basisRequest, valid_from: anchorDate,
+      valid_until: basisRequest === "artifact_dates" ? asserted : null,
+      artifact_asserted: true,
+      perpetual_assertion: basisRequest === "perpetual" ? assertion : undefined,
+    });
+    return { ok: true, value: {
+      validityBasis: basisRequest,
+      validUntil: basisRequest === "artifact_dates" ? asserted : null,
+      reason: basisRequest === "artifact_dates" ? "artifact_asserted_end" : "artifact_asserts_no_end",
+    } };
+  }
+
+  // ── The policy path ───────────────────────────────────────────────────────
+  const governed = policy
+    ? await resolveGovernedAnchor({
+        organizationId, evidenceId, assuranceClass, anchor: policy.anchor,
+        sourceType: evRow.source_type, sourceId: evRow.source_id,
+        engagementId: evRow.engagement_id, collectedAt: evRow.collected_at,
+        callerAnchorDate: anchorDate,
+      })
+    : ({ ok: true, anchorDate, linkedCadenceUntil: null } as GovernedAnchor);
+
+  const window = governed.ok
+    ? resolveValidityWindow({
+        policy, orgDurationMonths,
+        anchorDate: governed.anchorDate,
+        artifactAssertedUntil,
+        linkedCadenceUntil: governed.linkedCadenceUntil,
+      })
+    : ({ basis: "not_established", validUntil: null, reason: governed.reason } as const);
+  const effectiveAnchorDate = governed.ok ? governed.anchorDate : null;
 
   // The class is established even when no window can be. Knowing WHAT an
   // artifact is remains useful, and a NOT_EVALUABLE window is the honest
   // outcome rather than a reason to refuse the curation outright.
+  // ONE statement, for the reason given in the artifact-basis path above. When
+  // no window could be established the row keeps validity_basis
+  // 'not_established' with both dates NULL, which is the shape check's
+  // not_established arm — the class is still recorded, because knowing WHAT an
+  // artifact is stays useful even when nothing establishes how long it is good
+  // for.
+  const established = window.basis === "policy_default";
   const classUpd = await pg.query(
-    `UPDATE evidence SET assurance_class = $3
-      WHERE id = $1 AND organization_id = $2 AND assurance_class = 'unclassified'`,
-    [evidenceId, organizationId, assuranceClass]
+    `UPDATE evidence
+        SET assurance_class = $3,
+            validity_basis  = $4,
+            valid_from      = $5::date,
+            valid_until     = $6::date
+      WHERE id = $1 AND organization_id = $2
+        AND assurance_class = 'unclassified'
+        AND validity_basis  = 'not_established'`,
+    [
+      evidenceId, organizationId, assuranceClass,
+      established ? "policy_default" : "not_established",
+      established ? effectiveAnchorDate : null,
+      established ? window.validUntil : null,
+    ]
   );
   if ((classUpd.rowCount ?? 0) === 0) return { ok: false, reason: "assurance_class_already_established" };
   await recordEvent(organizationId, evidenceId, null, "assurance_class_established", actorUserId, {
@@ -320,17 +568,15 @@ export async function establishAssurance(args: {
   });
 
   if (window.basis === "policy_default") {
-    const vUpd = await pg.query(
-      `UPDATE evidence
-          SET validity_basis = 'policy_default', valid_from = $3::date, valid_until = $4::date
-        WHERE id = $1 AND organization_id = $2 AND validity_basis = 'not_established'`,
-      [evidenceId, organizationId, anchorDate, window.validUntil]
-    );
-    if ((vUpd.rowCount ?? 0) === 0) return { ok: false, reason: "validity_already_established" };
     await recordEvent(organizationId, evidenceId, null, "validity_established", actorUserId, {
-      validity_basis: "policy_default", valid_from: anchorDate, valid_until: window.validUntil,
+      validity_basis: "policy_default", valid_from: effectiveAnchorDate, valid_until: window.validUntil,
       duration_months: window.durationMonths, source: window.source,
       capped_by_artifact: window.cappedByArtifact,
+      capped_by_linked_cadence: window.cappedByLinkedCadence,
+      // G: a determination must stay replayable against the policy that was in
+      // force when it was made, so the version is part of the record.
+      policy_version: policyVersion,
+      anchor: policy?.anchor ?? null,
     });
     return { ok: true, value: { validityBasis: "policy_default", validUntil: window.validUntil, reason: window.reason } };
   }
@@ -339,6 +585,7 @@ export async function establishAssurance(args: {
   // not_established, and the REASON is recorded so the gap is legible.
   await recordEvent(organizationId, evidenceId, null, "validity_established", actorUserId, {
     validity_basis: "not_established", reason: window.reason,
+    policy_version: policyVersion, anchor: policy?.anchor ?? null,
   });
   return { ok: true, value: { validityBasis: "not_established", validUntil: null, reason: window.reason } };
 }

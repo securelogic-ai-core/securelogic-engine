@@ -48,7 +48,14 @@ import { pg } from "../../infra/postgres.js";
 import { resolveValidityWindow, isWindowCurrent } from "../evidenceValidityPolicy.js";
 import { loadEffectivePolicy } from "../evidenceLinkWriter.js";
 
-export const ASSURANCE_COVERAGE_VERSION = "assurance-coverage-1.0";
+/**
+ * 1.1 (2026-09-02): the D2-D14 ratification. Exclusions now report the ACTUAL
+ * refusal (a breached customer ceiling and a missing governed bridge were both
+ * reported as `policy_establishes_no_window`, which named the wrong cause on a
+ * silently-dropped requirement), and every covered row names the ratified
+ * policy VERSION that produced its window so a decision basis stays replayable.
+ */
+export const ASSURANCE_COVERAGE_VERSION = "assurance-coverage-1.1";
 
 export type CoverageExclusionReason =
   | "conflicting_governed_judgement"
@@ -57,6 +64,8 @@ export type CoverageExclusionReason =
   | "report_period_end_unparseable"
   | "no_ratified_validity_policy"
   | "policy_establishes_no_window"
+  | "customer_duration_exceeds_ceiling"
+  | "governed_bridge_required"
   | "validity_window_expired";
 
 export type CoveredRequirement = {
@@ -70,6 +79,8 @@ export type CoveredRequirement = {
   validitySource: "platform" | "customer";
   reportPeriodEnd: string;
   assuranceClass: string;
+  /** The ratified policy VERSION this window came from (G: replayability). */
+  policyVersion: number | null;
 };
 
 export type CoverageGap = {
@@ -90,6 +101,17 @@ export type AssuranceCoverage = {
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolver refusal slug -> the gap reason a reviewer sees. Anything unmapped
+ * falls back to `policy_establishes_no_window`, which stays correct for a class
+ * ratified to establish nothing.
+ */
+const REFUSAL_TO_GAP: Record<string, CoverageExclusionReason> = {
+  no_ratified_policy: "no_ratified_validity_policy",
+  customer_duration_exceeds_ceiling: "customer_duration_exceeds_ceiling",
+  governed_bridge_required: "governed_bridge_required",
+};
 
 /** Only explicit markers map; anything else is unclassifiable, never guessed. */
 export function assuranceClassForReportType(reportType: string | null): string | null {
@@ -270,10 +292,16 @@ export async function resolveAssuranceCoverage(args: {
     });
 
     if (window.basis !== "policy_default") {
-      gap(
-        window.reason === "no_ratified_policy" ? "no_ratified_validity_policy" : "policy_establishes_no_window",
-        { assurance_class: assuranceClass, window_reason: window.reason }
-      );
+      // Report the ACTUAL refusal. Collapsing every non-window outcome into
+      // "the policy establishes no window" told a customer the wrong thing
+      // about a requirement that had silently stopped counting: a breached
+      // ceiling and a missing bridge are both fixable, and neither is the
+      // policy declining to establish anything.
+      gap(REFUSAL_TO_GAP[window.reason] ?? "policy_establishes_no_window", {
+        assurance_class: assuranceClass,
+        window_reason: window.reason,
+        policy_version: eff.policyVersion,
+      });
       continue;
     }
     if (!isWindowCurrent(window, asOf)) {
@@ -293,6 +321,7 @@ export async function resolveAssuranceCoverage(args: {
       validitySource: window.source,
       reportPeriodEnd: periodEnd,
       assuranceClass,
+      policyVersion: eff.policyVersion,
     });
   }
 
