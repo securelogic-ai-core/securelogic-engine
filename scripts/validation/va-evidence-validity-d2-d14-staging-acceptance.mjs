@@ -307,8 +307,9 @@ async function main() {
   if (cov.rows[0]) {
     const c = await api("GET", `/vendor-engagements/${cov.rows[0].id}/assurance-coverage`, { token: jwt });
     check(32, "S4", "the coverage surface answers with the new version",
-      c.status === 200 && c.json?.version === "assurance-coverage-1.1",
-      { status: c.status, version: c.json?.version });
+      // The route names the field coverage_version (vendorEngagements.ts:2548).
+      c.status === 200 && c.json?.coverage_version === "assurance-coverage-1.1",
+      { status: c.status, coverage_version: c.json?.coverage_version });
   } else {
     note(32, "S4", "no decided engagement to read coverage from");
   }
