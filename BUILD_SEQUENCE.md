@@ -437,11 +437,15 @@ Billing note:
 > and the Step-2 lifecycle predicate. Extending the counting predicate beyond
 > SOC is separate work and is NOT authorized here.
 >
-> **One interpretive call is flagged for the owner** in
-> `docs/design/VA-EVIDENCE-validity-policy-RATIFICATION-MEMO.md`: whether
-> `privacy_agreement` may carry a `perpetual` basis. It is seeded FALSE on the
-> fail-closed reading of D11 plus global principles 4 and 6, and reversing it is
-> one policy row.
+> **The one interpretive call is RULED (owner, 2026-09-02): keep the DPA
+> perpetual assurance path CLOSED.** An evergreen contractual term and assurance
+> currency are separate facts. A DPA may be contractually evergreen through the
+> governed human assertion, but that must never make it perpetually current S4
+> assurance. `privacy_agreement` stays at 24 default / 6 min / 36 max, with
+> contractual termination an absolute ceiling where one exists, and an expired
+> assurance window leaves the DPA legally in force but STALE for S4 until
+> re-evidenced. No behaviour changed: the seeded row already implements this and
+> staging proves it (acceptance check 25).
 >
 > **Activation state unchanged:** `SECURELOGIC_EVIDENCE_LIFECYCLE_V2` remains ON
 > for the STAGING engine only, OFF and untouched in production and demo. No

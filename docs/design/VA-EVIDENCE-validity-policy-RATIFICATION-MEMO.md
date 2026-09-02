@@ -67,7 +67,35 @@
 >    ride `report_period_end`, which is SOC vocabulary describing a field a pen
 >    test and a DR exercise do not have.
 >
-> **THE ONE INTERPRETIVE CALL, FLAGGED FOR THE OWNER.** D11 says evergreen
+> **THE ONE INTERPRETIVE CALL — RULED BY THE OWNER 2026-09-02: KEEP IT CLOSED.**
+>
+> The owner ratified the seeded behaviour and stated the rule that governs it:
+> **an evergreen or perpetual contractual term and assurance currency are
+> separate facts.** A DPA may be contractually evergreen when that status is
+> established through the governed human assertion, but perpetual CONTRACTUAL
+> status must never cause the DPA to count as perpetually current S4 assurance.
+>
+> For `privacy_agreement` assurance currency, as ratified: default 24 months,
+> minimum 6, maximum 36; the customer may tighten within those bounds;
+> contractual termination or expiration remains an absolute ceiling wherever one
+> exists; evergreen contractual status does not remove the assurance-currency
+> ceiling; and once the assurance window expires the DPA may remain legally and
+> contractually in force while being STALE for S4 assurance until it is
+> appropriately re-evidenced or reconfirmed.
+>
+> The historical decision basis must keep those two facts distinguishable:
+> (1) contractual status and term, and (2) assurance currency. They are recorded
+> separately and neither is inferred from the other.
+>
+> `privacy_agreement.artifact_basis_permitted` stays FALSE. **No behaviour
+> changed as a result of this ruling** — the seeded row already implements it,
+> it is proven on staging by acceptance check 25
+> (`artifact_basis_not_permitted`), and `20261085`'s own note text is left
+> exactly as it was applied, because that note is seeded DATA and editing it
+> would make a from-scratch rebuild diverge from what actually ran.
+>
+> The reasoning that produced the seeded value, preserved as it stood before the
+> ruling: D11 says evergreen
 > status "requires explicit governed human assertion", and it also says a DPA
 > may remain contractually in force after its assurance evidence goes stale and
 > that the two must not be conflated. Those pull in opposite directions once
@@ -77,9 +105,9 @@
 > (customer configuration may not defeat a platform epistemic ceiling) and
 > principle 6 (fail closed) resolve it the same way, so `privacy_agreement` is
 > seeded with `artifact_basis_permitted = FALSE`: the 24-month assurance window
-> governs, and contractual perpetuity is recorded elsewhere. **If the owner
-> intended the other reading it is one row value to flip**, by a version-2
-> policy row, and nothing else changes.
+> governs, and contractual perpetuity is recorded elsewhere. *(That reading was
+> put to the owner as reversible by one row value. The owner ruled on
+> 2026-09-02 that it stands.)*
 >
 > **What D2-D14 does NOT deliver, stated plainly.** The S4 counting predicate
 > classifies only SOC reports, so no new class reaches questionnaire reduction
