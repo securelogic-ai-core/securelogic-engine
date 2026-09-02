@@ -215,8 +215,12 @@ application, because a duration is a ratified product decision and not a runtime
 Append-only versions, one live row per class. Seeded with **D1 only** — `soc1` and
 `soc2_type2` at 12 months from report period end (customer range 3..15), and `soc2_type1`
 with **no duration at all**, because D1 ratified that a Type I needs its own rule and named
-no number for it. Classes D2-D14 are unratified and have no row: absence yields
-`not_established`, which is the fail-closed default and deliberately not a catch-all TTL),
+no number for it. **D2-D14 were ratified 2026-09-02 and seeded by migration 20261085**,
+which also amends the two SOC rows to carry D2's bridge condition
+(`bridge_required_above_months = 12`, the 15-month ceiling unchanged). `contract` and
+`other_assurance_report` remain deliberately UNSEEDED by explicit ruling — their currency
+comes from a human-committed artifact basis, and a row would be the catch-all TTL those
+rulings forbid. Absence still yields `not_established`, the fail-closed default),
 **`evidence_lifecycle_events`** (new — ADR-0012 Step 2, migration 20261082; **RLS enabled**,
 **WORM/append-only** via the SHARED `worm_guard_mutation`; SELECT+INSERT only. What happened to an
 evidence artifact and to each of its uses. `evidence_id`/`link_id` are held BY VALUE with no FK so the
