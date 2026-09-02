@@ -105,10 +105,30 @@ async function main() {
   const vend = await q(
     `INSERT INTO vendors (organization_id, name, status, criticality)
      VALUES ($1,$2,'active','high') RETURNING id`, [org, `${LABEL} vendor ${Date.now()}`]);
+  // The engagement is created FULLY TIERED, with every inherent-risk dimension
+  // declared. This is not decoration. `POST /scope` mirrors the thirteen
+  // inherent facts into the canonical fact store before it resolves anything
+  // (VA-Q2 P3), and `writeFacts` REJECTS a null: a bare draft engagement fails
+  // with FactStoreValidationError "core.data_sensitivity must be a string" and
+  // the route answers 500 — which is what the first run of this harness hit.
+  //
+  // `tier_1_critical` on purpose: it asks the DEEPEST questionnaire, so the
+  // "depth is unchanged" arm compares a large real number against itself
+  // instead of comparing zero against zero.
   const eng = await q(
     `INSERT INTO vendor_engagements
-       (organization_id, vendor_id, engagement_type, status, methodology_version, scope_rule_version)
-     VALUES ($1,$2,'initial','draft','harness-1','harness-1') RETURNING id`, [org, vend.rows[0].id]);
+       (organization_id, vendor_id, engagement_type, status, methodology_version, scope_rule_version,
+        assessment_tier, data_sensitivity, data_volume_band, access_level,
+        operational_dependency, recoverability, business_criticality,
+        regulatory_exposure, regulatory_breach_notification,
+        ai_involvement, ai_autonomy, hosting_model,
+        fourth_party_exposure, concentration_snapshot)
+     VALUES ($1,$2,'initial','draft','harness-1','harness-1',
+             'tier_1_critical','restricted','large','admin',
+             'high','days','critical',
+             'high', true,
+             'embedded','human_in_the_loop','multi_tenant_saas',
+             'moderate','low') RETURNING id`, [org, vend.rows[0].id]);
   const engagementId = eng.rows[0].id;
   const fw = await q(
     `INSERT INTO frameworks (organization_id, name, version) VALUES ($1,$2,'1.0') RETURNING id`,
@@ -139,10 +159,39 @@ async function main() {
   const scope = () => api("POST", `/vendor-engagements/${engagementId}/scope`, { token: jwt, body: {} });
 
   /* ── f (baseline). Depth BEFORE any governed evidence exists ──────────── */
+  //
+  // DEPTH IS `scoped`. The first version of this harness read
+  // `json.requirements` and `json.assuranceCoveredRequirementIds`, and
+  // `POST /scope` returns NEITHER: its payload is
+  // { scoped, excluded, tier, scope_rule_version, truncated, composition }.
+  // `assuranceCoveredRequirementIds` is an INPUT to the resolver, never an
+  // output. Both reads therefore yielded 0 and [] unconditionally, and the
+  // whole "depth unchanged" arm compared 0 against 0 — it would have passed
+  // no matter what the product did. Read `scoped`, and assert it is non-zero,
+  // so the comparison has something to compare.
+  //
+  // The requirement SET is taken from `vendor_engagement_scope_items`, the
+  // frozen questionnaire the resolver just wrote. That is the actual list of
+  // questions the vendor will be asked — a stronger claim than any count.
+  const scopedItemIds = async () => (await q(
+    `SELECT requirement_id FROM vendor_engagement_scope_items
+      WHERE engagement_id = $1 AND organization_id = $2
+      ORDER BY requirement_id`, [engagementId, org])).rows.map((r) => r.requirement_id);
+
   const scopeBefore = await scope();
-  const depthBefore = (scopeBefore.json?.requirements ?? []).length;
-  const coveredIdsBefore = scopeBefore.json?.assuranceCoveredRequirementIds ?? [];
-  check(3, "depth", "baseline scope resolves", scopeBefore.status === 200, { depthBefore });
+  const depthBefore = scopeBefore.json?.scoped ?? 0;
+  const coveredIdsBefore = await scopedItemIds();
+  // The COVERAGE surface's own `covered[]` is a different list from the scope
+  // items — it is the SUFFICIENT determinations that reduce depth. Capture it
+  // at baseline so check 27 compares like with like.
+  const surfaceCoveredBefore = ((await coverage()).json?.covered ?? []).length;
+  check(3, "depth", "baseline scope resolves", scopeBefore.status === 200,
+    { status: scopeBefore.status, depthBefore, body: scopeBefore.json?.error ?? null });
+  // Without this the whole f-arm is vacuous: two failed calls both yield depth
+  // 0, and "0 === 0" would report questionnaire depth as unchanged when in
+  // truth it was never measured.
+  check(3.1, "depth", "the baseline depth is a REAL questionnaire, not an empty one",
+    depthBefore > 0, { depthBefore, tier: scopeBefore.json?.tier });
   note(4, "depth", "baseline covered ids", coveredIdsBefore);
 
   /* ── a. current governed non-SOC evidence is VISIBLE ──────────────────── */
@@ -224,46 +273,76 @@ async function main() {
     det.status === 200 && !idsAfter.has(penLink.linkId), { detach: det.status });
 
   /* ── e. cross-tenant evidence cannot appear ───────────────────────────── */
-  const other = await q(
-    `SELECT id FROM organizations WHERE id <> $1 ORDER BY created_at LIMIT 1`, [org]);
-  if (other.rows[0]) {
-    const otherOrg = other.rows[0].id;
-    const otherUser = await q(
-      `SELECT id, session_epoch FROM users WHERE organization_id=$1 AND status='active' LIMIT 1`, [otherOrg]);
-    check(20, "e-tenant", "a second organisation with an active user exists to test against",
-      otherUser.rows[0] !== undefined, { otherOrg });
-    if (otherUser.rows[0]) {
-      const otherJwt = signJwt(otherUser.rows[0].id, otherOrg, "admin", otherUser.rows[0].session_epoch ?? 0);
-      const foreign = await api("GET", `/vendor-engagements/${engagementId}/assurance-coverage`,
-        { token: otherJwt });
-      check(21, "e-tenant", "another tenant reading THIS engagement is refused, never served rows",
-        foreign.status === 404 || foreign.status === 403,
-        { status: foreign.status, body: foreign.json });
-      check(22, "e-tenant", "and no governed_evidence leaked in that response",
-        (foreign.json?.governed_evidence ?? []).length === 0);
-    }
-  } else {
-    note(20, "e-tenant", "no second organisation on staging — cross-tenant arm skipped");
-  }
+  // The foreign tenant is OURS, built here. Two earlier attempts were both
+  // unsound: picking the oldest organisation found one with no active user and
+  // silently SKIPPED this arm, and picking the oldest organisation that has an
+  // active user found a tenant whose user has not accepted the legal policies,
+  // so `requireConsent` answered 403 `consent_required` BEFORE the request ever
+  // reached the engagement lookup. That refusal proves a consent gate works.
+  // It proves nothing whatsoever about tenant isolation, and it would have
+  // passed a check written as `403 || 404`.
+  //
+  // So: a second organisation, a second active user, and that user's legal
+  // consents copied from the fixture owner — who is demonstrably past the gate,
+  // since every governed act above went through. Building the tenant instead of
+  // borrowing one also means this harness never reads or mutates another
+  // customer's data.
+  const fOrg = (await q(
+    `INSERT INTO organizations (name, slug, status, entitlement_level)
+     VALUES ($1, $2, 'active', 'premium') RETURNING id`,
+    [`${LABEL} foreign tenant`, `ge-foreign-${Date.now()}`])).rows[0].id;
+  const fUser = (await q(
+    `INSERT INTO users (organization_id, email, name, role, status, password_hash, email_verified)
+     VALUES ($1, $2, $2, 'admin', 'active', 'x', TRUE) RETURNING id, session_epoch`,
+    [fOrg, `ge-foreign-${Date.now()}@tokens.test`])).rows[0];
+  // And an ACTIVE api key: `requireApiKey` resolves the session's organisation
+  // to one and answers 401 `no_active_api_key` when there is none — again in
+  // FRONT of the engagement lookup. A foreign tenant that cannot get past the
+  // front door proves nothing about whether the door behind it is locked.
+  await q(
+    `INSERT INTO api_keys (organization_id, label, key_hash, entitlement_level, status)
+     VALUES ($1, $2, $3, 'premium', 'active')`,
+    [fOrg, `${LABEL} foreign key`, `ge-foreign-hash-${Date.now()}-${Math.random().toString(36).slice(2)}`]);
+  await q(
+    `INSERT INTO legal_consents
+       (user_id, organization_id, document_type, document_version, consent_method, consented_at)
+     SELECT $1, $2, document_type, document_version, 'admin_recorded', now()
+       FROM legal_consents WHERE user_id = $3
+     ON CONFLICT (user_id, document_type, document_version) DO NOTHING`,
+    [fUser.id, fOrg, ownerId]);
+  const fConsents = (await q(
+    `SELECT count(*)::int n FROM legal_consents WHERE user_id = $1`, [fUser.id])).rows[0].n;
+  note(19.5, "e-tenant", "foreign tenant built", { fOrg, consents: fConsents });
+  const otherJwt = signJwt(fUser.id, fOrg, "admin", fUser.session_epoch ?? 0);
+  const foreign = await api("GET", `/vendor-engagements/${engagementId}/assurance-coverage`,
+    { token: otherJwt });
+  check(20, "e-tenant", "the foreign tenant is past the consent gate — so a refusal below means TENANT, not consent",
+    foreign.json?.error !== "consent_required", { status: foreign.status, error: foreign.json?.error ?? null });
+  check(21, "e-tenant", "another tenant reading THIS engagement is refused, never served rows",
+    (foreign.status === 404 || foreign.status === 403) && foreign.json?.error !== "consent_required",
+    { status: foreign.status, body: foreign.json });
+  check(22, "e-tenant", "and no governed_evidence leaked in that response",
+    (foreign.json?.governed_evidence ?? []).length === 0);
   const anon = await api("GET", `/vendor-engagements/${engagementId}/assurance-coverage`);
   check(23, "e-tenant", "an unauthenticated read is refused", anon.status === 401 || anon.status === 404,
     anon.status);
 
   /* ── f. questionnaire depth is UNCHANGED ──────────────────────────────── */
   const scopeAfter = await scope();
-  const depthAfter = (scopeAfter.json?.requirements ?? []).length;
-  const coveredIdsAfter = scopeAfter.json?.assuranceCoveredRequirementIds ?? [];
+  const depthAfter = scopeAfter.json?.scoped ?? 0;
+  const coveredIdsAfter = await scopedItemIds();
   check(24, "f-depth", "scope still resolves after all the governed evidence",
-    scopeAfter.status === 200);
+    scopeAfter.status === 200,
+    { status: scopeAfter.status, depthAfter, body: scopeAfter.json?.error ?? null });
   check(25, "f-depth", "QUESTION DEPTH IS IDENTICAL before and after",
-    depthBefore === depthAfter, { depthBefore, depthAfter });
-  check(26, "f-depth", "the covered-requirement set is IDENTICAL — nothing new counts",
+    depthBefore === depthAfter && depthAfter > 0, { depthBefore, depthAfter });
+  check(26, "f-depth", "the FROZEN QUESTION SET is IDENTICAL — not just the count",
     JSON.stringify([...coveredIdsBefore].sort()) === JSON.stringify([...coveredIdsAfter].sort()),
     { before: coveredIdsBefore, after: coveredIdsAfter });
   const covFinal = await coverage();
   check(27, "f-depth", "covered[] on the coverage surface gained nothing from governed evidence",
-    (covFinal.json?.covered ?? []).length === coveredIdsBefore.length,
-    { covered: (covFinal.json?.covered ?? []).length });
+    (covFinal.json?.covered ?? []).length === surfaceCoveredBefore,
+    { before: surfaceCoveredBefore, after: (covFinal.json?.covered ?? []).length });
   check(28, "f-depth", "the COUNTING-rule version is unchanged — counting did not change",
     covFinal.json?.coverage_version === "assurance-coverage-1.1", covFinal.json?.coverage_version);
   const geIds = new Set((covFinal.json?.governed_evidence ?? []).map((g) => g.requirement_id));
