@@ -2564,6 +2564,25 @@ export async function getAssuranceCoverage(req: Request, res: Response): Promise
         reason: g.reason,
         detail: g.detail,
       })),
+      // Confirmed, current, requirement-grain governed evidence. VISIBLE and
+      // explicitly NON-COUNTING: `counts` is always false and none of these
+      // rows is in `covered`, so questionnaire depth is unaffected by every one
+      // of them. Before this, curating a pen test or an ISO certificate showed
+      // a reviewer nothing at all, which reads as "no evidence exists".
+      governed_evidence_version: coverage.governedEvidenceVersion,
+      governed_evidence: coverage.governedEvidence.map((g) => ({
+        link_id: g.linkId,
+        evidence_id: g.evidenceId,
+        requirement_id: g.requirementId,
+        requirement_reference: g.requirementReference,
+        assurance_class: g.assuranceClass,
+        validity_basis: g.validityBasis,
+        valid_until: g.validUntil,
+        confirmed_at: g.confirmedAt,
+        superseded_by_newer_version: g.supersededByNewerVersion,
+        counts: g.counts,
+        reason: g.reason,
+      })),
     });
   } catch (err) {
     logger.error({ event: "assurance_coverage_read_failed", engagementId: id, err },

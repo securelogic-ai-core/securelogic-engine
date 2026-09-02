@@ -46,6 +46,7 @@
 
 import { pg } from "../../infra/postgres.js";
 import { resolveValidityWindow, isWindowCurrent } from "../evidenceValidityPolicy.js";
+import { SQL_EVIDENCE_COUNTING, SQL_EVIDENCE_SUPERSEDED } from "../evidenceLifecycleContract.js";
 import { loadEffectivePolicy } from "../evidenceLinkWriter.js";
 
 /**
@@ -91,6 +92,76 @@ export type CoverageGap = {
   detail: Record<string, unknown>;
 };
 
+/**
+ * ── THE GOVERNED-EVIDENCE SURFACE (added 2026-09-02, owner-authorized) ───────
+ *
+ * Deliberately NOT versioned with ASSURANCE_COVERAGE_VERSION. That constant
+ * identifies the COUNTING rule that produced a stored decision basis, and the
+ * counting rule is byte-identical before and after this addition: nothing here
+ * touches `covered`, so a basis stamped `assurance-coverage-1.1` means exactly
+ * what it meant yesterday. Bumping it would falsely signal that counting
+ * changed. The new surface carries its own identity instead.
+ */
+export const GOVERNED_EVIDENCE_SURFACE_VERSION = "governed-evidence-surface-1.0";
+
+/**
+ * The assurance classes that can carry TESTED-CONTROL authority at all.
+ *
+ * These two are the only classes `assuranceClassForReportType` maps, and the
+ * only ones whose artifacts are audit reports that TEST controls. Every other
+ * ratified class describes an artifact with no tested control in it, so no
+ * `vendor_tested_control_resolutions` row can exist for it, so no
+ * `vendor_requirement_sufficiency_determinations` row can be written (that
+ * table NOT-NULLs `resolution_id` and `canonical_control_id`), so it can never
+ * reach a SUFFICIENT determination. That is a structural fact about the schema,
+ * not a policy choice, and it is why this surface never counts.
+ */
+const TESTED_CONTROL_CAPABLE_CLASSES: ReadonlySet<string> = new Set(["soc1", "soc2_type2"]);
+
+/**
+ * Why a governed evidence link does not count. DETERMINISTIC: derived only from
+ * the artifact's assurance class, never from a heuristic or a partial read.
+ *
+ *  - `no_tested_control_authority` — the class cannot produce a tested control,
+ *    so the authority chain (tested control -> canonical control -> governed
+ *    crosswalk -> requirement) does not exist for it. Owner-ruled 2026-09-02:
+ *    these fail CLOSED rather than receive a shortcut, and no INAPPLICABLE veto
+ *    state is introduced to let them through.
+ *  - `awaiting_sufficiency_determination` — the class COULD carry tested-control
+ *    authority, but this link is not a determination. Saying such an artifact
+ *    "lacks tested-control authority" would be false; it lacks a determination.
+ */
+export const GOVERNED_EVIDENCE_NON_COUNTING_REASONS = [
+  "no_tested_control_authority",
+  "awaiting_sufficiency_determination",
+] as const;
+export type GovernedEvidenceNonCountingReason =
+  (typeof GOVERNED_EVIDENCE_NON_COUNTING_REASONS)[number];
+
+/**
+ * One confirmed, current, requirement-grain governed evidence link.
+ *
+ * `counts` is the literal `false`, not a boolean: this arm has no branch that
+ * can make it true. Questionnaire depth reduction reads ONLY
+ * `AssuranceCoverage.covered`, which this arm never writes to.
+ */
+export type GovernedEvidenceLink = {
+  linkId: string;
+  evidenceId: string;
+  requirementId: string;
+  /** NULL when the requirement does not resolve inside THIS organization. */
+  requirementReference: string | null;
+  assuranceClass: string;
+  validityBasis: string;
+  /** NULL for `perpetual`, which has no end date by ratification. */
+  validUntil: string | null;
+  confirmedAt: string;
+  /** ADR-0012 2.4: a newer version is NAMED beside the row, never auto-detached. */
+  supersededByNewerVersion: boolean;
+  counts: false;
+  reason: GovernedEvidenceNonCountingReason;
+};
+
 export type AssuranceCoverage = {
   version: string;
   asOf: string;
@@ -98,6 +169,15 @@ export type AssuranceCoverage = {
   covered: CoveredRequirement[];
   /** SUFFICIENT determinations that did NOT count, and exactly why. */
   gaps: CoverageGap[];
+  /**
+   * Confirmed, current, requirement-grain governed evidence for this engagement.
+   * VISIBLE and explicitly NON-COUNTING. Curating a pen test or an ISO
+   * certificate used to produce silence on this surface, which reads as "no
+   * evidence exists"; it now reads as "evidence exists and here is why it does
+   * not reduce depth".
+   */
+  governedEvidence: GovernedEvidenceLink[];
+  governedEvidenceVersion: string;
 };
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -121,6 +201,87 @@ export function assuranceClassForReportType(reportType: string | null): string |
   if (/soc\s*2/.test(t) && /(type\s*(1|i))\b/.test(t)) return "soc2_type1";
   if (/soc\s*1/.test(t)) return "soc1";
   return null;
+}
+
+/**
+ * Enumerate the confirmed, current, requirement-grain governed evidence links
+ * for one engagement. READS ONLY. Never counts, by construction.
+ *
+ * Currency is decided by SQL_EVIDENCE_COUNTING — the SAME predicate the Step-2
+ * lifecycle uses, imported rather than re-implemented, so "current" means one
+ * thing across the platform. An expired artifact fails that predicate and is
+ * therefore ABSENT from this list: it cannot masquerade as current, and it is
+ * not silently reported as counting-but-stale either.
+ *
+ * TENANT ISOLATION. `evidence_links` and `evidence` are org-filtered explicitly
+ * at every hop; RLS is the backstop, never the only guard. `requirements` and
+ * `frameworks` have RLS DISABLED (measured), so the requirement reference is
+ * resolved through `frameworks.organization_id` and yields NULL rather than a
+ * foreign organization's text if the requirement does not belong here.
+ */
+export async function resolveGovernedEvidenceLinks(args: {
+  organizationId: string;
+  engagementId: string;
+}): Promise<GovernedEvidenceLink[]> {
+  const { organizationId, engagementId } = args;
+
+  const rows = await pg.query<{
+    link_id: string;
+    evidence_id: string;
+    requirement_id: string;
+    requirement_reference: string | null;
+    assurance_class: string;
+    validity_basis: string;
+    valid_until: string | null;
+    confirmed_at: string;
+    superseded_by_newer: boolean;
+  }>(
+    `SELECT el.id                          AS link_id,
+            el.evidence_id,
+            el.target_requirement_id       AS requirement_id,
+            CASE WHEN f.id IS NOT NULL THEN r.reference_id END
+                                           AS requirement_reference,
+            e.assurance_class,
+            e.validity_basis,
+            e.valid_until::text            AS valid_until,
+            el.confirmed_at::text          AS confirmed_at,
+            (${SQL_EVIDENCE_SUPERSEDED})   AS superseded_by_newer
+       FROM evidence_links el
+       JOIN evidence e
+         ON e.id = el.evidence_id
+        AND e.organization_id = el.organization_id
+       LEFT JOIN requirements r
+         ON r.id = el.target_requirement_id
+       -- The org gate on the reference: frameworks carries organization_id and
+       -- requirements does not, and NEITHER has RLS. No match here means the
+       -- reference renders NULL rather than another tenant's text.
+       LEFT JOIN frameworks f
+         ON f.id = r.framework_id
+        AND f.organization_id = el.organization_id
+      WHERE el.organization_id = $1
+        AND el.target_type = 'vendor_engagement'
+        AND el.target_id = $2
+        AND el.target_requirement_id IS NOT NULL
+        AND ${SQL_EVIDENCE_COUNTING}
+      ORDER BY el.confirmed_at DESC, el.id`,
+    [organizationId, engagementId]
+  );
+
+  return rows.rows.map((row) => ({
+    linkId: row.link_id,
+    evidenceId: row.evidence_id,
+    requirementId: row.requirement_id,
+    requirementReference: row.requirement_reference,
+    assuranceClass: row.assurance_class,
+    validityBasis: row.validity_basis,
+    validUntil: row.valid_until,
+    confirmedAt: row.confirmed_at,
+    supersededByNewerVersion: row.superseded_by_newer === true,
+    counts: false as const,
+    reason: TESTED_CONTROL_CAPABLE_CLASSES.has(row.assurance_class)
+      ? ("awaiting_sufficiency_determination" as const)
+      : ("no_tested_control_authority" as const),
+  }));
 }
 
 /**
@@ -325,5 +486,25 @@ export async function resolveAssuranceCoverage(args: {
     });
   }
 
-  return { version: ASSURANCE_COVERAGE_VERSION, asOf, engagementId, covered, gaps };
+  // The governed-evidence arm is computed LAST and kept in its own field. It is
+  // deliberately not merged into `covered` or `gaps`: `covered` drives depth
+  // reduction and `gaps` is the determination-side explanation. A read failure
+  // here must never lose the coverage answer, so it degrades to an empty list
+  // in the safe direction — visible-nothing, never counted-something.
+  let governedEvidence: GovernedEvidenceLink[] = [];
+  try {
+    governedEvidence = await resolveGovernedEvidenceLinks({ organizationId, engagementId });
+  } catch {
+    governedEvidence = [];
+  }
+
+  return {
+    version: ASSURANCE_COVERAGE_VERSION,
+    asOf,
+    engagementId,
+    covered,
+    gaps,
+    governedEvidence,
+    governedEvidenceVersion: GOVERNED_EVIDENCE_SURFACE_VERSION,
+  };
 }
