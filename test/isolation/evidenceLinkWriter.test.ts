@@ -189,7 +189,9 @@ describe("4. curation is write-once and never guesses a window", () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.value.validityBasis).toBe("not_established");
-    expect(out.value.reason).toBe("policy_establishes_no_window");
+    // 20261085 gives a ratified no-window class its ratified REASON, so the
+    // refusal says what was decided instead of a generic slug.
+    expect(out.value.reason).toBe("type_i_attests_design_only");
     const r = await pool.query("SELECT assurance_class, validity_basis FROM evidence WHERE id=$1", [ev]);
     expect(r.rows[0]).toMatchObject({ assurance_class: "soc2_type1", validity_basis: "not_established" });
   });
@@ -197,7 +199,7 @@ describe("4. curation is write-once and never guesses a window", () => {
   it("an UNRATIFIED class (D2-D14) gets no window either", async () => {
     const ev = await newEvidence(seed.orgA.id, "w-pentest");
     const out = await asOrg(seed.orgA.id, () => establishAssurance({
-      organizationId: seed.orgA.id, evidenceId: ev, assuranceClass: "pen_test",
+      organizationId: seed.orgA.id, evidenceId: ev, assuranceClass: "contract",
       anchorDate: "2025-12-31", artifactAssertedUntil: null, actorUserId: userA,
     }));
     expect(out.ok).toBe(true);

@@ -22,6 +22,75 @@
 > and zero pen tests**, so the "244 days stale" pressure describes STAGING
 > FIXTURES only. D1 was ratified on the annual-audit-cycle merit, and D16's
 > legacy-curation problem turned out not to exist.
+
+> ---
+>
+> **STATUS 2026-09-02 — D2 THROUGH D14 RATIFIED BY THE OWNER AND IMPLEMENTED as
+> migration `20261085`.** The ratification carried AMENDMENTS to the
+> recommendations that were put to the owner; the amendments govern. What
+> follows records them, the reconciliation against D0/D1/D15/D16, and the two
+> places where the implementation deliberately differs from the wording of the
+> recommendation because the ruling required it.
+>
+> **The rulings as ratified.** D2 SOC bridge: 12 months normally, months 13-15
+> only under a governed bridge letter, absolute ceiling period end + 15,
+> unbridged reports stale after month 12. D3 ISO: the certificate's stated
+> expiry is an absolute ceiling and is REQUIRED. D4 ISO re-evidence: 12 / 3 /
+> 36, never beyond the certificate, with assurance-policy configuration kept
+> semantically separate from risk acceptance. D5 pen test 12 / 3 / **15**. D6
+> vulnerability scan 3 / 1 / 3 CALENDAR months. D7 policy document: the linked
+> policy object's own cadence, ceiling last review + 24. D8 BCP/DR 12 / 3 /
+> **18**. D9 technical configuration 3 / 1 / 6 anchored on `collected_at`,
+> required, and never caller-supplied. D10 vendor attestation: the governed
+> engagement cadence under an absolute 24-month ceiling, shorter cadence wins.
+> D11 privacy agreement 24 / 6 / 36 and sub-processor list 12 / 3 / 12, held
+> separate. D12 AI evaluation: NO automated coverage until canonical
+> model-version identity exists. D13 contract and D14 other assurance report:
+> no policy row, human-committed artifact basis only.
+>
+> **Two implementation choices the rulings forced, both recorded so they are not
+> mistaken for drift:**
+>
+> 1. **D2 is implemented as a CONDITION, not as a lowered ceiling.** Dropping
+>    `max_duration_months` from 15 to 12 would have encoded a different rule
+>    that merely coincides while no bridge exists: it discards the ratified
+>    15-month absolute ceiling and strands any organization already sitting
+>    between 13 and 15 months, leaving a live setting no trigger re-checks.
+>    Instead `bridge_required_above_months = 12` stores the condition itself.
+>    Behaviour today is identical — nothing can satisfy an unsatisfiable
+>    condition — and the bridge package later supplies coverage without a second
+>    policy version.
+>
+> 2. **`artifact_term` was renamed `artifact_stated_date`.** It was seeded by
+>    nothing, so the rename cost zero rows now and a data migration later. Five
+>    ratified classes ride it; under the old name two of them would have had to
+>    ride `report_period_end`, which is SOC vocabulary describing a field a pen
+>    test and a DR exercise do not have.
+>
+> **THE ONE INTERPRETIVE CALL, FLAGGED FOR THE OWNER.** D11 says evergreen
+> status "requires explicit governed human assertion", and it also says a DPA
+> may remain contractually in force after its assurance evidence goes stale and
+> that the two must not be conflated. Those pull in opposite directions once
+> `perpetual` is a validity basis, because the Step-2 counting predicate treats
+> `perpetual` as always-current — so committing it would assert unlimited
+> ASSURANCE currency on the strength of a CONTRACTUAL fact. Global principle 4
+> (customer configuration may not defeat a platform epistemic ceiling) and
+> principle 6 (fail closed) resolve it the same way, so `privacy_agreement` is
+> seeded with `artifact_basis_permitted = FALSE`: the 24-month assurance window
+> governs, and contractual perpetuity is recorded elsewhere. **If the owner
+> intended the other reading it is one row value to flip**, by a version-2
+> policy row, and nothing else changes.
+>
+> **What D2-D14 does NOT deliver, stated plainly.** The S4 counting predicate
+> classifies only SOC reports, so no new class reaches questionnaire reduction
+> yet. This package makes the ratified policy real for the CURATION path and the
+> Step-2 lifecycle predicate; extending the counting predicate to non-SOC
+> assurance is separate work. Three limitations are unchanged and now recorded
+> against ratified policy rather than against a proposal: bridge letters have no
+> artifact type, surveillance-audit status is unobservable (D4 concedes this and
+> annual re-evidence is the proxy), and model-version identity does not exist
+> (D12 fails closed on it rather than substituting time).
+
 **Companion (the full analysis, unchanged):** `docs/design/VA-EVIDENCE-validity-policy-proposal.md`
 **Blocked by this memo:** wiring-plan §7 step 3, and therefore step 5.
 

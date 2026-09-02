@@ -48,7 +48,14 @@
 export const VALIDITY_ANCHORS = [
   "report_period_end",
   "collected_at",
-  "artifact_term",
+  "artifact_stated_date",
+  /**
+   * D7 / D10: follow a LINKED governed object's own review cadence rather than
+   * a duration of our own. The caller resolves the linked object and supplies
+   * both its last-event date (the anchor) and its next-due date; unlinked
+   * evidence establishes nothing.
+   */
+  "object_cadence",
   "none",
 ] as const;
 export type ValidityAnchor = (typeof VALIDITY_ANCHORS)[number];
@@ -69,6 +76,29 @@ export type ValidityPolicyRow = {
   /** The platform's sanity floor for its own default. NOT a customer bound. */
   minDurationMonths: number | null;
   anchor: ValidityAnchor;
+  /**
+   * D3: when true the artifact's own stated end is MANDATORY, not merely a cap.
+   * A row of this class with no asserted end resolves to not_established rather
+   * than taking the policy window — a certificate whose expiry nobody recorded
+   * must never inherit a duration.
+   */
+  requiresArtifactEnd: boolean;
+  /**
+   * D11 / D13 / D14: may a curator commit the ARTIFACT's own dates instead of a
+   * computed window? False for every class carrying a ratified duration, so an
+   * artifact basis can never route around a platform ceiling.
+   */
+  artifactBasisPermitted: boolean;
+  /**
+   * D2: beyond this many months the window counts ONLY when a governed bridge
+   * letter covers the gap. Null when the class has no bridge condition.
+   */
+  bridgeRequiredAboveMonths: number | null;
+  /**
+   * For a ratified class that establishes NO window, the reason it was ratified
+   * that way — so a refusal says what was decided rather than a generic slug.
+   */
+  noWindowReason: string | null;
 };
 
 export type ValidityWindowInput = {
@@ -83,6 +113,21 @@ export type ValidityWindowInput = {
    * A computed window is capped to this and can never exceed it.
    */
   artifactAssertedUntil: string | null;
+  /**
+   * For `object_cadence` policies only: the linked governed object's own next-due
+   * date (a policy's next review, an engagement's next reassessment). The
+   * SHORTER of this and the platform ceiling binds, so a long customer cadence
+   * can never outlive the ceiling (D10). Null when nothing is linked, which
+   * fails closed.
+   */
+  linkedCadenceUntil?: string | null;
+  /**
+   * D2: how far a governed bridge letter covers, when one is linked. No bridge
+   * artifact exists yet, so this is always null today and the bridge condition
+   * is therefore unsatisfiable — which is exactly the ratified behaviour. The
+   * bridge package supplies this and nothing else changes.
+   */
+  bridgeCoverageUntil?: string | null;
 };
 
 export type ValidityWindow =
@@ -100,6 +145,11 @@ export type ValidityWindow =
       source: "platform" | "customer";
       /** True when rule 3 narrowed the window to the artifact's own end. */
       cappedByArtifact: boolean;
+      /**
+       * True when a linked object's cadence ended before the platform ceiling
+       * (D7 / D10: the shorter governed cadence wins).
+       */
+      cappedByLinkedCadence: boolean;
       reason: string;
     };
 
@@ -138,6 +188,8 @@ export function addMonths(isoDate: string, months: number): string {
  */
 export function resolveValidityWindow(input: ValidityWindowInput): ValidityWindow {
   const { policy, orgDurationMonths, anchorDate, artifactAssertedUntil } = input;
+  const linkedCadenceUntil = input.linkedCadenceUntil ?? null;
+  const bridgeCoverageUntil = input.bridgeCoverageUntil ?? null;
 
   // Rule 1 — no ratified policy, no validity.
   if (!policy) {
@@ -147,12 +199,35 @@ export function resolveValidityWindow(input: ValidityWindowInput): ValidityWindo
     return {
       basis: "not_established",
       validUntil: null,
-      reason: "policy_establishes_no_window",
+      // A ratified class that establishes nothing says WHY it was ratified that
+      // way. Falling back to the generic slug would read as "nobody decided".
+      reason: policy.noWindowReason ?? "policy_establishes_no_window",
     };
   }
 
   if (!anchorDate || !ISO_DATE.test(anchorDate.trim())) {
     return { basis: "not_established", validUntil: null, reason: "no_anchor_date" };
+  }
+
+  // Rule 1b (D3) — some classes REQUIRE the artifact's own end. An ISO
+  // certificate states its expiry; one whose expiry nobody recorded must fail
+  // closed rather than inherit the policy's duration.
+  const asserted =
+    artifactAssertedUntil && ISO_DATE.test(artifactAssertedUntil.trim())
+      ? artifactAssertedUntil.trim()
+      : null;
+  if (policy.requiresArtifactEnd && asserted === null) {
+    return { basis: "not_established", validUntil: null, reason: "artifact_end_required" };
+  }
+
+  // Rule 1c (D7 / D10) — an object_cadence policy establishes nothing without
+  // the linked object it is supposed to follow. Missing linkage fails closed.
+  const cadenceUntil =
+    linkedCadenceUntil && ISO_DATE.test(linkedCadenceUntil.trim())
+      ? linkedCadenceUntil.trim()
+      : null;
+  if (policy.anchor === "object_cadence" && cadenceUntil === null) {
+    return { basis: "not_established", validUntil: null, reason: "no_linked_object_cadence" };
   }
 
   // Rule 2 — the customer layer, bounded on the loosening side only.
@@ -178,16 +253,51 @@ export function resolveValidityWindow(input: ValidityWindowInput): ValidityWindo
     source = "customer";
   }
 
+  // Rule 2c (D2) — a duration past the bridge threshold counts ONLY when a
+  // governed bridge letter covers the gap. The ratified ceiling above the
+  // threshold is preserved; what the threshold does is make it CONDITIONAL. No
+  // bridge artifact exists yet, so this refuses today and becomes reachable the
+  // moment the bridge package supplies coverage.
+  if (
+    policy.bridgeRequiredAboveMonths !== null &&
+    durationMonths > policy.bridgeRequiredAboveMonths
+  ) {
+    const bridged =
+      bridgeCoverageUntil !== null && ISO_DATE.test(bridgeCoverageUntil.trim())
+        ? bridgeCoverageUntil.trim()
+        : null;
+    const wouldEnd = addMonths(anchorDate.trim(), durationMonths);
+    if (bridged === null || bridged < wouldEnd) {
+      return {
+        basis: "not_established",
+        validUntil: null,
+        reason: "governed_bridge_required",
+      };
+    }
+  }
+
   let validUntil = addMonths(anchorDate.trim(), durationMonths);
 
-  // Rule 3 — the artifact always outranks the policy.
+  // Rule 2b (D7 / D10) — for an object_cadence policy the duration above is the
+  // ABSOLUTE CEILING, not the cadence. The linked object supplies the cadence,
+  // and the SHORTER of the two binds. This is what stops a 120-month customer
+  // engagement cadence from keeping a 10-year-old attestation current, and it
+  // is equally what lets a 6-month policy review cadence bind tighter than the
+  // 24-month ceiling.
+  let cappedByLinkedCadence = false;
+  if (policy.anchor === "object_cadence" && cadenceUntil !== null && cadenceUntil < validUntil) {
+    validUntil = cadenceUntil;
+    cappedByLinkedCadence = true;
+  }
+
+  // Rule 3 — the artifact always outranks the policy. Last, and unconditional:
+  // neither a platform duration nor a customer setting nor a linked cadence may
+  // outlive what the artifact itself asserts.
   let cappedByArtifact = false;
-  if (artifactAssertedUntil && ISO_DATE.test(artifactAssertedUntil.trim())) {
-    const asserted = artifactAssertedUntil.trim();
-    if (validUntil > asserted) {
-      validUntil = asserted;
-      cappedByArtifact = true;
-    }
+  if (asserted !== null && validUntil > asserted) {
+    validUntil = asserted;
+    cappedByArtifact = true;
+    cappedByLinkedCadence = false;
   }
 
   return {
@@ -196,7 +306,12 @@ export function resolveValidityWindow(input: ValidityWindowInput): ValidityWindo
     durationMonths,
     source,
     cappedByArtifact,
-    reason: cappedByArtifact ? "capped_by_artifact_asserted_end" : "policy_window",
+    cappedByLinkedCadence,
+    reason: cappedByArtifact
+      ? "capped_by_artifact_asserted_end"
+      : cappedByLinkedCadence
+        ? "capped_by_linked_object_cadence"
+        : "policy_window",
   };
 }
 

@@ -409,6 +409,45 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-09-02 — D2-D14 EVIDENCE-VALIDITY RATIFICATION: owner-ratified
+> and BUILT (migration `20261085`).**
+>
+> The owner ratified D2 through D14 on 2026-09-02 with amendments, closing the
+> only item the S4 block still listed as owed. `20261085` seeds ten newly
+> ratified assurance classes, amends the two SOC rows to carry D2's bridge
+> condition, and adds the four mechanisms the rulings needed that the policy
+> table could not previously express: `requires_artifact_end` (D3),
+> `artifact_basis_permitted` (D11/D13/D14), `bridge_required_above_months` (D2)
+> and `no_window_reason` (D12). `contract` and `other_assurance_report` are
+> seeded with NOTHING, by explicit ruling — their currency comes from a
+> human-committed artifact basis, and a row would be the catch-all TTL both
+> rulings forbid.
+>
+> **Two mechanisms the package had to build, not just seed:** the writer now
+> DERIVES the validity anchor from governed evidence state for `collected_at`
+> and `object_cadence` classes rather than trusting a caller (D9's "must not
+> permit callers to manufacture freshness"), and curation gained an explicit
+> human-committed artifact basis (`artifact_dates` / `perpetual`), without which
+> D13, D14 and D3 had no mechanism at all — the writer could previously only
+> ever produce a computed window.
+>
+> **Scope discipline, stated plainly:** the S4 counting predicate still
+> classifies only SOC reports, so no newly ratified class reaches questionnaire
+> reduction yet. This package makes ratified policy real for the curation path
+> and the Step-2 lifecycle predicate. Extending the counting predicate beyond
+> SOC is separate work and is NOT authorized here.
+>
+> **One interpretive call is flagged for the owner** in
+> `docs/design/VA-EVIDENCE-validity-policy-RATIFICATION-MEMO.md`: whether
+> `privacy_agreement` may carry a `perpetual` basis. It is seeded FALSE on the
+> fail-closed reading of D11 plus global principles 4 and 6, and reversing it is
+> one policy row.
+>
+> **Activation state unchanged:** `SECURELOGIC_EVIDENCE_LIFECYCLE_V2` remains ON
+> for the STAGING engine only, OFF and untouched in production and demo. No
+> promotion to `main`, no Blueprint sync, no production change.
+
+
 > **DOC-SYNC 2026-09-01 — VA-S4 intelligent assurance COMPLETE and ACTIVE ON
 > STAGING (this file only; no application code changed by this sync).**
 >
@@ -440,8 +479,9 @@ Billing note:
 > demo. The kill switch is the flag; the dark phase is the proven kill-switch
 > state (byte-identical composition). **No production change, no promotion to
 > main, no Blueprint sync** is authorized by this record. Remaining owner
-> item, unchanged: D2–D14 validity durations unratified (their classes
-> simply never count).
+> item as of that date: D2–D14 validity durations unratified (their classes
+> simply never count). **SUPERSEDED 2026-09-02 — D2-D14 are now ratified and
+> built; see the D2-D14 doc-sync at the top of this section.**
 >
 > **Environment-isolation correction (2026-09-02, docs-only):** the R2 and
 > Redis staging separation previously listed here as remaining owner work was

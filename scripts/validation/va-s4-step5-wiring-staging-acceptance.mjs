@@ -379,7 +379,7 @@ async function main() {
     check(20, "compose", "the decision basis rides the scope item",
       s4reason?.basis?.determination_id === determinationId
         && s4reason?.basis?.valid_until === "2026-12-31"
-        && s4reason?.basis?.coverage_version === "assurance-coverage-1.0",
+        && s4reason?.basis?.coverage_version === "assurance-coverage-1.1",
       s4reason?.basis ?? null);
     const audit = await q(
       `SELECT payload->'s4_assurance' s4 FROM security_audit_log

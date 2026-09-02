@@ -69,8 +69,16 @@ describe("1. only what was ratified is seeded", () => {
         WHERE superseded_at IS NULL
         ORDER BY assurance_class`
     );
-    expect(r.rows.map((x) => x.assurance_class)).toEqual(["soc1", "soc2_type1", "soc2_type2"]);
-    expect(r.rows.every((x) => x.ratification_ref === "D1")).toBe(true);
+    // ENUMERATED, not counted: the next package's diff has to be legible.
+    expect(r.rows.map((x) => x.assurance_class)).toEqual([
+      "ai_evaluation", "bcp_dr_test", "iso_certification", "pen_test",
+      "policy_document", "privacy_agreement", "soc1", "soc2_type1",
+      "soc2_type2", "subprocessor_list", "technical_configuration",
+      "vendor_attestation", "vulnerability_scan",
+    ]);
+    // D13 contract and D14 other_assurance_report are ruled to have NO row.
+    expect(r.rows.map((x) => x.assurance_class)).not.toContain("contract");
+    expect(r.rows.map((x) => x.assurance_class)).not.toContain("other_assurance_report");
   });
 
   it("soc2_type2 carries D1's ratified numbers", async () => {
@@ -79,6 +87,7 @@ describe("1. only what was ratified is seeded", () => {
          FROM evidence_validity_policy
         WHERE assurance_class = 'soc2_type2' AND superseded_at IS NULL`
     );
+    // D2 amended D1 by making months 13-15 conditional, NOT by lowering 15.
     expect(r.rows[0]).toMatchObject({ d: 12, mx: 15, mn: 3, anchor: "report_period_end" });
   });
 
@@ -93,10 +102,10 @@ describe("1. only what was ratified is seeded", () => {
     expect(r.rows[0].anchor).toBe("none");
   });
 
-  it("no unratified class (D2-D14) has a policy row", async () => {
+  it("the classes ruled to carry NO row have none", async () => {
     const r = await pool.query(
       `SELECT count(*)::int n FROM evidence_validity_policy
-        WHERE assurance_class NOT IN ('soc1','soc2_type1','soc2_type2')`
+        WHERE assurance_class IN ('contract','other_assurance_report')`
     );
     expect(r.rows[0].n).toBe(0);
   });
@@ -191,8 +200,10 @@ describe("3. the ceiling is enforced by the database, not only the contract", ()
     await expect(setSetting(seed.orgA.id, "soc2_type2", 16)).rejects.toThrow(/exceeds the platform ceiling/);
   });
 
-  it("an unratified class cannot be configured at all", async () => {
-    await expect(setSetting(seed.orgA.id, "pen_test", 12)).rejects.toThrow(/no live evidence_validity_policy/);
+  it("a class with NO ratified policy row cannot be configured at all", async () => {
+    // D13: contract is ruled to have no policy row, so there is no ceiling to
+    // bound a setting and no default to depart from.
+    await expect(setSetting(seed.orgA.id, "contract", 12)).rejects.toThrow(/no live evidence_validity_policy/);
   });
 
   it("a class with a policy but NO ratified duration cannot be configured", async () => {
@@ -322,7 +333,7 @@ describe("5. the tenant boundary holds", () => {
       await client.query("SET LOCAL ROLE app_request");
       await client.query("SELECT set_config('app.current_org_id', $1, true)", [seed.orgB.id]);
       const r = await client.query("SELECT count(*)::int n FROM evidence_validity_policy WHERE superseded_at IS NULL");
-      expect(r.rows[0].n).toBe(3);
+      expect(r.rows[0].n).toBe(13);
     } finally {
       await client.query("ROLLBACK").catch(() => {});
       client.release();

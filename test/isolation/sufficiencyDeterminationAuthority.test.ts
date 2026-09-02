@@ -852,7 +852,7 @@ describe("step 5 — sufficient assurance reduces question depth, end to end", (
     expect(r.body.covered).toHaveLength(1);
     expect(r.body.covered[0].requirement_reference).toBe(coveredRequirementRef);
     expect(r.body.covered[0].valid_until).toBe("2026-12-31");
-    expect(r.body.coverage_version).toBe("assurance-coverage-1.0");
+    expect(r.body.coverage_version).toBe("assurance-coverage-1.1");
     // And cross-tenant: org B sees a 404, not an empty list.
     const cross = await request(app)
       .get(`/api/vendor-engagements/${engagement}/assurance-coverage`)
@@ -917,7 +917,7 @@ describe("step 5 — sufficient assurance reduces question depth, end to end", (
       // The decision-basis snapshot rides the scope item itself.
       expect(s4!.basis?.["determination_id"]).toBe(determinationId || s4!.basis?.["determination_id"]);
       expect(s4!.basis?.["valid_until"]).toBe("2026-12-31");
-      expect(s4!.basis?.["coverage_version"]).toBe("assurance-coverage-1.0");
+      expect(s4!.basis?.["coverage_version"]).toBe("assurance-coverage-1.1");
 
       // Every OTHER item is untouched: same requirement set, same depths.
       const offOthers = offItems.rows.filter((r) => r.requirement_id !== coveredRequirementId)
