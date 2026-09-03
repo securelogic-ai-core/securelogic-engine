@@ -96,23 +96,60 @@ beforeEach(() => {
   h.seatDenies = false;
   process.env.OPENAI_API_KEY = "test-key";
   delete process.env.SECURELOGIC_ASK_ENABLED;
-  delete process.env.SECURELOGIC_ASK_VOICE_ENABLED;
+  // SEC-VOICE-1: the voice boundary is opt-in, so the suite's baseline is
+  // "deliberately enabled" — that is the state under which the downstream
+  // gates (tenant setting, seat policy, audit, Whisper call) are worth
+  // asserting at all. The tests that pin the DEFAULT delete this again, which
+  // is what makes the fail-closed behaviour observable rather than assumed.
+  process.env.SECURELOGIC_ASK_VOICE_ENABLED = "true";
   delete process.env.SECURELOGIC_ASK_VOICE_REALTIME_ENABLED;
 });
 
 // ─── C-9: the independent kill switch ───────────────────────────────────────
 
 describe("ASK-C C-9 — independent voice kill switch", () => {
-  it("defaults ON; only the literal 'false' disables (live capability)", async () => {
+  it("defaults OFF; only the literal 'true' enables (SEC-VOICE-1 / C-6)", async () => {
+    // INVERTED 2026-08-28. This flag is the boundary that decides whether
+    // customer audio leaves our infrastructure for a third-party subprocessor
+    // (OpenAI Whisper). It is opt-in: an unset key must not transmit.
     const { askVoiceEnabled, askVoiceRealtimeEnabled } = await import(
       "../lib/ask/askVoiceFeatureFlag.js"
     );
-    expect(askVoiceEnabled({})).toBe(true);
+    expect(askVoiceEnabled({})).toBe(false);
+    expect(askVoiceEnabled({ SECURELOGIC_ASK_VOICE_ENABLED: "true" })).toBe(true);
     expect(askVoiceEnabled({ SECURELOGIC_ASK_VOICE_ENABLED: "false" })).toBe(false);
-    expect(askVoiceEnabled({ SECURELOGIC_ASK_VOICE_ENABLED: "0" })).toBe(true);
-    // The realtime loop is the opposite: NEW behavior, dark by default.
+    // Anything that is not exactly "true" leaves the boundary closed — the
+    // near-miss values are the ones that cause accidental transmission.
+    for (const v of ["", "0", "1", "TRUE", "True", "yes", "on", "enabled", " true "]) {
+      expect(askVoiceEnabled({ SECURELOGIC_ASK_VOICE_ENABLED: v }), v).toBe(false);
+    }
+    // The realtime loop is the same shape: NEW behavior, dark by default.
     expect(askVoiceRealtimeEnabled({})).toBe(false);
     expect(askVoiceRealtimeEnabled({ SECURELOGIC_ASK_VOICE_REALTIME_ENABLED: "true" })).toBe(true);
+  });
+
+  it("an UNSET key sends no audio to the subprocessor — the C-6 boundary", async () => {
+    // This is the production condition on 2026-08-28: the key was never set.
+    // Under the old fail-open default this test would have seen 401/200 and a
+    // Whisper call; under opt-in it must 404 before any audio is parsed.
+    delete process.env.SECURELOGIC_ASK_VOICE_ENABLED;
+    const res = await postAudio();
+    expect(res.status).toBe(404);
+    expect(h.whisperCalls).toBe(0);
+    expect(h.auditEvents).toHaveLength(0);
+  });
+
+  it("closing the voice boundary leaves TEXT Ask untouched", async () => {
+    // The required end state for C-6: voice transcription unavailable,
+    // read-only Ask unaffected. Voice and text are separate flags, and the
+    // implication runs one way only.
+    const { askEnabled } = await import("../lib/askFeatureFlag.js");
+    const { askVoiceEnabled } = await import("../lib/ask/askVoiceFeatureFlag.js");
+    // Voice closed by default...
+    expect(askVoiceEnabled({})).toBe(false);
+    // ...while text Ask stays on, because it is a different switch entirely.
+    expect(askEnabled({})).toBe(true);
+    expect(askEnabled({ SECURELOGIC_ASK_VOICE_ENABLED: "false" })).toBe(true);
   });
 
   it("killed voice 404s before any audio processing", async () => {
@@ -131,7 +168,14 @@ describe("ASK-C C-9 — independent voice kill switch", () => {
   });
 
   it("/status stops advertising a killed capability", async () => {
+    // Opt-in: the capability must be explicitly enabled before /status will
+    // claim it. An unset key advertises nothing, which is what production
+    // should have been reporting all along.
+    delete process.env.SECURELOGIC_ASK_VOICE_ENABLED;
     let res = await request(app()).get("/api/ask/transcribe/status");
+    expect(res.body.configured).toBe(false);
+    process.env.SECURELOGIC_ASK_VOICE_ENABLED = "true";
+    res = await request(app()).get("/api/ask/transcribe/status");
     expect(res.body.configured).toBe(true);
     process.env.SECURELOGIC_ASK_VOICE_ENABLED = "false";
     res = await request(app()).get("/api/ask/transcribe/status");
