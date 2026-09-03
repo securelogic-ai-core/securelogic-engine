@@ -11,23 +11,15 @@ import {
   type Action,
   getFindingRiskLinks,
   getFindingOccurrences,
-  getFindingVendorProvenance,
   getRisks,
   getAuthMe,
-  getPenTestEngagement,
-  type PenTestEngagement,
-  getFindingRetests,
-  type PenTestRetest,
 } from "@/lib/api";
-import { RetestHistorySection } from "@/components/findings/RetestHistorySection";
-import { penTestEnabled } from "@/lib/penTestFeatureFlag";
 import { ActionCard } from "@/components/ActionCard";
 import { FindingEvidenceSection } from "@/components/findings/FindingEvidenceSection";
 import { HistorySection } from "@/components/HistorySection";
 import { AddActionForm } from "./AddActionForm";
 import { RiskRegisterPanel } from "./RiskRegisterPanel";
 import { AffectedAssetsPanel } from "./AffectedAssetsPanel";
-import { VendorProvenancePanel } from "./VendorProvenancePanel";
 import { FindingStatusButtons } from "./FindingStatusButtons";
 import { DecisionWorkspace } from "./DecisionWorkspace";
 import { recommendationEmptyCopy } from "./findingSourceCopy";
@@ -97,7 +89,6 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   manual:               "Manual",
   assessment:           "Assessment",
   risk:                 "Risk",
-  pen_test:             "Pen Test",
 };
 
 function SeverityBadge({ severity }: { severity: string }) {
@@ -242,14 +233,7 @@ function StatusPriorityCard({ finding, actions }: { finding: Finding; actions: A
 // Finding Details card (read-only metadata)
 // ─────────────────────────────────────────────────────────────
 
-function FindingDetailsCard({
-  finding,
-  penTestEngagement,
-}: {
-  finding: Finding;
-  /** PEN-1: the engagement a pen_test finding came from, when it loaded. */
-  penTestEngagement?: PenTestEngagement | null;
-}) {
+function FindingDetailsCard({ finding }: { finding: Finding }) {
   return (
     <div className="bg-brand-surface border border-brand-line rounded-xl p-5">
       <h3 className="text-xs font-semibold uppercase tracking-wide mb-4" style={{ color: "#94a3b8" }}>
@@ -258,21 +242,9 @@ function FindingDetailsCard({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs" style={{ color: "#94a3b8" }}>Source</span>
-          {/* A pen_test finding's source is a destination, not just a word —
-              the engagement name links back to the test that produced it. */}
-          {penTestEngagement ? (
-            <Link
-              href={`/pen-tests/${penTestEngagement.id}`}
-              className="text-xs font-medium text-right transition-opacity hover:opacity-80"
-              style={{ color: "#93c5fd" }}
-            >
-              {penTestEngagement.name}
-            </Link>
-          ) : (
-            <span className="text-xs font-medium" style={{ color: "#cbd5e1" }}>
-              {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
-            </span>
-          )}
+          <span className="text-xs font-medium" style={{ color: "#cbd5e1" }}>
+            {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
+          </span>
         </div>
         {finding.domain && (
           <div className="flex items-center justify-between">
@@ -490,7 +462,7 @@ export default async function FindingDetailPage({
   const token = session.jwtToken ?? session.apiKey ?? null;
   if (!token) redirect("/login");
 
-  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData, vendorProvenance] =
+  const [findingData, actionsData, teamData, riskLinks, registerRisks, authMe, occurrenceData] =
     await Promise.all([
     getFinding(token, id),
     getActionsForFinding(token, id),
@@ -510,48 +482,11 @@ export default async function FindingDetailPage({
     // thousands of hosts, so there is no "fetch all" variant; the rollup counts
     // come from a server-side aggregate, never from the returned page.
     getFindingOccurrences(token, id, { limit: 25, offset: occOffset }),
-    // T1-B. Fails soft to null; a provenance lookup must never take down the page.
-    getFindingVendorProvenance(token, id),
   ]);
 
   if (!findingData) redirect("/findings");
 
   const finding = findingData.finding;
-
-  // PEN-1 provenance + T2-I verification history: a pen_test finding's
-  // source_id points at a pen_test_engagements row, so the source can render
-  // as the ENGAGEMENT (name, linked to /pen-tests/[id]) instead of a bare
-  // "Pen Test" label — and its retest history renders beside it. Fetched
-  // after the finding because they depend on it, in ONE parallel round so the
-  // second fact costs no extra waterfall; best-effort — a failed engagement
-  // fetch falls back to the label, a failed retest fetch renders as an outage
-  // notice (never as "never retested"), neither blocks the page.
-  //
-  // The retest arm is ALSO gated on the pen-test activation flag, and this page
-  // is not otherwise pen-test gated. Without that gate, turning the capability
-  // off would make every pen_test finding claim "Retest history couldn't be
-  // loaded right now — an outage" — a false alarm about a capability that is
-  // deliberately dark, on a page any platform user reaches. Dark means the
-  // section is ABSENT, exactly as it is for every non-pen_test source.
-  // The ENGAGEMENT arm is deliberately left as develop has it: PEN-1 provenance
-  // already degrades to the plain label while dark, and that is shipped,
-  // validated behaviour this package does not change.
-  const isPenTestFinding = finding.source_type === "pen_test";
-  const retestsVisible = isPenTestFinding && penTestEnabled();
-  const [penTestEngagementData, findingRetests]: [
-    { engagement: PenTestEngagement } | null,
-    { count: number; retests: PenTestRetest[] } | null,
-  ] = isPenTestFinding
-    ? await Promise.all([
-        finding.source_id
-          ? getPenTestEngagement(token, finding.source_id)
-          : Promise.resolve(null),
-        retestsVisible ? getFindingRetests(token, id) : Promise.resolve(null),
-      ])
-    : [null, null];
-  const penTestEngagement: PenTestEngagement | null =
-    penTestEngagementData?.engagement ?? null;
-
   const actions = actionsData?.actions ?? [];
   const owners = (teamData?.members ?? [])
     .filter((m) => m.status === "active")
@@ -588,7 +523,6 @@ export default async function FindingDetailPage({
             /* Carried into the workspace so activating it does not remove
                Finding ↔ Risk visibility. Same component, same data, same
                permissions as the legacy layout — one implementation, not two. */
-            vendorProvenance={<VendorProvenancePanel data={vendorProvenance} />}
             affectedAssets={
               <AffectedAssetsPanel
                 findingId={finding.id}
@@ -607,38 +541,6 @@ export default async function FindingDetailPage({
                 }))}
                 canDecide={(authMe?.role ?? "viewer") !== "viewer"}
               />
-            }
-            /* PEN-1: the pen-test engagement this finding came from, linked —
-               server-composed so the workspace fetches nothing. Undefined for
-               every other source (and when the engagement fetch failed), which
-               renders exactly the pre-PEN-1 identity row. */
-            /* T2-I: the verification history, in the SAME server-composed way
-               PEN-1's provenance travels — the workspace fetches nothing.
-               Undefined for every other source: "no retests" is not a fact
-               about a control-test finding, so the section is absent, not
-               empty. */
-            retestHistory={
-              retestsVisible ? (
-                <RetestHistorySection retests={findingRetests} />
-              ) : undefined
-            }
-            sourceProvenance={
-              penTestEngagement ? (
-                <Link
-                  href={`/pen-tests/${penTestEngagement.id}`}
-                  className="transition-opacity hover:opacity-80"
-                  style={{
-                    fontSize: 11,
-                    color: "#93c5fd",
-                    border: "1px solid #93c5fd",
-                    borderRadius: 999,
-                    padding: "2px 8px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Pen Test: {penTestEngagement.name}
-                </Link>
-              ) : undefined
             }
           >
             {/* R-3: the recommendation is ADVISORY guidance — distinct from the
@@ -686,25 +588,12 @@ export default async function FindingDetailPage({
           <div className="bg-brand-surface border border-brand-line rounded-xl p-6">
             <div className="flex items-center gap-2 flex-wrap mb-3">
               <SeverityBadge severity={finding.severity ?? "No severity"} />
-              {/* PEN-1: a pen_test finding's provenance is the ENGAGEMENT, not
-                  a bare label — the badge links to the test that produced it.
-                  Falls back to the label when the engagement fetch failed. */}
-              {penTestEngagement ? (
-                <Link
-                  href={`/pen-tests/${penTestEngagement.id}`}
-                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium transition-opacity hover:opacity-80"
-                  style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
-                >
-                  Pen Test: {penTestEngagement.name}
-                </Link>
-              ) : (
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
-                  style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
-                >
-                  {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
-                </span>
-              )}
+              <span
+                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style={{ background: "rgba(59,130,246,0.1)", color: "#93c5fd" }}
+              >
+                {SOURCE_TYPE_LABELS[finding.source_type] ?? finding.source_type}
+              </span>
               {finding.priority && <PriorityBadge priority={finding.priority} />}
             </div>
             <h1 className="text-2xl font-bold" style={{ color: "#f1f5f9" }}>
@@ -739,16 +628,6 @@ export default async function FindingDetailPage({
             </div>
           )}
 
-          {/* Provenance — FIRST. "What is this and where did it come from"
-              precedes "where is it" and "are we carrying it". Rendered in BOTH
-              layouts for the same reason the panels below are: the Decision
-              Workspace is a different tree, so a panel added to only one of them
-              disappears the moment the flag flips. Renders nothing unless the
-              finding was promoted from a CUEC. */}
-          <div className="mb-5">
-            <VendorProvenancePanel data={vendorProvenance} />
-          </div>
-
           {/* Affected assets — ABOVE the Risk Register, because "where is this"
               precedes "are we carrying it". Rendered in BOTH layouts: the
               Decision Workspace is a different tree, so a panel added to only
@@ -778,12 +657,6 @@ export default async function FindingDetailPage({
           {/* Remediation Actions */}
           <RemediationActionsSection finding={finding} actions={actions} />
 
-          {/* T2-I: the verification history of a pen-test finding — after the
-              remediation work, because a retest VERIFIES that work. In both
-              layouts (like the PEN-1 provenance beside it), and absent — not
-              empty — for every other source type. */}
-          {retestsVisible && <RetestHistorySection retests={findingRetests} />}
-
           {/* Activity history — finding events plus its risk acceptances
               and the actions it spawned (shared per-object audit trail). */}
           <HistorySection resourcePath="findings" resourceId={finding.id} />
@@ -792,7 +665,7 @@ export default async function FindingDetailPage({
         {/* Right: sidebar */}
         <div className="w-full lg:w-72 flex-shrink-0 space-y-4">
           <StatusPriorityCard finding={finding} actions={actions} />
-          <FindingDetailsCard finding={finding} penTestEngagement={penTestEngagement} />
+          <FindingDetailsCard finding={finding} />
         </div>
       </div>
     </div>

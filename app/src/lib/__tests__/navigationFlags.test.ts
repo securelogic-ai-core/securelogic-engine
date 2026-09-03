@@ -203,21 +203,19 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
   it("leads Risk Operations with the two findings destinations and surfaces Approvals", () => {
     // Operations Workspace (the work hub) then Finding Explorer (the searchable
     // inventory) — one route, two distinct user intents, both reachable from the nav.
-    // Pen Tests and Approvals are both ACTIVATION-flagged, so the ordering is
-    // asserted with them on; their absence when the flags are off is a separate
-    // case below.
-    expect(groupChildren(ws(true, false, { pen_test: true, risk_acceptance: true }), "Risk Operations")).toEqual([
+    // Approvals is ACTIVATION-flagged, so the ordering is asserted with it on;
+    // its absence when the flag is off is a separate case below.
+    expect(groupChildren(ws(true, false, { risk_acceptance: true }), "Risk Operations")).toEqual([
       "/findings",
       "/findings?queue=all",
       "/actions",
       "/risks",
       "/approvals",
-      "/pen-tests",
     ]);
   });
 
   it("names the Risk Operations destinations by task, not by feature", () => {
-    const group = ws(true, false, { pen_test: true, risk_acceptance: true }).find(
+    const group = ws(true, false, { risk_acceptance: true }).find(
       (i): i is Extract<typeof i, { type: "group" }> =>
         i.type === "group" && i.label === "Risk Operations",
     );
@@ -227,54 +225,12 @@ describe("WORKSPACE_NAV_ITEMS (risk_workspace on)", () => {
       "Actions",
       "Risk Register",
       "Approvals",
-      "Pen Tests",
     ]);
   });
 
-  it("Pen Tests is DARK by default in BOTH nav models (PEN-1 activation flag)", () => {
-    // The entry ships in code and stays invisible everywhere the flag is off —
-    // fail-closed, and the reason a platform entitlement alone is no longer
-    // enough to surface it. Production renders the legacy menu, so the legacy
-    // model is the one that actually decides prod exposure.
-    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).not.toContain("/pen-tests");
-    expect(groupChildren(filterNav(NAV_ITEMS, true, true, false), "Risk")).not.toContain("/pen-tests");
-    expect(allHrefs(ws(true, false))).not.toContain("/pen-tests");
-  });
 
-  it("keeps Pen Tests reachable in BOTH nav models once ACTIVATED (production renders the legacy menu)", () => {
-    // Workspace IA.
-    expect(allHrefs(ws(true, false, { pen_test: true }))).toContain("/pen-tests");
-    // Legacy IA — the LIVE menu. A workspace-only entry would ship the
-    // /pen-tests pages nav-orphaned in production.
-    const legacyOn = filterNav(NAV_ITEMS, true, true, false, { pen_test: true });
-    expect(allHrefs(legacyOn)).toContain("/pen-tests");
-    expect(groupChildren(legacyOn, "Risk")).toContain("/pen-tests");
-  });
 
-  it("activation and entitlement are INDEPENDENT — both are required", () => {
-    // Entitled but not activated -> hidden.
-    expect(allHrefs(filterNav(NAV_ITEMS, true, true, false))).not.toContain("/pen-tests");
-    // Activated but not entitled -> still hidden (the Risk group is platform-only).
-    expect(
-      allHrefs(filterNav(NAV_ITEMS, false, true, false, { pen_test: true })),
-    ).not.toContain("/pen-tests");
-    expect(allHrefs(ws(false, false, { pen_test: true }))).not.toContain("/pen-tests");
-    // Both -> visible.
-    expect(
-      allHrefs(filterNav(NAV_ITEMS, true, true, false, { pen_test: true })),
-    ).toContain("/pen-tests");
-  });
 
-  it("the pen-test flag is an independent switch — no other flag reveals it", () => {
-    const others = filterNav(NAV_ITEMS, true, true, true, {
-      enterprise_context: true,
-      asset_registry: true,
-      risk_intelligence: true,
-      risk_workspace: true,
-      briefing: true,
-    });
-    expect(allHrefs(others)).not.toContain("/pen-tests");
-  });
 
   it("preserves EAR asset-registry behavior under Assets", () => {
     // Registry dark: legacy vendor/ai children.
@@ -516,9 +472,8 @@ describe("NAV-1 — Approvals declaration + activation flag", () => {
   });
 
   it("sits after Risk Register in the legacy Risk group, mirroring the workspace order", () => {
-    expect(groupChildren(legacy({ risk_acceptance: true, pen_test: true }), "Risk")).toEqual([
+    expect(groupChildren(legacy({ risk_acceptance: true }), "Risk")).toEqual([
       "/findings",
-      "/pen-tests",
       "/actions",
       "/risks",
       "/approvals",
@@ -646,7 +601,6 @@ describe("VA-NAV-1 — Vendor Assurance group is activation-flagged in BOTH nav 
       risk_intelligence: true,
       risk_workspace: true,
       briefing: true,
-      pen_test: true,
       risk_acceptance: true,
     };
     for (const h of VA_HREFS) {
