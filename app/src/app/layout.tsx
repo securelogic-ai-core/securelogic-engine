@@ -3,6 +3,8 @@ import "./globals.css";
 import { Header } from "@/components/Header";
 import { getSession } from "@/lib/session";
 import { getIdleSeconds } from "@/lib/sessionPolicy";
+import { riskAcceptanceEnabled } from "@/lib/riskAcceptanceFeatureFlag";
+import { vendorAssuranceEnabled } from "@/lib/vendorAssuranceFeatureFlag";
 import { getConsentStatus } from "@/lib/api";
 import IdleLogout from "@/components/IdleLogout";
 import ConsentInterstitial from "@/components/ConsentInterstitial";
@@ -60,6 +62,15 @@ export default async function RootLayout({
     // workspace nav's home entry "Briefing"; only takes effect together with
     // risk_workspace (the legacy nav is never touched).
     briefing: process.env.SECURELOGIC_DASHBOARD_BRIEFING_ENABLED === "true",
+    // Risk-acceptance capability (NAV-1 / P1-C) — DARK (default off). ACTIVATION
+    // for the "Approvals" entry in both nav models. Same key the engine reads, so
+    // the nav never advertises Approvals while /api/risk-acceptances 404s.
+    risk_acceptance: riskAcceptanceEnabled(),
+    // Vendor Assurance capability (VA-NAV-1) — ACTIVATION for the "Vendor
+    // Assurance" group in both nav models. Same key the engine reads (and the
+    // same resolver, including its non-production default), so the nav never
+    // advertises the engagement spine while its engine routes 404.
+    vendor_assurance: vendorAssuranceEnabled(),
   };
 
   return (

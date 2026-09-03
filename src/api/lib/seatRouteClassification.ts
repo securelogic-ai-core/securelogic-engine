@@ -47,6 +47,11 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // also expose what the org has judged sufficient, which is the assessment
   // policy itself.
   "evidenceLifecycle.ts",
+  // VA-Q1. The curated question library is governance content: what an org
+  // asks its vendors, and which requirements that evidences. Deny-all for
+  // contributors — there is no "my questions" scope to grant, and a
+  // contributor reading the library learns the org's assessment policy.
+  "questions.ts",
   // SL-RISK-LINK. Deny-all, not read-scoped: deciding that a finding belongs on
   // the Risk Register is a governance act, and the reverse read
   // (/risks/:id/findings) is a cross-tenant-shaped roll-up with no trustworthy
@@ -54,6 +59,12 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // risk creation. denyContributor() is on every route in the file.
   "findingRiskLinks.ts",
   "findingAssetOccurrences.ts",
+  // T1-B. Deny-all, matching its two siblings on the same finding-detail surface.
+  // Vendor Assurance provenance is governance evidence — which obligation, whose
+  // determination, on what basis — and there is no per-Contributor ownership
+  // predicate over a vendor's assurance document. Read-only, but "read-only" is
+  // not the axis this classification turns on.
+  "findingVendorProvenance.ts",
   // SL-PENTEST-IN. Deny-all: recording a security assessment and reading the
   // org's testing history are governance acts with no per-Contributor
   // ownership predicate, matching every other assessment family.
@@ -122,6 +133,12 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // credential for a party outside the organisation.
   "vendorEngagements.ts",
   "vendorSignalContext.ts",
+  // SL-OCC-3 (classified here by the stacked PLAT-ASSET-1 branch — the file
+  // shipped on the held SL-OCC-3 branch without a classification entry, which
+  // fails seatRouteCoverage there). Deny-all: importing a scan report creates
+  // findings and occurrences at scale, a governance act; denyContributor()
+  // is on the route.
+  "vulnerabilityScanImports.ts",
   "webhooks.ts"
 ];
 

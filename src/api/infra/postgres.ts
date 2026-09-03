@@ -2,10 +2,12 @@ import { Pool } from "pg";
 
 import { logger } from "./logger.js";
 import { resolvePgSsl } from "./pgSsl.js";
+import { resolvePoolTuning, toPoolOptions, type PoolTuning } from "./pgPoolTuning.js";
 import type { PoolClient } from "pg";
 import {
   tenantStorage,
   createSavepointClient,
+  currentPreTenantBootstrap,
   type TenantContext,
   type AfterCommitCallback
 } from "./tenantContext.js";
@@ -43,11 +45,92 @@ if (!databaseUrl) {
 // hatch) live in ./pgSsl.ts, shared with the standalone script pools.
 const ssl = resolvePgSsl();
 
+type PoolRole = "app" | "elevated";
+
+export interface PgPoolStats {
+  max: number;
+  /** Clients currently open (idle + checked out). */
+  total: number;
+  idle: number;
+  /** Callers queued for a client — any value > 0 is saturation. */
+  waiting: number;
+}
+
+const poolRegistry = new Map<PoolRole, { pool: Pool; tuning: PoolTuning }>();
+
+/** Minimum gap between two `db_pool_saturated` warnings for one pool. */
+const SATURATION_WARN_INTERVAL_MS = 30_000;
+
+/**
+ * R1-1 observability for one pool:
+ *
+ *  - `error`: an idle client's connection error is emitted on the pool; with
+ *    NO listener node treats it as an unhandled 'error' event and the process
+ *    crashes. A saturated or flapping pool must be loud, not fatal.
+ *  - saturation: `acquire` fires each time a caller gets a client. If other
+ *    callers are still queued at that moment (`waitingCount > 0`) the pool
+ *    is oversubscribed — the state that, before R1-1, was an invisible hang.
+ *    Logged at WARN, rate-limited per pool so a sustained burst is one line
+ *    every 30 s rather than one per checkout.
+ */
+function attachPoolObservability(target: Pool, role: PoolRole, tuning: PoolTuning): void {
+  poolRegistry.set(role, { pool: target, tuning });
+  target.on("error", (err) => {
+    logger.error(
+      { event: "db_pool_error", role, err },
+      `${role} pool emitted an error on an idle client`
+    );
+  });
+  let lastSaturationWarnAt = 0;
+  target.on("acquire", () => {
+    if (target.waitingCount <= 0) return;
+    const now = Date.now();
+    if (now - lastSaturationWarnAt < SATURATION_WARN_INTERVAL_MS) return;
+    lastSaturationWarnAt = now;
+    logger.warn(
+      { event: "db_pool_saturated", role, ...pgPoolStatsFor(role) },
+      `${role} pool is saturated: callers are queued for a client`
+    );
+  });
+}
+
+function pgPoolStatsFor(role: PoolRole): PgPoolStats {
+  const entry = poolRegistry.get(role);
+  if (!entry) return { max: 0, total: 0, idle: 0, waiting: 0 };
+  return {
+    max: entry.tuning.max,
+    total: entry.pool.totalCount,
+    idle: entry.pool.idleCount,
+    waiting: entry.pool.waitingCount
+  };
+}
+
+/**
+ * Point-in-time occupancy of both pools, for the ops health surface. Reads
+ * counters only — never touches the database, so it stays truthful while the
+ * database is the thing that is stuck.
+ */
+export function pgPoolStats(): Record<PoolRole, PgPoolStats> {
+  return { app: pgPoolStatsFor("app"), elevated: pgPoolStatsFor("elevated") };
+}
+
 // The application connection pool. Today connects as the DB owner; under
 // A04-G1 phase 1+ the DATABASE_URL on the 5 flip-set services repoints to the
 // non-owner `app_request` role so RLS policies apply. Internal — callers use
 // the `pg` wrapper below.
-const pool = new Pool({ connectionString: databaseUrl, ssl });
+// R1-1: bounds, not node-postgres' defaults. `connectionTimeoutMillis: 0`
+// (the pg default) makes pool exhaustion an INFINITE HANG — no error, no log,
+// no metric, health checks still green. See pgPoolTuning.ts for the measured
+// connection budget this sizing comes from.
+const appPoolTuning = resolvePoolTuning("app", process.env, (detail) =>
+  logger.warn(
+    { event: "db_pool_tuning_invalid", role: "app", ...detail },
+    "Ignoring invalid pool tuning override — using the default"
+  )
+);
+
+const pool = new Pool({ connectionString: databaseUrl, ssl, ...toPoolOptions(appPoolTuning) });
+attachPoolObservability(pool, "app", appPoolTuning);
 
 /**
  * Unwrapped application pool — the documented escape hatch. Performs NO tenant
@@ -68,7 +151,34 @@ export const pgRaw = pool;
  * with no callers it opens no connections.
  */
 const elevatedUrl = process.env.MIGRATION_DATABASE_URL ?? databaseUrl;
-export const pgElevated = new Pool({ connectionString: elevatedUrl, ssl });
+const elevatedPoolTuning = resolvePoolTuning("elevated", process.env, (detail) =>
+  logger.warn(
+    { event: "db_pool_tuning_invalid", role: "elevated", ...detail },
+    "Ignoring invalid pool tuning override — using the default"
+  )
+);
+
+export const pgElevated = new Pool({
+  connectionString: elevatedUrl,
+  ssl,
+  ...toPoolOptions(elevatedPoolTuning)
+});
+attachPoolObservability(pgElevated, "elevated", elevatedPoolTuning);
+
+// One line at startup so the deployed budget is a fact in the logs rather than
+// something to be re-derived from source during an incident.
+logger.info(
+  {
+    event: "db_pool_configured",
+    appPoolMax: appPoolTuning.max,
+    elevatedPoolMax: elevatedPoolTuning.max,
+    connectionTimeoutMillis: appPoolTuning.connectionTimeoutMillis,
+    idleTimeoutMillis: appPoolTuning.idleTimeoutMillis,
+    appStatementTimeoutMillis: appPoolTuning.statementTimeoutMillis,
+    elevatedStatementTimeoutMillis: elevatedPoolTuning.statementTimeoutMillis
+  },
+  "Database connection pools configured with explicit bounds"
+);
 
 /**
  * M-1 PR-1 (C-2) — strict-mode observability for the raw-pool fallback.
@@ -78,9 +188,19 @@ export const pgElevated = new Pool({ connectionString: elevatedUrl, ssl });
  * the owner credential this fallback is silently correct; under `app_request`
  * (post-flip) it is the silent-zero-rows failure mode on policied tables — the
  * staging soak reads this signal to find missed wraps empirically before prod.
- * Off by default; zero cost when disabled. Legitimate pre-org-context callers
- * (requireApiKey, attachOrganizationContext, …) will appear here by design and
- * are classified in the C-1 matrix, not silenced in code.
+ * Off by default; zero cost when disabled.
+ *
+ * #966 (owner ruling 2026-09-03) narrows ONE class out of this signal: the
+ * pre-tenant bootstrap queries that resolve the tenant in the first place
+ * (`withPreTenantBootstrap`, closed allowlist in tenantContext.ts). They fired
+ * on every API-key request, and a tripwire that always fires is one nobody
+ * reads. This SUPERSEDES the previous note here that such callers "are
+ * classified in the C-1 matrix, not silenced in code" — the classification was
+ * right that the calls are correct and wrong that permanent WARN noise was the
+ * way to record it. The exemption covers `pg.query()` inside an explicit
+ * bootstrap scope and NOTHING else: a bare `pg.connect()` still warns even
+ * inside that scope, and every unsanctioned bare query still warns exactly as
+ * before.
  */
 const strictTenantLog = process.env.SECURELOGIC_DB_STRICT_TENANT_LOG === "true";
 const strictLogCounts = new Map<string, number>();
@@ -126,13 +246,18 @@ function logBareQuery(args: unknown[]): void {
 function tenantAwareQuery(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
   if (ctx) return (ctx.client.query as (...a: unknown[]) => unknown)(...args);
-  if (strictTenantLog) logBareQuery(args);
+  // #966: only an explicit, allowlisted bootstrap scope suppresses the signal.
+  // Everything else outside a tenant scope still warns, unchanged.
+  if (strictTenantLog && currentPreTenantBootstrap() === undefined) logBareQuery(args);
   return (pool.query as (...a: unknown[]) => unknown)(...args);
 }
 
 function tenantAwareConnect(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
   if (!ctx) {
+    // Deliberately NOT exempt inside a bootstrap scope (#966): the sanctioned
+    // bootstrap path issues single queries, never a raw client checkout, so a
+    // checkout here is a genuine finding whatever scope it appears in.
     if (strictTenantLog) logBareQuery(["<pg.connect>"]);
     return (pool.connect as (...a: unknown[]) => unknown)(...args);
   }
@@ -212,3 +337,8 @@ export function withElevated<T>(fn: (client: PoolClient) => Promise<T>): Promise
 }
 
 export { requireTenantContext, currentTenantContext, registerAfterCommit } from "./tenantContext.js";
+// NOTE (#966): `withPreTenantBootstrap` is deliberately NOT re-exported here.
+// 149 suites mock "../infra/postgres.js" with a bare `{ pg }`, so a middleware
+// importing the helper from this module resolves it to `undefined` under test
+// and turns an auth refusal into a 500. Import it from ./tenantContext.js —
+// pure, pool-free, and mocked by nothing.

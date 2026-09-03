@@ -24,6 +24,7 @@ import { Pool } from "pg";
 
 import { bootstrapTestDb, seedVendor, type TestDbSeed } from "./testDb.js";
 import { buildRoutes } from "../../src/api/routes/index.js";
+import { enforceJsonContentType } from "../../src/api/lib/contentTypeAllowlist.js";
 import {
   hashPortalToken,
   generatePortalToken,
@@ -120,6 +121,13 @@ beforeAll(async () => {
   requirements.b = b.requirementId;
 
   app = express();
+  // The strict Content-Type gate, in the SAME position createApp() puts it
+  // (src/api/app.ts: enforceJsonContentType -> express.json -> cookieParser ->
+  // buildRoutes). Without it this suite drove the router directly and every
+  // multipart upload below passed while production 415'd at the gate —
+  // VA-E2E-1. The gate belongs here so the whole upload class is exercised
+  // through the chain that actually runs.
+  app.use(enforceJsonContentType);
   app.use(express.json());
   app.use(cookieParser());
   app.use(buildRoutes({ isDev: false, publicApiDisabled: false }));

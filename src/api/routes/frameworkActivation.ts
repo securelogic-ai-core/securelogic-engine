@@ -24,6 +24,8 @@ import { requireEntitlement } from "../middleware/requireEntitlement.js";
 import { requireAdminRole } from "../middleware/requireRole.js";
 import { FRAMEWORK_TEMPLATES } from "../lib/frameworkTemplates.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { resolveScopeTags } from "../lib/vendorRisk/curatedFrameworkTags.js";
+import { canonicalFrameworkKeyFor } from "../lib/controls/canonicalFrameworkIdentity.js";
 
 const router = Router();
 
@@ -78,12 +80,23 @@ router.post(
         id: string; organization_id: string; name: string;
         version: string; created_at: string; updated_at: string;
       }>(
-        `INSERT INTO frameworks (organization_id, name, version)
-         VALUES ($1, $2, $3)
+        // VA-S4 Step 1: persist the CANONICAL framework identity alongside the
+        // display name. `name` is a mutable display string and can never be the
+        // join key from a tenant requirement to the global crosswalk; the
+        // (framework_key, version) pair is. COALESCE keeps a re-activation from
+        // nulling a key an earlier write already resolved.
+        `INSERT INTO frameworks (organization_id, name, version, framework_key)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (organization_id, name, version)
-         DO UPDATE SET updated_at = frameworks.updated_at
+         DO UPDATE SET updated_at    = frameworks.updated_at,
+                       framework_key = COALESCE(frameworks.framework_key, EXCLUDED.framework_key)
          RETURNING id, organization_id, name, version, created_at, updated_at`,
-        [organizationId, template.name, template.version]
+        [
+          organizationId,
+          template.name,
+          template.version,
+          canonicalFrameworkKeyFor(template.name, template.version),
+        ]
       );
 
       const framework = frameworkResult.rows[0]!;
@@ -98,13 +111,39 @@ router.post(
         const placeholders: string[] = [];
 
         for (const req of template.requirements) {
+          // VA-6: tag at instantiation. Before this, a freshly activated
+          // framework landed with scope_tags='{}' and was invisible to every
+          // tier-2/3/4 vendor questionnaire until someone re-ran a backfill
+          // that only ever runs once.
+          //
+          // The template KEY is passed, which is what lets a curated framework
+          // be born curated instead of heuristic. Without it, activating
+          // nist_ai_rmf produced four `core` rows and an empty AI question set.
+          // A template with no curation still resolves — to 'heuristic' where a
+          // pattern matched, and to 'uncurated' where nothing did.
+          const resolved = resolveScopeTags({
+            templateKey,
+            reference_id: req.reference_id,
+            title: req.title,
+          });
           const base = values.length;
-          values.push(framework.id, req.reference_id, req.title, req.description ?? null);
-          placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+          values.push(
+            framework.id,
+            req.reference_id,
+            req.title,
+            req.description ?? null,
+            resolved.tags,
+            resolved.source
+          );
+          placeholders.push(
+            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, NOW())`
+          );
         }
 
         const insertResult = await client.query(
-          `INSERT INTO requirements (framework_id, reference_id, title, description)
+          `INSERT INTO requirements
+             (framework_id, reference_id, title, description,
+              scope_tags, scope_tags_source, scope_tags_at)
            VALUES ${placeholders.join(", ")}
            ON CONFLICT (framework_id, reference_id) DO NOTHING
            RETURNING id`,

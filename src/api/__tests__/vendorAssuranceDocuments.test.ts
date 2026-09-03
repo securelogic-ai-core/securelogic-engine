@@ -92,7 +92,7 @@ vi.mock("../lib/vendorAssurancePdfExporter.js", () => ({
   pdfDownloadFilename: () => "acme-cloud-2025-09-30-soc-review.pdf"
 }));
 
-import { MAX_ORG_STORAGE_BYTES } from "../lib/vendorAssuranceValidation.js";
+import { MAX_ORG_STORAGE_BYTES, ASSURANCE_BEARING_FIELD_NAMES } from "../lib/vendorAssuranceValidation.js";
 import {
   uploadVendorAssuranceDocument,
   listVendorAssuranceDocuments,
@@ -665,12 +665,17 @@ describe("getVendorAssuranceExtraction", () => {
     expect(overridesCall).toMatch(/DISTINCT ON \(field_name\)/);
     expect(overridesCall).toMatch(/ORDER BY field_name, overridden_at DESC, id DESC/);
 
+    // S4-4C-0: the decision projection is now per (field_name, element_key), so
+    // a whole-field decision and each tested-control decision are separate
+    // current decisions rather than one collapsing over the other.
     const projectionCall = pgQuerySpy.mock.calls[4]?.[0] as string;
-    expect(projectionCall).toMatch(/DISTINCT ON \(field_name\)/);
-    expect(projectionCall).toMatch(/ORDER BY field_name, decided_at DESC, id DESC/);
+    expect(projectionCall).toMatch(/DISTINCT ON \(field_name, element_key\)/);
+    expect(projectionCall).toMatch(/ORDER BY field_name, element_key, decided_at DESC, id DESC/);
 
     const body = json.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(body["current_decisions"]).toMatchObject({ vendor_name: { decision: "accept" } });
+    // Reported at BOTH grains; this fixture has no element decisions.
+    expect(body["current_control_decisions"]).toEqual({});
     expect(body["field_overrides"]).toEqual([
       expect.objectContaining({ field_name: "auditor_name", override_value: "New LLP" })
     ]);
@@ -1144,23 +1149,112 @@ describe("approveVendorAssuranceDocument", () => {
     expect(status).toHaveBeenCalledWith(409);
   });
 
-  it("200 happy path: sets approved + approved_at, audits vendor_assurance.document.approved", async () => {
+  // S4-4C-0: approval now passes through the review-authority gate, which reads
+  // the extraction and the current decisions before the UPDATE. These helpers
+  // build a review state that satisfies it.
+  const CONTROLS_VALUE = [{ control_id: "CC6.1" }, { control_id: "A1.2" }];
+  const fullyReviewed = () => ({
+    rowCount: 11,
+    rows: [
+      ...ASSURANCE_BEARING_FIELD_NAMES.map((field_name) => ({ field_name, element_key: null, decision: "accept" })),
+      { field_name: "controls", element_key: "CC6.1", decision: "accept" },
+      { field_name: "controls", element_key: "A1.2", decision: "accept" }
+    ]
+  });
+  const mockGateReads = (decisions: unknown) => {
     pgQuerySpy
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "approved" }] }); // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: EXTRACTION_ID, fields: { controls: { value: CONTROLS_VALUE } } }] })
+      .mockResolvedValueOnce(decisions);
+  };
+
+  it("200 happy path: sets approved + approved_at, audits vendor_assurance.document.approved", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] });
+    mockGateReads(fullyReviewed());
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "approved" }] }); // UPDATE
+
     const req = buildReq({ params: { id: DOC_ID } });
     const { res, status, json } = buildRes();
     await approveVendorAssuranceDocument(req as never, res as never);
     expect(status).toHaveBeenCalledWith(200);
-    const updateSql = pgQuerySpy.mock.calls[1]?.[0] as string;
+
+    // By CONTENT, not call index — the gate's reads sit between the doc lookup
+    // and the UPDATE, and a future guard would shift indices again.
+    const sqls = pgQuerySpy.mock.calls.map((c) => String(c[0]));
+    const updIdx = sqls.findIndex((t) => /UPDATE vendor_assurance_documents/.test(t));
+    expect(updIdx).toBeGreaterThan(-1);
+    const updateSql = sqls[updIdx]!;
     expect(updateSql).toMatch(/processing_status = \$3/);
     expect(updateSql).toMatch(/approved_at = NOW\(\)/);
     expect(updateSql).toMatch(/AND processing_status = 'extracted'/);
-    expect((pgQuerySpy.mock.calls[1]?.[1] as unknown[])[2]).toBe("approved");
+    expect((pgQuerySpy.mock.calls[updIdx]?.[1] as unknown[])[2]).toBe("approved");
     const auditCalls = (writeAuditEvent as unknown as ReturnType<typeof vi.fn>).mock.calls;
     expect(auditCalls.some((c) => c[0]?.eventType === "vendor_assurance.document.approved")).toBe(true);
     const body = json.mock.calls[0]?.[0] as { document: { processing_status: string } };
     expect(body.document.processing_status).toBe("approved");
+  });
+
+  it("409 when the assurance-bearing fields have never been reviewed", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] });
+    mockGateReads({ rowCount: 0, rows: [] }); // no decisions at all — the estate-wide state before 4C-0
+
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    const body = json.mock.calls[0]?.[0] as Record<string, never>;
+    expect(body["error"]).toBe("vendor_assurance_approval_review_incomplete");
+    expect(body["missing_field_names"]).toEqual([...ASSURANCE_BEARING_FIELD_NAMES]);
+    expect(body["unreviewed_control_keys"]).toEqual(["CC6.1", "A1.2"]);
+    // Nothing was written.
+    expect(pgQuerySpy.mock.calls.map((c) => String(c[0])).some((t) => /UPDATE/.test(t))).toBe(false);
+  });
+
+  it("409 when the fields are reviewed but a TESTED CONTROL is not", async () => {
+    // The case field-grain review could never express: the `controls` array was
+    // accepted as a whole, but one control inside it was never looked at.
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] });
+    mockGateReads({
+      rowCount: 10,
+      rows: [
+        ...ASSURANCE_BEARING_FIELD_NAMES.map((field_name) => ({ field_name, element_key: null, decision: "accept" })),
+        { field_name: "controls", element_key: "CC6.1", decision: "accept" }
+      ]
+    });
+
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    const body = json.mock.calls[0]?.[0] as Record<string, never>;
+    expect(body["missing_field_names"]).toEqual([]);
+    expect(body["unreviewed_control_keys"]).toEqual(["A1.2"]);
+  });
+
+  it("409 when a tested control carries no identifier — it cannot be reviewed, so it cannot be approved", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] });
+    pgQuerySpy.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ id: EXTRACTION_ID, fields: { controls: { value: [{ control_id: "CC6.1" }, { description: "no id" }] } } }]
+    });
+
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    const body = json.mock.calls[0]?.[0] as Record<string, never>;
+    expect(body["reason"]).toBe("unidentified_tested_controls");
+    expect(body["unidentified_tested_control_count"]).toBe(1);
+  });
+
+  it("409 when there is no extraction at all — nothing has been read, so nothing can be approved", async () => {
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: DOC_ID, processing_status: "extracted" }] });
+    pgQuerySpy.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const req = buildReq({ params: { id: DOC_ID } });
+    const { res, status, json } = buildRes();
+    await approveVendorAssuranceDocument(req as never, res as never);
+    expect(status).toHaveBeenCalledWith(409);
+    expect((json.mock.calls[0]?.[0] as Record<string, never>)["reason"]).toBe("no_extraction");
   });
 });
 

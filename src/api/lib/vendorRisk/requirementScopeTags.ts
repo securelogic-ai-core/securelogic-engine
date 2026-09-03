@@ -70,11 +70,70 @@ export const SCOPE_TAG_VOCABULARY = [
   "model-risk",
   "explainability",
   "human-oversight",
+  // ── VA-Q2 P2: the nine starred VA-Q0 §5 tags. CURATED-ONLY (see below). ──
+  // Security
+  "vulnerability-management",
+  "secure-development",
+  // Privacy
+  "data-subject-rights",
+  "cross-border",
+  "lawful-basis",
+  "breach-notification",
+  // AI
+  "training-data",
+  "model-provider",
+  "automated-decision",
 ] as const;
 
 export type ScopeTag = (typeof SCOPE_TAG_VOCABULARY)[number];
 
-export const SCOPE_TAG_SOURCES = ["heuristic", "curated"] as const;
+/**
+ * Tags a human must apply — `deriveScopeTags` NEVER emits them.
+ *
+ * Added in VA-Q2 P2 as vocabulary only: they are consumed by S5 through
+ * `DOMAIN_TAGS` (requirementDomain.ts) and accepted by `areValidScopeTags`,
+ * but they have no heuristic pattern. Two reasons, both deliberate:
+ *   - the SQL backfill in migration 20260926 is the heuristic's mirror and is
+ *     parity-tested against this module; a code-only pattern would silently
+ *     desynchronise the two;
+ *   - these are precisely the tags whose meaning a title cannot carry
+ *     ("lawful basis", "cross-border") — a curator's judgement, not a regex.
+ */
+export const CURATED_ONLY_SCOPE_TAGS = [
+  "vulnerability-management",
+  "secure-development",
+  "data-subject-rights",
+  "cross-border",
+  "lawful-basis",
+  "breach-notification",
+  "training-data",
+  "model-provider",
+  "automated-decision",
+] as const satisfies readonly ScopeTag[];
+export type CuratedOnlyScopeTag = (typeof CURATED_ONLY_SCOPE_TAGS)[number];
+
+/**
+ * How a requirement's tags were decided. Persisted in
+ * `requirements.scope_tags_source` and pinned to that column's CHECK by a
+ * lockstep test.
+ *
+ *   'curated'   — a human stood behind these tags (curated reference data in
+ *                 `curatedFrameworkTags.ts`, or a PATCH through the curation
+ *                 route).
+ *   'heuristic' — a keyword pattern in this module matched the title.
+ *   'uncurated' — NOTHING matched. The row carries `core` because the fallback
+ *                 put it there, not because anyone classified it as baseline
+ *                 security.
+ *
+ * The third value exists because the first two were not enough to tell those
+ * apart: `core` is simultaneously a real classification and the fallback, so an
+ * unreviewed requirement and a deliberately-security one were the same row.
+ * Measured on the shipped GDPR / CCPA / NIST AI RMF templates, 11 of 24
+ * requirements reached the security domain that way — including all four NIST
+ * AI RMF functions, which left the AI question set empty on a framework whose
+ * entire purpose is AI governance.
+ */
+export const SCOPE_TAG_SOURCES = ["heuristic", "curated", "uncurated"] as const;
 export type ScopeTagSource = (typeof SCOPE_TAG_SOURCES)[number];
 
 /**
@@ -85,7 +144,7 @@ export type ScopeTagSource = (typeof SCOPE_TAG_SOURCES)[number];
  * one requirement, which is correct — an "Encryption of personal data at rest"
  * control is genuinely both `encryption` and `privacy`.
  */
-const TAG_PATTERNS: Record<Exclude<ScopeTag, "core">, RegExp[]> = {
+const TAG_PATTERNS: Record<Exclude<ScopeTag, "core" | CuratedOnlyScopeTag>, RegExp[]> = {
   "access-control": [/\baccess control\b/i, /\bauthoriz/i, /\bauthentication\b/i, /\bpassword\b/i, /\bmfa\b/i, /multi-?factor/i],
   iam: [/\bidentity\b/i, /\baccount (management|provisioning)\b/i, /\bjoiner\b/i, /\bleaver\b/i, /\bprovisioning\b/i],
   "privileged-access": [/\bprivileged\b/i, /\badministrat/i, /\broot access\b/i, /\bsuperuser\b/i],
@@ -195,6 +254,13 @@ export function scopeTagCoverage(
   total: number;
   curated: number;
   heuristic: number;
+  /**
+   * Requirements nothing classified — holding `core` by fallback alone. This is
+   * the number that used to be invisible: these rows are asked as security
+   * questions, and before the 'uncurated' stamp they were indistinguishable
+   * from requirements a human had placed there.
+   */
+  uncurated: number;
   untagged: number;
   core_tagged: number;
   curated_pct: number;
@@ -202,12 +268,14 @@ export function scopeTagCoverage(
   const total = rows.length;
   const curated = rows.filter((r) => r.source === "curated").length;
   const heuristic = rows.filter((r) => r.source === "heuristic").length;
+  const uncurated = rows.filter((r) => r.source === "uncurated").length;
   const untagged = rows.filter((r) => r.tags.length === 0).length;
   const core = rows.filter((r) => r.tags.includes("core")).length;
   return {
     total,
     curated,
     heuristic,
+    uncurated,
     untagged,
     core_tagged: core,
     curated_pct: total > 0 ? Math.round((curated / total) * 100) : 0,

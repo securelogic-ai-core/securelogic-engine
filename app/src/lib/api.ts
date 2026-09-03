@@ -5608,8 +5608,50 @@ export type RequirementWithResponse = {
   reference_id: string;
   title: string;
   description: string | null;
+  /** VA-6 content-layer fields. Optional: absent on older engine payloads. */
+  scope_tags?: string[];
+  scope_tags_source?: "heuristic" | "curated" | "uncurated" | null;
   response: RequirementResponse | null;
 };
+
+/** VA-6 — scope-tag curation coverage ("curated_pct is the number that
+ *  matters before launch"). */
+export type ScopeTagCoverage = {
+  total: number;
+  curated: number;
+  heuristic: number;
+  untagged: number;
+  core_tagged: number;
+  curated_pct: number;
+};
+
+export type ScopeTagCoverageReport = {
+  overall: ScopeTagCoverage;
+  frameworks: Array<{
+    framework_id: string;
+    name: string;
+    version: string;
+    coverage: ScopeTagCoverage;
+  }>;
+  /** The closed vocabulary, served by the engine so the curation UI never
+   *  duplicates it. */
+  vocabulary: string[];
+};
+
+export async function getScopeTagCoverage(
+  apiKey: string
+): Promise<ScopeTagCoverageReport | null> {
+  try {
+    const res = await engineFetch(
+      `/api/requirements/scope-tag-coverage`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<ScopeTagCoverageReport>;
+  } catch {
+    return null;
+  }
+}
 
 export type FrameworkRequirements = {
   framework: {
@@ -5636,13 +5678,12 @@ export async function getFrameworkRequirements(
   apiKey: string,
   frameworkId: string,
   assessmentType: "self" | "vendor",
-  subjectId: string
+  subjectId?: string
 ): Promise<FrameworkRequirements | null> {
   try {
-    const params = new URLSearchParams({
-      assessment_type: assessmentType,
-      subject_id: subjectId,
-    });
+    const params = new URLSearchParams({ assessment_type: assessmentType });
+    // For "self" the engine defaults subject_id to the org; vendor requires it.
+    if (subjectId) params.set("subject_id", subjectId);
     const res = await engineFetch(
       `/api/frameworks/${encodeURIComponent(frameworkId)}/requirements?${params.toString()}`,
       apiKey
@@ -7428,10 +7469,39 @@ export type VendorEngagementDetail = {
   updated_at: string;
 };
 
+/** The closed assessment-domain vocabulary (engine: requirementDomain.ts, DB CHECK 20261062). */
+export const VENDOR_ASSESSMENT_DOMAINS = [
+  "security",
+  "privacy",
+  "ai",
+  "resilience",
+  "nth_party",
+  "compliance",
+] as const;
+export type VendorAssessmentDomain = (typeof VENDOR_ASSESSMENT_DOMAINS)[number];
+
+export const VENDOR_ASSESSMENT_DOMAIN_LABELS: Record<VendorAssessmentDomain, string> = {
+  security: "Security",
+  privacy: "Privacy",
+  ai: "AI governance",
+  resilience: "Resilience",
+  nth_party: "Fourth / Nth party",
+  compliance: "Compliance",
+};
+
+/**
+ * Per-domain item counts (VA-Q2 P2). `null` for an engagement resolved under
+ * scope-rule 1.0.0 — its items were never asked per domain, and the server
+ * reports null rather than six zeros. When present, the six values sum to
+ * `scoped`.
+ */
+export type VendorEngagementDomainCounts = Record<VendorAssessmentDomain, number>;
+
 export type VendorEngagementQuestionnaire = {
   scoped: number;
   answered: number;
   mandatory: number;
+  domains: VendorEngagementDomainCounts | null;
 };
 
 /** One row of GET /api/vendor-engagements/:id/evidence. */
@@ -7584,7 +7654,9 @@ export async function resolveVendorEngagementScope(
     excluded: number;
     tier: string;
     scope_rule_version: string;
-    notes: unknown;
+    /** Tier-cap truncation, surfaced never silent (VA-6 repaired the field
+     *  name — the engine previously emitted a `notes` that was always null). */
+    truncated: { cap: number; dropped_requirement_ids: string[] } | null;
   }>
 > {
   try {
@@ -7599,7 +7671,7 @@ export async function resolveVendorEngagementScope(
       excluded: number;
       tier: string;
       scope_rule_version: string;
-      notes: unknown;
+      truncated: { cap: number; dropped_requirement_ids: string[] } | null;
     };
   } catch {
     return { failure: { error: "scope_resolve_failed" } };
@@ -7730,6 +7802,71 @@ export async function recordVendorEngagementDecision(
   }
 }
 
+/** VA-R1 (2026-08-23): the reviewer's per-question view of the questionnaire.
+ *  Pre-issue this is "what will be sent" (every response is null); post-submit
+ *  it is the review surface. The engine computes everything — never derive
+ *  answered/complete locally. */
+export type VendorEngagementResponseItem = {
+  requirement: {
+    id: string;
+    reference: string;
+    title: string;
+    description: string | null;
+  };
+  /** `domain` is null on items resolved under scope-rule 1.0.0 (VA-Q2 P2). */
+  scope: { depth: string; mandatory: boolean; domain: VendorAssessmentDomain | null };
+  response: {
+    status: string | null;
+    notes: string | null;
+    responder_type: string | null;
+    answered_via_invite_id: string | null;
+    assessed_by_user_id: string | null;
+    assessed_at: string | null;
+    updated_at: string | null;
+  } | null;
+  evidence: { count: number; confirmed: boolean };
+  revisions: {
+    total: number;
+    truncated: boolean;
+    entries: Array<{
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>;
+  };
+};
+
+export type VendorEngagementResponses = {
+  engagement_id: string;
+  engagement_status: string;
+  counts: {
+    scoped: number;
+    answered: number;
+    mandatory: number;
+    domains: VendorEngagementDomainCounts | null;
+  };
+  items: VendorEngagementResponseItem[];
+};
+
+export async function getVendorEngagementResponses(
+  token: string,
+  id: string
+): Promise<VendorEngagementResponses | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/responses`,
+      token
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorEngagementResponses>;
+  } catch {
+    return null;
+  }
+}
+
 export async function listVendorEngagementEvidence(
   token: string,
   id: string
@@ -7784,6 +7921,27 @@ export type VendorEngagementPromotionResult = {
     title: string;
     severity_rationale: string;
   }>;
+  /** Supersede-on-pass ruling (2026-08-22, cross-engagement 2026-08-23):
+   *  open findings — from ANY engagement of this vendor — whose controls now
+   *  report pass/not_applicable in THIS engagement. Named, never auto-closed.
+   *  `source_engagement_id` may name an EARLIER engagement than the one
+   *  promoted against; the engine computes this — never recompute here. */
+  superseded_by_source: Array<{
+    finding_id: string;
+    reference: string;
+    requirement_id: string;
+    /** Optional during rolling deploy — older engine payloads omit it. */
+    source_engagement_id?: string;
+    current_response: "pass" | "not_applicable";
+    as_of: string;
+  }>;
+  /** Findings whose equivalence to a current response CANNOT be established
+   *  deterministically (requirement_id is NULL). Surfaced, never guessed.
+   *  Optional during rolling deploy. */
+  supersede_equivalence_undetermined?: {
+    count: number;
+    finding_ids: string[];
+  };
 };
 
 export async function promoteVendorEngagementFindings(
@@ -8036,6 +8194,91 @@ export async function getFindingOccurrences(
     };
   } catch {
     return empty;
+  }
+}
+
+/**
+ * T1-B — where a promoted Vendor Assurance finding came from.
+ *
+ * `source` is a three-state answer, not a nullable payload:
+ *   "vendor_assurance_cuec" — promoted from a reviewed CUEC; `provenance` is set
+ *   "vendor_assessment"     — a vendor_review finding with no CUEC. Legitimate
+ *   "not_applicable"        — some other source_type entirely
+ *
+ * Absence is an answer rather than an error, so the panel can say which of those
+ * three it is instead of rendering an empty box. Fails soft like every other
+ * finding-detail panel: a provenance lookup must never take down the page.
+ */
+export interface FindingVendorProvenance {
+  finding_id: string;
+  source_type: string;
+  source:
+    | "vendor_assurance_cuec"
+    | "vendor_assessment"
+    | "vendor_engagement"
+    | "not_applicable";
+  /** VA-10: set only for source === "vendor_engagement"; null there means a
+   *  dangling source_id (convention arm) — reported honestly, not 404'd. */
+  engagement_provenance?: {
+    vendor: { id: string; name: string };
+    engagement: {
+      id: string;
+      title: string | null;
+      engagement_type: string;
+      status: string;
+      decision: string | null;
+      decided_at: string | null;
+      submitted_at: string | null;
+      methodology_version: string;
+    };
+    requirement: {
+      id: string;
+      reference: string | null;
+      title: string | null;
+    } | null;
+    /** Promotion-time snapshot, stamped with the methodology version. */
+    severity_rationale: string | null;
+    /** Today's source assertion — labeled CURRENT in the UI. Per the
+     *  supersede-on-pass ruling a pass here never closes the finding. */
+    current_response: {
+      status: string;
+      as_of: string | null;
+      responder_type: string | null;
+    } | null;
+  } | null;
+  provenance: {
+    vendor: { id: string; name: string };
+    document: {
+      id: string;
+      original_filename: string;
+      sha256: string;
+      document_type_hint: string | null;
+      processing_status: string;
+    };
+    cuec: { id: string; ordinal: number; text: string; review_status: string };
+    determination: {
+      review_status: string;
+      reason: string | null;
+      decided_at: string | null;
+      decided_by: { user_id: string; email: string | null; name: string | null } | null;
+      basis: unknown;
+    };
+  } | null;
+}
+
+export async function getFindingVendorProvenance(
+  token: string,
+  findingId: string
+): Promise<FindingVendorProvenance | null> {
+  try {
+    const res = await engineFetch(
+      `/api/findings/${encodeURIComponent(findingId)}/vendor-provenance`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as FindingVendorProvenance;
+  } catch {
+    return null;
   }
 }
 

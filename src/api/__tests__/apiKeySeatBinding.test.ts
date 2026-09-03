@@ -21,7 +21,7 @@ const queryMock = vi.fn();
 vi.mock("../infra/postgres.js", () => ({ pg: { query: (...a: unknown[]) => queryMock(...a) } }));
 vi.mock("../infra/logger.js", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));
-vi.mock("../lib/jwt.js", () => ({ verifyJwt: () => null, SESSION_BLOCKED_STATUSES: new Set() }));
+vi.mock("../lib/jwt.js", () => ({ verifyJwt: () => null, verifyJwtDetailed: () => ({ ok: false, reason: "bad_signature" }), SESSION_BLOCKED_STATUSES: new Set() }));
 
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { requireAdminRole } from "../middleware/requireRole.js";

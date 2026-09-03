@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
+import { withPreTenantBootstrap } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { effectiveEntitlementLevel, graceState } from "../lib/graceWindow.js";
 
@@ -49,22 +50,26 @@ export async function attachOrganizationContext(
   }
 
   try {
-    const result = await pg.query<{
-      entitlement_level: string;
-      payment_failed_at: string | null;
-      stripe_customer_id: string | null;
-      stripe_subscription_tier: string | null;
-      stripe_subscription_status: string | null;
-      viewer_export_enabled: boolean | null;
-      voice_input_enabled: boolean | null;
-    }>(
-      `SELECT entitlement_level, payment_failed_at, stripe_customer_id,
+    const result = await withPreTenantBootstrap(
+      "org_context.entitlement_lookup",
+      () =>
+        pg.query<{
+          entitlement_level: string;
+          payment_failed_at: string | null;
+          stripe_customer_id: string | null;
+          stripe_subscription_tier: string | null;
+          stripe_subscription_status: string | null;
+          viewer_export_enabled: boolean | null;
+          voice_input_enabled: boolean | null;
+        }>(
+          `SELECT entitlement_level, payment_failed_at, stripe_customer_id,
               stripe_subscription_tier, stripe_subscription_status,
               viewer_export_enabled, voice_input_enabled
          FROM organizations
         WHERE id = $1
         LIMIT 1`,
-      [organizationId]
+          [organizationId]
+        )
     );
 
     const row = result.rows[0];

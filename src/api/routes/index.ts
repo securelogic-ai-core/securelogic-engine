@@ -48,6 +48,7 @@ import assessmentsRouter from "./assessments.js";
 import findingsRouter from "./findings.js";
 import findingRiskLinksRouter from "./findingRiskLinks.js";
 import findingAssetOccurrencesRouter from "./findingAssetOccurrences.js";
+import findingVendorProvenanceRouter from "./findingVendorProvenance.js";
 import penTestEngagementsRouter from "./penTestEngagements.js";
 import actionsRouter from "./actions.js";
 import vendorsRouter from "./vendors.js";
@@ -60,6 +61,7 @@ import frameworksRouter from "./frameworks.js";
 import frameworkReadinessRouter from "./frameworkReadiness.js";
 import frameworkActivationRouter from "./frameworkActivation.js";
 import requirementsRouter from "./requirements.js";
+import questionsRouter from "./questions.js";
 import controlsRouter from "./controls.js";
 import controlsExportRouter from "./controlsExport.js";
 import controlMappingsRouter from "./controlMappings.js";
@@ -113,6 +115,7 @@ import assetAssessmentsRouter from "./assetAssessments.js";
 import connectorsRouter from "./connectors.js";
 import templatesRouter from "./templates.js";
 import aiSystemVendorDependenciesRouter from "./aiSystemVendorDependencies.js";
+import vulnerabilityScanImportsRouter from "./vulnerabilityScanImports.js";
 import riskScoringWeightsRouter from "./riskScoringWeights.js";
 import dashboardRouter from "./dashboard.js";
 import postureRouter from "./posture.js";
@@ -487,6 +490,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   // /findings/:id/risk-links as an id of "risk-links".
   router.use("/api", findingRiskLinksRouter);
   router.use("/api", findingAssetOccurrencesRouter);
+  // Same reason: /findings/:id/vendor-provenance must not be captured as an id.
+  router.use("/api", findingVendorProvenanceRouter);
   router.use("/api", penTestEngagementsRouter);
   router.use("/api", findingsRouter);
   router.use("/api", actionsRouter);
@@ -513,6 +518,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", frameworkReadinessRouter);
   router.use("/api", frameworksRouter);
   router.use("/api", requirementsRouter);
+  // VA-Q1: the curated question library (ADR-0013 R1). Internal, premium, JSON-only.
+  router.use("/api", questionsRouter);
   // Export routers MUST mount before their register routers: GET /:id would
   // otherwise capture the literal /export.csv path (the findingsExport trap).
   router.use("/api", controlsExportRouter);
@@ -576,6 +583,8 @@ router.use("/api", riskAcceptancesRouter);
   router.use("/api", connectorsRouter);
   router.use("/api", templatesRouter);
   router.use("/api", aiSystemVendorDependenciesRouter);
+  // SL-OCC-3: scanner-ingestion producer (dark behind SECURELOGIC_VULN_SCAN_INGESTION_ENABLED).
+  router.use("/api", vulnerabilityScanImportsRouter);
   router.use("/api", riskScoringWeightsRouter);
   router.use("/api", dashboardRouter);
   router.use("/api", postureRouter);

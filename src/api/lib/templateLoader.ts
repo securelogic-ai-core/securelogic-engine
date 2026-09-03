@@ -57,6 +57,7 @@ import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "./auditLog.js";
 import { assetRegistryEnabled } from "./assetRegistryFeatureFlag.js";
 import { registerAsset } from "./assetRegistrar.js";
+import { canonicalFrameworkKeyFor } from "./controls/canonicalFrameworkIdentity.js";
 import {
   FRAMEWORK_REFS,
   TEMPLATES,
@@ -270,13 +271,18 @@ export async function loadTemplate(
           );
         }
 
+        // VA-S4 Step 1: persist the CANONICAL framework identity. `name` is a
+        // mutable display string and can never be the join key from a tenant
+        // requirement to the global crosswalk; (framework_key, version) is.
+        // COALESCE so a re-load never nulls a key an earlier write resolved.
         const fwResult = await client.query<{ id: string }>(
-          `INSERT INTO frameworks (organization_id, name, version)
-           VALUES ($1, $2, $3)
+          `INSERT INTO frameworks (organization_id, name, version, framework_key)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT (organization_id, name, version)
-           DO UPDATE SET updated_at = frameworks.updated_at
+           DO UPDATE SET updated_at    = frameworks.updated_at,
+                         framework_key = COALESCE(frameworks.framework_key, EXCLUDED.framework_key)
            RETURNING id`,
-          [organizationId, meta.name, meta.version]
+          [organizationId, meta.name, meta.version, canonicalFrameworkKeyFor(meta.name, meta.version)]
         );
         const frameworkId = fwResult.rows[0]!.id;
 
@@ -313,6 +319,7 @@ export async function loadTemplate(
 
         if ((insertControl.rowCount ?? 0) > 0) {
           inserted.controls += 1;
+          const newControlId = insertControl.rows[0]!.id;
           const resolution = frameworkResolution.get(c.framework_ref);
           if (resolution !== undefined) {
             // ON CONFLICT DO NOTHING because a manual control_mapping with
@@ -321,9 +328,40 @@ export async function loadTemplate(
               `INSERT INTO control_mappings (control_id, requirement_id)
                VALUES ($1, $2)
                ON CONFLICT (control_id, requirement_id) DO NOTHING`,
-              [insertControl.rows[0]!.id, resolution.requirementId]
+              [newControlId, resolution.requirementId]
             );
           }
+
+          // VA-S4 Step 1: stop DISCARDING TemplateControl.id.
+          //
+          // `template_source` records which TEMPLATE a control came from, not
+          // WHICH CONTROL it is, and the reconciliation found that to be the
+          // whole of a tenant control's provenance. `c.id` is a globally stable
+          // slug; where it is a registered alias of a PUBLISHED canonical
+          // control, the load now records the canonical identity with
+          // provenance 'template'.
+          //
+          // The SELECT is the whole gate, and it is deliberately narrow:
+          //   * an alias that resolves to nothing writes nothing. A template
+          //     control with no canonical identity is a legitimate state, and
+          //     the owner ruling forbids manufacturing one;
+          //   * a DRAFT canonical control is not eligible. Only governed,
+          //     published reference content may claim a tenant control.
+          // A template load therefore stays correct on an environment where
+          // the canonical corpus has never been published: it writes zero rows.
+          await client.query(
+            `INSERT INTO control_canonical_identities
+               (organization_id, control_id, canonical_control_id,
+                provenance, confidence, evidence_ref)
+             SELECT $1, $2, cc.id, 'template', 100, $3
+               FROM canonical_control_aliases a
+               JOIN canonical_controls cc ON cc.id = a.canonical_control_id
+              WHERE a.alias_key = $3
+                AND cc.status = 'published'
+             ON CONFLICT (organization_id, control_id, canonical_control_id, provenance)
+             DO NOTHING`,
+            [organizationId, newControlId, c.id]
+          );
         } else {
           skipped.controls += 1;
           // Pre-existing control: do NOT add a control_mapping. See header

@@ -16,7 +16,8 @@
  *
  *   - METHODOLOGY_VERSION   the inherent / effectiveness / evidence / residual
  *                           models and their weight + level tables.
- *   - SCOPE_RULE_VERSION    the applicability rule corpus (S1–S4).
+ *   - SCOPE_RULE_VERSION    the applicability rule corpus (S1–S5) AND the fact
+ *                           registry (`factRegistry.ts`) — they version together.
  *   - requirement-set       a content hash of the frameworks + requirements +
  *                           scope_tags actually in effect for an org. Computed
  *                           per engagement at scoping time, not a constant —
@@ -37,8 +38,18 @@
 /** Semantic version of the scoring models. Bump on ANY weight/level/rule change. */
 export const METHODOLOGY_VERSION = "1.0.0" as const;
 
-/** Semantic version of the questionnaire-scoping rule corpus. */
-export const SCOPE_RULE_VERSION = "1.0.0" as const;
+/**
+ * Semantic version of the questionnaire-scoping rule corpus.
+ *
+ *   1.0.0  S1–S4 (VA-6).
+ *   1.1.0  VA-Q2 P1: fact registry; S5 domain activation; `domain` on items.
+ *          S5 runs ONLY for engagements stamped >= 1.1.0 — an engagement
+ *          stamped 1.0.0 re-resolves byte-identically (golden-tested).
+ */
+export const SCOPE_RULE_VERSION = "1.1.0" as const;
+
+/** The version at which S5 domain activation entered the corpus. */
+export const SCOPE_RULE_VERSION_S5 = "1.1.0" as const;
 
 /**
  * The shared, versioned explainability envelope.

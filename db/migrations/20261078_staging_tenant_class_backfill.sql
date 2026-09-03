@@ -1,0 +1,58 @@
+-- 20261078 — the tenant_class backfill decision owed by 20261074 / 4C-3
+-- acceptance check 41, settled on POSITIVE PROVENANCE.
+--
+-- 20261074 classified what an in-tree naming convention could justify and
+-- deliberately left the residue `customer` rather than guessing a tenant's
+-- nature from its name. Owner ruling 2026-08-31: reclassify only where positive
+-- provenance establishes seeded staging/validation data. Name similarity is
+-- explicitly NOT sufficient.
+--
+-- THE MARKER, AND WHY IT IS POSITIVE. Every organisation already classified
+-- synthetic by 20261074 carries users at a reserved, unregistrable e-mail TLD:
+-- `[DECOMMISSIONED] 807 validation org` -> `.invalid`; `[SEED] Professional
+-- Tier Org` and `[SEED] Walkthrough Org` -> `seed.securelogicai.test` and
+-- `seed.invalid`. RFC 2606 reserves `.test` and `.invalid` so that no such
+-- address can ever belong to a real person. That is machine-checkable evidence
+-- of manufactured data, and it corroborates the existing classification rather
+-- than asserting a new rule.
+--
+-- ONE organisation in the residue carries it:
+--   `Onboarding Validation 20260809150033` (a0755951) — sole user at
+--   `securelogicai.test`, e-mail never verified, never logged in, no Stripe
+--   customer, and an organisation name that is a script-generated timestamp
+--   (20260809150033) matching its own created_at (2026-08-09 15:00:33) to the
+--   second. Two independent positive markers.
+--
+-- NINE WERE EXAMINED AND DELIBERATELY LEFT `customer`, because the only thing
+-- linking them to validation work is their name:
+--   fe2ede61 Staging Inc      — 10 vendors, 4356 findings, 53 assurance
+--                               documents, 2 verified users who have logged in,
+--                               6 recorded consents, live Stripe subscription
+--                               `cus_UPi9…`. The evidence points AWAY from
+--                               seeding. See the note below.
+--   55041494 Standing Inc 3   — live Stripe subscription, verified user,
+--                               consents recorded. Name similarity to the
+--                               "Staging Inc" family is NOT provenance.
+--   f70267ce Enterprise Validation StageA — holds all 30 canonical control
+--                               identities, but on a verified gmail user with a
+--                               live Stripe subscription and no synthetic
+--                               marker of any kind.
+--   65a1b20b Deliverability Check 773, a0755951's siblings 8c7209e0 /
+--   14a6b864 / 3cf08bbb Staging Inc, 0d8f5fa4 Staging2 Inc,
+--   3b82e322 Staging Inc 4 — all gmail.com, most with real `cus_` Stripe ids
+--                               and recorded consents.
+--
+-- CONSEQUENCE FOR THE HISTORICAL RECORD. Because fe2ede61 cannot be established
+-- as seeded, the REAL / SYNTHETIC split recorded during VA-S4-4C-1, 4C-2 and
+-- 4C-3 — five real extractions against twelve synthetic — STANDS AS RECORDED.
+-- It is not downgraded. This reverses an earlier reading that assumed the
+-- "Staging Inc" name settled the question; applying the provenance standard
+-- settles it the other way.
+--
+-- Production is unaffected: this identity does not exist there, and nothing is
+-- matched by name. Reversible: docs/release/ROLLBACK-20261078.sql.
+
+UPDATE organizations
+   SET tenant_class = 'synthetic_fixture'
+ WHERE tenant_class = 'customer'
+   AND id = 'a0755951-0809-4481-a733-38334b5df85f'::uuid;

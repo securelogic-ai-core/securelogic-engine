@@ -768,3 +768,55 @@ async function runPending(gates: Map<string, Deferred>): Promise<void> {
   for (const g of gates.values()) g.resolve();
   await settle();
 }
+
+// ---------------------------------------------------------------------------
+// EMAIL-OBS-1 / F-3: scheduler_brief_sent must carry EVERY send counter
+// ---------------------------------------------------------------------------
+
+describe("scheduler_brief_sent carries every SendBriefResult counter", () => {
+  const sentLines = () =>
+    vi
+      .mocked(logger.info)
+      .mock.calls.map((c) => c[0] as unknown as Record<string, unknown>)
+      .filter((o) => o && o.event === "scheduler_brief_sent");
+
+  it("a zero-send run explains itself: suppressed and skipped_filtered are on the line", async () => {
+    const org = orgId(1);
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([org]);
+    // F-3's real shape: one subscriber, suppressed — previously logged as
+    // "sent 0 failed 0 skipped false already_sent 0", i.e. all zeros.
+    vi.mocked(sendBrief).mockResolvedValue({
+      sent: 0, failed: 0, skipped: false, skipped_filtered: 1, suppressed: 2, already_sent: 0
+    } as never);
+
+    await runScheduler();
+
+    const lines = sentLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      orgId: org,
+      attempted: 0,
+      accepted: 0,
+      rejected: 0,
+      sent: 0,
+      failed: 0,
+      suppressed: 2,
+      skipped_filtered: 1,
+      skipped: false,
+      already_sent: 0
+    });
+    expect(typeof lines[0]!.briefId).toBe("string");
+  });
+
+  it("attempted = accepted + rejected", async () => {
+    const org = orgId(2);
+    vi.mocked(listBriefEligibleOrgIds).mockResolvedValue([org]);
+    vi.mocked(sendBrief).mockResolvedValue({
+      sent: 3, failed: 2, skipped: false, skipped_filtered: 0, suppressed: 0, already_sent: 1
+    } as never);
+
+    await runScheduler();
+
+    expect(sentLines()[0]).toMatchObject({ attempted: 5, accepted: 3, rejected: 2, already_sent: 1 });
+  });
+});

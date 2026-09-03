@@ -26,6 +26,7 @@ import { Pool } from "pg";
 
 import { bootstrapTestDb, seedVendor, type TestDbSeed } from "./testDb.js";
 import { buildRoutes } from "../../src/api/routes/index.js";
+import { enforceJsonContentType } from "../../src/api/lib/contentTypeAllowlist.js";
 import { PORTAL_SESSION_COOKIE } from "../../src/api/lib/vendorPortal/portalTokens.js";
 
 let seed: TestDbSeed;
@@ -115,6 +116,12 @@ beforeAll(async () => {
   }
 
   app = express();
+
+  // The strict Content-Type gate, in the position createApp() puts it —
+
+  // the VA-E2E-1 rule, enforced by isolationSuitesUseRealGate.test.ts.
+
+  app.use(enforceJsonContentType);
   app.use(express.json());
   app.use(cookieParser());
   app.use(buildRoutes({ isDev: false, publicApiDisabled: false }));
@@ -588,6 +595,35 @@ describe("STEP 5b — evidence review and finding promotion", () => {
       [seed.orgA.id, flow.engagementId]
     );
     expect(Number(count.rows[0]!.n)).toBe(2);
+  });
+
+  it("the vendor's PERSISTED legacy risk score moves when findings are promoted", async () => {
+    // Promotion now schedules a recompute of vendors.current_risk_score (the
+    // legacy HIGHER = BETTER score, entirely separate from the engagement's
+    // residual score) via scheduleVendorScoreRecompute — the same hook CUEC
+    // promotion uses. Before the hook this column stayed NULL forever here:
+    // promotion scheduled no recompute, so the score only corrected itself the
+    // next time some UNRELATED finding on the same vendor changed state.
+    //
+    // The hook is fire-and-forget (setImmediate + its own tenant scope), so
+    // the write lands shortly AFTER the promote response — poll briefly
+    // instead of sleeping a fixed amount.
+    let score: number | null = null;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const row = await pool.query<{ score: number | null }>(
+        `SELECT current_risk_score::float8 AS score
+           FROM vendors WHERE id = $1 AND organization_id = $2`,
+        [vendorId, seed.orgA.id]
+      );
+      score = row.rows[0]!.score;
+      if (score !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(score).not.toBeNull();
+    // Two ACTIVE engagement findings (one Critical) plus 'high' vendor
+    // criticality: strictly below the 100 a finding-free vendor scores.
+    expect(score!).toBeLessThan(100);
   });
 
   it("severity reflects THIS vendor, and says why", async () => {

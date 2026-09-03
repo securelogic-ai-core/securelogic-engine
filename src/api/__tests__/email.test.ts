@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const { mockSend, mockQuery } = vi.hoisted(() => ({ mockSend: vi.fn(), mockQuery: vi.fn() }));
 
 vi.mock("resend", () => ({ Resend: class { emails = { send: mockSend }; } }));
-vi.mock("../infra/postgres.js", () => ({ pg: { query: mockQuery } }));
+vi.mock("../infra/postgres.js", () => ({ pg: { query: mockQuery }, pgElevated: { query: vi.fn(async () => ({ rows: [] })) } }));
 vi.mock("../infra/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
 import { sendEmail } from "../infra/email.js";
@@ -14,8 +14,10 @@ beforeEach(() => {
   mockSend.mockReset();
   mockQuery.mockReset().mockResolvedValue({ rows: [] }); // not suppressed by default
   process.env[KEY] = "re_test";
+  // This suite drives a MOCKED provider; opt out of the test-runner guard.
+  process.env.SECURELOGIC_EMAIL_ALLOW_TEST_SEND = "true";
 });
-afterEach(() => { delete process.env[KEY]; });
+afterEach(() => { delete process.env[KEY]; delete process.env.SECURELOGIC_EMAIL_ALLOW_TEST_SEND; });
 
 describe("sendEmail", () => {
   it("returns unavailable when RESEND_API_KEY is not set", async () => {
@@ -57,5 +59,19 @@ describe("sendEmail", () => {
   it("rejects an empty recipient", async () => {
     const r = await sendEmail({ to: "  ", subject: "s", html: "<p>x</p>" });
     expect(r).toEqual({ ok: false, reason: "failed", detail: "missing recipient" });
+  });
+
+  it("reports a provider REJECTION as failed — the SDK resolves with { error } instead of throwing", async () => {
+    mockSend.mockResolvedValueOnce({ data: null, error: { name: "validation_error", message: "domain not verified", statusCode: 403 } });
+    const r = await sendEmail({ to: "a@b.com", subject: "s", html: "<p>x</p>" });
+    expect(r).toEqual({ ok: false, reason: "failed", detail: "domain not verified" });
+  });
+
+  it("is blocked under a test runner unless the explicit opt-out is set (counts as not-sent)", async () => {
+    delete process.env.SECURELOGIC_EMAIL_ALLOW_TEST_SEND;
+    mockSend.mockResolvedValueOnce({ data: { id: "must-not-happen" } });
+    const r = await sendEmail({ to: "a@b.com", subject: "s", html: "<p>x</p>" });
+    expect(r).toMatchObject({ ok: false, reason: "blocked_test_env" });
+    expect(mockSend).not.toHaveBeenCalled();
   });
 });

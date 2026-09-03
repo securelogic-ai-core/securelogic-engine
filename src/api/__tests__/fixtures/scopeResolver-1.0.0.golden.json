@@ -1,0 +1,2895 @@
+{
+  "t4-benign": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t3-benign": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_3_moderate",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t2-benign": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_2_high",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "resil-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t1-benign": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_1_critical",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "ai-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "bcp-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "iam-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "obscure-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "oversight-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "priv-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "privacy-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "resil-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "retention-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "supply-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      }
+    ],
+    "excluded": [],
+    "truncated": null
+  },
+  "t4-read-write": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "iam-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-admin": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "iam-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      },
+      {
+        "requirement_id": "priv-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.privileged",
+            "rule_family": "S2",
+            "rationale": "The vendor holds privileged or network-level access to your environment."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-confidential": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          }
+        ]
+      },
+      {
+        "requirement_id": "privacy-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          }
+        ]
+      },
+      {
+        "requirement_id": "retention-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-multi-tenant": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.tenancy",
+            "rule_family": "S2",
+            "rationale": "The service is multi-tenant, so logical isolation between customers is in scope."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-ai-embedded": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "ai-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.ai",
+            "rule_family": "S2",
+            "rationale": "The service involves AI, so AI-governance requirements apply (NIST AI RMF)."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-ai-autonomous": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "ai-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.ai",
+            "rule_family": "S2",
+            "rationale": "The service involves AI, so AI-governance requirements apply (NIST AI RMF)."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "oversight-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.ai_autonomy",
+            "rule_family": "S2",
+            "rationale": "The vendor's AI makes consequential decisions without human review, so oversight controls apply."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-fourth-party-high": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "supply-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.fourth_party",
+            "rule_family": "S2",
+            "rationale": "The vendor relies materially on its own sub-processors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-critical-dependency": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "bcp-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.resilience",
+            "rule_family": "S2",
+            "rationale": "You cannot readily operate without this vendor, so continuity controls apply."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "resil-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.resilience",
+            "rule_family": "S2",
+            "rationale": "You cannot readily operate without this vendor, so continuity controls apply."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-high-dependency": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-recoverability-weeks": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-business-critical": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t3-hipaa-obligation": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_3_moderate",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 3 moderate vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "obscure-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S3.obligation",
+            "rule_family": "S3",
+            "rationale": "Required by your active obligation \"HIPAA Security Rule §164.308\"."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 3 moderate vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t2-admin-dora": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_2_high",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          },
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          },
+          {
+            "rule_id": "S3.obligation",
+            "rule_family": "S3",
+            "rationale": "Required by your active obligation \"DORA\"."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "iam-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      },
+      {
+        "requirement_id": "priv-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S2.privileged",
+            "rule_family": "S2",
+            "rationale": "The vendor holds privileged or network-level access to your environment."
+          }
+        ]
+      },
+      {
+        "requirement_id": "resil-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 2 high vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 2 high vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-assurance-core-1": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-1",
+        "depth": "confirm",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          },
+          {
+            "rule_id": "S4.assurance",
+            "rule_family": "S4",
+            "rationale": "Covered by an approved, in-validity independent assurance report — asked as a confirmation rather than in full."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "acl-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "iam-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "priv-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "data-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "privacy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "ai-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "oversight-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "supply-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "resil-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "bcp-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "retention-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      },
+      {
+        "requirement_id": "obscure-1",
+        "rationale": "No rule in scope-rule-set 1.0.0 includes this requirement for a tier 4 low vendor."
+      }
+    ],
+    "truncated": null
+  },
+  "t4-over-cap": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-0",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-10",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-11",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-12",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-13",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-14",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-15",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-16",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-17",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-18",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-19",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-20",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-21",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "core-3",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-4",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-5",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-6",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-7",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-8",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-9",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-22",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-23",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-24",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-25",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-26",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-27",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-28",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-29",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-30",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-31",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-32",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-33",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-34",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-35",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-36",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-37",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-38",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-39",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      }
+    ],
+    "truncated": {
+      "cap": 15,
+      "dropped_requirement_ids": [
+        "core-22",
+        "core-23",
+        "core-24",
+        "core-25",
+        "core-26",
+        "core-27",
+        "core-28",
+        "core-29",
+        "core-3",
+        "core-30",
+        "core-31",
+        "core-32",
+        "core-33",
+        "core-34",
+        "core-35",
+        "core-36",
+        "core-37",
+        "core-38",
+        "core-39",
+        "core-4",
+        "core-5",
+        "core-6",
+        "core-7",
+        "core-8",
+        "core-9"
+      ]
+    }
+  },
+  "t4-over-cap-reversed": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_4_low",
+    "items": [
+      {
+        "requirement_id": "core-0",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-10",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-11",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-12",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-13",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-14",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-15",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-16",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-17",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-18",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-19",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-20",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-21",
+        "depth": "attest",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "Baseline for tier 4 low vendors."
+          }
+        ]
+      }
+    ],
+    "excluded": [
+      {
+        "requirement_id": "core-39",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-38",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-37",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-36",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-35",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-34",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-33",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-32",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-31",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-30",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-29",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-28",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-27",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-26",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-25",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-24",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-23",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-22",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-9",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-8",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-7",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-6",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-5",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-4",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      },
+      {
+        "requirement_id": "core-3",
+        "rationale": "Dropped by the tier 4 low question cap of 15."
+      }
+    ],
+    "truncated": {
+      "cap": 15,
+      "dropped_requirement_ids": [
+        "core-22",
+        "core-23",
+        "core-24",
+        "core-25",
+        "core-26",
+        "core-27",
+        "core-28",
+        "core-29",
+        "core-3",
+        "core-30",
+        "core-31",
+        "core-32",
+        "core-33",
+        "core-34",
+        "core-35",
+        "core-36",
+        "core-37",
+        "core-38",
+        "core-39",
+        "core-4",
+        "core-5",
+        "core-6",
+        "core-7",
+        "core-8",
+        "core-9"
+      ]
+    }
+  },
+  "t1-everything": {
+    "scope_rule_version": "1.0.0",
+    "tier": "tier_1_critical",
+    "items": [
+      {
+        "requirement_id": "acl-1",
+        "depth": "confirm",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          },
+          {
+            "rule_id": "S4.assurance",
+            "rule_family": "S4",
+            "rationale": "Covered by an approved, in-validity independent assurance report — asked as a confirmation rather than in full."
+          }
+        ]
+      },
+      {
+        "requirement_id": "ai-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.ai",
+            "rule_family": "S2",
+            "rationale": "The service involves AI, so AI-governance requirements apply (NIST AI RMF)."
+          }
+        ]
+      },
+      {
+        "requirement_id": "bcp-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.resilience",
+            "rule_family": "S2",
+            "rationale": "You cannot readily operate without this vendor, so continuity controls apply."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "core-2",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "data-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          }
+        ]
+      },
+      {
+        "requirement_id": "iam-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.access",
+            "rule_family": "S2",
+            "rationale": "The vendor can change data in your systems, so access control is in scope."
+          }
+        ]
+      },
+      {
+        "requirement_id": "obscure-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          }
+        ]
+      },
+      {
+        "requirement_id": "oversight-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.ai_autonomy",
+            "rule_family": "S2",
+            "rationale": "The vendor's AI makes consequential decisions without human review, so oversight controls apply."
+          }
+        ]
+      },
+      {
+        "requirement_id": "priv-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.privileged",
+            "rule_family": "S2",
+            "rationale": "The vendor holds privileged or network-level access to your environment."
+          }
+        ]
+      },
+      {
+        "requirement_id": "privacy-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          },
+          {
+            "rule_id": "S3.obligation",
+            "rule_family": "S3",
+            "rationale": "Required by your active obligation \"GDPR Art. 28\"."
+          }
+        ]
+      },
+      {
+        "requirement_id": "resil-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.resilience",
+            "rule_family": "S2",
+            "rationale": "You cannot readily operate without this vendor, so continuity controls apply."
+          }
+        ]
+      },
+      {
+        "requirement_id": "retention-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.pii",
+            "rule_family": "S2",
+            "rationale": "The vendor handles confidential or restricted data."
+          }
+        ]
+      },
+      {
+        "requirement_id": "supply-1",
+        "depth": "full",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.fourth_party",
+            "rule_family": "S2",
+            "rationale": "The vendor relies materially on its own sub-processors."
+          }
+        ]
+      },
+      {
+        "requirement_id": "tenancy-1",
+        "depth": "confirm",
+        "mandatory": true,
+        "source": "deterministic",
+        "reasons": [
+          {
+            "rule_id": "S1.baseline",
+            "rule_family": "S1",
+            "rationale": "This vendor is tier 1 critical, so the full requirement set applies."
+          },
+          {
+            "rule_id": "S2.tenancy",
+            "rule_family": "S2",
+            "rationale": "The service is multi-tenant, so logical isolation between customers is in scope."
+          },
+          {
+            "rule_id": "S4.assurance",
+            "rule_family": "S4",
+            "rationale": "Covered by an approved, in-validity independent assurance report — asked as a confirmation rather than in full."
+          }
+        ]
+      }
+    ],
+    "excluded": [],
+    "truncated": null
+  }
+}

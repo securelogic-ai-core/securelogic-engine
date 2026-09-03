@@ -43,7 +43,38 @@ export type NavFeatureFlag =
   // the knowledge index stay byte-identical. Vocabulary: the "Briefing" label was
   // operator-ratified (2026-07-21) — deliberately distinct from the Intelligence
   // group's "Briefs" (the Intelligence Brief wedge product).
-  | "briefing";
+  | "briefing"
+  // Risk-acceptance capability (NAV-1 / P1-C) — DARK (default off). The
+  // ACTIVATION control for the "Approvals" entry in BOTH nav models. Mirrors the
+  // engine's SECURELOGIC_RISK_ACCEPTANCE_ENABLED, which 404s every
+  // /api/risk-acceptances route independently.
+  //
+  // Why Approvals is flagged and the other Risk children are not: /approvals is
+  // entitlement-gated but NOT flag-gated in its page body — it degrades to an
+  // "unavailable" state when the engine 404s. Ungated in the nav, production
+  // (where the flag is off) would advertise a menu entry to a page with nothing
+  // on it. That exact hazard is why the production app block holds
+  // SECURELOGIC_RISK_WORKSPACE_ENABLED dark today; gating the entry removes it
+  // from both models at once.
+  //
+  // SCOPE: this gates on the risk-ACCEPTANCE family only. /approvals also hosts
+  // the risk-LIFECYCLE treatment-plan queue behind
+  // SECURELOGIC_RISK_LIFECYCLE_ENABLED, which is `false` in every environment
+  // today. If lifecycle is ever enabled while acceptance stays off, the page
+  // would have content with no nav entry — a NavItem carries one flag, so
+  // covering that combination needs an OR contract and is deliberately NOT
+  // built here.
+  | "risk_acceptance"
+  // Vendor Assurance capability (VA-NAV-1) — ACTIVATION for the "Vendor
+  // Assurance" group in BOTH nav models. Mirrors the engine's
+  // SECURELOGIC_VENDOR_ASSURANCE_ENABLED (src/api/lib/vendorAssuranceFeatureFlag.ts),
+  // which 404s every /api/vendor-assurance and /api/vendor-engagements route
+  // independently, and the app-tier page gate (vendorAssuranceFeatureFlag.ts)
+  // which notFound()s the six pages. Production runs the engine flag FALSE,
+  // so the ungated group advertised three destinations with nothing behind
+  // them to every platform-tier user. Hiding the entry is presentation only:
+  // the page and engine gates are the authorization, and are tested separately.
+  | "vendor_assurance";
 export type NavFlags = Partial<Record<NavFeatureFlag, boolean>>;
 
 export type NavItem =
@@ -120,7 +151,10 @@ export const NAV_ITEMS: NavItem[] = [
   // because `asset_registry` hides it under Assets; in the legacy nav with that
   // flag off it is still reachable at Assets → Vendors, and duplicating it would
   // put the same destination in two menus at once.
-  { type: "group", label: "Vendor Assurance", platform: true,
+  //
+  // featureFlag: vendor_assurance (VA-NAV-1) — the whole group is dark until the
+  // engine capability is on; production runs it false today.
+  { type: "group", label: "Vendor Assurance", platform: true, featureFlag: "vendor_assurance",
     items: [
       { label: "Overview",       href: "/vendor-assurance" },
       { label: "Engagements",    href: "/vendor-engagements" },
@@ -147,6 +181,17 @@ export const NAV_ITEMS: NavItem[] = [
       { label: "Findings",      href: "/findings" },
       { label: "Actions",       href: "/actions" },
       { label: "Risk Register", href: "/risks" },
+      // NAV-1. Approvals was declared ONLY in WORKSPACE_NAV_ITEMS, so with
+      // `risk_workspace` off — the PRODUCTION nav model — the org-wide approvals
+      // queue was nav-orphaned: reachable only from a back-link on /risks or by
+      // typing the URL, and carried as `navLabel: null` in the generated
+      // Application Knowledge Index, so Ask SecureLogic could not name a path to
+      // it either. Same defect class as the Vendor Assurance group above.
+      //
+      // Declared in BOTH models, and ACTIVATION-flagged in both, so fixing the
+      // orphan does not advertise a dead page: with the flag off the entry is
+      // invisible in every model, which is production's state today.
+      { label: "Approvals",     href: "/approvals", featureFlag: "risk_acceptance" },
     ],
   },
   { type: "link", label: "Audit Log", href: "/audit-log", admin: true },
@@ -166,7 +211,10 @@ export const NAV_ITEMS: NavItem[] = [
 //     matcher queue, platform-only via per-child gating).
 //   - "Risk Operations" is the risk work hub. It leads with the two task-oriented
 //     destinations (Operations Workspace, then Finding Explorer) and surfaces
-//     Approvals, which is otherwise reachable only from a /risks back-link.
+//     Approvals, which was otherwise reachable only from a /risks back-link.
+//     (NAV-1 since declared Approvals in the legacy model too, so this is no
+//     longer the only menu that carries it — both are gated on
+//     `risk_acceptance`.)
 //   - "Assets" surfaces Vendor Assurance (otherwise nav-orphaned) and keeps the
 //     EAR asset_registry canonical-entry behavior (EAR-AD-1) unchanged.
 //   - Ask and Search are NOT here — both are GLOBAL UTILITIES in the header's
@@ -206,7 +254,10 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       { label: "Finding Explorer",     href: "/findings?queue=all" },
       { label: "Actions",              href: "/actions" },
       { label: "Risk Register",        href: "/risks" },
-      { label: "Approvals",            href: "/approvals" },
+      // NAV-1: ACTIVATION-flagged to match the legacy declaration above. On
+      // staging (SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true on the app service)
+      // this entry is unchanged; in production both nav models are dark on it.
+      { label: "Approvals",            href: "/approvals", featureFlag: "risk_acceptance" },
     ],
   },
   { type: "group", label: "Assets", platform: true,
@@ -226,11 +277,19 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
   // typing the URL. "Vendors" is repeated here because the asset_registry flag
   // hides it under Assets, which otherwise leaves the vendor list — where an
   // engagement is opened from — unreachable whenever that flag is on.
+  //
+  // VA-NAV-1: the three assurance destinations are gated PER CHILD on
+  // vendor_assurance rather than the group as a whole, because "Vendors" is not
+  // an assurance surface (it is the vendor register on the frameworks spine,
+  // ruled un-flagged) and must stay reachable here when asset_registry has
+  // hidden it under Assets. With vendor_assurance off the group collapses to
+  // just "Vendors"; with both flags off it disappears entirely (filterNav
+  // drops a group whose children all resolve away).
   { type: "group", label: "Vendor Assurance", platform: true,
     items: [
-      { label: "Overview",       href: "/vendor-assurance" },
-      { label: "Engagements",    href: "/vendor-engagements" },
-      { label: "Document Queue", href: "/vendor-assurance/queue" },
+      { label: "Overview",       href: "/vendor-assurance",       featureFlag: "vendor_assurance" },
+      { label: "Engagements",    href: "/vendor-engagements",     featureFlag: "vendor_assurance" },
+      { label: "Document Queue", href: "/vendor-assurance/queue", featureFlag: "vendor_assurance" },
       { label: "Vendors",        href: "/vendors" },
     ],
   },

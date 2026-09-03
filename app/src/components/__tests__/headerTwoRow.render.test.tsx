@@ -45,6 +45,9 @@ const WORKSPACE_USER = {
     risk_workspace: true,
     briefing: true,
     enterprise_context: true,
+    // VA-NAV-1: the engine capability is on in staging; without it the group
+    // collapses to its un-flagged "Vendors" child (see WORKSPACE_NAV_ITEMS).
+    vendor_assurance: true,
   } as Record<string, boolean>,
 };
 

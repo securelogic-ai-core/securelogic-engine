@@ -7,8 +7,17 @@
  *
  * RESEND API
  * ----------
- * POST https://api.resend.com/emails
- * Authorization: Bearer {RESEND_API_KEY}
+ * Every send goes through `infra/emailTransport.sendViaProvider()` — the one
+ * choke point shared by all send sites (EMAIL-OBS-1). It logs
+ * `email_send_attempt` / `email_send_result` with purpose `brief.weekly`,
+ * the org id and the Brief id as correlation id, checks the provider's
+ * `{ error }`, and records the provider message id in `email_sends` so the
+ * provider's webhook events can be joined back to this Brief. This module
+ * previously POSTed to the REST API directly, which was why a grep for the
+ * SDK missed the highest-volume sender.
+ *
+ * PRIVACY: no log line here carries a subscriber address. Recipients are
+ * described by domain; the subscriber id is the join key into the audit table.
  *
  * FROM ADDRESS
  * ------------
@@ -45,9 +54,10 @@ import { logger } from "../infra/logger.js";
 import { renderBriefEmail, renderBriefEmailText, type BriefEmailData, type EmailBriefItem, type EmailBriefCategory } from "./briefEmailRenderer.js";
 import type { BriefSynthesis } from "./briefSynthesizer.js";
 import { getAppBaseUrl } from "./alerting/alertPrimitives.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { logEmailSkipped, recipientDomain, sendViaProvider } from "../infra/emailTransport.js";
 
-const RESEND_API_URL = "https://api.resend.com/emails";
+/** Purpose key carried on every Brief send's observability lines. */
+export const BRIEF_EMAIL_PURPOSE = "brief.weekly";
 
 // ---------------------------------------------------------------------------
 // DB row types
@@ -242,54 +252,31 @@ export function filterBriefForFreeTier(data: BriefEmailData): BriefEmailData {
 // ---------------------------------------------------------------------------
 
 async function sendViaResend(
+  ctx: { orgId: string; briefId: string },
   to: string,
   subject: string,
   html: string,
   text: string
-): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = process.env["RESEND_API_KEY"];
-  if (!apiKey) {
-    return { ok: false, error: "RESEND_API_KEY not configured" };
-  }
-
+): Promise<{ ok: boolean; error?: string; providerMessageId?: string | null }> {
   const from =
     process.env["BRIEF_FROM_EMAIL"] ?? "SecureLogic AI <briefs@securelogicai.com>";
 
-  try {
-    const response = await fetch(RESEND_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      // Briefs are the highest-volume outbound path and therefore the biggest
-      // source of bounce events. This sender talks to the REST API directly
-      // rather than through the SDK, so it needs the environment tag applied
-      // explicitly — a tag added only at the SDK sites would leave the noisiest
-      // producer of webhook events unattributable.
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject,
-        html,
-        text,
-        tags: withEnvironmentTag()
-      })
-    });
+  const res = await sendViaProvider({
+    purpose: BRIEF_EMAIL_PURPOSE,
+    orgId: ctx.orgId,
+    correlationId: ctx.briefId,
+    to,
+    from,
+    subject,
+    html,
+    text
+  });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "(no body)");
-      return {
-        ok: false,
-        error: `Resend HTTP ${response.status}: ${body.slice(0, 200)}`
-      };
-    }
-
-    return { ok: true };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg };
-  }
+  if (res.ok) return { ok: true, providerMessageId: res.providerMessageId };
+  // The audit row's error_message keeps the previous "Resend HTTP <status>:
+  // <detail>" shape when the provider answered with a status code.
+  const prefix = res.outcome === "provider_rejected" && res.statusCode !== null ? `Resend HTTP ${res.statusCode}: ` : "";
+  return { ok: false, error: `${prefix}${res.errorMessage}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -572,11 +559,19 @@ export async function sendBrief(
           event: "brief_send_suppressed",
           briefId,
           subscriberId: subscriber.id,
-          email: subscriber.email,
+          recipientDomain: recipientDomain(subscriber.email),
           orgId
         },
         "Brief send skipped — subscriber email is suppressed"
       );
+      logEmailSkipped({
+        purpose: BRIEF_EMAIL_PURPOSE,
+        orgId,
+        correlationId: briefId,
+        to: subscriber.email,
+        outcome: "suppressed",
+        reason: "email_suppressions"
+      });
       auditRows.push({ subscriberId: subscriber.id, status: "suppressed", errorMessage: "email_suppressed" });
       continue;
     }
@@ -596,8 +591,9 @@ export async function sendBrief(
         {
           event: "brief_send_filtered_empty",
           briefId,
+          orgId,
           subscriberId: subscriber.id,
-          email: subscriber.email,
+          recipientDomain: recipientDomain(subscriber.email),
           min_severity: subscriber.min_severity,
           notify_vendor_matches_only: subscriber.notify_vendor_matches_only
         },
@@ -643,15 +639,22 @@ export async function sendBrief(
     const baseText = renderBriefEmailText(emailData, orgName);
     const text = baseText.replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl);
 
-    const result = await sendViaResend(subscriber.email, subject, html, text);
+    const result = await sendViaResend({ orgId, briefId }, subscriber.email, subject, html, text);
 
     if (result.ok) {
       sent++;
       auditRows.push({ subscriberId: subscriber.id, status: "sent", errorMessage: null });
 
       logger.info(
-        { event: "brief_sent", briefId, subscriberId: subscriber.id, email: subscriber.email },
-        "Intelligence Brief sent"
+        {
+          event: "brief_sent",
+          briefId,
+          orgId,
+          subscriberId: subscriber.id,
+          recipientDomain: recipientDomain(subscriber.email),
+          providerMessageId: result.providerMessageId ?? null
+        },
+        "Intelligence Brief accepted by provider"
       );
     } else {
       failed++;
@@ -661,8 +664,9 @@ export async function sendBrief(
         {
           event: "brief_send_failed",
           briefId,
+          orgId,
           subscriberId: subscriber.id,
-          email: subscriber.email,
+          recipientDomain: recipientDomain(subscriber.email),
           error: result.error
         },
         "Intelligence Brief send failed"

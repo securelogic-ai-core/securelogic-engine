@@ -10,12 +10,20 @@
  * every route that creates or reads requirements.
  *
  * Routes:
- *   POST  /api/requirements       — create requirement under a framework
- *   GET   /api/requirements       — list requirements (?framework_id required)
- *   GET   /api/requirements/:id   — get single requirement
+ *   POST  /api/requirements                     — create requirement under a framework
+ *   GET   /api/requirements                     — list requirements (?framework_id required)
+ *   GET   /api/requirements/scope-tag-coverage  — curation coverage (VA-6)
+ *   GET   /api/requirements/:id                 — get single requirement
+ *   PATCH /api/requirements/:id                 — curate content (VA-6, admin)
  *
- * No PATCH. No DELETE. Requirements are reference data in this package.
- * All routes use the standard middleware chain.
+ * No DELETE. VA-6 opened a deliberate crack in the old "no PATCH" rule:
+ * curation may change a question's CONTENT (guidance, scope tags) but never
+ * its IDENTITY (reference_id, title) — responses and engagement scope items
+ * reference the requirement, and renaming a question would silently rewrite
+ * what a vendor already answered. Curation is admin-gated (like framework
+ * activation) because scope tags decide which questions every tier-2/3/4
+ * vendor questionnaire asks, and guidance is rendered verbatim to EXTERNAL
+ * vendors in the portal.
  */
 
 import { Router } from "express";
@@ -27,10 +35,20 @@ import { denyContributor } from "../middleware/requireSeat.js";
 import { ownerCondition, mayAccessOwned, isAssignedScope } from "../lib/contributorScope.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
-import { validateRequirementCreate } from "../lib/requirementValidation.js";
+import {
+  validateRequirementCreate,
+  validateRequirementCurationPatch,
+} from "../lib/requirementValidation.js";
 import { validateRequirementResponseUpsert } from "../lib/requirementResponseValidation.js";
 import { assessmentProgress } from "../lib/frameworkCoverage.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import { requireAdminRole } from "../middleware/requireRole.js";
+import {
+  SCOPE_TAG_VOCABULARY,
+  areValidScopeTags,
+  scopeTagCoverage,
+} from "../lib/vendorRisk/requirementScopeTags.js";
+import { resolveScopeTags } from "../lib/vendorRisk/curatedFrameworkTags.js";
 
 const router = Router();
 
@@ -59,6 +77,10 @@ const REQUIREMENT_SELECT = `
   r.framework_id,
   r.reference_id,
   r.title,
+  r.description,
+  COALESCE(r.scope_tags, '{}') AS scope_tags,
+  r.scope_tags_source,
+  r.scope_tags_at,
   r.created_at
 `;
 
@@ -66,6 +88,13 @@ const REQUIREMENT_SELECT = `
    POST /api/requirements
    Create a requirement under a framework.
    The framework must belong to the requesting organization.
+
+   Admin-gated (ruled 2026-08-23): a requirement's title/description is
+   governed content rendered verbatim into every future vendor
+   questionnaire — creation must carry the same authorization boundary as
+   curation (the PATCH below). Same primitive, no new role. The R9 caveat
+   (API-key auth bypasses JWT role checks) applies here exactly as it does
+   to the PATCH — documented platform-wide, not widened here.
    ========================================================= */
 
 router.post(
@@ -74,6 +103,7 @@ router.post(
   attachOrganizationContext,
   requireEntitlement("premium"),
   denyContributor(),
+  requireAdminRole,
   asTenant(async (req, res) => {
     const organizationContext = (req as any).organizationContext ?? null;
     const organizationId = organizationContext?.organizationId ?? null;
@@ -114,20 +144,48 @@ router.post(
         return;
       }
 
+      // VA-6: a custom question enters the SCOPING universe at birth. Without
+      // tags it would be invisible to every tier-2/3/4 questionnaire forever —
+      // the fate of every requirement created between the 20260926 backfill
+      // and this package. Heuristic tags are a weak signal and are stamped as
+      // such; curation (PATCH below) upgrades them to 'curated'.
+      //
+      // No template key: a custom question is by definition not curated
+      // reference data. It resolves to 'heuristic' where a pattern matched, and
+      // to 'uncurated' where nothing did — so a question nobody has classified
+      // is visible AS unclassified instead of arriving as a security question.
+      const derived = resolveScopeTags({
+        reference_id: input.reference_id,
+        title: input.title,
+      });
+
       let result;
       try {
         result = await client.query(
           `
-          INSERT INTO requirements (framework_id, reference_id, title)
-          VALUES ($1, $2, $3)
+          INSERT INTO requirements
+            (framework_id, reference_id, title, description,
+             scope_tags, scope_tags_source, scope_tags_at)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
           RETURNING
             id,
             framework_id,
             reference_id,
             title,
+            description,
+            scope_tags,
+            scope_tags_source,
+            scope_tags_at,
             created_at
           `,
-          [input.framework_id, input.reference_id, input.title]
+          [
+            input.framework_id,
+            input.reference_id,
+            input.title,
+            input.description,
+            derived.tags,
+            derived.source,
+          ]
         );
       } catch (err: any) {
         await client.query("ROLLBACK");
@@ -153,6 +211,23 @@ router.post(
         },
         "Requirement created"
       );
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "requirement.created",
+        resourceType: "requirement",
+        resourceId: result.rows[0]?.id ?? null,
+        payload: {
+          framework_id: input.framework_id,
+          reference_id: input.reference_id,
+          has_description: input.description !== null,
+          scope_tags: derived.tags,
+          scope_tags_source: derived.source,
+        },
+        ipAddress: req.ip ?? null,
+      });
 
       res.status(201).json({ requirement: result.rows[0] });
     } catch (err) {
@@ -288,6 +363,95 @@ router.get(
 ));
 
 /* =========================================================
+   GET /api/requirements/scope-tag-coverage — VA-6.
+
+   "curated_pct is the number that matters before launch"
+   (requirementScopeTags.ts). This is where that number becomes visible:
+   org-wide totals plus a per-framework breakdown, computed by the same
+   scopeTagCoverage() the vocabulary module has exported untouched since
+   20260926. Also returns the closed vocabulary so the curation UI renders
+   the real tag set instead of duplicating it.
+
+   REGISTERED BEFORE /requirements/:id so the literal path is not captured
+   as an id (the findingVendorProvenance registration-order precedent).
+   ========================================================= */
+
+router.get(
+  "/requirements/scope-tag-coverage",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    try {
+      const rows = await pg.query<{
+        framework_id: string;
+        framework_name: string;
+        framework_version: string;
+        scope_tags: string[];
+        scope_tags_source: string | null;
+      }>(
+        `SELECT r.framework_id,
+                f.name    AS framework_name,
+                f.version AS framework_version,
+                COALESCE(r.scope_tags, '{}') AS scope_tags,
+                r.scope_tags_source
+           FROM requirements r
+           JOIN frameworks f
+             ON f.id = r.framework_id
+            AND f.organization_id = $1`,
+        [organizationId]
+      );
+
+      const asCoverageRow = (r: (typeof rows.rows)[number]) => ({
+        tags: r.scope_tags,
+        source: r.scope_tags_source ?? "",
+      });
+      const overall = scopeTagCoverage(rows.rows.map(asCoverageRow));
+
+      const byFramework = new Map<
+        string,
+        { name: string; version: string; rows: Array<{ tags: string[]; source: string }> }
+      >();
+      for (const row of rows.rows) {
+        const entry = byFramework.get(row.framework_id) ?? {
+          name: row.framework_name,
+          version: row.framework_version,
+          rows: [],
+        };
+        entry.rows.push(asCoverageRow(row));
+        byFramework.set(row.framework_id, entry);
+      }
+
+      res.status(200).json({
+        overall,
+        frameworks: Array.from(byFramework.entries()).map(([id, fw]) => ({
+          framework_id: id,
+          name: fw.name,
+          version: fw.version,
+          coverage: scopeTagCoverage(fw.rows),
+        })),
+        vocabulary: SCOPE_TAG_VOCABULARY,
+      });
+    } catch (err) {
+      logger.error(
+        { event: "scope_tag_coverage_failed", err },
+        "GET /api/requirements/scope-tag-coverage failed"
+      );
+      res.status(500).json({ error: "scope_tag_coverage_failed" });
+    }
+  })
+);
+
+/* =========================================================
    GET /api/requirements/:id
    Get a single requirement.
    Org isolation enforced via join through framework.
@@ -349,6 +513,159 @@ router.get(
     }
   }
 ));
+
+/* =========================================================
+   PATCH /api/requirements/:id — VA-6 curation.
+
+   Content only, never identity: description (guidance shown verbatim to the
+   external vendor in the portal) and scope_tags (which decide what every
+   tier-2/3/4 questionnaire asks). reference_id and title are immutable here.
+
+   Any scope_tags write through this route stamps source='curated' — the
+   20260926 backfill's contract is that curated tags are never overwritten by
+   the heuristic, so this is the one path that produces them. Audited with
+   the from->to pair per the ratified audit convention.
+
+   Admin-gated like framework activation: curation reshapes every future
+   vendor questionnaire in the org.
+   ========================================================= */
+
+router.patch(
+  "/requirements/:id",
+  requireApiKey,
+  attachOrganizationContext,
+  requireEntitlement("premium"),
+  denyContributor(),
+  requireAdminRole,
+  asTenant(async (req, res) => {
+    const organizationContext = (req as any).organizationContext ?? null;
+    const organizationId = organizationContext?.organizationId ?? null;
+
+    if (!organizationId) {
+      res.status(403).json({ error: "organization_context_missing" });
+      return;
+    }
+
+    const requirementId = String(req.params["id"] ?? "").trim();
+    if (!isUuid(requirementId)) {
+      res.status(400).json({ error: "requirement_id_must_be_uuid" });
+      return;
+    }
+
+    const validated = validateRequirementCurationPatch(req.body);
+    if ("error" in validated) {
+      res.status(400).json(validated);
+      return;
+    }
+    const { input } = validated;
+
+    if (input.scope_tags !== undefined && !areValidScopeTags(input.scope_tags)) {
+      res.status(400).json({
+        error: "invalid_scope_tags",
+        detail: `Tags must come from the closed vocabulary: ${SCOPE_TAG_VOCABULARY.join(", ")}.`,
+      });
+      return;
+    }
+
+    const client = await pg.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Org scope via the framework join; FOR UPDATE OF r so two concurrent
+      // curations serialize instead of interleaving their audit records.
+      const existing = await client.query<{
+        id: string;
+        reference_id: string;
+        description: string | null;
+        scope_tags: string[];
+        scope_tags_source: string | null;
+      }>(
+        `SELECT r.id, r.reference_id, r.description,
+                COALESCE(r.scope_tags, '{}') AS scope_tags,
+                r.scope_tags_source
+           FROM requirements r
+           JOIN frameworks f
+             ON f.id = r.framework_id
+            AND f.organization_id = $2
+          WHERE r.id = $1
+          FOR UPDATE OF r`,
+        [requirementId, organizationId]
+      );
+
+      if ((existing.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "requirement_not_found" });
+        return;
+      }
+      const before = existing.rows[0]!;
+
+      const sets: string[] = [];
+      const values: unknown[] = [requirementId];
+      if (input.description !== undefined) {
+        values.push(input.description);
+        sets.push(`description = $${values.length}`);
+      }
+      if (input.scope_tags !== undefined) {
+        values.push(input.scope_tags);
+        sets.push(`scope_tags = $${values.length}`);
+        sets.push(`scope_tags_source = 'curated'`);
+        sets.push(`scope_tags_at = NOW()`);
+      }
+
+      const updated = await client.query(
+        `UPDATE requirements r
+            SET ${sets.join(", ")}
+          WHERE r.id = $1
+          RETURNING ${REQUIREMENT_SELECT}`,
+        values
+      );
+
+      await client.query("COMMIT");
+
+      writeAuditEvent({
+        organizationId,
+        actorApiKeyId: (req as any).apiKey?.id ?? null,
+        actorUserId: (req as any).userId ?? null,
+        eventType: "requirement.curated",
+        resourceType: "requirement",
+        resourceId: requirementId,
+        payload: {
+          reference_id: before.reference_id,
+          ...(input.description !== undefined
+            ? {
+                description_from_present: before.description !== null,
+                description_to_present: input.description !== null,
+              }
+            : {}),
+          ...(input.scope_tags !== undefined
+            ? {
+                scope_tags_from: before.scope_tags,
+                scope_tags_to: input.scope_tags,
+                scope_tags_source_from: before.scope_tags_source,
+                scope_tags_source_to: "curated",
+              }
+            : {}),
+        },
+        ipAddress: req.ip ?? null,
+      });
+
+      res.status(200).json({ requirement: updated.rows[0] });
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignore rollback failure
+      }
+      logger.error(
+        { event: "requirement_curation_failed", err },
+        "PATCH /api/requirements/:id failed"
+      );
+      res.status(500).json({ error: "requirement_curation_failed" });
+    } finally {
+      client.release();
+    }
+  })
+);
 
 /* =========================================================
    GET /api/frameworks/:id/requirements
@@ -448,6 +765,8 @@ router.get(
         reference_id: string;
         title: string;
         description: string | null;
+        scope_tags: string[];
+        scope_tags_source: string | null;
         response_id: string | null;
         response_status: string | null;
         response_notes: string | null;
@@ -460,6 +779,8 @@ router.get(
           r.reference_id,
           r.title,
           r.description,
+          COALESCE(r.scope_tags, '{}') AS scope_tags,
+          r.scope_tags_source,
           rr.id             AS response_id,
           rr.status         AS response_status,
           rr.notes          AS response_notes,
@@ -511,6 +832,8 @@ router.get(
           reference_id: row.reference_id,
           title: row.title,
           description: row.description ?? null,
+          scope_tags: row.scope_tags ?? [],
+          scope_tags_source: row.scope_tags_source ?? null,
           response: hasResponse
             ? {
                 status: row.response_status,

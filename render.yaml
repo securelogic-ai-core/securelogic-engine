@@ -245,6 +245,26 @@ services:
         value: "true"
       - key: SECURELOGIC_RISK_LIFECYCLE_ENABLED       # Epic R1 — risk lifecycle, DARK (default off)
         value: "false"
+      # P1-C (NAV-1 package). Finding risk-acceptance workflow — DARK. This key
+      # was previously UNDECLARED in this block: it resolved absent -> false via
+      # the strict `=== "true"` reader in src/api/lib/riskAcceptanceFeatureFlag.ts,
+      # so the behaviour was already correct but the INTENT was not reviewable —
+      # "off on purpose" and "nobody ever considered it" looked identical here,
+      # and three governing docs carried it as an open declaration gap.
+      #
+      # Declaring it "false" is behaviourally a NO-OP (absent and "false" both
+      # fail the strict reader) and is NOT an activation. It is strictly safer
+      # than absent: a Blueprint sync now pins production off rather than leaving
+      # the value to whatever the dashboard holds.
+      #
+      # History: a "true" declaration for this key reached develop in f19f7059
+      # and was REMOVED from the promotion candidate — "adding it *is* the
+      # change" — because Wave 1 was unauthorized (see
+      # docs/validation/develop-to-main-promotion-audit.md). That ruling was about
+      # the VALUE, not the key. Production enablement remains a separate GATE-B
+      # operator decision after staging validation.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "false"  # production-authorized value; do NOT flip without a GATE-B ruling
       - key: SECURELOGIC_ENTERPRISE_CONTEXT_ENABLED   # ECL (Priority 5) — DARK (default off); do NOT enable in prod until AD-17 grant + edge cap (H1) + graph load test (H2)
         value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
       - key: SECURELOGIC_ASSET_REGISTRY_ENABLED       # EAR Phase 0 (asset registry) — DARK (default off); GATE B posture, do NOT enable in prod under the EAR goal
@@ -596,10 +616,11 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # Cloudflare R2 — STAGING ONLY. Vendor-assurance-intelligence Phase 0
-      # ships the blob primitive against R2; production engine is intentionally
-      # left unconfigured in this package. Populate R2_* in the staging
-      # dashboard before running scripts/blob-storage-smoke.ts.
+      # Cloudflare R2 — configured in BOTH environments (dashboard values).
+      # Production uses the `securelogic-ai` bucket; staging uses the dedicated
+      # `securelogic-ai-staging` bucket with a bucket-scoped token (staging
+      # credentials cannot read or write production objects, verified
+      # 2026-09-01). Never point staging R2_* at the production bucket.
       # Per TENANT_ISOLATION_STANDARD.md §5: every object key MUST be prefixed
       # with org/{organizationId}/; pre-signed URLs are single-org and clamped
       # to <=120s TTL by src/api/lib/blobStorage.ts.
@@ -1265,10 +1286,10 @@ services:
   # Polls every 15s, single-flight, drains SIGTERM. Workers do NOT
   # auto-migrate — the engine startCommand owns migrations.
   #
-  # PROD R2 NOTE: production R2 is intentionally unconfigured today
-  # (see the engine block — Phase 0 shipped R2 to staging only).
-  # This worker is INERT in prod until R2_* is populated AND the
-  # data-rights intake (PR #5) begins enqueuing jobs. Declared here
+  # PROD R2 NOTE: production R2_* IS populated in the dashboard (bucket
+  # `securelogic-ai`); the earlier "intentionally unconfigured" note is
+  # obsolete. This worker is inert in prod only until the data-rights
+  # intake (PR #5) begins enqueuing jobs. Declared here
   # so the IaC is complete and the flip-set (docs/A04-G1-rls-rollout
   # -plan.md §4a) records it as a DATABASE_URL holder.
   #
@@ -1315,8 +1336,8 @@ services:
         sync: false
 
       # Cloudflare R2 — destination for export bundles
-      # (org/{orgId}/data-exports/{exportId}.zip). Populate in the dashboard;
-      # prod enablement is a pending platform decision (see PROD R2 NOTE).
+      # (org/{orgId}/data-exports/{exportId}.zip). Populated in the dashboard
+      # (production bucket `securelogic-ai`; see PROD R2 NOTE).
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1397,8 +1418,8 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
 
-      # Cloudflare R2 — STAGING. Same bucket the engine-staging block uses for
-      # vendor-assurance blobs; export bundles land under data-exports/.
+      # Cloudflare R2 — STAGING. Same `securelogic-ai-staging` bucket the
+      # engine-staging block uses; export bundles land under data-exports/.
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1505,8 +1526,8 @@ services:
         sync: false
 
       # Cloudflare R2 — source of the uploaded SOC PDFs the worker
-      # extracts (org/{orgId}/vendor-assurance/...). Populate in the
-      # dashboard; prod enablement is a separate Part-2 decision.
+      # extracts (org/{orgId}/vendor-assurance/...). Populated in the
+      # dashboard (production bucket `securelogic-ai`).
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1580,8 +1601,8 @@ services:
       - key: MIGRATION_DATABASE_URL
         sync: false
 
-      # Cloudflare R2 — STAGING. Same bucket engine-staging uses for
-      # vendor-assurance blobs.
+      # Cloudflare R2 — STAGING. Same `securelogic-ai-staging` bucket
+      # engine-staging uses for vendor-assurance blobs.
       - key: R2_ACCOUNT_ID
         sync: false
 
@@ -1703,11 +1724,41 @@ services:
       # flip is GATE B.
       # This is the flag that changes the navigation, so it is also the flag the
       # WhatsNewPanel keys on — the orientation panel and the change it describes
-      # share one lifecycle and roll back together. Prod stays DARK: enabling it
-      # surfaces an "Approvals" nav entry whose page has no backing capability in
-      # the production flag set (RISK_LIFECYCLE=false, RISK_ACCEPTANCE undeclared).
+      # share one lifecycle and roll back together. Prod stays DARK on its own
+      # merits (Wave 1 is unauthorized).
+      # SUPERSEDED by NAV-1: this comment used to add "enabling it surfaces an
+      # Approvals nav entry whose page has no backing capability". That is no
+      # longer true — the Approvals entry in BOTH nav models is now gated on
+      # `risk_acceptance`, which is declared "false" below, so flipping this flag
+      # can no longer surface it. RISK_LIFECYCLE is still false and unchanged.
       - key: SECURELOGIC_RISK_WORKSPACE_ENABLED
         value: "false"  # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
+      # P1-C (NAV-1 package). App half of the risk-acceptance two-switch — DARK.
+      # Previously UNDECLARED here, exactly as in the engine block; declaring it
+      # "false" is behaviourally a NO-OP under the strict `=== "true"` reader in
+      # app/src/lib/riskAcceptanceFeatureFlag.ts and is NOT an activation.
+      #
+      # What it now controls on this tier: the "Approvals" nav entry, which NAV-1
+      # declared in BOTH nav models. With this off, Approvals is invisible in the
+      # legacy menu production renders AND in the workspace menu — so the orphan
+      # is fixed without advertising a page whose engine routes 404.
+      # Prod enablement is GATE B, together with the engine key above.
+      - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "false"  # production-authorized value; do NOT flip without a GATE-B ruling
+
+      # Vendor Assurance activation (VA-NAV-1) — app half of the engine's
+      # SECURELOGIC_VENDOR_ASSURANCE_ENABLED (app/src/lib/vendorAssuranceFeatureFlag.ts,
+      # SAME resolver as the engine: "true" = on; anything else = OFF under
+      # NODE_ENV=production, which is what `next start` runs). Controls the
+      # "Vendor Assurance" nav group in BOTH nav models AND notFound()s the six
+      # /vendor-assurance + /vendor-engagements pages. Before this key the app
+      # never read the flag and advertised three destinations whose engine
+      # routes 404. ABSENT reads false on this tier; declared "false" here so the
+      # Blueprint records the intent explicitly. Flip together with the LIVE
+      # engine value (the engine block above declares "true" but the live prod
+      # engine runs false — never infer live state from this file).
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
+        value: "false"  # production-authorized value; flip only with the live engine key
 
       # ERIP Package 3 (Decision Workspace) — DARK (default off). App half of the
       # two-switch model: renders the Decision Workspace on /findings/:id when on
@@ -1895,6 +1946,11 @@ services:
       # the production app block intentionally does not receive this var (absent reads
       # false), matching the production engine block; prod enablement is GATE B.
       - key: SECURELOGIC_RISK_ACCEPTANCE_ENABLED
+        value: "true"
+      # Vendor Assurance activation (VA-NAV-1) — app half of the engine key the
+      # staging engine block already declares "true". Same resolver as the engine;
+      # RUNTIME env (not NEXT_PUBLIC): a restart applies, no rebuild.
+      - key: SECURELOGIC_VENDOR_ASSURANCE_ENABLED
         value: "true"
       # ENABLED on STAGING: the scalable Risk Findings queue controls (search /
       # filter / sort toolbar, due-status urgency, server OFFSET pagination) on the

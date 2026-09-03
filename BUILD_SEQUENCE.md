@@ -409,6 +409,92 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-09-02 — D2-D14 EVIDENCE-VALIDITY RATIFICATION: owner-ratified
+> and BUILT (migration `20261085`).**
+>
+> The owner ratified D2 through D14 on 2026-09-02 with amendments, closing the
+> only item the S4 block still listed as owed. `20261085` seeds ten newly
+> ratified assurance classes, amends the two SOC rows to carry D2's bridge
+> condition, and adds the four mechanisms the rulings needed that the policy
+> table could not previously express: `requires_artifact_end` (D3),
+> `artifact_basis_permitted` (D11/D13/D14), `bridge_required_above_months` (D2)
+> and `no_window_reason` (D12). `contract` and `other_assurance_report` are
+> seeded with NOTHING, by explicit ruling — their currency comes from a
+> human-committed artifact basis, and a row would be the catch-all TTL both
+> rulings forbid.
+>
+> **Two mechanisms the package had to build, not just seed:** the writer now
+> DERIVES the validity anchor from governed evidence state for `collected_at`
+> and `object_cadence` classes rather than trusting a caller (D9's "must not
+> permit callers to manufacture freshness"), and curation gained an explicit
+> human-committed artifact basis (`artifact_dates` / `perpetual`), without which
+> D13, D14 and D3 had no mechanism at all — the writer could previously only
+> ever produce a computed window.
+>
+> **Scope discipline, stated plainly:** the S4 counting predicate still
+> classifies only SOC reports, so no newly ratified class reaches questionnaire
+> reduction yet. This package makes ratified policy real for the curation path
+> and the Step-2 lifecycle predicate. Extending the counting predicate beyond
+> SOC is separate work and is NOT authorized here.
+>
+> **The one interpretive call is RULED (owner, 2026-09-02): keep the DPA
+> perpetual assurance path CLOSED.** An evergreen contractual term and assurance
+> currency are separate facts. A DPA may be contractually evergreen through the
+> governed human assertion, but that must never make it perpetually current S4
+> assurance. `privacy_agreement` stays at 24 default / 6 min / 36 max, with
+> contractual termination an absolute ceiling where one exists, and an expired
+> assurance window leaves the DPA legally in force but STALE for S4 until
+> re-evidenced. No behaviour changed: the seeded row already implements this and
+> staging proves it (acceptance check 25).
+>
+> **Activation state unchanged:** `SECURELOGIC_EVIDENCE_LIFECYCLE_V2` remains ON
+> for the STAGING engine only, OFF and untouched in production and demo. No
+> promotion to `main`, no Blueprint sync, no production change.
+
+
+> **DOC-SYNC 2026-09-01 — VA-S4 intelligent assurance COMPLETE and ACTIVE ON
+> STAGING (this file only; no application code changed by this sync).**
+>
+> The S4 chain is finished end to end and **staging-verified through product
+> paths**: 4C-0..4C-4 (evidence authority → crosswalk → tested-control
+> resolution → three-layer outcomes → the twelve-veto sufficiency
+> determination), Step 1 canonical control identity, Step 2 ADR-0012 evidence
+> lifecycle (20261080–82, dark), Step 3 ratified evidence-validity policy
+> (20261083; owner ratified D0/D1/D15/D16 2026-09-01), the governed evidence
+> writer (20261084: link/confirm/detach, write-once curation, D15 surface,
+> SECURITY-DEFINER withdrawal per owner ruling), and **Step 5 runtime wiring**
+> (counting predicate `assurance-coverage-1.0`, evaluator
+> `sufficiency-veto-1.1`, ADR-0012 §5 dual-read, reviewer coverage surface,
+> depth-only questionnaire reduction with a decision-basis snapshot).
+>
+> **Evidence (VERIFIED):** PRs #964/#965/#968 (4C-4, staging 45/45), #969
+> (Step 2, merge `49b28875`), #970 (Step 3, `bb028172`), #971 (writer,
+> `aa317b5b`), #972/#973 (Step 5 + read-time conflict guard, develop
+> `dd25073f`), #974 (gate record). Staging acceptance **dark 22/0**
+> (`job-dabig0ou01pc73b4daug`, SHA `0fb5b58a`) and **active 19/0**
+> (`job-dabjdbfavr4c738j62h0`, SHA `dd25073f`) —
+> `docs/validation/VA-S4-step5-wiring-2026-09-01.md`. The acceptance itself
+> found and fixed one product gap (conflicting governed judgements at read
+> time, #973) and exercised the remediation workflow live (action → finding →
+> closure gate → sufficiency).
+>
+> **Activation state:** `SECURELOGIC_EVIDENCE_LIFECYCLE_V2` is ON for the
+> STAGING engine only, undeclared in IaC, OFF and untouched in production and
+> demo. The kill switch is the flag; the dark phase is the proven kill-switch
+> state (byte-identical composition). **No production change, no promotion to
+> main, no Blueprint sync** is authorized by this record. Remaining owner
+> item as of that date: D2–D14 validity durations unratified (their classes
+> simply never count). **SUPERSEDED 2026-09-02 — D2-D14 are now ratified and
+> built; see the D2-D14 doc-sync at the top of this section.**
+>
+> **Environment-isolation correction (2026-09-02, docs-only):** the R2 and
+> Redis staging separation previously listed here as remaining owner work was
+> CLOSED on 2026-09-01, independent of S4. Proven state: staging and demo
+> Redis / Key Value are separated from production through Render environment
+> isolation with dedicated staging and demo stores; staging R2 uses its own
+> dedicated bucket-scoped credential, and negative access to the production
+> bucket from staging was proven `AccessDenied`.
+
 > **DOC-SYNC 2026-08-21 — active governing program restated (this file only; no
 > application code, no feature flag, no merge, no promotion).**
 >

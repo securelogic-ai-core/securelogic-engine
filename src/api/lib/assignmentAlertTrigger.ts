@@ -28,7 +28,7 @@
  */
 import { withTenant, pg } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { sendViaProvider } from "../infra/emailTransport.js";
 import {
   getResend,
   getFromAddress,
@@ -160,13 +160,17 @@ async function doTrigger(input: AssignmentAlertInput): Promise<void> {
 </html>`;
 
   try {
-    await getResend().emails.send({
+    const sendResult = await sendViaProvider({
+      client: getResend(),
+      purpose: "alert.assignment",
+      orgId: null,
+      correlationId: `${item.kind}:${item.id}`,
       from: getFromAddress(),
       to: row.email,
       subject: `Assigned to you: ${item.title}`,
-      html,
-      tags: withEnvironmentTag(),
+      html
     });
+    if (!sendResult.ok) throw new Error(sendResult.errorMessage);
     await recordSend(assigneeUserId, ALERT_TYPE, dedupeKey);
     logger.info(
       { event: "alert_sent", alertType: ALERT_TYPE, userId: assigneeUserId, itemKind: item.kind, itemId: item.id },

@@ -57,7 +57,7 @@ import {
   type ConsentMethod,
 } from "../lib/legalConsent.js";
 import { Resend } from "resend";
-import { withEnvironmentTag } from "../infra/emailEnvironment.js";
+import { sendViaProvider, type ResendLike } from "../infra/emailTransport.js";
 
 const router = Router();
 
@@ -247,20 +247,29 @@ function passwordResetEmailHtml(name: string, resetUrl: string): string {
  * customer whose mail had been refused outright. Surfacing the error as a throw
  * is what makes every caller's existing try/catch mean what it says.
  */
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  purpose: "auth.verification" | "auth.password_reset" = "auth.verification"
+): Promise<void> {
   const resend = getResend();
-  const res = await resend.emails.send({
+  // EMAIL-OBS-1: the shared choke point performs the `{ error }` check this
+  // function introduced, and logs attempt/result with the purpose key and the
+  // recipient DOMAIN only — the address itself never reaches a log line.
+  const res = await sendViaProvider({
+    client: resend as unknown as ResendLike,
+    purpose,
+    orgId: null,
     from: getFromAddress(),
-    to: [to],
+    to,
     subject,
-    html,
-    tags: withEnvironmentTag()
+    html
   });
 
-  const error = (res as { error?: { message?: string; name?: string } | null })?.error;
-  if (error) {
+  if (!res.ok) {
     throw new Error(
-      `Resend rejected the send: ${error.name ?? "error"}: ${error.message ?? "unknown"}`
+      `Resend rejected the send: ${res.errorName ?? res.outcome}: ${res.errorMessage || "unknown"}`
     );
   }
 }
@@ -1092,7 +1101,7 @@ router.post("/auth/forgot-password", forgotPasswordLimiter, async (req, res) => 
     );
 
     const resetUrl = `${getAppBaseUrl()}/reset-password?token=${resetToken}`;
-    sendEmail(email, "Reset your SecureLogic AI password", passwordResetEmailHtml(user.name, resetUrl))
+    sendEmail(email, "Reset your SecureLogic AI password", passwordResetEmailHtml(user.name, resetUrl), "auth.password_reset")
       .catch((err) => {
         logger.warn({ event: "password_reset_email_failed", userId: user.id, err }, "Password reset email not sent");
       });

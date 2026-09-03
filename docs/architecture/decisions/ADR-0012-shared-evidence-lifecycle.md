@@ -171,6 +171,36 @@ until this ADR is ratified** (coordinate in the freeze-window schema ledger):
 No change to `findings`, `vendor_assurance_documents`, or
 `vendor_engagements`.
 
+### Implementation note — 2026-09-01 (does not amend the decision)
+
+**The reserved range was never consumed and is now RETIRED UNUSED.** T2-A stayed
+gated behind the promotion and the held train while the repository migration
+floor advanced to 20261079. Per owner direction 2026-09-01 the implementation
+took the next sequential range instead of backfilling numbers below the applied
+floor: **20261080** (validity + supersession + `assurance_class`), **20261081**
+(`evidence_links`), **20261082** (`evidence_lifecycle_events`). 20261051–55 must
+not be claimed by anything else.
+
+**Two parts of this ADR were deliberately NOT implemented**, by the same
+direction — recorded here so the divergence is visible from the ADR itself and
+not only from the package record:
+
+1. **§2.1's origin-link backfill was not built.** A `reviewed_at` on the artifact
+   is not a per-context confirmation; copying it into every context an artifact
+   is used in manufactures a judgement nobody made, which is the thing per-use
+   confirmation exists to prevent.
+2. **§6.2's "legacy NULL-validity rows keep counting" was not implemented.**
+   `valid_until IS NULL` conflates "nobody established this artifact's validity"
+   with "this artifact never expires", and §2.3's predicate reads both as valid.
+   20261080 adds `validity_basis` to tell them apart, and the shipped predicate
+   counts only the second.
+
+Consequence, stated in the ADR because it governs when §5's rollout may begin:
+the legacy estate counts for **nothing** under the new predicate, so the
+`evidence_lifecycle_v2` flip now additionally requires a **legacy curation path**
+alongside §5's zero-divergence dual-read proof. Full record:
+`docs/design/VA-S4-step2-adr0012-evidence-lifecycle.md`.
+
 ## 5. Rollout
 
 Schema dark → backfill + dual-write → dark dual-read logging divergence

@@ -237,8 +237,39 @@ describe("the COUNTING PREDICATE is still not wired", () => {
       .map((l) => l.trim())
       .filter(Boolean)
       .filter((f) => !f.endsWith("lib/evidenceLifecycleContract.ts"))
-      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"));
+      .filter((f) => !f.endsWith("__tests__/evidenceLifecycleContract.test.ts"))
+      // ONE authorized consumer, owner-approved 2026-09-02: the governed-
+      // evidence SURFACE. It is read-only and explicitly NON-COUNTING — it
+      // populates `governedEvidence`, never `covered`, and `covered` is the
+      // sole input to questionnaire depth reduction. That is exactly the thing
+      // this guard protects, so the exemption is narrow and the two assertions
+      // below make it self-enforcing rather than a hole.
+      .filter((f) => !f.endsWith("lib/vendorAssurance/assuranceCoverage.ts"));
     expect(out).toEqual([]);
+  });
+
+  it("the authorized consumer keeps the predicate OUT of the counting path", () => {
+    const src = readFileSync(
+      resolve(__dirname, "../lib/vendorAssurance/assuranceCoverage.ts"),
+      "utf8"
+    );
+    // The predicate may appear ONLY inside resolveGovernedEvidenceLinks.
+    const fn = /export async function resolveGovernedEvidenceLinks[\s\S]*?\n}\n/.exec(src);
+    expect(fn, "resolveGovernedEvidenceLinks must exist").not.toBeNull();
+    const body = fn![0];
+    expect(body).toMatch(/SQL_EVIDENCE_COUNTING/);
+
+    // Outside that function the predicate must not appear again, except in the
+    // import line that brings it in.
+    const outside = src.replace(body, "").split("\n")
+      .filter((l) => /SQL_EVIDENCE_(COUNTING|SUPERSEDED)/.test(l))
+      .filter((l) => !l.startsWith("import "))
+      // Prose that NAMES the predicate is documentation, not wiring.
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l));
+    expect(outside).toEqual([]);
+
+    // And the governed-evidence arm can never reach the counting collection.
+    expect(body).not.toMatch(/\bcovered\b/);
   });
 
   it("the writer imports vocabularies only — never the predicate", () => {

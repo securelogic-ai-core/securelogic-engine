@@ -145,6 +145,9 @@ tables once the `app_request` flip lands).
 | `vendor_assurance_cuecs` | review_status_updated_by_user_id | high | pending |
 | `vendor_assurance_cuec_control_mappings` | created_by_user_id, updated_by_user_id | none | pending |
 | `vendor_assurance_review_decisions` | decided_by_user_id | high | pending |
+| `vendor_tested_control_effectiveness` | accepted_by_user_id | low | **enabled** |
+| `vendor_assurance_exceptions` | effect_accepted_by_user_id | low | **enabled** |
+| `vendor_requirement_sufficiency_determinations` | determined_by_user_id | low | **enabled** |
 | `vendor_assurance_field_overrides` | overridden_by_user_id | high | pending |
 | `ai_systems` | owner_user_id | high | pending |
 | `ai_governance_assessments` | reviewer_uuid, *reviewer_id (TEXT)* | high | pending |
@@ -171,7 +174,22 @@ tables once the `app_request` flip lands).
 
 ### D — Org data not user-tied (leave alone)
 `organizations` (ROOT-TENANT; see Special handling), `vendor_assurance_extractions`,
-`vendor_assurance_extraction_spans`, `frameworks`, `requirements`, `policies`,
+`vendor_assurance_extraction_spans`,
+`vendor_tested_control_assertions` (**RLS enabled**; VA-S4-4C-3, migration 20261075 —
+LAYER 1 of the assurance outcome model: what the AUDITOR asserted about one tested control,
+normalized into a closed vocabulary with the verbatim result kept in `source_text`. Category D
+and the absence of a user column is deliberate — Layer 1 is machine-produced and carries no
+human authority; disagreement is expressed in Layer 2. Superseded, never mutated),
+`vendor_assurance_exception_controls` (**RLS enabled**; VA-S4-4C-3, migration 20261077 —
+the many-to-many link from an exception to the tested control(s) it concerns. `linked_by_user_id`
+is NULL for every extracted link and is set only on the `human` link source, which no route
+writes today. Every link carries `link_source` and the verbatim `source_value`),
+`vendor_tested_control_resolutions` (**RLS enabled**; VA-S4-4C-2, migration 20261073 —
+the record of a vendor tested control resolved against the governed canonical crosswalk at
+approval: original extraction + governed effective value side by side, with the crosswalk row
+consulted. No user ref — the human act lives in `vendor_assurance_field_overrides` (C) and is
+referenced by `override_id`, not duplicated. Superseded by `superseded_at`, never mutated),
+`frameworks`, `requirements`, `policies`,
 `policy_control_links`, `control_mappings`, `obligation_mappings`, `dependencies`,
 `evidence` (⚠ `collected_by` is free TEXT — may embed a name/email, see O-7;
 ADR-0012 Step 2 / 20261080 added `valid_from`/`valid_until`/`validity_basis`,
@@ -194,13 +212,14 @@ org-FK CASCADE never fires).
 applicable** — global governed reference content with no org dimension, like the canonical
 crosswalk. `app_request` holds SELECT only; the table changes by migration, never by the
 application, because a duration is a ratified product decision and not a runtime setting.
-Append-only versions, one live row per class. D1 seeded `soc1`/`soc2_type2` at 12 months from
-report period end (customer range 3..15) and `soc2_type1` with **no duration at all**, because
-D1 ratified that a Type I needs its own rule and named no number for it. **D2–D14 were ratified
-2026-09-02 and seeded by migration 20261085**, which also amends the two SOC rows to carry D2's
-bridge condition (`bridge_required_above_months = 12`, the 15-month ceiling unchanged).
-`contract` and `other_assurance_report` remain deliberately UNSEEDED by explicit ruling — their
-currency comes from a human-committed artifact basis, and a row would be the catch-all TTL those
+Append-only versions, one live row per class. Seeded with **D1 only** — `soc1` and
+`soc2_type2` at 12 months from report period end (customer range 3..15), and `soc2_type1`
+with **no duration at all**, because D1 ratified that a Type I needs its own rule and named
+no number for it. **D2-D14 were ratified 2026-09-02 and seeded by migration 20261085**,
+which also amends the two SOC rows to carry D2's bridge condition
+(`bridge_required_above_months = 12`, the 15-month ceiling unchanged). `contract` and
+`other_assurance_report` remain deliberately UNSEEDED by explicit ruling — their currency
+comes from a human-committed artifact basis, and a row would be the catch-all TTL those
 rulings forbid. Absence still yields `not_established`, the fail-closed default),
 **`evidence_lifecycle_events`** (new — ADR-0012 Step 2, migration 20261082; **RLS enabled**,
 **WORM/append-only** via the SHARED `worm_guard_mutation`; SELECT+INSERT only. What happened to an
@@ -215,7 +234,16 @@ stream outlives its subject; `actor_user_id` ON DELETE SET NULL matches the life
 **`canonical_products`** + **`canonical_product_aliases`** +
 **`canonical_product_external_ids`** + **`canonical_product_versions`** (new — the
 GLOBAL, org-neutral Canonical Product reference; ERG convergence C1b; no
-organization_id, no RLS, no PII), plus the special-handling tables below.
+organization_id, no RLS, no PII),
+**`canonical_controls`** + **`canonical_control_aliases`** +
+**`canonical_framework_versions`** + **`canonical_control_crosswalk`** (new — the
+GLOBAL, org-neutral canonical CONTROL reference and its governed crosswalk;
+VA-S4 Step 1, migrations 20261067–68; no organization_id, no RLS, no PII.
+`published_by_user_id` / `approved_by_user_id` are governance ACTORS, not PII:
+their FKs are ON DELETE RESTRICT because a published decision must keep naming
+the human who made it, and the tenant-side link lives in
+`control_canonical_identities`, which is org-scoped and RLS-enabled),
+plus the special-handling tables below.
 
 ### F — Billing / financial
 `api_keys` — carries legacy Stripe mirror fields (`stripe_customer_id`,

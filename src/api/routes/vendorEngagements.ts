@@ -32,9 +32,14 @@
 
 import { Router, type Request, type Response } from "express";
 
-import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { pg, registerAfterCommit } from "../infra/postgres.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
+import {
+  ensureBridgeQuestions,
+  loadQuestionSetItems,
+  questionSetHash,
+} from "../lib/questionnaire/bridgeQuestions.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -58,7 +63,31 @@ import {
   computeVendorInherentRisk,
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
-import { resolveEngagementScope } from "../lib/vendorRisk/scopeResolver.js";
+import { resolveEngagementScopeWithApplicability } from "../lib/vendorRisk/scopeResolver.js";
+import { resolveAssuranceCoverage, type AssuranceCoverage } from "../lib/vendorAssurance/assuranceCoverage.js";
+import { evidenceLifecycleV2Enabled } from "../lib/evidenceLifecycleFlag.js";
+import { recordApplicability } from "../lib/vendorRisk/applicabilityStore.js";
+import { summarizeDomains } from "../lib/vendorRisk/requirementDomain.js";
+import { resolveFacts } from "../lib/vendorRisk/factResolver.js";
+import {
+  FACT_ORIGINS,
+  FACT_SOURCES,
+  isFactOrigin,
+  isFactSource,
+  validateFact,
+  type FactOrigin,
+  type FactSource,
+  type FactValidationError,
+} from "../lib/vendorRisk/factRegistry.js";
+import { resolveFactSubject } from "../lib/vendorRisk/factSubjects.js";
+import {
+  FactStoreValidationError,
+  loadFactRows,
+  mirrorSubjectFacts,
+  writeFacts,
+  type FactWrite,
+  type StoredFactRow,
+} from "../lib/vendorRisk/factStore.js";
 import {
   assuranceFor,
   computeControlEffectiveness,
@@ -76,9 +105,126 @@ import {
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
+import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
+import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
+
+/* =========================================================
+   Supersede-on-pass observation (ruled 2026-08-22).
+
+   A PASS SUPERSEDES NOTHING AUTOMATICALLY — the fourth appearance of the
+   machines-observe-humans-decide principle (scanner reappearance never
+   reopens; monitoring recommendation never transitions; a pen-test retest
+   never closes; this: an engagement control transitioning to pass never
+   closes the finding it once promoted). Closure stays with the human gate
+   (SoD, evidence, decision_state); the machine's obligation is to NAME the
+   divergence, everywhere a human is looking, and to DERIVE it fresh at read
+   rather than caching a marker that would itself go stale the moment the
+   vendor revises again. finding_lifecycle_events is deliberately NOT used:
+   it is a closed-vocabulary TRANSITION ledger, and a pass is an observation.
+
+   CROSS-ENGAGEMENT (ruled 2026-08-23): the observation spans every
+   engagement of the SAME VENDOR — an annual re-assessment opened as a new
+   engagement must not make the earlier engagement's finding invisible.
+   Equivalence is deterministic-or-declared: same vendor_id (FK) + same
+   requirement_id (FK), never text matching; a finding whose requirement_id
+   is NULL is surfaced as equivalence_undetermined instead of being guessed
+   about or silently dropped. Each named row carries source_engagement_id so
+   provenance of BOTH engagements survives.
+
+   `pass` and `not_applicable` are both "the source no longer asserts a gap",
+   but they are DIFFERENT assertions ("we do it" vs "does not apply") and a
+   human closing on the second is often adjudicating a scope dispute — so the
+   row says which. `as_of` is requirement_responses.assessed_at: when the
+   vendor last asserted this answer (the portal upsert is its only writer).
+   ========================================================= */
+type SupersededBySource = {
+  finding_id: string;
+  reference: string;
+  requirement_id: string;
+  source_engagement_id: string;
+  current_response: "pass" | "not_applicable";
+  as_of: string;
+};
+
+type SupersedeObservation = {
+  superseded: SupersededBySource[];
+  /** Open engagement findings of the SAME VENDOR whose requirement_id is
+   *  NULL: equivalence to a current response cannot be established
+   *  deterministically, so the machine SAYS SO instead of guessing
+   *  (cross-engagement ruling, 2026-08-23). */
+  equivalence_undetermined: string[];
+};
+
+/** Open vendor_engagement findings — of ANY engagement of this engagement's
+ *  vendor (cross-engagement ruling, 2026-08-23: a new engagement must not
+ *  make an earlier engagement's finding invisible) — whose requirement's
+ *  CURRENT response in THIS engagement no longer asserts a gap.
+ *
+ *  Equivalence is established deterministically or not at all: the finding's
+ *  source engagement must belong to the same vendor (FK identity) and the
+ *  requirement_id must match exactly (FK identity). No text matching. A
+ *  finding whose requirement_id is NULL is reported as undetermined, never
+ *  silently dropped and never guessed at.
+ *
+ *  Tenant-first on every leg — the joins must never be able to plan a
+ *  cross-org read. `rr.assessment_type = 'vendor'` pins the response lane so
+ *  a future non-vendor assessment row for the same requirement cannot fan
+ *  out the observation. */
+async function listFindingsSupersededBySource(
+  organizationId: string,
+  engagementId: string
+): Promise<SupersedeObservation> {
+  const rows = await pg.query<SupersededBySource>(
+    `SELECT f.id AS finding_id, r.reference_id AS reference, f.requirement_id,
+            f.source_id AS source_engagement_id,
+            rr.status AS current_response, rr.assessed_at AS as_of
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
+       JOIN requirement_responses rr
+         ON rr.organization_id = f.organization_id
+        AND rr.engagement_id = e.id
+        AND rr.assessment_type = 'vendor'
+        AND rr.requirement_id = f.requirement_id
+       JOIN requirements r ON r.id = f.requirement_id
+      WHERE e.organization_id = $1
+        AND e.id = $2
+        AND f.requirement_id IS NOT NULL
+        AND rr.status IN ('pass', 'not_applicable')
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY r.reference_id, f.id`,
+    [organizationId, engagementId]
+  );
+  const undetermined = await pg.query<{ id: string }>(
+    `SELECT f.id
+       FROM vendor_engagements e
+       JOIN vendor_engagements fe
+         ON fe.organization_id = e.organization_id
+        AND fe.vendor_id = e.vendor_id
+       JOIN findings f
+         ON f.organization_id = fe.organization_id
+        AND f.source_type = 'vendor_engagement'
+        AND f.source_id::text = fe.id::text
+      WHERE e.organization_id = $1
+        AND e.id = $2
+        AND f.requirement_id IS NULL
+        AND ${sqlFindingActive("f.operational_status")}
+      ORDER BY f.id`,
+    [organizationId, engagementId]
+  );
+  return {
+    superseded: rows.rows,
+    equivalence_undetermined: undetermined.rows.map((r) => r.id),
+  };
+}
 
 function orgOf(req: Request): string | null {
   return (
@@ -381,12 +527,47 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       [id, organizationId]
     );
 
+    // VA-Q2 P2: the questionnaire grouped by the domain each item was asked
+    // under. Stamped at resolve for scope-rule 1.1.0+; a pre-Q2 engagement has
+    // NULL on every item and reports `domains: null` rather than six zeros.
+    const domainRows = await pg.query<{ domain: string | null }>(
+      `SELECT domain FROM vendor_engagement_scope_items
+        WHERE engagement_id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    const domains = summarizeDomains(domainRows.rows.map((r) => r.domain));
+
+    // The engagement view previously said nothing about findings at all — so
+    // it could assert "this control passes" while the finding it once
+    // promoted stayed open, with the divergence visible nowhere. Derived
+    // fresh on every read (the supersede-on-pass ruling, 2026-08-22): counts
+    // plus the named list of open findings whose controls no longer assert a
+    // gap. Nothing here transitions anything.
+    const findingsSummary = await pg.query<{ total: string; open: string }>(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE ${sqlFindingActive("operational_status")})::text AS open
+         FROM findings
+        WHERE organization_id = $2 AND source_type = 'vendor_engagement' AND source_id = $1`,
+      [id, organizationId]
+    );
+    const observation = await listFindingsSupersededBySource(organizationId, id);
+
     res.status(200).json({
       engagement: result.rows[0],
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
         mandatory: Number(scope.rows[0]?.mandatory ?? "0"),
+        domains,
+      },
+      findings: {
+        total: Number(findingsSummary.rows[0]?.total ?? "0"),
+        open: Number(findingsSummary.rows[0]?.open ?? "0"),
+        superseded_by_source: observation.superseded,
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+          finding_ids: observation.equivalence_undetermined,
+        },
       },
     });
   } catch (err) {
@@ -493,7 +674,8 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
 
   try {
     const eng = await pg.query<Record<string, string | null>>(
-      `SELECT status, assessment_tier, data_sensitivity, data_volume_band, access_level,
+      `SELECT status, assessment_tier, scope_rule_version,
+              data_sensitivity, data_volume_band, access_level,
               operational_dependency, recoverability, business_criticality,
               regulatory_exposure, regulatory_breach_notification,
               ai_involvement, ai_autonomy, hosting_model,
@@ -523,9 +705,10 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       framework_id: string;
       reference_id: string;
       title: string;
+      description: string | null;
       scope_tags: string[];
     }>(
-      `SELECT r.id AS requirement_id, r.framework_id, r.reference_id, r.title,
+      `SELECT r.id AS requirement_id, r.framework_id, r.reference_id, r.title, r.description,
               COALESCE(r.scope_tags, '{}') AS scope_tags
          FROM requirements r
          JOIN frameworks f ON f.id = r.framework_id
@@ -548,13 +731,11 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       [organizationId]
     );
 
-    const resolution = resolveEngagementScope({
-      tier: row.assessment_tier as never,
-      // The column names differ from the model's field names in two places
-      // (`data_volume_band`, `concentration_snapshot`) because the spine named
-      // them for what they are: a band, and a point-in-time snapshot taken so a
-      // historical assessment stays reproducible.
-      inherent: {
+    // The column names differ from the model's field names in two places
+    // (`data_volume_band`, `concentration_snapshot`) because the spine named
+    // them for what they are: a band, and a point-in-time snapshot taken so a
+    // historical assessment stays reproducible.
+    const inherent = {
         data_sensitivity: row.data_sensitivity,
         data_volume: row.data_volume_band,
         access_level: row.access_level,
@@ -568,9 +749,88 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
         hosting_model: row.hosting_model,
         fourth_party_exposure: row.fourth_party_exposure,
         concentration: row.concentration_snapshot,
-      } as never,
+      } as InherentRiskInput;
+
+    // VA-Q2 P3: the resolver reads ONE fact surface — the canonical fact store.
+    // The subject is obtained ONLY through the tenant-scoped resolver (D1
+    // integrity layer 3); the mirrors (13 inputs, vendor-profile flags,
+    // AI-system dependencies) are idempotent and run at every resolve while
+    // the scope is mutable (checked above); then the ACCEPTED rows — mirrors
+    // plus whatever `PUT /facts` declared — are resolved by precedence.
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    await mirrorSubjectFacts(pg, organizationId, subject, inherent);
+    const factRows = await loadFactRows(pg, organizationId, subject, { statuses: ["accepted"] });
+
+    // ── VA-S4 step 5 — governed assurance coverage ─────────────────────────
+    //
+    // DUAL-READ FIRST, AUTHORITY SECOND (ADR-0012 §5). The predicate is
+    // computed on EVERY resolve and logged; it is APPLIED only behind
+    // SECURELOGIC_EVIDENCE_LIFECYCLE_V2. While the flag is off the resolution
+    // is byte-identical to pre-step-5 output — the legacy coverage source was
+    // the empty set, so zero divergence means the log shows covered_count 0
+    // until a human has actually curated, linked and determined sufficiency.
+    // The audit event below persists the comparison, so the divergence record
+    // survives log retention.
+    //
+    // FAIL-CLOSED, in the safe direction: a coverage failure yields NO
+    // reduction — the vendor is asked in full, which is the pre-S4 behaviour,
+    // never a crash and never a silent pass.
+    let s4Coverage: AssuranceCoverage | null = null;
+    try {
+      s4Coverage = await resolveAssuranceCoverage({ organizationId, engagementId: id });
+    } catch (err) {
+      logger.error({ event: "s4_coverage_failed", engagementId: id, err },
+        "S4 assurance coverage computation failed — resolving with no reduction");
+    }
+    const s4Applied = evidenceLifecycleV2Enabled(process.env) && s4Coverage !== null;
+    if (s4Coverage) {
+      logger.info({
+        event: "s4_coverage_dual_read",
+        engagementId: id,
+        applied: s4Applied,
+        covered_count: s4Coverage.covered.length,
+        gap_count: s4Coverage.gaps.length,
+        coverage_version: s4Coverage.version,
+        as_of: s4Coverage.asOf,
+      }, "S4 coverage dual-read");
+    }
+    const s4BasisByRequirement: Record<string, Record<string, unknown>> = {};
+    if (s4Applied && s4Coverage) {
+      for (const c of s4Coverage.covered) {
+        s4BasisByRequirement[c.requirementId] = {
+          determination_id: c.determinationId,
+          document_id: c.documentId,
+          valid_until: c.validUntil,
+          validity_source: c.validitySource,
+          report_period_end: c.reportPeriodEnd,
+          assurance_class: c.assuranceClass,
+          coverage_version: s4Coverage.version,
+          as_of: s4Coverage.asOf,
+        };
+      }
+    }
+
+    const { resolution, applicability } = resolveEngagementScopeWithApplicability({
+      tier: row.assessment_tier as never,
+      inherent,
+      facts: resolveFacts(factRows),
+      // The STAMPED rule version is load-bearing (methodologyVersion.ts:
+      // "recompute reads the stamped values"). An engagement stamped 1.0.0
+      // re-resolves under 1.0.0 — S5 never runs for it — so a pre-Q2
+      // questionnaire cannot change under a customer's feet.
+      scopeRuleVersion: typeof row.scope_rule_version === "string" ? row.scope_rule_version : "1.0.0",
       requirements: requirements.rows,
       obligationEdges: edges.rows,
+      ...(s4Applied && s4Coverage
+        ? {
+            assuranceCoveredRequirementIds: s4Coverage.covered.map((c) => c.requirementId),
+            assuranceCoverageBasis: s4BasisByRequirement,
+          }
+        : {}),
     });
 
     // Freeze. Delete-then-insert inside the one tenant transaction the asTenant
@@ -580,11 +840,26 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       `DELETE FROM vendor_engagement_scope_items WHERE engagement_id = $1 AND organization_id = $2`,
       [id, organizationId]
     );
+
+    // VA-Q1 P2 (ADR-0013 R1/R3): every scope item is addressed by an IMMUTABLE
+    // question version. Until the curated library covers a requirement, the
+    // version is the requirement-as-question bridge — same text the vendor saw
+    // before P2, now pinned so a later requirement edit cannot move under an
+    // issued questionnaire. Ensured here, at composition, because requirement
+    // inserts happen on three separate paths and hooking them cannot be
+    // guaranteed complete.
+    const byId = new Map(requirements.rows.map((r) => [r.requirement_id, r]));
+    const chosen = resolution.items
+      .map((i) => byId.get(i.requirement_id))
+      .filter((r): r is NonNullable<typeof r> => r !== undefined);
+    const versionByRequirement = await ensureBridgeQuestions(pg, organizationId, chosen);
+
     for (const item of resolution.items) {
       await pg.query(
         `INSERT INTO vendor_engagement_scope_items
-           (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+           (organization_id, engagement_id, requirement_id, depth, mandatory, source, reasons,
+            question_version_id, domain)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
         [
           organizationId,
           id,
@@ -593,9 +868,26 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
           item.mandatory,
           item.source,
           JSON.stringify(item.reasons),
+          versionByRequirement.get(item.requirement_id) ?? null,
+          // VA-Q2 P2: the domain the resolver asked this item under. Present
+          // only when the STAMPED corpus is >= 1.1.0 (the resolver sets it
+          // then and only then); a 1.0.0 engagement writes NULL — the stamp
+          // records what was computed, never a domain nobody computed.
+          item.domain ?? null,
         ]
       );
     }
+
+    // #926: record WHAT APPLIED, independently of what composition kept. This
+    // is written from `applicability`, which the resolver collected BEFORE
+    // truncation — a rule whose every item was dropped is recorded here and
+    // nowhere else. Idempotent by unique key, so a repeat resolve inserts 0.
+    await recordApplicability(pg, {
+      organizationId,
+      engagementId: id,
+      scopeRuleVersion: resolution.scope_rule_version,
+      records: applicability,
+    });
 
     await pg.query(
       `UPDATE vendor_engagements
@@ -613,6 +905,17 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       payload: {
         item_count: resolution.items.length,
         excluded_count: resolution.excluded.length,
+        // ADR-0012 §5: the dual-read comparison, PERSISTED — the divergence
+        // evidence must outlive log retention. applied=false with a nonzero
+        // covered_count is a divergence candidate to investigate before flip.
+        s4_assurance: s4Coverage === null ? { computed: false } : {
+          computed: true,
+          applied: s4Applied,
+          covered_count: s4Coverage.covered.length,
+          gap_count: s4Coverage.gaps.length,
+          coverage_version: s4Coverage.version,
+          as_of: s4Coverage.asOf,
+        },
         scope_rule_version: resolution.scope_rule_version,
         tier: resolution.tier,
       },
@@ -625,8 +928,16 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       tier: resolution.tier,
       scope_rule_version: resolution.scope_rule_version,
       // Caps are surfaced, never silent — a truncated questionnaire that looks
-      // complete is the failure this field exists to prevent.
-      notes: (resolution as { notes?: unknown }).notes ?? null,
+      // complete is the failure this field exists to prevent. (VA-6 repaired
+      // this line: it previously read a `notes` field the resolver has never
+      // had, so the tier cap was computed and then always reported as null.)
+      truncated: resolution.truncated ?? null,
+      // #922: how the questionnaire was composed against the tier's NOMINAL
+      // target. `nominal_target` is a target, not a ceiling — the SecureLogic
+      // assessment floor is satisfied first and is never truncated, so `total`
+      // exceeds it whenever the floor alone does and `mandatory_overage` says
+      // by how much. Absent for 1.0.0 resolutions, which keep frozen behaviour.
+      composition: resolution.composition ?? null,
     });
   } catch (err) {
     logger.error({ event: "vendor_scope_resolve_failed", organizationId, err }, "Scope resolve failed");
@@ -658,8 +969,15 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
   }
 
   try {
+    // #946. LOCK the row for the rest of the transaction. This — not the
+    // rowCount assertion further down — is the primary serialization
+    // mechanism: a second concurrent issue blocks here until the first commits,
+    // then re-reads `issued` and fails its own transition check. Without it,
+    // check-then-act leaves a window in which two callers both pass
+    // canTransition against the same `scoped` state.
     const eng = await pg.query<{ status: string }>(
-      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      `SELECT status FROM vendor_engagements
+        WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
       [id, organizationId]
     );
     if (eng.rowCount === 0) {
@@ -701,12 +1019,61 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       return;
     }
 
-    const invite = mintInviteToken();
+    // VA-Q1 P2: the content-addressed identity of what is being sent, stamped
+    // at the one moment scope freezes and never rewritten (ADR-0013 R3).
+    // `GET /vendor-engagements/:id/integrity` recomputes and compares.
+    //
+    // #946: loaded UNDER THE LOCK, so the hash is computed from the exact
+    // question set this transition is freezing. Loading it before the lock
+    // would let the set move between hashing and freezing.
+    const set = await loadQuestionSetItems(pg, organizationId, id);
+    const setHash = set.unversioned === 0 ? questionSetHash(set.items) : null;
 
-    // Elevated: the invite is the credential a not-yet-authenticated external
-    // party will present, and its lookup at exchange time necessarily precedes
-    // org context. Written on the same channel that will read it.
-    await pgElevated.query(
+    // #946: THE TRANSITION HAPPENS FIRST, AND IS VERIFIED. The old order wrote
+    // the credential first and never checked whether this UPDATE matched
+    // anything, so a zero-row transition still returned 200 with a usable
+    // invite. Nothing below runs unless exactly one row moved.
+    const moved = await pg.query(
+      `UPDATE vendor_engagements
+          SET status = 'issued', issued_at = NOW(), updated_at = NOW(),
+              question_set_hash = COALESCE($4, question_set_hash),
+              question_set_hash_at = CASE WHEN $4 IS NOT NULL THEN NOW() ELSE question_set_hash_at END
+        WHERE id = $1 AND organization_id = $2 AND status = $3`,
+      [id, organizationId, from, setHash]
+    );
+    if (moved.rowCount !== 1) {
+      // Unreachable while the FOR UPDATE lock holds — kept as an assertion, not
+      // as the mechanism. If it ever fires, the state moved under a lock we
+      // believed we held, and issuing anyway would mint a credential for an
+      // engagement that was never issued.
+      logger.error(
+        {
+          event: "vendor_engagement_issue_transition_lost",
+          organizationId,
+          engagementId: id,
+          from,
+          rowCount: moved.rowCount,
+        },
+        "Issue transition matched no row while holding FOR UPDATE"
+      );
+      res.status(409).json({
+        error: "issue_conflict",
+        message:
+          "This engagement changed while it was being issued. Nothing was sent — re-read it and try again.",
+      });
+      return;
+    }
+
+    // Only now does a credential come into existence. Written on the TENANT
+    // channel so it shares this transaction: if anything after this point
+    // fails, the ROLLBACK takes the invite with it and no usable token
+    // survives. RLS-safe — vendor_engagement_invites carries
+    // `WITH CHECK (organization_id = current_setting('app.current_org_id'))`
+    // and GRANTs INSERT to app_request (20260923_vendor_portal_access.sql).
+    // The ELEVATED channel is still required for the pre-auth READ at exchange
+    // time (vendorPortal.ts), a different operation, and is unchanged.
+    const invite = mintInviteToken();
+    await pg.query(
       `INSERT INTO vendor_engagement_invites
          (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
           expires_at, created_by_user_id)
@@ -714,25 +1081,26 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req)]
     );
 
-    await pg.query(
-      `UPDATE vendor_engagements
-          SET status = 'issued', issued_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND organization_id = $2 AND status = $3`,
-      [id, organizationId, from]
+    // #946: deferred to AFTER COMMIT. writeAuditEvent goes to the elevated
+    // pool, so calling it inline would record an issuance that a later
+    // rollback erased. registerAfterCommit runs only on a durable commit and
+    // is discarded on rollback.
+    registerAfterCommit(() =>
+      writeAuditEvent({
+        organizationId,
+        actorUserId: userOf(req),
+        eventType: "vendor_engagement.issued",
+        resourceType: "vendor_engagement",
+        resourceId: id,
+        // The token is NEVER in the audit payload. An audit log readable by more
+        // people than the vendor's mailbox must not contain a working credential.
+        payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
+        ipAddress: req.ip ?? null,
+      })
     );
 
-    writeAuditEvent({
-      organizationId,
-      actorUserId: userOf(req),
-      eventType: "vendor_engagement.issued",
-      resourceType: "vendor_engagement",
-      resourceId: id,
-      // The token is NEVER in the audit payload. An audit log readable by more
-      // people than the vendor's mailbox must not contain a working credential.
-      payload: { contact_email: email, expires_at: invite.expiresAt.toISOString() },
-      ipAddress: req.ip ?? null,
-    });
-
+    // Buffered by the asTenant wrap and replayed only after COMMIT, so the raw
+    // credential never reaches the caller ahead of the durable write it names.
     res.status(200).json({
       ok: true,
       status: "issued",
@@ -1182,8 +1550,12 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
   const id = String(req.params["id"] ?? "");
 
   try {
-    const eng = await pg.query<{ inherent_rating: string | null; vendor_name: string }>(
-      `SELECT e.inherent_rating, v.name AS vendor_name
+    const eng = await pg.query<{
+      inherent_rating: string | null;
+      vendor_id: string;
+      vendor_name: string;
+    }>(
+      `SELECT e.inherent_rating, e.vendor_id, v.name AS vendor_name
          FROM vendor_engagements e JOIN vendors v ON v.id = e.vendor_id
         WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
       [id, organizationId]
@@ -1270,6 +1642,44 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
       else updated += 1;
     }
 
+    // THE VENDOR'S RISK SCORE MUST MOVE WHEN A GAP IS RECORDED AGAINST IT.
+    // Engagement promotion was — like CUEC promotion before it — a
+    // vendor-finding-creating path that scheduled no recompute at all: with
+    // the fourth linkage arm in place the resolver and the scoring query now
+    // see these findings, but nothing would trigger them until some UNRELATED
+    // finding on the same vendor changed state, which is indistinguishable
+    // from "the gap does not count". The known-vendor variant is used because
+    // the engagement row already carries vendor_id; fire-and-forget and
+    // best-effort by contract, so a score refresh failure can never fail the
+    // promotion. It defers with setImmediate and opens its OWN tenant scope,
+    // so calling it inside this asTenant-wrapped handler runs it after the
+    // request's tenant transaction has committed (A04-G1 γ.3) — the same
+    // placement promoteVendorAssuranceCuecToFinding uses. Guarded on a
+    // non-empty promotion because upserts are the only writes here: zero
+    // promoted findings means zero score inputs changed.
+    if (findings.length > 0) {
+      scheduleVendorScoreRecompute(organizationId, eng.rows[0]!.vendor_id);
+    }
+
+    // Supersede-on-pass observation (ruled 2026-08-22): controls that now
+    // report pass/not_applicable are ABSENT from the promoted set, so their
+    // previously promoted findings would otherwise vanish from this summary
+    // while staying open — and a resolution the summary hides is a resolution
+    // nobody reviews. Name them; close nothing.
+    const observation = await listFindingsSupersededBySource(organizationId, id);
+    const superseded = observation.superseded;
+    if (superseded.length > 0) {
+      logger.info(
+        {
+          event: "vendor_engagement_findings_not_closed_on_pass",
+          organizationId,
+          engagementId: id,
+          count: superseded.length,
+        },
+        `${superseded.length} open finding(s) NOT closed automatically — the source now reports pass/not_applicable for their controls; closure remains a human decision through the ordinary gate`
+      );
+    }
+
     writeAuditEvent({
       organizationId,
       actorUserId: userOf(req),
@@ -1283,6 +1693,17 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
           acc[f.severity] = (acc[f.severity] ?? 0) + 1;
           return acc;
         }, {}),
+        // Capped so the payload stays operationally small; the full list is
+        // in the response and derivable at any time.
+        not_closed_superseded_by_source: {
+          count: superseded.length,
+          findings: superseded
+            .slice(0, 20)
+            .map((s) => ({ id: s.finding_id, current_response: s.current_response })),
+        },
+        supersede_equivalence_undetermined: {
+          count: observation.equivalence_undetermined.length,
+        },
         methodology_version: METHODOLOGY_VERSION,
       },
       ipAddress: req.ip ?? null,
@@ -1298,6 +1719,11 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
         title: f.title,
         severity_rationale: f.severity_rationale,
       })),
+      superseded_by_source: superseded,
+      supersede_equivalence_undetermined: {
+        count: observation.equivalence_undetermined.length,
+        finding_ids: observation.equivalence_undetermined,
+      },
     });
   } catch (err) {
     logger.error({ event: "finding_promotion_failed", organizationId, err }, "Finding promotion failed");
@@ -1468,6 +1894,197 @@ export async function beginReview(req: Request, res: Response): Promise<void> {
   } catch (err) {
     logger.error({ event: "begin_review_failed", organizationId, err }, "Begin review failed");
     res.status(500).json({ error: "begin_review_failed" });
+  }
+}
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/responses — the reviewer's view of the
+   questionnaire itself (VA-R1, authorized 2026-08-23).
+
+   Before this route the customer could see COUNTS ("7/12 answered"), scores,
+   evidence rows and comments — but never the answers. The one hop named
+   "review" contained no reviewable content: findings were promoted against
+   aggregates. This is the read surface that makes the review workflow mean
+   something.
+
+   It is also the pre-issue answer to "what will my vendor be asked?" (owner
+   ruling on derived scoping, 2026-08-23): for a scoped-but-unissued
+   engagement every row simply carries response: null, so the same surface
+   shows exactly what will be sent before any invitation exists. The scope
+   population uses the SAME predicate as recompute and the portal
+   questionnaire (deterministic OR accepted) — the reviewer reads the same
+   questionnaire the vendor answers, never a superset and never a subset.
+
+   Includes the first read surface over requirement_response_revisions —
+   append-only since 20260924, durable but invisible until now. Revisions are
+   capped per response and the cap is REPORTED (`truncated`), so a long edit
+   history is elided loudly, never silently.
+   ========================================================= */
+const REVISIONS_PER_RESPONSE_CAP = 50;
+
+export async function listEngagementResponses(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const rows = await pg.query<{
+      requirement_id: string;
+      reference_id: string;
+      title: string;
+      description: string | null;
+      depth: string;
+      mandatory: boolean;
+      response_id: string | null;
+      status: string | null;
+      notes: string | null;
+      responder_type: string | null;
+      answered_via_invite_id: string | null;
+      assessed_by: string | null;
+      assessed_at: string | null;
+      updated_at: string | null;
+      evidence_count: string;
+      evidence_confirmed: boolean;
+      question_version_id: string | null;
+      domain: string | null;
+    }>(
+      `SELECT si.requirement_id, r.reference_id,
+              COALESCE(qv.prompt, r.title) AS title,
+              COALESCE(qv.guidance, r.description) AS description,
+              si.question_version_id,
+              si.depth, si.mandatory, si.domain,
+              rr.id AS response_id, rr.status, rr.notes, rr.responder_type,
+              rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at,
+              COUNT(ev.id)::text AS evidence_count,
+              COALESCE(bool_or(ev.reviewed_at IS NOT NULL), FALSE) AS evidence_confirmed
+         FROM vendor_engagement_scope_items si
+         JOIN requirements r ON r.id = si.requirement_id
+         -- VA-Q1 P2: the reviewer reads the SAME immutable text the vendor was
+         -- asked. Pre-P2 rows have no version and fall back to the requirement.
+         LEFT JOIN question_versions qv
+                ON qv.id = si.question_version_id
+               AND qv.organization_id = si.organization_id
+         LEFT JOIN requirement_responses rr
+                ON rr.requirement_id  = si.requirement_id
+               AND rr.engagement_id   = si.engagement_id
+               AND rr.organization_id = si.organization_id
+         LEFT JOIN evidence ev
+                ON ev.engagement_id   = si.engagement_id
+               AND ev.requirement_id  = si.requirement_id
+               AND ev.organization_id = si.organization_id
+               AND ev.detached_at IS NULL
+        WHERE si.engagement_id = $1 AND si.organization_id = $2
+          AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
+        GROUP BY si.requirement_id, r.reference_id, qv.prompt, r.title, qv.guidance, r.description,
+                 si.question_version_id,
+                 si.depth, si.mandatory, si.domain,
+                 rr.id, rr.status, rr.notes, rr.responder_type,
+                 rr.answered_via_invite_id, rr.assessed_by, rr.assessed_at, rr.updated_at
+        ORDER BY si.mandatory DESC, r.reference_id, si.requirement_id`,
+      [id, organizationId]
+    );
+
+    // One pass for every revision of every response on this engagement. The
+    // join re-checks the org on BOTH legs — the revision table is reachable
+    // only through a same-org response row.
+    const revisions = await pg.query<{
+      response_id: string;
+      status: string;
+      notes: string | null;
+      responder_type: string;
+      answered_by_user_id: string | null;
+      answered_via_invite_id: string | null;
+      created_at: string;
+    }>(
+      `SELECT rev.response_id, rev.status, rev.notes, rev.responder_type,
+              rev.answered_by_user_id, rev.answered_via_invite_id, rev.created_at
+         FROM requirement_response_revisions rev
+         JOIN requirement_responses rr
+           ON rr.id = rev.response_id
+          AND rr.organization_id = rev.organization_id
+        WHERE rev.organization_id = $2 AND rr.engagement_id = $1
+        ORDER BY rev.created_at ASC`,
+      [id, organizationId]
+    );
+    const revisionsByResponse = new Map<string, typeof revisions.rows>();
+    for (const rev of revisions.rows) {
+      const list = revisionsByResponse.get(rev.response_id) ?? [];
+      list.push(rev);
+      revisionsByResponse.set(rev.response_id, list);
+    }
+
+    const items = rows.rows.map((row) => {
+      const revs = row.response_id ? (revisionsByResponse.get(row.response_id) ?? []) : [];
+      return {
+        requirement: {
+          id: row.requirement_id,
+          reference: row.reference_id,
+          title: row.title,
+          description: row.description,
+        },
+        question_version_id: row.question_version_id,
+        // VA-Q2 P2: null on items resolved under scope-rule 1.0.0.
+        scope: { depth: row.depth, mandatory: row.mandatory, domain: row.domain },
+        response:
+          row.response_id === null
+            ? null
+            : {
+                status: row.status,
+                notes: row.notes,
+                responder_type: row.responder_type,
+                answered_via_invite_id: row.answered_via_invite_id,
+                assessed_by_user_id: row.assessed_by,
+                assessed_at: row.assessed_at,
+                updated_at: row.updated_at,
+              },
+        evidence: {
+          count: Number(row.evidence_count),
+          confirmed: row.evidence_confirmed,
+        },
+        revisions: {
+          total: revs.length,
+          truncated: revs.length > REVISIONS_PER_RESPONSE_CAP,
+          entries: revs.slice(-REVISIONS_PER_RESPONSE_CAP).map((rev) => ({
+            status: rev.status,
+            notes: rev.notes,
+            responder_type: rev.responder_type,
+            answered_by_user_id: rev.answered_by_user_id,
+            answered_via_invite_id: rev.answered_via_invite_id,
+            created_at: rev.created_at,
+          })),
+        },
+      };
+    });
+
+    res.status(200).json({
+      engagement_id: id,
+      engagement_status: eng.rows[0]!.status,
+      counts: {
+        scoped: items.length,
+        answered: items.filter((i) => i.response !== null).length,
+        mandatory: items.filter((i) => i.scope.mandatory).length,
+        domains: summarizeDomains(items.map((i) => i.scope.domain)),
+      },
+      items,
+    });
+  } catch (err) {
+    logger.error(
+      { event: "engagement_responses_read_failed", organizationId, err },
+      "Engagement responses read failed"
+    );
+    res.status(500).json({ error: "engagement_responses_read_failed" });
   }
 }
 
@@ -1660,6 +2277,234 @@ export async function startMonitoring(req: Request, res: Response): Promise<void
   }
 }
 
+/* =========================================================
+   VA-Q2 P3 — the canonical fact store, internal intake surface
+   (assessment_facts; D1 Option B).
+
+   GET  /vendor-engagements/:id/facts   every row of THIS subject (history
+        included, with source / origin / status / provenance / timing) plus
+        the resolved set the scope resolver would read — never cross-subject.
+   PUT  /vendor-engagements/:id/facts   batch declaration. Body:
+        { facts: [{ fact_key, value, source?, origin?, observed_at? }] }
+        - subject_type / subject_id / status / verified_at / provenance in the
+          body are IGNORED (forced server-side; the subject is the path id,
+          resolved inside the tenant scope);
+        - source defaults to `intake`; only `intake` | `internal_user` may be
+          declared here (a human cannot assert a `system_derived` mirror, a
+          vendor answer or a model extraction — those have their own writers,
+          none in Q2) → 400 `source` otherwise;
+        - origin defaults to `intake` and must be `intake` → 400 otherwise;
+        - unknown key / malformed value → 400 with field names;
+        - engagement issued → 409 scope_frozen (the widen-only path for an
+          issued subject is Q3's vendor_response writer, not this route);
+        - subject missing or another org's → 404 (never 403: no oracle).
+        Audit carries KEYS only — never values (T-13).
+   ========================================================= */
+
+const FACT_ROUTE_SOURCES: readonly FactSource[] = ["intake", "internal_user"];
+const FACT_ROUTE_ORIGIN: FactOrigin = "intake";
+const MAX_FACTS_PER_PUT = 200;
+
+function publicFactRow(r: StoredFactRow): Record<string, unknown> {
+  return {
+    id: r.id,
+    fact_key: r.fact_key,
+    value: r.value,
+    source: r.source,
+    origin: r.origin,
+    status: r.status,
+    provenance: r.provenance,
+    observed_at: r.observed_at,
+    verified_at: r.verified_at,
+    confidence: r.confidence,
+    supersedes_id: r.supersedes_id,
+    accepted_at: r.accepted_at,
+    created_at: r.created_at,
+  };
+}
+
+async function loadFactsPayload(organizationId: string, subject: NonNullable<Awaited<ReturnType<typeof resolveFactSubject>>>) {
+  const rows = await loadFactRows(pg, organizationId, subject);
+  const resolved = resolveFacts(rows.filter((r) => r.status === "accepted"));
+  return {
+    subject: { subject_type: subject.kind, subject_id: subject.id },
+    status: subject.state,
+    scope_rule_version: subject.scope_rule_version,
+    resolved,
+    facts: rows.map(publicFactRow),
+  };
+}
+
+export async function getEngagementFacts(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  try {
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    res.status(200).json(await loadFactsPayload(organizationId, subject));
+  } catch (err) {
+    logger.error({ event: "vendor_engagement_facts_read_failed", organizationId, err }, "Facts read failed");
+    res.status(500).json({ error: "facts_read_failed" });
+  }
+}
+
+type FactInputError = { index: number; errors: FactValidationError[] };
+
+/** Parse + validate the PUT body. Values never leave this function except inside the writes. */
+function parseFactWrites(
+  body: unknown,
+  actorUserId: string | null,
+  now: Date
+): { ok: true; writes: FactWrite[] } | { ok: false; error: string; details?: FactInputError[] } {
+  if (!body || typeof body !== "object" || !Array.isArray((body as { facts?: unknown }).facts)) {
+    return { ok: false, error: "facts_required" };
+  }
+  const items = (body as { facts: unknown[] }).facts;
+  if (items.length === 0) return { ok: false, error: "facts_required" };
+  if (items.length > MAX_FACTS_PER_PUT) return { ok: false, error: "too_many_facts" };
+
+  const writes: FactWrite[] = [];
+  const details: FactInputError[] = [];
+  items.forEach((item, index) => {
+    if (!item || typeof item !== "object") {
+      details.push({ index, errors: [{ field: "fact_key", reason: "each fact must be an object" }] });
+      return;
+    }
+    const f = item as Record<string, unknown>;
+    const errors: FactValidationError[] = [];
+
+    const source: unknown = f["source"] === undefined ? "intake" : f["source"];
+    if (!isFactSource(source) || !FACT_ROUTE_SOURCES.includes(source)) {
+      errors.push({ field: "source", reason: `must be one of: ${FACT_ROUTE_SOURCES.join(", ")} (of ${FACT_SOURCES.join(", ")})` });
+    }
+    const origin: unknown = f["origin"] === undefined ? FACT_ROUTE_ORIGIN : f["origin"];
+    if (!isFactOrigin(origin) || origin !== FACT_ROUTE_ORIGIN) {
+      errors.push({ field: "origin", reason: `must be ${FACT_ROUTE_ORIGIN} on this route (of ${FACT_ORIGINS.join(", ")})` });
+    }
+    let observedAt = now;
+    if (f["observed_at"] !== undefined) {
+      const t = typeof f["observed_at"] === "string" ? new Date(f["observed_at"]) : new Date(NaN);
+      if (Number.isNaN(t.getTime()) || t.getTime() > now.getTime() + 5_000) {
+        errors.push({ field: "value", reason: "observed_at must be an ISO-8601 timestamp not in the future" });
+      } else {
+        observedAt = t;
+      }
+    }
+    // `core.*` is mirrored from the 13 inherent-risk columns on every scope
+    // resolve (mirrorInherentFacts) — the columns are the store of record, so a
+    // declared core.* row would be silently superseded before it could ever
+    // influence scope. Refuse it and point the caller at the real writer.
+    if (typeof f["fact_key"] === "string" && f["fact_key"].startsWith("core.")) {
+      errors.push({ field: "fact_key", reason: "core.* facts are derived from the inherent-risk intake; use PATCH /inherent" });
+    }
+    // Registry validation runs even when source/origin failed, so the caller
+    // sees every defect at once; subject_type is forced, not read from the body.
+    const v = validateFact(f["fact_key"], f["value"], isFactSource(source) ? source : "intake", isFactOrigin(origin) ? origin : "intake", "vendor_engagement");
+    if (!v.ok) errors.push(...v.errors.filter((e) => !errors.some((x) => x.field === e.field)));
+    if (errors.length > 0) {
+      details.push({ index, errors });
+      return;
+    }
+    if (!v.ok) return; // unreachable: errors would be non-empty
+    writes.push({
+      fact_key: v.key,
+      value: v.value,
+      source: v.source,
+      origin: v.origin,
+      observed_at: observedAt,
+      provenance: {
+        actor: { kind: actorUserId ? "user" : "system", id: actorUserId },
+        via: "PUT /vendor-engagements/:id/facts",
+        at: now.toISOString(),
+        evidence: null,
+        model: null,
+      },
+      created_by: actorUserId,
+    });
+  });
+  if (details.length > 0) return { ok: false, error: "invalid_facts", details };
+  return { ok: true, writes };
+}
+
+export async function putEngagementFacts(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const actorUserId = userOf(req);
+
+  try {
+    // Subject FIRST (404 before any body detail leaks a validation shape to a
+    // caller who does not own the engagement).
+    const subject = await resolveFactSubject(pg, organizationId, "vendor_engagement", id);
+    if (!subject) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    if (!isScopeMutable(subject.state)) {
+      res.status(409).json({
+        error: "scope_frozen",
+        message: "The questionnaire has been issued. Its facts are frozen from this surface — a vendor's answers are only meaningful against the questions they were asked.",
+        status: subject.state,
+      });
+      return;
+    }
+
+    const parsed = parseFactWrites(req.body, actorUserId, new Date());
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error, details: parsed.details ?? [] });
+      return;
+    }
+
+    let outcome;
+    try {
+      outcome = await writeFacts(pg, organizationId, subject, parsed.writes);
+    } catch (err) {
+      if (err instanceof FactStoreValidationError) {
+        res.status(400).json({ error: "invalid_facts", details: [{ index: err.index, errors: err.errors }] });
+        return;
+      }
+      throw err;
+    }
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId,
+      eventType: "vendor_engagement.facts_declared",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      // Keys and counts only — never a value (T-13).
+      payload: {
+        keys: outcome.keys,
+        inserted: outcome.inserted,
+        unchanged: outcome.unchanged,
+        superseded: outcome.superseded,
+        source: [...new Set(parsed.writes.map((w) => w.source))],
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      inserted: outcome.inserted,
+      unchanged: outcome.unchanged,
+      superseded: outcome.superseded,
+      ...(await loadFactsPayload(organizationId, subject)),
+    });
+  } catch (err) {
+    logger.error({ event: "vendor_engagement_facts_write_failed", organizationId, err }, "Facts write failed");
+    res.status(500).json({ error: "facts_write_failed" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring — every route behind the same chain.
 // ---------------------------------------------------------------------------
@@ -1674,12 +2519,89 @@ const chain = [
 
 router.post("/vendor-engagements", ...chain, asTenant(createEngagement));
 router.get("/vendor-engagements", ...chain, asTenant(listEngagements));
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/assurance-coverage
+
+   The assurance-gap view: which of this engagement's requirements already
+   carry sufficient, current, governed assurance — and, just as importantly,
+   which SUFFICIENT determinations do NOT count right now and exactly why
+   (identity unresolved, class unclassifiable, no ratified policy, window
+   expired). Read-only, computed by the same counting predicate the scope
+   resolver applies, so what the reviewer sees is what the composition will do.
+   ========================================================= */
+export async function getAssuranceCoverage(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query(
+      `SELECT 1 FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) { res.status(404).json({ error: "engagement_not_found" }); return; }
+
+    const coverage = await resolveAssuranceCoverage({ organizationId, engagementId: id });
+    res.status(200).json({
+      engagement_id: id,
+      coverage_version: coverage.version,
+      as_of: coverage.asOf,
+      applied_at_composition: evidenceLifecycleV2Enabled(process.env),
+      covered: coverage.covered.map((c) => ({
+        requirement_id: c.requirementId,
+        requirement_reference: c.requirementReference,
+        determination_id: c.determinationId,
+        document_id: c.documentId,
+        valid_until: c.validUntil,
+        validity_source: c.validitySource,
+        assurance_class: c.assuranceClass,
+      })),
+      gaps: coverage.gaps.map((g) => ({
+        determination_id: g.determinationId,
+        requirement_reference: g.requirementReference,
+        requirement_id: g.requirementId,
+        reason: g.reason,
+        detail: g.detail,
+      })),
+      // Confirmed, current, requirement-grain governed evidence. VISIBLE and
+      // explicitly NON-COUNTING: `counts` is always false and none of these
+      // rows is in `covered`, so questionnaire depth is unaffected by every one
+      // of them. Before this, curating a pen test or an ISO certificate showed
+      // a reviewer nothing at all, which reads as "no evidence exists".
+      governed_evidence_version: coverage.governedEvidenceVersion,
+      governed_evidence: coverage.governedEvidence.map((g) => ({
+        link_id: g.linkId,
+        evidence_id: g.evidenceId,
+        requirement_id: g.requirementId,
+        requirement_reference: g.requirementReference,
+        assurance_class: g.assuranceClass,
+        validity_basis: g.validityBasis,
+        valid_until: g.validUntil,
+        confirmed_at: g.confirmedAt,
+        superseded_by_newer_version: g.supersededByNewerVersion,
+        counts: g.counts,
+        reason: g.reason,
+      })),
+    });
+  } catch (err) {
+    logger.error({ event: "assurance_coverage_read_failed", engagementId: id, err },
+      "Assurance coverage read failed");
+    res.status(500).json({ error: "assurance_coverage_unavailable" });
+  }
+}
+
 router.get("/vendor-engagements/:id", ...chain, asTenant(getEngagement));
 router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInherent));
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
+router.get("/vendor-engagements/:id/assurance-coverage", ...chain, asTenant(getAssuranceCoverage));
+router.get("/vendor-engagements/:id/facts", ...chain, asTenant(getEngagementFacts));
+router.put("/vendor-engagements/:id/facts", ...chain, asTenant(putEngagementFacts));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
 router.post("/vendor-engagements/:id/decision", ...chain, asTenant(recordDecision));
 router.get("/vendor-engagements/:id/evidence", ...chain, asTenant(listEngagementEvidence));
+router.get("/vendor-engagements/:id/responses", ...chain, asTenant(listEngagementResponses));
+router.get("/vendor-engagements/:id/integrity", ...chain, asTenant(checkQuestionnaireIntegrity));
 router.post(
   "/vendor-engagements/:id/evidence/:evidenceId/review",
   ...chain,
@@ -1692,16 +2614,75 @@ router.post("/vendor-engagements/:id/begin-review", ...chain, asTenant(beginRevi
 router.post("/vendor-engagements/:id/complete-analysis", ...chain, asTenant(completeAnalysis));
 router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonitoring));
 
-// The issue route writes the invite on the ELEVATED channel (the credential is
-// read before org context exists at exchange time), so it manages its own
-// scoping rather than taking the asTenant wrap.
-router.post("/vendor-engagements/:id/issue", ...chain, async (req: Request, res: Response) => {
+// #946: takes the asTenant wrap like every sibling. It previously managed its
+// own withTenant scope because the invite was written on the ELEVATED channel;
+// the invite now rides the tenant transaction, so there is nothing left to
+// manage. The wrap matters for more than tidiness — it BUFFERS the response and
+// replays it only after COMMIT, which is what stops a raw invite token (and a
+// 200 claiming `status: "issued"`) from reaching the caller before the
+// transition is durable. The pre-auth READ of the invite at exchange time is
+// still elevated; that lives in vendorPortal.ts and is unchanged.
+router.post("/vendor-engagements/:id/issue", ...chain, asTenant(issueEngagement));
+
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/integrity — VA-Q1 P2.
+
+   Recomputes the content-addressed identity of the questionnaire from the
+   stored scope items and compares it with the hash stamped at issue.
+
+     match      what the vendor was asked is exactly what was issued
+     drift      the stored items no longer hash to the stamp — an incident,
+                not a warning: something mutated an issued questionnaire
+     unstamped  issued before P2, or has items without a version (pre-P2
+                rows); nothing to compare against
+     unissued   scope not frozen yet; the hash is not defined
+   ========================================================= */
+export async function checkQuestionnaireIntegrity(req: Request, res: Response): Promise<void> {
   const organizationId = orgOf(req);
   if (!organizationId) {
     res.status(403).json({ error: "organization_context_missing" });
     return;
   }
-  await withTenant(organizationId, () => issueEngagement(req, res));
-});
+  const id = String(req.params["id"] ?? "");
+  try {
+    const eng = await pg.query<{ status: string; issued_at: string | null; question_set_hash: string | null; question_set_hash_at: string | null }>(
+      `SELECT status, issued_at, question_set_hash, question_set_hash_at
+         FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const row = eng.rows[0]!;
+    const set = await loadQuestionSetItems(pg, organizationId, id);
+    const computed = set.unversioned === 0 && set.items.length > 0 ? questionSetHash(set.items) : null;
+
+    let verdict: "match" | "drift" | "unstamped" | "unissued";
+    if (!row.issued_at) verdict = "unissued";
+    else if (!row.question_set_hash || computed === null) verdict = "unstamped";
+    else verdict = computed === row.question_set_hash ? "match" : "drift";
+
+    if (verdict === "drift") {
+      logger.error(
+        { event: "questionnaire_integrity_drift", organizationId, engagementId: id, stamped: row.question_set_hash, computed },
+        "Issued questionnaire no longer hashes to its stamp"
+      );
+    }
+    res.status(200).json({
+      engagement_id: id,
+      verdict,
+      stamped_hash: row.question_set_hash,
+      stamped_at: row.question_set_hash_at,
+      computed_hash: computed,
+      items: set.items.length,
+      unversioned_items: set.unversioned,
+    });
+  } catch (err) {
+    logger.error({ err, organizationId, engagementId: id }, "GET /vendor-engagements/:id/integrity failed");
+    res.status(500).json({ error: "internal_error" });
+  }
+}
 
 export default router;

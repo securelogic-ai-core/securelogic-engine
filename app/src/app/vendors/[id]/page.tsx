@@ -182,6 +182,15 @@ const ASSESSMENT_TYPE_LABELS: Record<string, string> = {
   pre_contract:         "Pre-Contract Due Diligence",
   post_incident:        "Post-Incident Review",
   framework_assessment: "Framework Assessment",
+  // Not an assessment type at all — the linkage discriminator for a finding
+  // promoted from a Complementary User Entity Control gap in a vendor's report.
+  // It shares this field because /api/vendors/:id/findings keeps `assessment_type`
+  // for wire compatibility; without an entry here the raw key rendered on screen.
+  vendor_assurance_cuec: "Vendor Assurance Review",
+  // Likewise a linkage discriminator, not an assessment type — a finding
+  // promoted from a failed/partial/unanswered control in a Vendor Assurance
+  // engagement (the fourth linkage arm in vendorFindingLinkage.ts).
+  vendor_engagement: "Vendor Engagement Assessment",
 };
 
 function assessmentTypeLabel(raw: string): string {

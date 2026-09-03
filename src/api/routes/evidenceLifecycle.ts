@@ -99,7 +99,14 @@ const FAILURE_STATUS: Record<WriterFailure, number> = {
   perpetual_requires_assertion: 400,
 };
 
-const GATE = [requireApiKey, attachOrganizationContext, requirePremiumOrCorePlatform, denyContributor(), requireLifecycleV2] as const;
+// ORDER IS LOAD-BEARING. `requireLifecycleV2` runs FIRST, before authentication,
+// entitlement and seat, so a dark surface is a BARE 404 to everyone — not a 401
+// to an anonymous prober and a 403 to a Contributor, each of which advertises
+// that the route is real and you merely lack something. That is the standard
+// c4FlagOff.test.ts states and intelligenceEvents.ts already follows; this file
+// asserted it in prose while the gate order defeated it. The flag check reads
+// only process.env and touches no request state, so running it first is safe.
+const GATE = [requireLifecycleV2, requireApiKey, attachOrganizationContext, requirePremiumOrCorePlatform, denyContributor()] as const;
 
 /* =========================================================
    POST /api/evidence/:id/links — record a USE of an artifact.

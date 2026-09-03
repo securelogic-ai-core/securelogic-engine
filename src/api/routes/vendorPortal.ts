@@ -332,11 +332,19 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
         // Only ASKABLE items: deterministic ones, plus AI-suggested ones a human
         // accepted. An unaccepted suggestion must never reach a vendor — that is
         // the ratified AI boundary.
-        `SELECT si.requirement_id, r.reference_id, r.title, r.description,
+        `SELECT si.requirement_id, r.reference_id,
+                COALESCE(qv.prompt, r.title) AS title,
+                COALESCE(qv.guidance, r.description) AS description,
                 si.depth, si.mandatory, si.reasons,
                 rr.status, rr.notes
            FROM vendor_engagement_scope_items si
            JOIN requirements r ON r.id = si.requirement_id
+           -- VA-Q1 P2 (ADR-0013 R3): the vendor reads the IMMUTABLE version the
+           -- scope item was frozen against, so a later requirement edit cannot
+           -- change the question mid-assessment. Pre-P2 rows fall back.
+           LEFT JOIN question_versions qv
+                  ON qv.id = si.question_version_id
+                 AND qv.organization_id = si.organization_id
            LEFT JOIN requirement_responses rr
                   ON rr.requirement_id = si.requirement_id
                  AND rr.engagement_id  = si.engagement_id
@@ -419,14 +427,17 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
       // The requirement must be IN THIS ENGAGEMENT'S FROZEN SCOPE. A vendor
       // cannot answer a question they were not asked, and cannot reach another
       // engagement's requirement by id.
-      const inScope = await pg.query(
-        `SELECT 1 FROM vendor_engagement_scope_items
+      const inScope = await pg.query<{ question_version_id: string | null }>(
+        `SELECT question_version_id FROM vendor_engagement_scope_items
           WHERE engagement_id = $1 AND organization_id = $2 AND requirement_id = $3
             AND (source = 'deterministic' OR accepted_at IS NOT NULL)
           LIMIT 1`,
         [ctx.engagementId, ctx.organizationId, requirementId]
       );
       if ((inScope.rowCount ?? 0) === 0) return { code: 404 as const };
+      // VA-Q1 P2: the answer records WHICH content it answered. Taken from the
+      // frozen scope item, never from the caller.
+      const questionVersionId = inScope.rows[0]!.question_version_id;
 
       // subject_id is the ENGAGEMENT'S vendor, resolved server-side.
       const vendor = await pg.query<{ vendor_id: string }>(
@@ -438,27 +449,29 @@ export async function savePortalAnswer(req: PortalRequest, res: Response): Promi
       const saved = await pg.query<{ id: string }>(
         `INSERT INTO requirement_responses
            (organization_id, requirement_id, assessment_type, subject_id, engagement_id,
-            responder_type, answered_via_invite_id, status, notes, assessed_at)
-         VALUES ($1, $2, 'vendor', $3, $4, 'vendor', $5, $6, $7, NOW())
+            responder_type, answered_via_invite_id, status, notes, assessed_at, question_version_id)
+         VALUES ($1, $2, 'vendor', $3, $4, 'vendor', $5, $6, $7, NOW(), $8)
          ON CONFLICT (organization_id, requirement_id, assessment_type, subject_id,
                       COALESCE(engagement_id, '00000000-0000-0000-0000-000000000000'::uuid))
          DO UPDATE SET status = EXCLUDED.status,
                        notes = EXCLUDED.notes,
                        responder_type = EXCLUDED.responder_type,
                        answered_via_invite_id = EXCLUDED.answered_via_invite_id,
+                       question_version_id = COALESCE(EXCLUDED.question_version_id, requirement_responses.question_version_id),
                        assessed_at = NOW(),
                        updated_at = NOW()
          RETURNING id`,
-        [ctx.organizationId, requirementId, vendorId, ctx.engagementId, ctx.inviteId, status, notes]
+        [ctx.organizationId, requirementId, vendorId, ctx.engagementId, ctx.inviteId, status, notes, questionVersionId]
       );
 
       // Append-only history. The upsert above cannot answer "what did they say
       // before they changed it"; this can.
       await pg.query(
         `INSERT INTO requirement_response_revisions
-           (organization_id, response_id, status, notes, responder_type, answered_via_invite_id)
-         VALUES ($1, $2, $3, $4, 'vendor', $5)`,
-        [ctx.organizationId, saved.rows[0]!.id, status, notes, ctx.inviteId]
+           (organization_id, response_id, status, notes, responder_type, answered_via_invite_id,
+            question_version_id)
+         VALUES ($1, $2, $3, $4, 'vendor', $5, $6)`,
+        [ctx.organizationId, saved.rows[0]!.id, status, notes, ctx.inviteId, questionVersionId]
       );
 
       // Answering during a clarification is what reopens the engagement —
@@ -511,8 +524,15 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
   const ctx = req.portalContext!;
   try {
     const outcome = await withTenant(ctx.organizationId, async () => {
+      // #949: LOCK the engagement row for the rest of this transaction. Submit
+      // is a check-then-act — read the status, decide, then write conditionally
+      // on that same status — and without the lock a concurrent submit (a
+      // double-click is enough) can commit the transition in between, leaving
+      // the second UPDATE matching zero rows. The lock is the mechanism; the
+      // rowCount assertion below is the backstop, not the control.
       const eng = await pg.query<{ status: string }>(
-        `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        `SELECT status FROM vendor_engagements
+          WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
         [ctx.engagementId, ctx.organizationId]
       );
       const from = eng.rows[0]?.status as EngagementState | undefined;
@@ -540,12 +560,35 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       const remaining = Number(unanswered.rows[0]?.n ?? "0");
       if (remaining > 0) return { code: 422 as const, remaining };
 
-      await pg.query(
+      // #949: THE TRANSITION IS VERIFIED. This UPDATE is conditional on the
+      // status we read, and its rowCount used to be discarded — so a zero-row
+      // transition still returned 200 and the vendor was told their
+      // questionnaire had been submitted when it had not, with a
+      // `vendor_portal.submitted` audit event to match. Nothing downstream runs
+      // unless exactly one row moved.
+      const moved = await pg.query(
         `UPDATE vendor_engagements
             SET status = 'submitted', submitted_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND organization_id = $2 AND status = $3`,
         [ctx.engagementId, ctx.organizationId, from]
       );
+      if (moved.rowCount !== 1) {
+        // Unreachable while the FOR UPDATE lock holds. Kept as an assertion: if
+        // it fires, the state moved under a lock we believed we held, and
+        // answering 200 would tell a vendor their obligation is discharged when
+        // the authoritative record says otherwise.
+        logger.error(
+          {
+            event: "portal_submit_transition_lost",
+            organizationId: ctx.organizationId,
+            engagementId: ctx.engagementId,
+            from,
+            rowCount: moved.rowCount,
+          },
+          "Submit transition matched no row while holding FOR UPDATE"
+        );
+        return { code: 409 as const, conflict: true as const };
+      }
       return { code: 200 as const };
     });
 
@@ -554,9 +597,17 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       return;
     }
     if (outcome.code === 409) {
+      // Two distinguishable refusals. `cannot_submit` is the ordinary one — the
+      // state machine says a portal actor may not make this transition from
+      // here. `submit_conflict` means the engagement moved while this
+      // submission was being prepared; the vendor's answers are intact and
+      // re-submitting is the right next step, so the message says so.
+      const conflict = "conflict" in outcome && outcome.conflict === true;
       res.status(409).json({
-        error: "cannot_submit",
-        message: "This questionnaire is not currently open for submission.",
+        error: conflict ? "submit_conflict" : "cannot_submit",
+        message: conflict
+          ? "This questionnaire changed while your submission was being recorded. Nothing was lost — please try again."
+          : "This questionnaire is not currently open for submission.",
       });
       return;
     }
@@ -950,6 +1001,28 @@ export async function deletePortalEvidence(req: PortalRequest, res: Response): P
       if (!win) return { code: 401 as const };
       if (!isPortalRespondable(win.state)) return { code: 409 as const };
 
+      // VA-S4: an artifact that is IN USE is not the vendor's to destroy.
+      //
+      // 20261081 made evidence_links.evidence_id ON DELETE RESTRICT, so once a
+      // reviewer has linked this file the DELETE below would fail on the
+      // constraint and surface as a 500. Refuse first, with a reason.
+      //
+      // This is also an authorization boundary, not just an error-shape fix. A
+      // vendor able to delete evidence a reviewer already confirmed could
+      // remove inconvenient proof after the fact. Destroying a linked artifact
+      // is a governed WITHDRAWAL (owner ruling 2026-09-01) performed by an
+      // attributed reviewer in the OWNING organization — POST
+      // /api/evidence/:id/withdraw — never by the vendor.
+      //
+      // Today this changes nothing: no links exist estate-wide. It is
+      // fail-closed from the moment linking starts.
+      const inUse = await pg.query(
+        `SELECT 1 FROM evidence_links
+          WHERE evidence_id = $1 AND organization_id = $2 LIMIT 1`,
+        [evidenceId, ctx.organizationId]
+      );
+      if ((inUse.rowCount ?? 0) > 0) return { code: 423 as const };
+
       // Row first, blob second. The reverse order can leave a row pointing at a
       // blob that no longer exists, which is a broken record; this order can at
       // worst leave an unreferenced blob, which is inert.
@@ -977,6 +1050,19 @@ export async function deletePortalEvidence(req: PortalRequest, res: Response): P
       res.status(409).json({
         error: "responses_closed",
         message: "This request is no longer accepting changes.",
+      });
+      return;
+    }
+    // A DIFFERENT refusal from "responses closed", and it must say so. Two 409s
+    // that render the same message is the defect family this codebase has hit
+    // three times: a check that proves something by observing a refusal has to
+    // pin down WHY the refusal happened.
+    if (outcome.code === 423) {
+      res.status(409).json({
+        error: "evidence_in_use",
+        message:
+          "This file has been used as evidence in a review and can no longer be " +
+          "removed here. Ask your contact at the reviewing organization to withdraw it.",
       });
       return;
     }

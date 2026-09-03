@@ -29,6 +29,13 @@ export function isContentTypeEnforcementExempt(originalUrl: string): boolean {
     /^\/api\/vendor-assurance\/documents(\?|$)/.test(originalUrl) ||
     // Remediation Evidence file upload receives multipart/form-data.
     /^\/api\/evidence\/upload(\?|$)/.test(originalUrl) ||
+    // External vendor portal evidence upload receives multipart/form-data.
+    // Deliberately the COLLECTION path only: `(\?|$)` stops it covering
+    // /evidence/:id (the JSON-free DELETE) or any future sub-path, and every
+    // other portal route — /session, /submit, /comments, PUT /questions/:id —
+    // stays JSON-only. This is the platform's one unauthenticated write
+    // surface; the exemption must open exactly the route that carries a file.
+    /^\/api\/vendor-portal\/evidence(\?|$)/.test(originalUrl) ||
     // Ask voice transcription receives multipart/form-data audio uploads.
     originalUrl.startsWith("/api/ask/transcribe") ||
     /^\/api\/sso\/[^/]+\/acs/.test(originalUrl)

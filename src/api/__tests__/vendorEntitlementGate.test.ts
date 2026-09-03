@@ -49,9 +49,15 @@ const PROF = 'requireEntitlement("professional")';
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
   "vendors.ts": 9,
-  // 20 = 19 routes + 1 header comment reference. VA-1 added the CUEC
-  // promote-to-finding route, which is premium-gated like every sibling.
-  "vendorAssuranceDocuments.ts": 20,
+  // 27 = 26 routes + 1 header comment reference. VA-1 added the CUEC
+  // promote-to-finding route; VA-S4-P2 added the GET and POST assurance-opinion
+  // routes; VA-S4-4C-3 added the assurance-outcomes read plus the two governed
+  // acceptance routes (tested-control effectiveness, exception effect);
+  // VA-S4-4C-4 added the sufficiency-candidates read and the sufficiency
+  // determination write. All are premium-gated like every sibling; the 4C-3 and
+  // 4C-4 WRITES additionally carry requireCapability("assurance:review"), which
+  // this census does not count.
+  "vendorAssuranceDocuments.ts": 27,
   "vendorAssessments.ts": 3,
   "vendorReviews.ts": 4,
   "vendorAssessmentAnalysis.ts": 1,
@@ -88,7 +94,10 @@ const BUCKET_A_PREMIUM: Record<string, number> = {
   "frameworks.ts": 4,
   "frameworkActivation.ts": 1,
   "frameworkReadiness.ts": 1,
-  "requirements.ts": 6,
+  // 8 since VA-6: +1 GET /requirements/scope-tag-coverage, +1 PATCH
+  // /requirements/:id (curation, additionally admin-gated) — both premium
+  // like every sibling; the STD==0 assertion still holds.
+  "requirements.ts": 8,
   // obligations
   // 7 since GET /obligations/:id/history — dual-gated like the rest.
   "obligations.ts": 7,

@@ -34,7 +34,8 @@ vi.mock("../infra/postgres.js", () => ({
 }));
 vi.mock("../lib/jwt.js", () => ({
   signJwt: vi.fn(() => "signed.jwt.token"),
-  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", iat: 0, exp: 9_999_999_999 })),
+  verifyJwt: vi.fn(() => ({ sub: USER, org: ORG, role: "admin", type: "session", iat: 0, exp: 9_999_999_999 })),
+  verifyJwtDetailed: vi.fn(() => ({ ok: true, payload: { sub: USER, org: ORG, role: "admin", type: "session", iat: 0, exp: 9_999_999_999 } })),
   SESSION_BLOCKED_STATUSES: new Set(["inactive", "pending_deletion", "deleted"]),
 }));
 vi.mock("../lib/auditLog.js", () => ({ writeAuditEvent: vi.fn() }));

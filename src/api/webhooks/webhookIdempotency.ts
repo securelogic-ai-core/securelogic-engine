@@ -35,6 +35,31 @@ export async function claimWebhookEvent(
 }
 
 /**
+ * Release a claim taken by claimWebhookEvent when the handler FAILED after
+ * claiming (BILL-WH-1).
+ *
+ * INVARIANT: a row in webhook_events_processed means "this event's handler
+ * completed". The claim is taken before processing only so that a concurrent
+ * duplicate delivery (Stripe sends them) cannot run the handler twice; if the
+ * handler then throws, the row must not survive, or the provider's retry —
+ * and any manual replay — would short-circuit as `idempotent_replay` and the
+ * billing state stays desynced forever.
+ *
+ * Throws on DB failure. The caller is still failing closed (5xx) at that
+ * point; it must log loudly, because a row it could not delete WILL make the
+ * retry short-circuit and needs an operator to clear it.
+ */
+export async function releaseWebhookEventClaim(
+  provider: WebhookProvider,
+  eventId: string
+): Promise<void> {
+  await pg.query(
+    `DELETE FROM webhook_events_processed WHERE provider = $1 AND event_id = $2`,
+    [provider, eventId]
+  );
+}
+
+/**
  * Lemon Squeezy doesn't reliably publish a stable per-event id, so we derive
  * one. Preferred: meta.event_id when present. Fallback: SHA-256 of the raw
  * request body, truncated to 32 hex chars — replays of the same event have
