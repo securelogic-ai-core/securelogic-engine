@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { pg } from "../infra/postgres.js";
+import { withPreTenantBootstrap } from "../infra/tenantContext.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 // Tier-2 auth-anomaly fix: audit events on this surface feed the
@@ -131,15 +132,19 @@ export async function requireApiKey(
       // resolve to 'full' — the pre-seat-model default.
       let effectiveSeatType = "full";
       try {
-        const pwResult = await pg.query<{
-          password_changed_at: Date | null;
-          status: string;
-          role: string;
-          seat_type: string | null;
-          session_epoch: number;
-        }>(
-          `SELECT password_changed_at, status, role, seat_type, session_epoch FROM users WHERE id = $1 LIMIT 1`,
-          [payload.sub]
+        const pwResult = await withPreTenantBootstrap(
+          "api_key_auth.user_identity_lookup",
+          () =>
+            pg.query<{
+              password_changed_at: Date | null;
+              status: string;
+              role: string;
+              seat_type: string | null;
+              session_epoch: number;
+            }>(
+              `SELECT password_changed_at, status, role, seat_type, session_epoch FROM users WHERE id = $1 LIMIT 1`,
+              [payload.sub]
+            )
         );
         const userRow = pwResult.rows[0] ?? null;
 
@@ -213,14 +218,18 @@ export async function requireApiKey(
         return;
       }
 
-      const orgKeyResult = await pg.query(
-        `SELECT id, organization_id, label, key_hash, status,
+      const orgKeyResult = await withPreTenantBootstrap(
+        "api_key_auth.org_key_lookup",
+        () =>
+          pg.query(
+            `SELECT id, organization_id, label, key_hash, status,
                 last_used_at, created_at, revoked_at, expires_at,
                 created_by_user_id
            FROM api_keys
           WHERE organization_id = $1 AND status = 'active'
           ORDER BY created_at DESC LIMIT 1`,
-        [payload.org]
+            [payload.org]
+          )
       );
 
       if (orgKeyResult.rows.length === 0) {
@@ -231,9 +240,11 @@ export async function requireApiKey(
       const orgApiKey = orgKeyResult.rows[0] as Record<string, unknown>;
 
       // Fire-and-forget last_used_at update — same pattern as direct key path.
-      pg.query(
-        `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
-        [orgApiKey.id]
+      withPreTenantBootstrap("api_key_auth.key_last_used_update", () =>
+        pg.query(
+          `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
+          [orgApiKey.id]
+        )
       ).catch(() => { /* silent */ });
 
       (req as any).apiKey     = orgApiKey;
@@ -248,8 +259,11 @@ export async function requireApiKey(
 
     const hashedKey = crypto.createHash("sha256").update(presentedKey).digest("hex");
 
-    const result = await pg.query(
-      `
+    const result = await withPreTenantBootstrap(
+      "api_key_auth.key_hash_lookup",
+      () =>
+        pg.query(
+          `
       SELECT id, organization_id, label, key_hash, status,
              last_used_at, created_at, revoked_at, expires_at,
              created_by_user_id, bound_seat_type, bound_role
@@ -257,7 +271,8 @@ export async function requireApiKey(
       WHERE key_hash = $1
       LIMIT 1
       `,
-      [hashedKey]
+          [hashedKey]
+        )
     );
 
     if (result.rows.length === 0) {
@@ -326,9 +341,11 @@ export async function requireApiKey(
       return;
     }
 
-    pg.query(
-      `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
-      [apiKey.id]
+    withPreTenantBootstrap("api_key_auth.key_last_used_update", () =>
+      pg.query(
+        `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`,
+        [apiKey.id]
+      )
     ).catch(() => { /* silent */ });
 
     (req as any).apiKey = apiKey;
