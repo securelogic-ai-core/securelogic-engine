@@ -120,6 +120,82 @@ export function currentTenantContext(): TenantContext | undefined {
   return tenantStorage.getStore();
 }
 
+/* ── Pre-tenant bootstrap exemption (#966, owner ruling 2026-09-03) ─────────
+ *
+ * A handful of queries run BEFORE the tenant is known, because resolving the
+ * tenant is their purpose: the API-key hash lookup, the users row behind a
+ * JWT-bridge session, the api_keys bookkeeping UPDATE, and the organizations
+ * row that attachOrganizationContext exists to load. Every one is keyed by
+ * primary key or by key hash, so none can return another tenant's rows.
+ *
+ * Before this exemption those six sites emitted `db_query_outside_tenant_scope`
+ * on EVERY API-key request. That is a permanent false positive, and a tripwire
+ * that always fires is a tripwire nobody reads — the exact failure mode the
+ * signal exists to prevent, on a codebase where app-layer predicates are the
+ * whole boundary for tables without RLS.
+ *
+ * THE EXEMPTION IS DELIBERATELY NARROW. It is NOT "raw-pool access is fine
+ * when no tenant is in scope":
+ *
+ *   1. `reason` is a CLOSED allowlist. An arbitrary string throws. Adding a
+ *      site means editing this list, in review, with a name that says why.
+ *   2. It exempts `pg.query()` ONLY. A bare `pg.connect()` still warns even
+ *      inside the scope — a bootstrap path that checks out a raw client is
+ *      precisely what you would want to see.
+ *   3. It covers only what the callback covers. Wrap the single query, never
+ *      the surrounding handler, so anything added later is unexempt by default.
+ *   4. `preTenantBootstrapOnly.test.ts` asserts the helper is imported by the
+ *      two sanctioned middleware modules and nowhere else, so the exemption
+ *      cannot spread by copy-paste.
+ *
+ * This supersedes the "not silenced in code" note that stood in postgres.ts:
+ * the classification argument was right that these calls are correct, and
+ * wrong that permanent WARN noise was the acceptable way to record it.
+ */
+
+/** The ONLY paths that may suppress the bare-query tripwire. Closed set. */
+export const PRE_TENANT_BOOTSTRAP_REASONS = [
+  /** requireApiKey: the users row behind a verified JWT, by primary key. */
+  "api_key_auth.user_identity_lookup",
+  /** requireApiKey: the org's active api_keys row, by organization_id from the verified JWT. */
+  "api_key_auth.org_key_lookup",
+  /** requireApiKey: the api_keys row behind a presented key, by key_hash. */
+  "api_key_auth.key_hash_lookup",
+  /** requireApiKey: fire-and-forget `last_used_at` bookkeeping, by primary key. */
+  "api_key_auth.key_last_used_update",
+  /** attachOrganizationContext: the organizations row this middleware exists to load, by primary key. */
+  "org_context.entitlement_lookup",
+] as const;
+
+export type PreTenantBootstrapReason = (typeof PRE_TENANT_BOOTSTRAP_REASONS)[number];
+
+const bootstrapStorage = new AsyncLocalStorage<PreTenantBootstrapReason>();
+
+/** The active bootstrap reason, or undefined. Read by postgres.ts only. */
+export function currentPreTenantBootstrap(): PreTenantBootstrapReason | undefined {
+  return bootstrapStorage.getStore();
+}
+
+/**
+ * Run ONE pre-tenant bootstrap query with the bare-query tripwire suppressed.
+ *
+ * Wrap the query, not the handler. An unlisted reason throws rather than
+ * silently opening a new exemption.
+ */
+export function withPreTenantBootstrap<T>(
+  reason: PreTenantBootstrapReason,
+  fn: () => T
+): T {
+  if (!(PRE_TENANT_BOOTSTRAP_REASONS as readonly string[]).includes(reason)) {
+    throw new Error(
+      `withPreTenantBootstrap: '${reason}' is not an allowlisted pre-tenant ` +
+        "bootstrap reason. Add it to PRE_TENANT_BOOTSTRAP_REASONS in review, " +
+        "or use withTenant()/withElevated() — do not widen the exemption here."
+    );
+  }
+  return bootstrapStorage.run(reason, fn);
+}
+
 /**
  * Fail-fast accessor. Use when a code path MUST be tenant-scoped. Throws if
  * called outside a withTenant scope rather than letting a query run unscoped.

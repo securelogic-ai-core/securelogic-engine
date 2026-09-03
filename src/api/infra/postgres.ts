@@ -7,6 +7,7 @@ import type { PoolClient } from "pg";
 import {
   tenantStorage,
   createSavepointClient,
+  currentPreTenantBootstrap,
   type TenantContext,
   type AfterCommitCallback
 } from "./tenantContext.js";
@@ -187,9 +188,19 @@ logger.info(
  * the owner credential this fallback is silently correct; under `app_request`
  * (post-flip) it is the silent-zero-rows failure mode on policied tables — the
  * staging soak reads this signal to find missed wraps empirically before prod.
- * Off by default; zero cost when disabled. Legitimate pre-org-context callers
- * (requireApiKey, attachOrganizationContext, …) will appear here by design and
- * are classified in the C-1 matrix, not silenced in code.
+ * Off by default; zero cost when disabled.
+ *
+ * #966 (owner ruling 2026-09-03) narrows ONE class out of this signal: the
+ * pre-tenant bootstrap queries that resolve the tenant in the first place
+ * (`withPreTenantBootstrap`, closed allowlist in tenantContext.ts). They fired
+ * on every API-key request, and a tripwire that always fires is one nobody
+ * reads. This SUPERSEDES the previous note here that such callers "are
+ * classified in the C-1 matrix, not silenced in code" — the classification was
+ * right that the calls are correct and wrong that permanent WARN noise was the
+ * way to record it. The exemption covers `pg.query()` inside an explicit
+ * bootstrap scope and NOTHING else: a bare `pg.connect()` still warns even
+ * inside that scope, and every unsanctioned bare query still warns exactly as
+ * before.
  */
 const strictTenantLog = process.env.SECURELOGIC_DB_STRICT_TENANT_LOG === "true";
 const strictLogCounts = new Map<string, number>();
@@ -235,13 +246,18 @@ function logBareQuery(args: unknown[]): void {
 function tenantAwareQuery(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
   if (ctx) return (ctx.client.query as (...a: unknown[]) => unknown)(...args);
-  if (strictTenantLog) logBareQuery(args);
+  // #966: only an explicit, allowlisted bootstrap scope suppresses the signal.
+  // Everything else outside a tenant scope still warns, unchanged.
+  if (strictTenantLog && currentPreTenantBootstrap() === undefined) logBareQuery(args);
   return (pool.query as (...a: unknown[]) => unknown)(...args);
 }
 
 function tenantAwareConnect(...args: unknown[]): unknown {
   const ctx = tenantStorage.getStore();
   if (!ctx) {
+    // Deliberately NOT exempt inside a bootstrap scope (#966): the sanctioned
+    // bootstrap path issues single queries, never a raw client checkout, so a
+    // checkout here is a genuine finding whatever scope it appears in.
     if (strictTenantLog) logBareQuery(["<pg.connect>"]);
     return (pool.connect as (...a: unknown[]) => unknown)(...args);
   }
@@ -321,3 +337,8 @@ export function withElevated<T>(fn: (client: PoolClient) => Promise<T>): Promise
 }
 
 export { requireTenantContext, currentTenantContext, registerAfterCommit } from "./tenantContext.js";
+// NOTE (#966): `withPreTenantBootstrap` is deliberately NOT re-exported here.
+// 149 suites mock "../infra/postgres.js" with a bare `{ pg }`, so a middleware
+// importing the helper from this module resolves it to `undefined` under test
+// and turns an auth refusal into a 500. Import it from ./tenantContext.js —
+// pure, pool-free, and mocked by nothing.
