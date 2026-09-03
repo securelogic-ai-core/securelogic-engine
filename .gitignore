@@ -88,3 +88,11 @@ type-errors.log
 # input for prompt iteration; not source.
 synthesis-wired-verify.json
 .tokensave/
+
+# =========================
+# LOCAL CLAUDE CODE PERMISSIONS
+# =========================
+# Per-developer permission allowlist. The rest of .claude/ IS tracked on
+# purpose (agents, skills — 51 files), so this ignores the ONE local file
+# and nothing else.
+/.claude/settings.json
