@@ -44,13 +44,6 @@ export type NavFeatureFlag =
   // operator-ratified (2026-07-21) — deliberately distinct from the Intelligence
   // group's "Briefs" (the Intelligence Brief wedge product).
   | "briefing"
-  // Pen-test capability (PEN-1 / T2-I) — DARK (default off). The ACTIVATION
-  // control, distinct from the Risk group's `platform` entitlement above it:
-  // entitlement says who may use Pen Tests, this says whether Pen Tests are
-  // exposed at all. Mirrors the engine's SECURELOGIC_PEN_TEST_ENABLED, which
-  // 404s every pen-test route independently, so nav and API go dark together
-  // and neither can be reached by way of the other.
-  | "pen_test"
   // Risk-acceptance capability (NAV-1 / P1-C) — DARK (default off). The
   // ACTIVATION control for the "Approvals" entry in BOTH nav models. Mirrors the
   // engine's SECURELOGIC_RISK_ACCEPTANCE_ENABLED, which 404s every
@@ -186,14 +179,6 @@ export const NAV_ITEMS: NavItem[] = [
   { type: "group", label: "Risk", platform: true,
     items: [
       { label: "Findings",      href: "/findings" },
-      // Pen-test engagements (PEN-1). Under Risk beside Findings because an
-      // engagement is a finding SOURCE, not an asset or a compliance object —
-      // its output is ordinary Findings and the journey runs list → detail →
-      // /findings/[id]. Declared in BOTH nav models: this legacy menu is what
-      // production renders (risk_workspace is off there), so a workspace-only
-      // entry would ship the pages nav-orphaned — the exact defect the Vendor
-      // Assurance group above exists to prevent.
-      { label: "Pen Tests",     href: "/pen-tests", featureFlag: "pen_test" },
       { label: "Actions",       href: "/actions" },
       { label: "Risk Register", href: "/risks" },
       // NAV-1. Approvals was declared ONLY in WORKSPACE_NAV_ITEMS, so with
@@ -273,10 +258,6 @@ export const WORKSPACE_NAV_ITEMS: NavItem[] = [
       // staging (SECURELOGIC_RISK_ACCEPTANCE_ENABLED=true on the app service)
       // this entry is unchanged; in production both nav models are dark on it.
       { label: "Approvals",            href: "/approvals", featureFlag: "risk_acceptance" },
-      // Pen-test engagements (PEN-1) — the finding-source registry, mirrored
-      // from the legacy Risk group. Appended after the task-led ordering the
-      // group leads with, so the two findings destinations stay first.
-      { label: "Pen Tests",            href: "/pen-tests", featureFlag: "pen_test" },
     ],
   },
   { type: "group", label: "Assets", platform: true,
