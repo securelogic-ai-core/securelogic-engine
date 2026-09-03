@@ -24,7 +24,6 @@ const SOURCE_LABELS: Record<string, string> = {
   signal: "external intelligence signal",
   cyber_signal: "external intelligence signal",
   intelligence_event: "intelligence event",
-  pen_test: "penetration test",
 };
 
 /** Whether a finding's source is external threat/vulnerability intelligence. */

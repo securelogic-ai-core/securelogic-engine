@@ -17,36 +17,7 @@
 
 ### PLAT-ASSET-1 — Asset inventory is effectively unpopulated
 
-**Status: RULED 2026-08-22 (operator) — v1 BUILD IN FLIGHT on held branch
-`feat/plat-asset-1-identity-autocreate` (stacked on SL-OCC-3 #866).**
-
-> **The ruling (P0-F, operator, 2026-08-22):** machines may make deterministic
-> decisions; humans resolve ambiguity. A source asset carrying a sufficiently
-> strong, provider-native, globally unique identity may automatically create a
-> canonical asset when none carries that identity; exact strong matches
-> attach/update; weak identifiers (hostname/FQDN/scanner-local ids) never
-> auto-create without an explicitly established deterministic namespace;
-> ambiguous/conflicting/multi-candidate matches go to a human review queue;
-> never auto-merge, never auto-delete; full provenance and auditability;
-> tenant isolation at every step; no per-org setting in v1; no confidence
-> scores or fuzzy matching; not a CMDB or discovery scanner.
->
-> **The v1 allowlist (evidence-verified):** exactly `cloud_resource_id` values
-> parsing under a provider-native grammar — AWS ARN / Azure ARM resource id
-> (case-folded) / GCP full asset name (`assetStrongIdentity.ts`). Excluded
-> with recorded evidence: `instance_id` (account/region namespace not captured
-> by any intake), `internal_id` (single-authority assumption unenforced;
-> free-text source vocabulary), `scanner_asset_id` (namespace key is
-> unregistered free text; id stability unverifiable), `fqdn`/`hostname`
-> (operator-excluded; 20261033's two-`web01`s reality), `application_id` (no
-> producer, no registry), `ip`/`mac` (volatile). Migrations `20261047`–`49`;
-> review queue + provenance sidecar + freshness grant; wired into the SL-OCC-3
-> scan intake behind `SECURELOGIC_ASSET_AUTO_CREATE_ENABLED` (+ the registry
-> flag). The build closes the "asset_identifiers has no writer" gap for
-> cloud-native estates; bulk weak-identified estate population remains a
-> separate package.
-
-**Original statement (2026-08-21), retained for history:**
+**Status: OPEN — no owner. Surfaced by the SL-OCC-1/2 packages, 2026-08-21.**
 
 Per-asset vulnerability tracking is built, merged and verified on `develop`
 (SL-OCC-1a/1b, SL-OCC-2). The **substrate is empty**: staging holds **24 assets and
