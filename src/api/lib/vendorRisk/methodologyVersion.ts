@@ -48,6 +48,21 @@ export const METHODOLOGY_VERSION = "1.0.0" as const;
  */
 export const SCOPE_RULE_VERSION = "1.1.0" as const;
 
+/**
+ * Vendor Onboarding 2.0 (methodology FROZEN 2026-09-03, docs/design/
+ * vendor-onboarding-2.0-methodology.md). Criticality and Inherent Risk are
+ * PEERS; the assessment tier is their joint function. Each engine stamps its
+ * own version so a stored basis is reproducible without the current constants.
+ *
+ * METHODOLOGY_VERSION above stays "1.0.0" and is NOT rewritten: it is the
+ * stamp on every engagement scored under the nine-dimension inherent model,
+ * and those are never rescored.
+ */
+export const CRITICALITY_METHODOLOGY_VERSION = "1.0.0" as const;
+export const INHERENT_METHODOLOGY_VERSION_V2 = "2.0.0" as const;
+export const TIER_METHODOLOGY_VERSION = "1.0.0" as const;
+
+
 /** The version at which S5 domain activation entered the corpus. */
 export const SCOPE_RULE_VERSION_S5 = "1.1.0" as const;
 
