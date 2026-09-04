@@ -28,6 +28,7 @@ import bodyParser from "body-parser";
 
 import helmet from "helmet";
 import cors from "cors";
+import { buildAllowedOrigins, isAllowedOrigin } from "./lib/corsOrigins.js";
 import rateLimit from "express-rate-limit";
 import { rateLimitKeyGenerator } from "./infra/clientIp.js";
 import slowDown from "express-slow-down";
@@ -130,16 +131,10 @@ export function resolveRequestTimeoutMs(path: string): number {
   return EXTENDED_TIMEOUT_PATHS.has(routedPath) ? ASK_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 }
 
-// Production origins: exact-match allowlist — no wildcard.
-// Dev origins: github.dev previews (*.app.github.dev) plus localhost variants.
-const PROD_ORIGINS = new Set([
-  "https://www.securelogicai.com",
-  "https://securelogicai.com",
-  "https://app.securelogicai.com"
-]);
-
-const DEV_ORIGIN_RE =
-  /^https:\/\/[a-z0-9-]+-[a-z0-9]+-[a-z0-9]+\.app\.github\.dev$|^https?:\/\/localhost(:\d+)?$|^https?:\/\/127\.0\.0\.1(:\d+)?$/;
+// Browser origins allowed to call the engine directly: the exact production
+// origins plus this deployment's own app origin (from APP_BASE_URL) — no
+// wildcard. See lib/corsOrigins.ts for why the second half exists.
+const ALLOWED_ORIGINS = buildAllowedOrigins();
 
 /* =========================================================
    APP FACTORY
@@ -241,23 +236,7 @@ export function createApp(opts: CreateAppOptions): express.Express {
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Same-origin / non-browser requests (no Origin header) — allow.
-        if (!origin) {
-          callback(null, true);
-          return;
-        }
-
-        if (PROD_ORIGINS.has(origin)) {
-          callback(null, true);
-          return;
-        }
-
-        if (isDev && DEV_ORIGIN_RE.test(origin)) {
-          callback(null, true);
-          return;
-        }
-
-        callback(null, false);
+        callback(null, isAllowedOrigin(origin, { allowed: ALLOWED_ORIGINS, isDev }));
       },
       credentials: false,
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
