@@ -373,7 +373,7 @@ export default function IssueQuestionnaireFlow({
           <div style={{ fontSize: 13, color: "#e5e7eb" }}>
             {selected?.full_name ?? result.contactEmail} · {result.contactEmail}
             {result.dueDate && <span style={{ color: "#9ca3af" }}> · response due {result.dueDate}</span>}
-            <span style={{ color: "#9ca3af" }}> · link expires {new Date(result.expiresAt).toLocaleDateString()}</span>
+            <span style={{ color: "#9ca3af" }}> · link expires {result.expiresAt.slice(0, 10)}</span>
           </div>
           <details open={result.emailDelivery !== "sent"} style={{ fontSize: 12, color: "#9ca3af" }}>
             <summary style={{ cursor: "pointer" }}>

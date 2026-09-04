@@ -89,7 +89,7 @@ export default function AssessmentCompositionSection({
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
         <h2 style={h2}>Assessment composition</h2>
         <span style={{ fontSize: 11, color: "#6b7280" }}>
-          {TIER_LABELS[composition.tier] ?? composition.tier} · composed {new Date(composition.resolved_at).toLocaleDateString()} · rules v
+          {TIER_LABELS[composition.tier] ?? composition.tier} · composed {composition.resolved_at.slice(0, 10)} · rules v
           {composition.scope_rule_version}
           {composition.core_assurance_version && ` · core set v${composition.core_assurance_version}`}
         </span>
