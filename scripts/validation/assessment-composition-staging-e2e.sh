@@ -91,6 +91,20 @@ SN=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID2/scope" -d '{}')
 NI=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID2/issue" -d "{\"contact_id\":\"$CID\"}")
 [ "$(echo "$NI" | j "d['error']")" = "empty_scope" ] && ok "nominal engagement cannot be issued (422 empty_scope)" || bad "empty issue" "$NI"
 
+# ── 4b. Tier depth: a low-exposure relationship composes fewer objectives at attestation depth ──
+R3=$(api -X POST "$ENGINE_URL/api/vendors/$VID/relationships" -d '{"name":"Newsletter tooling"}')
+RID3=$(echo "$R3" | j "d['relationship']['id']")
+LOW='{"max_tolerable_disruption":"gt_1_month","operational_dependency":"incidental","business_reach":"single_team","substitutability":"interchangeable","process_coupling":"peripheral","concentration":"none","data_sensitivity":"internal","data_volume":"minimal","access_level":"none","regulatory_exposure":"none","regulatory_breach_notification":false,"ai_involvement":"none","ai_autonomy":"none","hosting_model":"saas","fourth_party_exposure":"none"}'
+I3=$(api -X POST "$ENGINE_URL/api/vendors/$VID/relationships/$RID3/intake" -d "$LOW")
+T3=$(echo "$I3" | j "d['relationship']['assessment_tier']")
+E3=$(api -X POST "$ENGINE_URL/api/vendor-engagements" -d "{\"vendor_id\":\"$VID\",\"relationship_id\":\"$RID3\",\"engagement_type\":\"initial\",\"title\":\"AC1 low $STAMP\"}")
+EID3=$(echo "$E3" | j "d['id']")
+S3=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID3/scope" -d '{}')
+A3=$(echo "$S3" | j "d['composition_snapshot']['summary']['core_applicable']"); AT3=$(echo "$S3" | j "d['composition_snapshot']['summary']['asked_attest']"); NA3=$(echo "$S3" | j "d['composition_snapshot']['summary']['core_not_applicable']")
+[ "$T3" = "tier_4_low" ] && [ "$AT3" -gt 0 ] 2>/dev/null && [ "$A3" -lt 16 ] 2>/dev/null && ok "tier depth: low-exposure relationship = $T3, $A3 objectives apply ($NA3 not applicable), asked at ATTEST depth ($AT3)" || bad "tier depth" "tier=$T3 applicable=$A3 attest=$AT3 na=$NA3"
+C3=$(api "$ENGINE_URL/api/vendor-engagements/$EID3/composition")
+[ -n "$(echo "$C3" | j "next((o['rationale'] for o in d['composition']['core_assurance']['objectives'] if o['outcome']=='not_applicable'), '')")" ] && ok "not-applicable objectives carry their reason" || bad "n/a reason" "$(echo "$C3" | head -c 200)"
+
 # ── 5. Issue to a directory contact, sent from SecureLogic ──
 DUE=$(date -u -d "+21 days" +%Y-%m-%d 2>/dev/null || date -u -v+21d +%Y-%m-%d)
 IS=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID/issue" -d "{\"contact_id\":\"$CID\",\"message\":\"Hello Jane,\\n\\nAC1 E2E $STAMP — please complete our assessment.\\n\\nThanks\",\"due_date\":\"$DUE\"}")
