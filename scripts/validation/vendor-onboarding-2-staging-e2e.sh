@@ -26,12 +26,20 @@ api()  { curl -s --max-time 60 -H "Authorization: Bearer $TOK" -H "Content-Type:
 
 TOK=$(curl -s --max-time 60 -X POST -H "Content-Type: application/json" "$ENGINE_URL/api/auth/login" -d "{\"email\":\"$E2E_EMAIL\",\"password\":\"$E2E_PASSWORD\"}" | j "d['token']")
 [ -n "$TOK" ] && ok "login" || { echo "FAIL login"; exit 2; }
+# Render reports a deploy live slightly before the new instance takes traffic.
+# Wait until the VO2 route answers with its own shape (401/200/404-no-path),
+# not the Express fallthrough 404 that carries a "path" key.
+for i in $(seq 1 20); do
+  P=$(curl -s --max-time 30 -H "Authorization: Bearer $TOK" "$ENGINE_URL/api/vendors/00000000-0000-0000-0000-000000000000/relationships")
+  echo "$P" | grep -q '"path"' || break
+  sleep 6
+done
 
 # ── 1. Add Vendor: identity + factual master data, NO classification ──
 V=$(api -X POST "$ENGINE_URL/api/vendors" -d "{\"name\":\"VO2 E2E Payments $STAMP\",\"category\":\"Payment Processing\",\"service_description\":\"Card acquiring\",\"data_sensitivity\":\"restricted\",\"access_level\":\"read_write\",\"website\":\"https://example.test\"}")
 VID=$(echo "$V" | j "d['vendor']['id']")
 [ -n "$VID" ] && ok "create vendor (no criticality asked)" || bad "create vendor" "$V"
-[ "$(echo "$V" | j "d['vendor'].get('criticality')")" = "None" ] && ok "vendor has NO manufactured criticality" || bad "criticality manufactured" "$(echo "$V" | j "d['vendor'].get('criticality')")"
+[ -z "$(echo "$V" | j "d['vendor'].get('criticality')")" ] && ok "vendor has NO manufactured criticality" || bad "criticality manufactured" "$(echo "$V" | j "d['vendor'].get('criticality')")"
 
 # ── 2. Relationship grain ──
 R1=$(api -X POST "$ENGINE_URL/api/vendors/$VID/relationships" -d '{"name":"Card processing","service_description":"Online card acquiring"}')
@@ -39,7 +47,7 @@ RID=$(echo "$R1" | j "d['relationship']['id']")
 [ -n "$RID" ] && ok "create relationship" || bad "create relationship (VO2 deployed?)" "$R1"
 [ "$(echo "$R1" | j "d['relationship']['is_primary']")" = "True" ] && ok "first relationship is primary" || bad "first not primary" "$R1"
 [ "$(echo "$R1" | j "d['relationship']['classification_state']")" = "intake_required" ] && ok "new relationship is intake_required (ignorance, not zero)" || bad "state" "$R1"
-[ "$(echo "$R1" | j "d['relationship']['assessment_tier']")" = "None" ] && ok "no tier before intake" || bad "tier before intake" "$R1"
+[ -z "$(echo "$R1" | j "d['relationship']['assessment_tier']")" ] && ok "no tier before intake" || bad "tier before intake" "$R1"
 
 # ── 3. Contacts: persistent vendor-level records ──
 C1=$(api -X POST "$ENGINE_URL/api/vendors/$VID/contacts" -d "{\"full_name\":\"Jane Security\",\"email\":\"jane-$STAMP@vendor.test\",\"contact_role\":\"security\",\"is_primary_contact\":true}")
@@ -96,7 +104,24 @@ SC=$(echo "$S" | j "d.get('resolution',{}).get('items') and len(d['resolution'][
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -H "Authorization: Bearer $TOK" -X POST "$ENGINE_URL/api/vendor-engagements/$EID/scope" -H 'Content-Type: application/json' -d '{}')" = "200" ] && ok "scope resolved through the existing resolver (items=$SC)" || bad "scope" "$(echo "$S" | head -c 300)"
 IS=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID/issue" -d "{\"contact_id\":\"$CID\"}")
 [ -n "$(echo "$IS" | j "d.get('invite_token') or d.get('ok')")" ] && ok "questionnaire issued to a DIRECTORY CONTACT (portal credential separate from contact)" || bad "issue to contact" "$(echo "$IS" | head -c 300)"
-U=$(api -X POST "$ENGINE_URL/api/vendor-engagements" -d "{\"vendor_id\":\"$VID\",\"relationship_id\":\"$RID\",\"engagement_type\":\"initial\"}")
+# the supplier's credential is engagement-specific and SEPARATE from the contact:
+# exchange the invite for a portal session (cookie) and read the engagement as the vendor would
+INV=$(echo "$IS" | j "d.get('invite_token')")
+JAR=$(mktemp)
+SESS=$(curl -s --max-time 60 -c "$JAR" -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" -X POST "$ENGINE_URL/api/vendor-portal/session" -d "{\"token\":\"$INV\"}")
+[ "$SESS" = "200" ] && ok "portal: invite exchanged for an engagement-scoped session (credential != contact)" || bad "portal exchange" "HTTP $SESS"
+PE=$(curl -s --max-time 60 -b "$JAR" "$ENGINE_URL/api/vendor-portal/engagement")
+[ "$(echo "$PE" | j "d.get('engagement',d).get('id')")" = "$EID" ] && ok "portal: the vendor sees exactly the engagement opened from the relationship" || bad "portal engagement" "$(echo "$PE" | head -c 200)"
+PQ=$(curl -s --max-time 60 -b "$JAR" -o /dev/null -w '%{http_code}' "$ENGINE_URL/api/vendor-portal/questions")
+[ "$PQ" = "200" ] && ok "portal: questionnaire composed from the derived tier is readable by the vendor" || bad "portal questions" "HTTP $PQ"
+rm -f "$JAR"
+# lifecycle continuity: the VO2 engagement is an ordinary engagement to every downstream surface
+for path in responses assurance-coverage evidence integrity; do
+  code=$(curl -s --max-time 60 -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$ENGINE_URL/api/vendor-engagements/$EID/$path")
+  [ "$code" = "200" ] && ok "continuity: GET /vendor-engagements/:id/$path = 200" || bad "continuity $path" "HTTP $code"
+done
+ST=$(api "$ENGINE_URL/api/vendor-engagements/$EID" | j "d.get('status') or d.get('engagement',{}).get('status')")
+[ "$ST" = "issued" ] && ok "state machine: engagement is 'issued' after the invite (existing lifecycle unchanged)" || bad "state" "$ST"
 # an engagement from an intake_required relationship must be refused
 R3=$(api -X POST "$ENGINE_URL/api/vendors/$VID/relationships" -d '{"name":"Unassessed service"}')
 RID3=$(echo "$R3" | j "d['relationship']['id']")
