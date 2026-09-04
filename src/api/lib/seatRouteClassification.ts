@@ -141,6 +141,10 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // Onboarding 2.0. Deny-all: declaring what the organisation depends on, and
   // how much, is a governance act — same posture as the engagement routes.
   "vendorRelationships.ts",
+  // One-read framework progress for a vendor. Deny-all: it replaces
+  // `GET /frameworks` + `GET /frameworks/:id/requirements` (both deny
+  // Contributors) and carries the same guard chain — never a wider read.
+  "vendorFrameworkProgress.ts",
   // Every route carries denyContributor(): opening an engagement, overriding an
   // inherent rating, issuing a vendor credential and recording a governance
   // decision are all owner/admin actions, and issuing in particular mints a

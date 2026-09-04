@@ -4,7 +4,7 @@ import { legacyVendorWritesEnabled, engagementCta } from "@/lib/legacyVendorWrit
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import {
-  getVendor,
+  getVendorDetail,
   getVendorAssessmentsForVendor,
   getVendorReviews,
   getVendorFindings,
@@ -14,10 +14,8 @@ import {
   listVendorContacts,
   listVendorRelationships,
   getVendorAssuranceExtraction,
-  getFrameworks,
-  getFrameworkRequirements,
-  type Framework,
-  type FrameworkRequirements,
+  getVendorFrameworkProgress,
+  type VendorFrameworkProgressEntry,
   type Vendor,
   type VendorAssessment,
   type VendorReview,
@@ -27,6 +25,7 @@ import {
   type VendorAssuranceDocument,
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
+import { UnavailableNotice } from "@/components/edx/UnavailableNotice";
 import { VendorContactsCard } from "./VendorContactsCard";
 import { VendorRelationshipsCard } from "./VendorRelationshipsCard";
 import { HistorySection } from "@/components/HistorySection";
@@ -323,10 +322,7 @@ function OpenFindingsSectionClient({
 // Section: Framework Assessments (per-vendor progress)
 // ─────────────────────────────────────────────────────────────
 
-type VendorFrameworkProgress = {
-  framework: Framework;
-  summary: FrameworkRequirements["summary"];
-};
+type VendorFrameworkProgress = VendorFrameworkProgressEntry;
 
 /** date-only render of an ISO timestamp; em-dash when absent. */
 function fmtDateOnly(iso: string | null | undefined): string {
@@ -897,8 +893,8 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps, contactsData, relationshipsData] = await Promise.all([
-    getVendor(token, id),
+  const [vendorRead, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps, contactsData, relationshipsData, frameworkProgressData] = await Promise.all([
+    getVendorDetail(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
     getVendorFindings(token, id),
@@ -919,29 +915,38 @@ export default async function VendorDetailPage({
     // such; a relationship with no intake renders as intake_required, never
     // as a zero.
     listVendorRelationships(token, id),
+    // Framework assessment progress for THIS vendor — ONE read (engine
+    // aggregate) instead of the frameworks list plus one requirements read per
+    // activated framework. Answered here means the vendor-scoped questionnaire
+    // (assessment_type='vendor', subject_id=vendor) — a separate truth from org
+    // readiness and from the vendor risk score (O-5). Only frameworks where
+    // this vendor's assessment has started come back; an untouched framework
+    // belongs behind the "Assess against a framework" CTA, not as a 0% row.
+    getVendorFrameworkProgress(token, id),
   ]);
 
+  // The engine did not answer (429 from the per-session limiter, 5xx, timeout):
+  // stay on the page and say so. Leaving for /vendors here read as "vendor
+  // gone" — and /vendors, hit in the same breath, then failed the same way.
+  if (vendorRead.outcome === "unavailable") {
+    return (
+      <div className="max-w-6xl mx-auto px-6 py-12">
+        <UnavailableNotice
+          subject="This vendor"
+          denial="not a missing vendor, not a permission problem, and not a limit of your plan"
+          reassurance="The vendor record is unchanged."
+          retryHref={`/vendors/${encodeURIComponent(id)}`}
+        />
+      </div>
+    );
+  }
+  // Not this caller's record (or no such record): the ONLY safe render is none.
+  const vendor = vendorRead.vendor;
   if (!vendor) redirect("/vendors");
 
-  // Framework assessment progress for THIS vendor: activated frameworks with
-  // at least one recorded response. Answered here means the vendor-scoped
-  // questionnaire (assessment_type='vendor', subject_id=vendor) — a separate
-  // truth from org readiness and from the vendor risk score (O-5).
-  const frameworksData = await getFrameworks(token);
-  const activeFrameworks = frameworksData?.frameworks ?? [];
-  const frameworkProgress: VendorFrameworkProgress[] = (
-    await Promise.all(
-      activeFrameworks.map(async (fw) => {
-        const reqs = await getFrameworkRequirements(token, fw.id, "vendor", vendor.id);
-        if (!reqs || reqs.summary.total === 0) return null;
-        // Only frameworks where this vendor's assessment has started — an
-        // untouched framework belongs behind the "Assess against a framework"
-        // CTA, not as a wall of 0% rows.
-        if (reqs.summary.total - reqs.summary.not_assessed === 0) return null;
-        return { framework: fw, summary: reqs.summary };
-      })
-    )
-  ).filter((p): p is VendorFrameworkProgress => p !== null);
+  const frameworkProgress: VendorFrameworkProgress[] = (frameworkProgressData?.frameworks ?? []).filter(
+    (p) => p.summary.total > 0 && p.summary.total - p.summary.not_assessed > 0
+  );
 
   // Vendor-Assurance read: latest REVIEWED document + its extraction, with the
   // current value per field projected at read time. No stored snapshot.
