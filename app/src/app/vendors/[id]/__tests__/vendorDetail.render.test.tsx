@@ -24,7 +24,6 @@ import {
   hrefOf,
 } from "@/test/harness";
 import {
-  aFramework,
   aVendor,
   aVendorAssessment,
   aVendorAssessmentsResponse,
@@ -47,6 +46,8 @@ const api = vi.hoisted(() => ({
   getVendorAssuranceExtraction: vi.fn(),
   getFrameworks: vi.fn(),
   getFrameworkRequirements: vi.fn(),
+  getVendorDetail: vi.fn(),
+  getVendorFrameworkProgress: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -75,6 +76,14 @@ beforeEach(() => {
   api.getVendorAssuranceExtraction.mockResolvedValue(null);
   api.getFrameworks.mockResolvedValue({ frameworks: [] });
   api.getFrameworkRequirements.mockResolvedValue(null);
+  // The page reads the vendor through getVendorDetail (outcome + vendor). Derive
+  // it from getVendor so every existing case keeps programming ONE mock and the
+  // assertions on getVendor's arguments stay meaningful.
+  api.getVendorDetail.mockImplementation(async (token: string, id: string) => {
+    const vendor = await api.getVendor(token, id);
+    return vendor ? { outcome: "ok", vendor } : { outcome: "not_found", vendor: null };
+  });
+  api.getVendorFrameworkProgress.mockResolvedValue({ vendor_id: "v-1", frameworks: [] });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -833,23 +842,16 @@ describe("/vendors/[id] — framework assessment progress", () => {
   };
 
   it("shows per-framework progress with last-updated and a continue link", async () => {
-    api.getFrameworks.mockResolvedValue({
-      frameworks: [aFramework({ id: "fw-1", name: "NIST CSF", version: "2.0" })],
-    });
-    api.getFrameworkRequirements.mockResolvedValue({
-      framework: { id: "fw-1", name: "NIST CSF", version: "2.0" },
-      requirements: [],
-      summary,
+    api.getVendorFrameworkProgress.mockResolvedValue({
+      vendor_id: "v-1",
+      frameworks: [{ framework: { id: "fw-1", name: "NIST CSF", version: "2.0" }, summary }],
     });
 
     const { container } = await renderPage(VendorDetailPage, props("v-1"));
 
-    expect(api.getFrameworkRequirements).toHaveBeenCalledWith(
-      "test-jwt",
-      "fw-1",
-      "vendor",
-      "v-1",
-    );
+    // ONE aggregate read for this vendor — never a per-framework loop.
+    expect(api.getVendorFrameworkProgress).toHaveBeenCalledWith("test-jwt", "v-1");
+    expect(api.getFrameworkRequirements).not.toHaveBeenCalled();
     expect(screen.getByText("Framework Assessments")).toBeInTheDocument();
     // Progress is COMPLETION — labeled so it can't read as a verdict (O-5).
     expect(screen.getByText(/3 of 4 requirements assessed · 75% — completion, not readiness/)).toBeInTheDocument();
@@ -860,13 +862,14 @@ describe("/vendors/[id] — framework assessment progress", () => {
   });
 
   it("an untouched framework is not listed; the empty state routes to the assess flow", async () => {
-    api.getFrameworks.mockResolvedValue({
-      frameworks: [aFramework({ id: "fw-1", name: "NIST CSF", version: "2.0" })],
-    });
-    api.getFrameworkRequirements.mockResolvedValue({
-      framework: { id: "fw-1", name: "NIST CSF", version: "2.0" },
-      requirements: [],
-      summary: { total: 4, pass: 0, partial: 0, fail: 0, not_assessed: 4, progress_pct: 0, last_response_at: null },
+    // The engine only returns frameworks where the assessment has started; the
+    // page still refuses to show a 0-of-N row if one ever arrived.
+    api.getVendorFrameworkProgress.mockResolvedValue({
+      vendor_id: "v-1",
+      frameworks: [{
+        framework: { id: "fw-1", name: "NIST CSF", version: "2.0" },
+        summary: { total: 4, pass: 0, partial: 0, fail: 0, not_assessed: 4, progress_pct: 0, last_response_at: null },
+      }],
     });
 
     const { container } = await renderPage(VendorDetailPage, props("v-1"));

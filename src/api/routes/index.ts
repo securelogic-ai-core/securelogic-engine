@@ -80,6 +80,7 @@ import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import vendorPortalRouter from "./vendorPortal.js";
 import vendorContactsRouter from "./vendorContacts.js";
+import vendorFrameworkProgressRouter from "./vendorFrameworkProgress.js";
 import vendorRelationshipsRouter from "./vendorRelationships.js";
 import vendorEngagementsRouter from "./vendorEngagements.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
@@ -505,6 +506,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorAssessmentAnalysisRouter);
   router.use("/api", vendorAssuranceDocumentsRouter);
   router.use("/api", vendorContactsRouter);
+  router.use("/api", vendorFrameworkProgressRouter);
   // Vendor Onboarding 2.0: the relationship grain + factual intake -> classification.
   router.use("/api", vendorRelationshipsRouter);
   router.use("/api", vendorEngagementsRouter);

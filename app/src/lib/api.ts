@@ -2291,6 +2291,69 @@ export async function getVendor(
   }
 }
 
+/**
+ * The vendor detail read WITH its outcome, for the one surface that must tell
+ * "this vendor is not yours / does not exist" (→ leave the page) apart from
+ * "the engine did not answer" (→ stay, say so, offer a retry).
+ *
+ * `getVendor` collapses every non-2xx to null, which on the detail page became
+ * `redirect("/vendors")` — so a 429 from the per-session limiter, a 5xx or a
+ * timeout was rendered as "vendor gone". Only 403/404 (and 401, whose recovery
+ * is the session layer's) mean the caller may not see this record.
+ */
+export type VendorDetailOutcome = "ok" | "not_found" | "unavailable";
+
+export async function getVendorDetail(
+  apiKey: string,
+  id: string
+): Promise<{ outcome: VendorDetailOutcome; vendor: Vendor | null }> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(id)}`, apiKey);
+    if (res.ok) {
+      const body = (await res.json()) as { vendor: Vendor };
+      return body.vendor ? { outcome: "ok", vendor: body.vendor } : { outcome: "not_found", vendor: null };
+    }
+    if (res.status === 401 || res.status === 403 || res.status === 404) {
+      return { outcome: "not_found", vendor: null };
+    }
+    return { outcome: "unavailable", vendor: null };
+  } catch {
+    return { outcome: "unavailable", vendor: null };
+  }
+}
+
+/**
+ * ONE read for the vendor's assessment progress against every framework where
+ * it has started (engine: GET /api/vendors/:id/framework-progress). Replaces
+ * `getFrameworks` + one `getFrameworkRequirements` per framework on the vendor
+ * detail page. null = the read FAILED (rendered as such, never as "no progress").
+ */
+export type VendorFrameworkProgressEntry = {
+  framework: Pick<Framework, "id" | "name" | "version">;
+  summary: FrameworkRequirements["summary"];
+};
+
+export type VendorFrameworkProgressResponse = {
+  vendor_id: string;
+  frameworks: VendorFrameworkProgressEntry[];
+};
+
+export async function getVendorFrameworkProgress(
+  apiKey: string,
+  vendorId: string
+): Promise<VendorFrameworkProgressResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendors/${encodeURIComponent(vendorId)}/framework-progress`,
+      apiKey
+    );
+    if (!res.ok) return null;
+    return res.json() as Promise<VendorFrameworkProgressResponse>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getVendorAssessmentsForVendor(
   apiKey: string,
   vendorId: string,
