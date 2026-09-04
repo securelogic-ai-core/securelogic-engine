@@ -544,11 +544,11 @@ export default function QuestionnairePage() {
                           onClick={() => void save(q.requirement_id, s.answer!, s.notes)}
                           className="rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-semibold text-brand-bg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Save notes
+                          Save explanation
                         </button>
                         {s.answer === null && (
                           <span className="text-xs text-slate-500">
-                            Choose an answer first — notes are saved with it.
+                            Choose an answer first — the explanation is saved with it.
                           </span>
                         )}
                       </div>
