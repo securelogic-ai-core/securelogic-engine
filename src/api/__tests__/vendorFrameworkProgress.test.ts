@@ -4,7 +4,7 @@
  * progress_pct from assessmentProgress, ISO last_response_at or null).
  */
 import { describe, expect, it } from "vitest";
-import { projectProgressRow } from "../routes/vendorFrameworkProgress.js";
+import { projectProgressRow } from "../lib/vendorFrameworkProgress.js";
 
 describe("projectProgressRow", () => {
   it("counts a stored not_assessed as unassessed and derives progress from pass+partial+fail", () => {
