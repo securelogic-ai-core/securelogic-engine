@@ -7750,13 +7750,13 @@ export async function getVendorEngagement(
   token: string,
   id: string
 ): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire; relationship: VendorEngagementRelationshipContext | null } | null> {
-      relationship: VendorEngagementRelationshipContext | null;
   try {
     const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
     if (!res.ok) return null;
     return res.json() as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      relationship: VendorEngagementRelationshipContext | null;
     }>;
   } catch {
     return null;
