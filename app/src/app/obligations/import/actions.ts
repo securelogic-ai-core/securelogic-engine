@@ -1,8 +1,9 @@
 "use server";
 
 import { getSession } from "@/lib/session";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export type ObligationImportRow = {
   title: string;

@@ -12,11 +12,19 @@ import {
   AuthDivider,
 } from "@/components/AuthCard";
 
+import { browserEngineBaseUrl, joinEngineUrl } from "@/lib/engineBaseUrl";
+
 // Browser-facing engine base URL. Set per environment (staging→staging engine,
-// prod→prod engine) via NEXT_PUBLIC_ENGINE_URL. The dev fallback is localhost —
+// prod→prod engine) via NEXT_PUBLIC_ENGINE_URL, normalized so a configured
+// trailing slash cannot become `//api/...`. The dev fallback is localhost —
 // NEVER a production host, so a missing value in a staging build fails locally
 // instead of silently routing staging traffic to production.
-const ENGINE_URL = process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4000";
+const ENGINE_URL = browserEngineBaseUrl();
+
+// The SSO availability check is a convenience that decides whether to OFFER an
+// SSO button. It must never stand between a person and the password form: a
+// slow, unreachable or misconfigured engine is treated as "no SSO known here".
+const SSO_CHECK_TIMEOUT_MS = 5_000;
 
 interface SsoDomainResult {
   hasSso: boolean;
@@ -51,17 +59,23 @@ function LoginForm() {
     if (!trimmed.includes("@")) return;
 
     setCheckingSSO(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SSO_CHECK_TIMEOUT_MS);
     try {
       const res = await fetch(
-        `${ENGINE_URL}/api/sso/check-domain?email=${encodeURIComponent(trimmed)}`,
-        { cache: "no-store" }
+        joinEngineUrl(ENGINE_URL, `/api/sso/check-domain?email=${encodeURIComponent(trimmed)}`),
+        { cache: "no-store", signal: controller.signal }
       );
       if (!res.ok) { setSsoConfig(null); return; }
       const data = (await res.json()) as SsoDomainResult;
       setSsoConfig(data);
     } catch {
+      // Network failure, CORS refusal, timeout, malformed body: intentionally
+      // swallowed. The outcome is "no SSO offered", never an exception that
+      // reaches the page (WebKit reports an unhandled fetch failure as one).
       setSsoConfig(null);
     } finally {
+      clearTimeout(timer);
       setCheckingSSO(false);
     }
   }, []);
@@ -159,7 +173,7 @@ function LoginForm() {
   const hasSso      = ssoConfig?.hasSso === true;
   const isEnforced  = ssoConfig?.isEnforced === true;
   const ssoLoginUrl = hasSso && ssoConfig?.organizationId
-    ? `${ENGINE_URL}/api/sso/${ssoConfig.organizationId}/login`
+    ? joinEngineUrl(ENGINE_URL, `/api/sso/${encodeURIComponent(ssoConfig.organizationId)}/login`)
     : null;
 
   const showPasswordForm = !hasSso || showPassword;

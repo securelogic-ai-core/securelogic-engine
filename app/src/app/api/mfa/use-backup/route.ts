@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getIronSession } from "iron-session";
 import { getSessionOptions, type SessionData } from "@/lib/session";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export async function POST(request: Request) {
   const body = await request.json() as { backup_code?: unknown; mfa_token?: unknown };

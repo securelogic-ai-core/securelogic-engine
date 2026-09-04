@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 /**
  * Proxies GET /api/ai-systems/:id/history from the browser to the

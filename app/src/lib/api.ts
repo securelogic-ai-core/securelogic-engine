@@ -39,8 +39,9 @@ import type {
   PostureForecastResponse,
   ConnectorHealthResponse,
 } from "./executiveRisk";
+import { engineBaseUrl, joinEngineUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 // =========================================================
 // TYPES
@@ -5170,7 +5171,7 @@ export async function checkSsoDomain(
 ): Promise<SsoDomainCheck> {
   try {
     const res = await fetch(
-      `${ENGINE_URL}/api/sso/check-domain?email=${encodeURIComponent(email)}`,
+      joinEngineUrl(ENGINE_URL, `/api/sso/check-domain?email=${encodeURIComponent(email)}`),
       { cache: "no-store" }
     );
     if (!res.ok) return { hasSso: false, isEnforced: false, organizationId: null };

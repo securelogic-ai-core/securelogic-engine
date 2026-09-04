@@ -24,8 +24,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getSession } from "@/lib/session";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
