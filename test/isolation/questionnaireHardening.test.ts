@@ -59,6 +59,10 @@ async function openIssuedEngagement(title: string) {
   const created = await asAdmin("post", "/api/vendor-engagements").send({ ...TIER1_INTAKE, vendor_id: vendorId, title });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = created.body.id as string;
+  // Pinned to the 1.1.0 corpus this suite proves over its one-requirement
+  // library (Assessment Composition v1 stamps new engagements 1.2.0, which
+  // provisions the Core Assurance Set; the stamp selects the corpus).
+  await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [id]);
   expect((await asAdmin("post", `/api/vendor-engagements/${id}/scope`).send({})).status).toBe(200);
   const issued = await asAdmin("post", `/api/vendor-engagements/${id}/issue`).send({ contact_email: `${title}@example.com` });
   expect(issued.status, JSON.stringify(issued.body)).toBe(200);
