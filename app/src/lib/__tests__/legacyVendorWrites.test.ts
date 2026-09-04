@@ -37,18 +37,19 @@ describe("legacyVendorWritesEnabled", () => {
 describe("engagementCta", () => {
   it("targets the intake page with the vendor preselected", () => {
     expect(engagementCta("abc-123")).toEqual({
-      href: "/vendor-engagements/new?vendorId=abc-123",
-      label: "Open an engagement",
+      // Vendor Onboarding 2.0: the canonical way in is the vendor page.
+      href: "/vendors/abc-123#relationships",
+      label: "Classify and assess from the vendor page",
     });
   });
 
   it("URL-encodes the vendor id", () => {
     expect(engagementCta("a/b?c").href).toBe(
-      "/vendor-engagements/new?vendorId=a%2Fb%3Fc"
+      "/vendors/a%2Fb%3Fc#relationships"
     );
   });
 
   it("omits the query without a vendor", () => {
-    expect(engagementCta().href).toBe("/vendor-engagements/new");
+    expect(engagementCta().href).toBe("/vendors");
   });
 });
