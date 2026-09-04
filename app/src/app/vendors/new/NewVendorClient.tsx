@@ -76,24 +76,6 @@ export default function NewVendorClient({
             />
           </div>
 
-          {/* Criticality */}
-          <div>
-            <FieldLabel>Criticality</FieldLabel>
-            <select
-              name="criticality"
-              className={inputClass}
-              style={inputStyle}
-              disabled={submitting}
-              defaultValue=""
-            >
-              <option value="" style={{ background: "#0a0f1a" }}>Select criticality…</option>
-              <option value="critical" style={{ background: "#0a0f1a" }}>Critical</option>
-              <option value="high"     style={{ background: "#0a0f1a" }}>High</option>
-              <option value="medium"   style={{ background: "#0a0f1a" }}>Medium</option>
-              <option value="low"      style={{ background: "#0a0f1a" }}>Low</option>
-            </select>
-          </div>
-
           {/* Category */}
           <div>
             <FieldLabel>Category</FieldLabel>

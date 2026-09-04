@@ -7980,6 +7980,158 @@ export async function deleteVendorContact(
   }
 }
 
+/* ─────────────────────────────────────────────────────────────
+   Vendor Onboarding 2.0 — relationships, factual intake, and the
+   DERIVED classification (criticality, inherent risk v2, assessment tier).
+
+   A relationship is what the customer buys from a vendor. Nothing here asks
+   for a classification: the customer answers facts, the engine derives.
+   `classification_state === "intake_required"` renders as ignorance — never
+   a zero, never a rating.
+   ───────────────────────────────────────────────────────────── */
+
+export const ASSESSMENT_TIER_VALUES = ["tier_1_critical", "tier_2_high", "tier_3_moderate", "tier_4_low"] as const;
+export type AssessmentTierValue = (typeof ASSESSMENT_TIER_VALUES)[number];
+export type RiskBandValue = "Critical" | "High" | "Moderate" | "Low";
+
+export type MethodologyAdjustment = { rule_id: string; explanation: string; points?: number };
+export type ClassificationFactor = { dimension: string; level: string; raw: number; weight: number; contribution: number; explanation: string };
+export type ClassificationBasis = {
+  method: string;
+  version: number;
+  methodology_version: string;
+  factors: ClassificationFactor[];
+  adjustments: MethodologyAdjustment[];
+};
+export type TierBasis = {
+  method: string;
+  methodology_version: string;
+  criticality_band: RiskBandValue;
+  inherent_band: RiskBandValue;
+  adjustments: MethodologyAdjustment[];
+  policy?: { requested: AssessmentTierValue; applied: boolean; reason: string };
+};
+
+export type VendorRelationship = {
+  id: string;
+  vendor_id: string;
+  name: string;
+  service_description: string | null;
+  status: "active" | "inactive";
+  is_primary: boolean;
+  policy_minimum_tier: AssessmentTierValue | null;
+  classification_state: "classified" | "intake_required";
+  criticality_score: number | null;
+  criticality_band: RiskBandValue | null;
+  criticality_arithmetic_band: RiskBandValue | null;
+  criticality_basis: ClassificationBasis | null;
+  criticality_methodology_version: string | null;
+  inherent_score: number | null;
+  inherent_band: RiskBandValue | null;
+  inherent_arithmetic_band: RiskBandValue | null;
+  inherent_basis: ClassificationBasis | null;
+  inherent_methodology_version: string | null;
+  assessment_tier: AssessmentTierValue | null;
+  tier_calculated_minimum: AssessmentTierValue | null;
+  tier_basis: TierBasis | null;
+  tier_methodology_version: string | null;
+  classification_intake_id: string | null;
+  classification_computed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VendorRelationshipsResponse = { relationships: VendorRelationship[]; count: number; intake_required_count: number };
+
+export type RelationshipIntakeInput = {
+  max_tolerable_disruption: string;
+  operational_dependency: string;
+  business_reach: string;
+  substitutability: string;
+  process_coupling: string;
+  concentration: string;
+  data_sensitivity: string;
+  data_volume: string;
+  access_level: string;
+  regulatory_exposure: string;
+  regulatory_breach_notification: boolean;
+  ai_involvement: string;
+  ai_autonomy: string;
+  hosting_model: string;
+  fourth_party_exposure: string;
+};
+
+export type VendorRelationshipResult<T> = T | { failure: { error: string; message?: string; missing?: string[]; invalid?: string[] } };
+export function isVendorRelationshipFailure<T>(r: VendorRelationshipResult<T>): r is { failure: { error: string; message?: string; missing?: string[]; invalid?: string[] } } {
+  return typeof r === "object" && r !== null && "failure" in r;
+}
+async function relationshipFailureFrom(res: Response, fallback: string): Promise<{ failure: { error: string; message?: string; missing?: string[]; invalid?: string[] } }> {
+  const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string; missing?: string[]; invalid?: string[] };
+  return { failure: { error: data.error ?? fallback, ...(data.message ? { message: data.message } : {}), ...(data.missing ? { missing: data.missing } : {}), ...(data.invalid ? { invalid: data.invalid } : {}) } };
+}
+
+export async function listVendorRelationships(token: string, vendorId: string): Promise<VendorRelationshipsResponse | null> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(vendorId)}/relationships`, token);
+    if (!res.ok) return null;
+    return (await res.json()) as VendorRelationshipsResponse;
+  } catch {
+    return null;
+  }
+}
+
+export async function createVendorRelationship(
+  token: string, vendorId: string,
+  input: { name: string; service_description?: string; is_primary?: boolean; policy_minimum_tier?: AssessmentTierValue | null }
+): Promise<VendorRelationshipResult<{ relationship: VendorRelationship }>> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(vendorId)}/relationships`, token, { method: "POST", body: JSON.stringify(input) });
+    if (!res.ok) return relationshipFailureFrom(res, "relationship_create_failed");
+    return (await res.json()) as { relationship: VendorRelationship };
+  } catch {
+    return { failure: { error: "relationship_create_failed" } };
+  }
+}
+
+export async function updateVendorRelationship(
+  token: string, vendorId: string, relationshipId: string,
+  patch: { name?: string; service_description?: string | null; status?: "active" | "inactive"; policy_minimum_tier?: AssessmentTierValue | null }
+): Promise<VendorRelationshipResult<{ relationship: VendorRelationship }>> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(vendorId)}/relationships/${encodeURIComponent(relationshipId)}`, token, { method: "PATCH", body: JSON.stringify(patch) });
+    if (!res.ok) return relationshipFailureFrom(res, "relationship_update_failed");
+    return (await res.json()) as { relationship: VendorRelationship };
+  } catch {
+    return { failure: { error: "relationship_update_failed" } };
+  }
+}
+
+export async function submitRelationshipIntake(
+  token: string, vendorId: string, relationshipId: string, intake: RelationshipIntakeInput
+): Promise<VendorRelationshipResult<{ intake: { id: string; version: number }; relationship: VendorRelationship }>> {
+  try {
+    const res = await engineFetch(`/api/vendors/${encodeURIComponent(vendorId)}/relationships/${encodeURIComponent(relationshipId)}/intake`, token, { method: "POST", body: JSON.stringify(intake) });
+    if (!res.ok) return relationshipFailureFrom(res, "relationship_intake_failed");
+    return (await res.json()) as { intake: { id: string; version: number }; relationship: VendorRelationship };
+  } catch {
+    return { failure: { error: "relationship_intake_failed" } };
+  }
+}
+
+/** VO-7: open an engagement FROM a classified relationship. No intake is re-asked. */
+export async function createVendorEngagementFromRelationship(
+  token: string,
+  input: { vendor_id: string; relationship_id: string; engagement_type: "initial" | "periodic" | "targeted" | "event_driven"; title?: string }
+): Promise<VendorEngagementResult<VendorEngagementCreated>> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements`, token, { method: "POST", body: JSON.stringify(input) });
+    if (!res.ok) return engagementFailureFrom(res, "engagement_create_failed");
+    return (await res.json()) as VendorEngagementCreated;
+  } catch {
+    return { failure: { error: "engagement_create_failed" } };
+  }
+}
+
 export type VendorEngagementRecomputeResult = {
   effectiveness: {
     score: number;

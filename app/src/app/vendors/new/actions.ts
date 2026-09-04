@@ -22,7 +22,6 @@ export async function createVendor(
 
   const optionals: Array<[string, string | null]> = [
     ["category",            formData.get("category") as string | null],
-    ["criticality",         formData.get("criticality") as string | null],
     ["service_description", formData.get("service_description") as string | null],
     ["data_sensitivity",    formData.get("data_sensitivity") as string | null],
     ["access_level",        formData.get("access_level") as string | null],
@@ -57,5 +56,23 @@ export async function createVendor(
   }
 
   const data = (await res.json()) as { vendor: { id: string } };
+
+  // Vendor Onboarding 2.0: the common one-vendor/one-service case gets its
+  // primary relationship created for it, named after the vendor. Criticality
+  // is no longer asked here — it is DERIVED from the relationship's factual
+  // intake, which the vendor page now prompts for. Best-effort and silent on
+  // failure: where Vendor Assurance is dark the route answers 404, and the
+  // vendor itself is already created either way.
+  try {
+    await fetch(`${ENGINE_URL}/api/vendors/${encodeURIComponent(data.vendor.id)}/relationships`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: `${name} — primary service`, ...(body.service_description ? { service_description: body.service_description } : {}) }),
+      cache: "no-store",
+    });
+  } catch {
+    /* the vendor exists; the relationship can be added from its page */
+  }
+
   redirect(`/vendors/${data.vendor.id}`);
 }
