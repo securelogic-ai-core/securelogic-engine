@@ -14,6 +14,7 @@
  * slides lastActivityAt), so the login/issuance routes are left untouched.
  */
 import { sealData, unsealData } from "iron-session";
+import { joinEngineUrl, normalizeBaseUrl } from "@/lib/engineBaseUrl";
 
 export const SESSION_COOKIE_NAME = "sl_session";
 
@@ -247,13 +248,14 @@ export type EngineSessionVerdict = "valid" | "invalid" | "unknown";
  * session alone. An engine outage must never sign the whole customer base out.
  */
 export async function probeEngineSession(token: string): Promise<EngineSessionVerdict> {
-  const base = process.env.ENGINE_API_URL;
+  // Normalized (no trailing slash) so a configured `…/` cannot become `//api/…`.
+  const base = normalizeBaseUrl(process.env.ENGINE_API_URL, "");
   if (!base) return "unknown";
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ENGINE_PROBE_TIMEOUT_MS);
   try {
-    const res = await fetch(`${base}/api/auth/me`, {
+    const res = await fetch(joinEngineUrl(base, "/api/auth/me"), {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
       signal: controller.signal,

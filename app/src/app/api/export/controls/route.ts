@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { type NextRequest, NextResponse } from "next/server";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSession();

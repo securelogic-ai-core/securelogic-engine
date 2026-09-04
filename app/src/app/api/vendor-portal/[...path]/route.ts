@@ -28,8 +28,9 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 /** Engine's requestId middleware allowlist: /^[a-zA-Z0-9._-]+$/ up to 128. */
 function safeRequestId(incoming: string | null): string {

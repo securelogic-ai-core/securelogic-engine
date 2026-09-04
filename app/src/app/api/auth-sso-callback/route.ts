@@ -4,8 +4,9 @@ import { getIronSession } from "iron-session";
 import { getSessionOptions, type SessionData } from "@/lib/session";
 import { getAuthMe } from "@/lib/api";
 import { getOrigin } from "@/lib/getOrigin";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export async function GET(request: Request) {
   // #823: every redirect below MUST be built against the PUBLIC origin, not

@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
 import { penTestEnabled } from "@/lib/penTestFeatureFlag";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 async function getToken(): Promise<string | null> {
   const session = await getSession();

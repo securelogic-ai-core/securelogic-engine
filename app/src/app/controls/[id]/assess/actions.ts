@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
 export type UpdateControlAssessmentStatusResult = { error: string };
 
@@ -36,7 +37,7 @@ export async function updateControlAssessmentStatus(
   revalidatePath(`/controls/${controlId}`);
 }
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export type CreateControlAssessmentResult = { error: string };
 

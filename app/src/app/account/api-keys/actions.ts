@@ -2,8 +2,9 @@
 
 import { getSession } from "@/lib/session";
 import type { ApiKeyRecord } from "@/lib/api";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export async function createKeyAction(
   label: string,

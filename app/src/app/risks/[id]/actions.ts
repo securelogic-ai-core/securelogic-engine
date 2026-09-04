@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getSession } from "@/lib/session";
 import { patchRisk } from "@/lib/api";
+import { engineBaseUrl } from "@/lib/engineBaseUrl";
 
 /**
  * RR-5 — Server actions for the risk detail page.
@@ -20,7 +21,7 @@ import { patchRisk } from "@/lib/api";
  * badge changes).
  */
 
-const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const ENGINE_URL = engineBaseUrl();
 
 export async function updateRiskCadenceAction(
   riskId: string,
