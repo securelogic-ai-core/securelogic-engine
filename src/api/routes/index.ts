@@ -79,6 +79,7 @@ import vendorAssessmentAnalysisRouter from "./vendorAssessmentAnalysis.js";
 import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import vendorPortalRouter from "./vendorPortal.js";
+import vendorContactsRouter from "./vendorContacts.js";
 import vendorEngagementsRouter from "./vendorEngagements.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
@@ -502,6 +503,7 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorReviewsRouter);
   router.use("/api", vendorAssessmentAnalysisRouter);
   router.use("/api", vendorAssuranceDocumentsRouter);
+  router.use("/api", vendorContactsRouter);
   router.use("/api", vendorEngagementsRouter);
   router.use("/api", vendorSignalContextRouter);
   // EXTERNAL surface — reachable without a platform account. Every route inside
