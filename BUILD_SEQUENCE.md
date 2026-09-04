@@ -409,6 +409,50 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-09-04 — OWNER WALKTHROUGH REMEDIATION (WA-1 … WA-4).**
+> Owner rulings recorded 2026-09-04 after the manual owner/customer walkthrough
+> of Vendor Assurance / Assessment Composition v1. Four packages, sequential,
+> **WA-1 → WA-2 → WA-3 → WA-4**, no production activation between them.
+>
+> Gate: **WA-3 must land and pass deployed-staging validation before Vendor
+> Assurance is eligible for production activation.** Production stays dark
+> (`SECURELOGIC_VENDOR_ASSURANCE_ENABLED=false` on the production engine).
+>
+> - **WA-1 — assurance integrity at the point of answering. BUILT.**
+>   Explanation required at SUBMIT (never at save) for `partial`, `fail` and
+>   `not_applicable`; for `pass` only where the question's existing
+>   `question_versions.evidence_policy` asks for more. Per-question evidence
+>   attach on `/portal/questionnaire` through the SAME canonical endpoint the
+>   document library posts to. Portal write authorization terminated,
+>   engagement-scoped, at `analysis_complete`. **No migration** — the rule is
+>   answer-driven, so the per-question column it first appeared to need would
+>   have rehashed and republished the whole question library to store a
+>   constant. New pure module `src/api/lib/vendorPortal/responseCompleteness.ts`
+>   is the single authority, called by the engine's submit gate and mirrored in
+>   exactly one named function on the client.
+> - **WA-2 — decision transparency and contact correction.** Analyst basis
+>   panel from the stored `criticality_basis` / `inherent_basis` / `tier_basis`;
+>   render the snapshot's unshown `coverage` / `dropped` / `excluded_by_rules`;
+>   correct the `overrideInherent` refusal copy (its stated justification —
+>   "the scope derives from it" — stopped being true under Onboarding 2.0).
+>   Inline contact edit through the existing PATCH; root-fix the
+>   hidden-inactive contact collision without destructive historical deletion;
+>   `full_name` kept (owner ruling 4). Applicability **challenge**, never
+>   removal (owner ruling 2): the SecureLogic Core Assurance floor cannot be
+>   suppressed, and a fact-corrected non-applicability is recorded as a
+>   determination with provenance — new intake version → re-classify →
+>   re-compose → new snapshot. Adds the missing `reason` on an intake write.
+> - **WA-3 — vendor-facing language.** A curated vendor explanation distinct
+>   from the analyst rule trace; rule ids out of the portal; fix the
+>   second-person misdirection (customer-directed rationales are currently
+>   shown to the vendor); US-English and editorial pass over the Core Assurance
+>   Set and `frameworkTemplates.ts`. Sequenced before activation because a
+>   content edit after go-live permanently forks the question library.
+> - **WA-4 — portfolio navigation and triage.** Needs Attention DERIVED from
+>   canonical truth; durable, audited human disposition persisted separately
+>   (owner ruling 5); engagement-list query params with a whitelisted sort. No
+>   automatic promotion of any response to a formal Finding.
+
 > **DOC-SYNC 2026-09-04 — ASSESSMENT COMPOSITION v1 + CONTACT-BASED ISSUANCE
 > SENT FROM SECURELOGIC: owner-approved methodology, BUILT (migrations
 > `20261088`, `20261089`; scope-rule corpus `1.2.0`). Design record:

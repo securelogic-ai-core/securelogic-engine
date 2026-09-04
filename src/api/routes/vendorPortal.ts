@@ -80,6 +80,16 @@ import {
   isPortalWritable,
   type EngagementState,
 } from "../lib/vendorRisk/engagementStateMachine.js";
+import {
+  asEvidencePolicy,
+  evidenceRequired,
+  explanationRequired,
+  incompleteItems,
+  isResponseAnswer,
+  summarizeIncomplete,
+  RESPONSE_ANSWERS,
+  type CompletenessItem,
+} from "../lib/vendorPortal/responseCompleteness.js";
 
 const router = Router();
 
@@ -317,6 +327,14 @@ export async function getPortalEngagement(req: PortalRequest, res: Response): Pr
    GET /api/vendor-portal/questions
    The FROZEN scope, with each question's "why we're asking", plus whatever the
    vendor has answered so far.
+
+   WA-1: also carries the COMPLETENESS contract per item — the question's
+   evidence policy, how many artifacts are attached to it, and the two derived
+   booleans the submit gate will apply. The vendor's UI must be able to show
+   "an explanation is required here" BEFORE they reach the submit refusal, and
+   it must derive that from the same module the engine refuses with
+   (responseCompleteness.ts) rather than reimplementing the rule in TypeScript
+   on the other side of the wire.
    ========================================================= */
 export async function getPortalQuestions(req: PortalRequest, res: Response): Promise<void> {
   const ctx = req.portalContext!;
@@ -332,6 +350,8 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
         reasons: unknown;
         status: string | null;
         notes: string | null;
+        evidence_policy: string | null;
+        evidence_count: string;
       }>(
         // Only ASKABLE items: deterministic ones, plus AI-suggested ones a human
         // accepted. An unaccepted suggestion must never reach a vendor — that is
@@ -340,7 +360,12 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
                 COALESCE(qv.prompt, r.title) AS title,
                 COALESCE(qv.guidance, r.description) AS description,
                 si.depth, si.mandatory, si.reasons,
-                rr.status, rr.notes
+                rr.status, rr.notes,
+                qv.evidence_policy,
+                -- Artifacts the vendor has attached TO THIS QUESTION. The same
+                -- predicate listPortalEvidence uses, so the count beside a
+                -- question and the file on the library page are one fact.
+                COUNT(ev.id)::text AS evidence_count
            FROM vendor_engagement_scope_items si
            JOIN requirements r ON r.id = si.requirement_id
            -- VA-Q1 P2 (ADR-0013 R3): the vendor reads the IMMUTABLE version the
@@ -353,28 +378,49 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
                   ON rr.requirement_id = si.requirement_id
                  AND rr.engagement_id  = si.engagement_id
                  AND rr.organization_id = si.organization_id
+           LEFT JOIN evidence ev
+                  ON ev.engagement_id   = si.engagement_id
+                 AND ev.requirement_id  = si.requirement_id
+                 AND ev.organization_id = si.organization_id
+                 AND ev.detached_at IS NULL
+                 AND ev.storage_key IS NOT NULL
           WHERE si.engagement_id = $1
             AND si.organization_id = $2
             AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
+          GROUP BY si.requirement_id, r.reference_id, qv.prompt, r.title,
+                   qv.guidance, r.description, si.depth, si.mandatory, si.reasons,
+                   rr.status, rr.notes, qv.evidence_policy
           ORDER BY r.reference_id ASC`,
         [ctx.engagementId, ctx.organizationId]
       )
     );
 
     res.status(200).json({
-      questions: result.rows.map((row) => ({
-        requirement_id: row.requirement_id,
-        reference: row.reference_id,
-        title: row.title,
-        guidance: row.description,
-        depth: row.depth,
-        mandatory: row.mandatory,
-        // The justification for the question. A vendor being asked 200 controls
-        // deserves to know why each one applies to them.
-        why_we_are_asking: row.reasons,
-        answer: row.status,
-        notes: row.notes,
-      })),
+      questions: result.rows.map((row) => {
+        const policy = asEvidencePolicy(row.evidence_policy);
+        const answer = isResponseAnswer(row.status) ? row.status : null;
+        return {
+          requirement_id: row.requirement_id,
+          reference: row.reference_id,
+          title: row.title,
+          guidance: row.description,
+          depth: row.depth,
+          mandatory: row.mandatory,
+          // The justification for the question. A vendor being asked 200 controls
+          // deserves to know why each one applies to them.
+          why_we_are_asking: row.reasons,
+          answer: row.status,
+          notes: row.notes,
+          // WA-1 completeness contract. `*_required` are NULL until the vendor
+          // has answered — the requirement is a property of the answer, and
+          // asserting one before there is an answer would light the whole form
+          // up red on first open.
+          evidence_policy: policy,
+          evidence_count: Number(row.evidence_count),
+          explanation_required: answer === null ? null : explanationRequired(answer, policy),
+          evidence_required: answer === null ? null : evidenceRequired(answer, policy),
+        };
+      }),
     });
   } catch (err) {
     logger.error({ event: "portal_questions_read_failed", err }, "Portal questions read failed");
@@ -382,8 +428,21 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
   }
 }
 
-/** The structured answer vocabulary. Required — see the effectiveness ladder. */
-const PORTAL_ANSWERS = new Set(["pass", "partial", "fail", "not_applicable"]);
+/**
+ * The structured answer vocabulary. Required — see the effectiveness ladder.
+ *
+ * Taken from responseCompleteness.ts rather than re-listed here: the module
+ * that decides whether an answer needs an explanation and the route that
+ * decides whether an answer is valid must not be able to disagree about what
+ * the answers ARE.
+ */
+const PORTAL_ANSWERS = new Set<string>(RESPONSE_ANSWERS);
+
+/**
+ * How many incomplete items the submit refusal names individually. The counts
+ * are always exact; only the list is capped, and `items_truncated` says so.
+ */
+const INCOMPLETE_ITEMS_CAP = 50;
 
 /* =========================================================
    PUT /api/vendor-portal/questions/:requirementId
@@ -547,22 +606,64 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       const check = canTransition(from, "submitted", "portal");
       if (!check.allowed) return { code: 409 as const, from, reason: check.reason };
 
-      // Guard `all_mandatory_answered`, declared on the transition.
-      const unanswered = await pg.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n
+      // Guard `all_mandatory_answered`, declared on the transition — WIDENED by
+      // WA-1 (owner ruling 3) into the full completeness rule.
+      //
+      // The shipped guard counted unanswered mandatory items and nothing else,
+      // which is how the owner's walkthrough submitted 5 `partial` and 3 `fail`
+      // answers with no explanation on any of them. The decision about what
+      // blocks a submission now lives in ONE pure module
+      // (responseCompleteness.ts) that this guard and the read surface the
+      // vendor's UI renders from both call; the SQL below only supplies facts.
+      //
+      // Same scope predicate as `/questions` and recompute — deterministic OR
+      // accepted — so the gate can never demand an explanation for an item the
+      // vendor was never shown.
+      const scope = await pg.query<{
+        requirement_id: string;
+        reference_id: string;
+        mandatory: boolean;
+        status: string | null;
+        notes: string | null;
+        evidence_policy: string | null;
+        evidence_count: string;
+      }>(
+        `SELECT si.requirement_id, r.reference_id, si.mandatory,
+                rr.status, rr.notes, qv.evidence_policy,
+                COUNT(ev.id)::text AS evidence_count
            FROM vendor_engagement_scope_items si
+           JOIN requirements r ON r.id = si.requirement_id
+           LEFT JOIN question_versions qv
+                  ON qv.id = si.question_version_id
+                 AND qv.organization_id = si.organization_id
            LEFT JOIN requirement_responses rr
                   ON rr.requirement_id = si.requirement_id
                  AND rr.engagement_id  = si.engagement_id
                  AND rr.organization_id = si.organization_id
+           LEFT JOIN evidence ev
+                  ON ev.engagement_id   = si.engagement_id
+                 AND ev.requirement_id  = si.requirement_id
+                 AND ev.organization_id = si.organization_id
+                 AND ev.detached_at IS NULL
+                 AND ev.storage_key IS NOT NULL
           WHERE si.engagement_id = $1 AND si.organization_id = $2
-            AND si.mandatory = TRUE
             AND (si.source = 'deterministic' OR si.accepted_at IS NOT NULL)
-            AND rr.status IS NULL`,
+          GROUP BY si.requirement_id, r.reference_id, si.mandatory,
+                   rr.status, rr.notes, qv.evidence_policy
+          ORDER BY r.reference_id ASC`,
         [ctx.engagementId, ctx.organizationId]
       );
-      const remaining = Number(unanswered.rows[0]?.n ?? "0");
-      if (remaining > 0) return { code: 422 as const, remaining };
+      const items: CompletenessItem[] = scope.rows.map((row) => ({
+        requirement_id: row.requirement_id,
+        reference: row.reference_id,
+        mandatory: row.mandatory,
+        answer: row.status,
+        notes: row.notes,
+        evidence_policy: asEvidencePolicy(row.evidence_policy),
+        evidence_count: Number(row.evidence_count),
+      }));
+      const incomplete = incompleteItems(items);
+      if (incomplete.length > 0) return { code: 422 as const, incomplete };
 
       // #949: THE TRANSITION IS VERIFIED. This UPDATE is conditional on the
       // status we read, and its rowCount used to be discarded — so a zero-row
@@ -616,10 +717,32 @@ export async function submitPortalResponses(req: PortalRequest, res: Response): 
       return;
     }
     if (outcome.code === 422) {
+      // ADDITIVE refusal shape. `error` and `unanswered_required` keep their
+      // shipped meaning so an existing client that reads only those two keys
+      // behaves exactly as before; the new keys name the rest. The per-item
+      // list is capped because a vendor with 200 unstarted questions needs a
+      // number and a place to start, not 200 lines of JSON.
+      const counts = summarizeIncomplete(outcome.incomplete);
+      const parts: string[] = [];
+      if (counts.unanswered_required > 0) {
+        parts.push(`${counts.unanswered_required} required question(s) still need an answer`);
+      }
+      if (counts.explanations_missing > 0) {
+        parts.push(
+          `${counts.explanations_missing} answer(s) need an explanation — "Partially in place", "Not in place" and "Not applicable" must say why`
+        );
+      }
+      if (counts.evidence_missing > 0) {
+        parts.push(`${counts.evidence_missing} answer(s) need supporting evidence attached`);
+      }
       res.status(422).json({
         error: "incomplete",
-        unanswered_required: outcome.remaining,
-        message: `${outcome.remaining} required question(s) still need an answer.`,
+        unanswered_required: counts.unanswered_required,
+        explanations_missing: counts.explanations_missing,
+        evidence_missing: counts.evidence_missing,
+        items: outcome.incomplete.slice(0, INCOMPLETE_ITEMS_CAP),
+        items_truncated: outcome.incomplete.length > INCOMPLETE_ITEMS_CAP,
+        message: `${parts.join("; ")}.`,
       });
       return;
     }

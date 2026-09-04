@@ -10,7 +10,9 @@
  *  - a failed save rolls the selection back and surfaces the engine message;
  *  - a submitted engagement renders read-only;
  *  - a dead session shows the uniform "secure link required" state (no login
- *    form on this surface).
+ *    form on this surface);
+ *  - WA-1: a negative answer prompts for the explanation the submit gate will
+ *    require, and evidence can be attached AT the question.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -44,6 +46,10 @@ const QUESTIONS = [
     ],
     answer: null,
     notes: null,
+    evidence_policy: "optional",
+    evidence_count: 0,
+    explanation_required: null,
+    evidence_required: null,
   },
   {
     requirement_id: "req-2",
@@ -55,6 +61,23 @@ const QUESTIONS = [
     why_we_are_asking: [],
     answer: "pass",
     notes: "Tested annually.",
+    evidence_policy: "optional",
+    evidence_count: 0,
+    explanation_required: false,
+    evidence_required: false,
+  },
+];
+
+/** One artifact already attached to req-1, for the per-question list. */
+const EVIDENCE = [
+  {
+    id: "ev-1",
+    title: "Access review Q1",
+    filename: "access-review-q1.pdf",
+    byte_size: 1024,
+    requirement_id: "req-1",
+    requirement_reference: "AC-2",
+    uploaded_at: "2026-09-01T00:00:00.000Z",
   },
 ];
 
@@ -71,6 +94,12 @@ function stubPortalFetch(overrides: Partial<Record<string, Handler>> = {}) {
         "GET /api/vendor-portal/questions": () => ({
           status: 200,
           body: { questions: QUESTIONS },
+        }),
+        // WA-1: the questionnaire now reads attachments so it can show them
+        // beside the question they support.
+        "GET /api/vendor-portal/evidence": () => ({
+          status: 200,
+          body: { files: EVIDENCE, accepting_uploads: true },
         }),
       } as Record<string, Handler>)[key];
     if (!handler) throw new Error(`Unexpected fetch in test: ${key}`);
@@ -147,6 +176,98 @@ describe("portal questionnaire", () => {
       expect(partial).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByText("Saved")).toBeInTheDocument();
     });
+  });
+
+  it("prompts for the explanation the moment a negative answer is chosen (WA-1)", async () => {
+    stubPortalFetch({
+      "PUT /api/vendor-portal/questions/req-1": () => ({ status: 200, body: { ok: true } }),
+    });
+    renderQuestionnaire();
+
+    // Before answering, nothing is demanded — a form that opens covered in
+    // warnings for questions nobody has touched is noise, not guidance.
+    await screen.findAllByRole("button", { name: "Partially in place" });
+    expect(screen.queryByText(/an explanation is required/i)).not.toBeInTheDocument();
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Partially in place" }))[0]!);
+
+    // The prompt tracks the OPTIMISTIC answer, so it appears on the click
+    // rather than after the next read of /questions.
+    expect(
+      await screen.findByText(/an explanation is required before this questionnaire can be submitted/i)
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/explanation \(required\)/i).length).toBeGreaterThan(0);
+    // The placeholder is answer-specific, not a generic "add notes".
+    expect(
+      screen.getByPlaceholderText(/describe what is in place and what is not/i)
+    ).toBeInTheDocument();
+  });
+
+  it("clears the explanation prompt once the vendor types one (WA-1)", async () => {
+    stubPortalFetch({
+      "PUT /api/vendor-portal/questions/req-1": () => ({ status: 200, body: { ok: true } }),
+    });
+    renderQuestionnaire();
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Not in place" }))[0]!);
+    expect(await screen.findByText(/an explanation is required/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/explain why this is not in place/i), {
+      target: { value: "No formal process yet; scheduled for Q3." },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/an explanation is required/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows evidence attached to a question, at the question (WA-1)", async () => {
+    stubPortalFetch();
+    renderQuestionnaire();
+
+    // req-1's artifact renders beside req-1 — the whole point of WA-1 is that
+    // evidence lives where the question that needs it lives.
+    expect(await screen.findByText("access-review-q1.pdf")).toBeInTheDocument();
+    expect(screen.getByLabelText("Attach evidence for req-1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Attach evidence for req-2")).toBeInTheDocument();
+  });
+
+  it("posts an attachment to the canonical endpoint with its requirement (WA-1)", async () => {
+    const upload = vi.fn<Handler>(() => ({ status: 201, body: { ok: true } }));
+    const fetchMock = stubPortalFetch({ "POST /api/vendor-portal/evidence": upload });
+    renderQuestionnaire();
+
+    const input = (await screen.findByLabelText("Attach evidence for req-1")) as HTMLInputElement;
+    const file = new File(["%PDF-1.4 test"], "soc2.pdf", { type: "application/pdf" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(upload).toHaveBeenCalledTimes(1);
+    });
+    const call = fetchMock.mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "POST"
+    )!;
+    // The SAME canonical route the library page posts to — no second evidence
+    // model, no second storage path.
+    expect(String(call[0])).toBe("/api/vendor-portal/evidence");
+    const form = (call[1] as RequestInit).body as FormData;
+    expect(form.get("requirement_id")).toBe("req-1");
+    expect((form.get("file") as File).name).toBe("soc2.pdf");
+  });
+
+  it("offers no attachment control once the questionnaire is read-only (WA-1)", async () => {
+    stubPortalFetch({
+      "GET /api/vendor-portal/engagement": () => ({
+        status: 200,
+        body: { ...ENGAGEMENT, status: "submitted", accepting_responses: false },
+      }),
+    });
+    renderQuestionnaire();
+
+    // Same gate as the answers: isPortalRespondable governs both, so they must
+    // close together.
+    await screen.findByText("access-review-q1.pdf");
+    expect(screen.queryByLabelText("Attach evidence for req-1")).not.toBeInTheDocument();
   });
 
   it("rolls the selection back and shows the engine message when a save fails", async () => {

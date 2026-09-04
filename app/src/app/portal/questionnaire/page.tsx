@@ -14,14 +14,17 @@
  * answer back and locks the form with the engine's own message.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePortal } from "../PortalShell";
 import {
   ANSWER_OPTIONS,
+  EXPLANATION_PROMPT,
   depthLabel,
   errorMessage,
+  explanationRequiredForAnswer,
   portalFetch,
+  type PortalEvidenceFile,
   type PortalQuestion,
   type ScopeReason,
 } from "../portalApi";
@@ -55,6 +58,124 @@ function initialItemState(q: PortalQuestion): ItemState {
   };
 }
 
+/**
+ * Attachments for ONE question (WA-1).
+ *
+ * The evidence a vendor is being asked for belongs beside the question that
+ * asks for it. Before this, upload lived only on /portal/evidence behind a
+ * requirement dropdown, which is why the owner's walkthrough produced 37
+ * answers and zero artifacts — and why every control scored at `asserted`, the
+ * weakest rung of the effectiveness ladder.
+ *
+ * This is the SAME canonical endpoint the library page posts to
+ * (POST /vendor-portal/evidence -> the `evidence` table with engagement_id +
+ * requirement_id). No second attachment model, no second storage path, no
+ * second validator — only a second place to reach the one that exists.
+ */
+function QuestionEvidence({
+  requirementId,
+  files,
+  readOnly,
+  required,
+  onChanged,
+  onUnauthorized,
+}: {
+  requirementId: string;
+  files: PortalEvidenceFile[];
+  readOnly: boolean;
+  required: boolean;
+  onChanged: () => Promise<void>;
+  onUnauthorized: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function upload(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("requirement_id", requirementId);
+      // No Content-Type header: the browser sets the multipart boundary.
+      const result = await portalFetch("/evidence", { method: "POST", body: form });
+      if (result.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      if (result.status === 201) {
+        if (inputRef.current) inputRef.current.value = "";
+        await onChanged();
+        return;
+      }
+      // 413 quota/size, 415 type, 409 closed, 503 storage — engine text verbatim,
+      // because those messages name the exact limits.
+      setError(errorMessage(result, "The file could not be attached. Please try again."));
+    } catch {
+      setError("Network problem — the file was not attached. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex flex-wrap items-baseline gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Supporting evidence {required ? "(required)" : "(optional)"}
+        </span>
+        {files.length > 0 && (
+          <span className="text-xs text-slate-500">
+            {files.length} attached
+          </span>
+        )}
+      </div>
+
+      {files.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {files.map((f) => (
+            <li key={f.id} className="text-xs text-slate-300">
+              <span className="mr-2 text-slate-500">•</span>
+              {f.filename}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!readOnly && (
+        <input
+          ref={inputRef}
+          type="file"
+          disabled={busy}
+          aria-label={`Attach evidence for ${requirementId}`}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void upload(file);
+          }}
+          className="block w-full text-xs text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-line file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-200 hover:file:opacity-90 disabled:opacity-60"
+        />
+      )}
+
+      {busy && <p className="mt-1 text-xs text-slate-500">Attaching…</p>}
+      {error && (
+        <p className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-xs leading-5 text-red-300">
+          {error}
+        </p>
+      )}
+      {!readOnly && (
+        <p className="mt-1 text-xs text-slate-600">
+          Attaching here links the document to this question.{" "}
+          <Link href="/portal/evidence" className="underline hover:text-slate-400">
+            Manage all documents
+          </Link>
+          .
+        </p>
+      )}
+    </div>
+  );
+}
+
 function WhyWeAreAsking({ reasons }: { reasons: ScopeReason[] | null }) {
   if (!reasons || reasons.length === 0) return null;
   return (
@@ -81,14 +202,49 @@ export default function QuestionnairePage() {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [questions, setQuestions] = useState<PortalQuestion[]>([]);
   const [items, setItems] = useState<Record<string, ItemState>>({});
+  const [evidence, setEvidence] = useState<PortalEvidenceFile[]>([]);
   // Set when the engine says the window closed (submitted elsewhere).
   const [closedMessage, setClosedMessage] = useState<string | null>(null);
+
+  /**
+   * Re-read attachments only. Called after an upload so a question's file list
+   * and its `evidence_count` refresh without re-fetching (and re-initialising)
+   * every answer — that would discard notes the vendor is part-way through
+   * typing on another question.
+   */
+  const fetchEvidence = useCallback(async () => {
+    try {
+      const result = await portalFetch<{ files: PortalEvidenceFile[] }>("/evidence");
+      if (result.status === 401) {
+        onUnauthorized();
+        return;
+      }
+      if (result.ok && result.body) {
+        const files = result.body.files;
+        setEvidence(files);
+        // Keep the engine-decided counts in step with what we just read, so the
+        // "evidence required" prompt clears the moment a file lands.
+        setQuestions((prev) =>
+          prev.map((q) => ({
+            ...q,
+            evidence_count: files.filter((f) => f.requirement_id === q.requirement_id).length,
+          }))
+        );
+      }
+    } catch {
+      // A failed refresh leaves the previous list. The upload itself already
+      // reported its own outcome; a second error here would be noise.
+    }
+  }, [onUnauthorized]);
 
   const fetchQuestions = useCallback(async () => {
     setLoad({ phase: "loading" });
     try {
-      const result = await portalFetch<{ questions: PortalQuestion[] }>("/questions");
-      if (result.status === 401) {
+      const [result, ev] = await Promise.all([
+        portalFetch<{ questions: PortalQuestion[] }>("/questions"),
+        portalFetch<{ files: PortalEvidenceFile[] }>("/evidence"),
+      ]);
+      if (result.status === 401 || ev.status === 401) {
         onUnauthorized();
         return;
       }
@@ -100,6 +256,9 @@ export default function QuestionnairePage() {
       setItems(
         Object.fromEntries(result.body.questions.map((q) => [q.requirement_id, initialItemState(q)]))
       );
+      // Attachments are supporting detail: if that read fails the questionnaire
+      // is still answerable, so it must not take the whole page to `error`.
+      if (ev.ok && ev.body) setEvidence(ev.body.files);
       setLoad({ phase: "ready" });
     } catch {
       setLoad({ phase: "error" });
@@ -261,6 +420,11 @@ export default function QuestionnairePage() {
             {group.items.map((q) => {
               const s = items[q.requirement_id]!;
               const notesDirty = s.notes !== s.savedNotes;
+              // Read against the answer showing RIGHT NOW (optimistic), so the
+              // prompt appears on the click rather than one fetch later.
+              const explanationNeeded = explanationRequiredForAnswer(s.answer, q.evidence_policy);
+              const explanationMissing = explanationNeeded && s.notes.trim().length === 0;
+              const questionFiles = evidence.filter((f) => f.requirement_id === q.requirement_id);
               return (
                 <li
                   key={q.requirement_id}
@@ -333,13 +497,13 @@ export default function QuestionnairePage() {
                     </div>
                   </fieldset>
 
-                  {/* Notes */}
+                  {/* Explanation */}
                   <div className="mt-3">
                     <label
                       htmlFor={`notes-${q.requirement_id}`}
                       className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500"
                     >
-                      Notes (optional)
+                      Explanation {explanationNeeded ? "(required)" : "(optional)"}
                     </label>
                     <textarea
                       id={`notes-${q.requirement_id}`}
@@ -347,12 +511,31 @@ export default function QuestionnairePage() {
                       maxLength={4000}
                       rows={2}
                       disabled={readOnly}
+                      aria-required={explanationNeeded}
                       onChange={(e) =>
                         patchItem(q.requirement_id, { notes: e.target.value, saved: false })
                       }
-                      placeholder="Add context, compensating controls, or references to attachments."
-                      className="w-full rounded-lg border border-brand-line bg-brand-bg p-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-teal focus:outline-none disabled:opacity-60"
+                      placeholder={
+                        s.answer
+                          ? (EXPLANATION_PROMPT[s.answer] ??
+                            "Add context, compensating controls, or references to attachments.")
+                          : "Add context, compensating controls, or references to attachments."
+                      }
+                      className={
+                        "w-full rounded-lg border bg-brand-bg p-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-brand-teal focus:outline-none disabled:opacity-60 " +
+                        (explanationMissing ? "border-amber-500/60" : "border-brand-line")
+                      }
                     />
+                    {/*
+                      A prompt, not a block. The answer is already saved; the
+                      vendor is told now so they are not surprised by the submit
+                      refusal, and they may still leave it and come back.
+                    */}
+                    {explanationMissing && !readOnly && (
+                      <p className="mt-1 text-xs leading-5 text-amber-300">
+                        An explanation is required before this questionnaire can be submitted.
+                      </p>
+                    )}
                     {notesDirty && !readOnly && (
                       <div className="mt-2 flex items-center gap-3">
                         <button
@@ -361,16 +544,31 @@ export default function QuestionnairePage() {
                           onClick={() => void save(q.requirement_id, s.answer!, s.notes)}
                           className="rounded-lg bg-brand-teal px-3 py-1.5 text-xs font-semibold text-brand-bg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Save notes
+                          Save explanation
                         </button>
                         {s.answer === null && (
                           <span className="text-xs text-slate-500">
-                            Choose an answer first — notes are saved with it.
+                            Choose an answer first — the explanation is saved with it.
                           </span>
                         )}
                       </div>
                     )}
                   </div>
+
+                  {/*
+                    `readOnly` here is the same predicate the engine reports as
+                    `accepting_uploads` on /evidence — both are
+                    isPortalRespondable — so attachments and answers open and
+                    close together rather than through two separate gates.
+                  */}
+                  <QuestionEvidence
+                    requirementId={q.requirement_id}
+                    files={questionFiles}
+                    readOnly={readOnly}
+                    required={q.evidence_required === true}
+                    onChanged={fetchEvidence}
+                    onUnauthorized={onUnauthorized}
+                  />
 
                   {s.error && (
                     <p className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs leading-5 text-red-300">

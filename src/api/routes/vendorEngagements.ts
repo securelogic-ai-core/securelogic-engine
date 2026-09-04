@@ -2821,7 +2821,7 @@ export async function completeAnalysis(req: Request, res: Response): Promise<voi
       analyzedCount: Number(counts.rows[0]?.analyzed_count ?? "0"),
     });
 
-    await pg.query(
+    const moved = await pg.query(
       `UPDATE vendor_engagements
           SET status = 'analysis_complete',
               analysis_coverage = $3, analysis_coverage_at = NOW(),
@@ -2830,17 +2830,73 @@ export async function completeAnalysis(req: Request, res: Response): Promise<voi
       [id, organizationId, coverage, from]
     );
 
+    // ── WA-1 / owner ruling 6: the portal's participation window ends HERE ──
+    //
+    // `analysis_complete` is the exact state at which this engagement leaves
+    // the vendor's reach: `isPortalRespondable` already refused writes from
+    // `submitted` onward, `isPortalCommentable` stops at this state, and no
+    // transition returns from here to any portal-reachable state. The only
+    // route back to a vendor is `in_review -> clarification_requested`, which
+    // is unreachable once we are past `in_review`.
+    //
+    // Terminating at `submitted` instead would have been wrong: that state is
+    // deliberately reopenable via clarification, and revoking there would break
+    // the one workflow the state exists for.
+    //
+    // ENGAGEMENT-SCOPED BY CONSTRUCTION, which is the ruling's other half. A
+    // portal session belongs to exactly one invite and one engagement
+    // (vendor_portal_sessions.engagement_id), so this cannot touch a contact's
+    // access to a DIFFERENT active engagement — there is no shared credential
+    // to damage. Revoking the invite is what makes it stick: requirePortalSession
+    // re-reads the invite on every request and treats a revoked one as killing
+    // every session minted from it, so a stale emailed link cannot mint a fresh
+    // session for a concluded assessment.
+    //
+    // Guarded on `moved.rowCount`: a conditional side effect must not run when
+    // the transition it belongs to did not happen.
+    let accessRevoked: { invites: number; sessions: number } | null = null;
+    if (moved.rowCount === 1) {
+      const invites = await pg.query<{ id: string }>(
+        `UPDATE vendor_engagement_invites
+            SET revoked_at = NOW(), revoked_by_user_id = $3,
+                revocation_reason = 'engagement concluded — analysis complete'
+          WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+          RETURNING id`,
+        [id, organizationId, userOf(req)]
+      );
+      const sessions = await pg.query(
+        `UPDATE vendor_portal_sessions
+            SET revoked_at = NOW()
+          WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL`,
+        [id, organizationId]
+      );
+      accessRevoked = { invites: invites.rowCount ?? 0, sessions: sessions.rowCount ?? 0 };
+    }
+
     writeAuditEvent({
       organizationId,
       actorUserId: userOf(req),
       eventType: "vendor_engagement.analysis_completed",
       resourceType: "vendor_engagement",
       resourceId: id,
-      payload: { analysis_coverage: coverage },
+      payload: {
+        analysis_coverage: coverage,
+        // Recorded on the same event rather than a separate one: the revocation
+        // is not an independent decision, it is what completing the analysis
+        // MEANS for the vendor's access, and splitting them would let a reader
+        // find one without the other.
+        portal_invites_revoked: accessRevoked?.invites ?? 0,
+        portal_sessions_revoked: accessRevoked?.sessions ?? 0,
+      },
       ipAddress: req.ip ?? null,
     });
 
-    res.status(200).json({ ok: true, status: "analysis_complete", analysis_coverage: coverage });
+    res.status(200).json({
+      ok: true,
+      status: "analysis_complete",
+      analysis_coverage: coverage,
+      portal_access_revoked: accessRevoked,
+    });
   } catch (err) {
     logger.error({ event: "complete_analysis_failed", organizationId, err }, "Complete analysis failed");
     res.status(500).json({ error: "complete_analysis_failed" });
