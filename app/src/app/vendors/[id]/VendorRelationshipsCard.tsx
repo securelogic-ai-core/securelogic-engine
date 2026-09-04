@@ -156,7 +156,7 @@ export function VendorRelationshipsCard({ vendorId, relationships, loadFailed, m
   }
 
   return (
-    <div style={card}>
+    <div style={card} id="relationships">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>Relationships &amp; classification</h3>
         <button type="button" onClick={() => setAdding((x) => !x)} disabled={pending} style={btn()}>{adding ? "Cancel" : "Add relationship"}</button>
