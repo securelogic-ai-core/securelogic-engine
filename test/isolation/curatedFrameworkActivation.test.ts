@@ -23,7 +23,7 @@ import { Pool } from "pg";
 import { bootstrapTestDb, type TestDbSeed } from "./testDb.js";
 import { buildRoutes } from "../../src/api/routes/index.js";
 import {
-  CURATED_FRAMEWORK_TAGS,
+  ALL_CURATED_FRAMEWORK_TAGS,
   CURATED_TEMPLATE_KEYS,
 } from "../../src/api/lib/vendorRisk/curatedFrameworkTags.js";
 import { SCOPE_TAG_SOURCES } from "../../src/api/lib/vendorRisk/requirementScopeTags.js";
@@ -72,7 +72,7 @@ afterAll(async () => {
 describe("activation writes the curated reference data", () => {
   it.each(CURATED_TEMPLATE_KEYS)("%s activates fully curated", async (template) => {
     const { rows } = await activated(seed.orgA.apiKey, template);
-    const expected = CURATED_FRAMEWORK_TAGS[template]!;
+    const expected = ALL_CURATED_FRAMEWORK_TAGS[template]!;
 
     expect(rows).toHaveLength(Object.keys(expected).length);
     for (const row of rows) {
@@ -96,7 +96,7 @@ describe("activation writes the curated reference data", () => {
     }
   });
 
-  it("the security domain gains exactly the two deliberate requirements across all 24", async () => {
+  it("the security domain gains exactly the two deliberate regulatory requirements plus the Core Assurance security objectives across all 40", async () => {
     const byDomain: Record<string, string[]> = {};
     for (const template of CURATED_TEMPLATE_KEYS) {
       const { rows } = await activated(seed.orgA.apiKey, template);
@@ -105,11 +105,14 @@ describe("activation writes the curated reference data", () => {
         (byDomain[d] ??= []).push(`${template}/${row.reference_id}`);
       }
     }
-    expect(Object.values(byDomain).flat()).toHaveLength(24);
-    expect(byDomain["security"]?.sort()).toEqual(["ccpa/CCPA-8", "gdpr/Art-32"]);
-    expect(byDomain["privacy"]).toHaveLength(17);
+    expect(Object.values(byDomain).flat()).toHaveLength(40);
+    const regulatorySecurity = byDomain["security"]!.filter((k) => !k.startsWith("securelogic_core_assurance/")).sort();
+    expect(regulatorySecurity).toEqual(["ccpa/CCPA-8", "gdpr/Art-32"]);
+    expect(byDomain["security"]!.filter((k) => k.startsWith("securelogic_core_assurance/"))).toHaveLength(13);
+    expect(byDomain["privacy"]).toHaveLength(18); // 17 regulatory + CAS-16
     expect(byDomain["ai"]).toHaveLength(4);
-    expect(byDomain["nth_party"]).toEqual(["gdpr/Art-28"]);
+    expect(byDomain["nth_party"]!.sort()).toEqual(["gdpr/Art-28", "securelogic_core_assurance/CAS-11"]);
+    expect(byDomain["resilience"]).toEqual(["securelogic_core_assurance/CAS-10"]);
   });
 
   it("re-activating is idempotent — curated rows are not rewritten or duplicated", async () => {

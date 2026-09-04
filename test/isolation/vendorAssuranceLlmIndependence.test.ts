@@ -259,6 +259,10 @@ describe("LLM independence — end to end with NO provider credentials", () => {
         scope_tags: ["core"],
       })),
       obligationEdges: [],
+      // The engagement row above is stamped 1.0.0; the resolver must be given
+      // the STAMP, not the current constant (1.2.0 re-bases the `core` floor
+      // onto the Core Assurance Set). Same rule the route follows.
+      scopeRuleVersion: "1.0.0",
     });
     expect(scope.items.length).toBe(2);
 

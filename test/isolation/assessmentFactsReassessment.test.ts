@@ -84,6 +84,11 @@ async function createEngagement(title: string, parentId?: string): Promise<strin
   const created = await asOrg("post", "/api/vendor-engagements").send(body);
   expect(created.status, JSON.stringify(created.body)).toBe(201);
   const id = created.body.id as string;
+  // Pinned to the 1.1.0 corpus this suite proves (Assessment Composition v1
+  // stamps new engagements 1.2.0, which provisions the sixteen Core Assurance
+  // objectives and re-bases the S1 floor; the stamp selects the corpus, and the
+  // 1.2.0 route path has its own suite: assessmentComposition.test.ts).
+  await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [id]);
   if (parentId) {
     // The route may not accept a parent on create; the column is the contract.
     await pool.query(`UPDATE vendor_engagements SET parent_engagement_id = $1 WHERE id = $2`, [parentId, id]);
