@@ -15,8 +15,11 @@ const EMAIL = process.env.E2E_EMAIL, PASSWORD = process.env.E2E_PASSWORD;
 const ENG = process.argv[2];
 const OUT = process.env.OUT_DIR ?? ".";
 if (!EMAIL || !PASSWORD || !ENG) { console.error("usage: E2E_EMAIL E2E_PASSWORD node … <engagement-id>"); process.exit(2); }
-// The login page's SSO domain check is a known, unrelated console error; ignore it.
-const IGNORE = /check-domain|ERR_FAILED/;
+// Nothing on this path is an expected error. (The login page's SSO domain
+// check used to fail CORS on staging — a double-slash URL AND an engine
+// allowlist without the staging app's origin, fixed by #1002/#1004 — and was
+// once ignored here. It is not ignored any more: a login-page error is a FAIL.)
+const IGNORE = /$^/;
 let failed = false;
 const browser = await chromium.launch();
 for (const [locale, timezoneId] of [["en-US", "UTC"], ["de-DE", "Pacific/Auckland"]]) {
