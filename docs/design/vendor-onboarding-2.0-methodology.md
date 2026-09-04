@@ -102,13 +102,22 @@ dimensions are preserved — minimum honest drift.
 |---|---|---|---|
 | `data_exposure` | 0.20 | **0.2857** | 2/7 |
 | `access_exposure` | 0.18 | **0.2571** | 9/35 |
-| `regulatory_exposure` | 0.12 | **0.1714** | 6/35 |
+| `regulatory_exposure` (declared — see note) | 0.12 | **0.1714** | 6/35 |
 | `ai_exposure` | 0.09 | **0.1286** | 9/70 |
 | `hosting_model` | 0.06 | **0.0857** | 3/35 |
 | `fourth_party_exposure` | 0.05 | **0.0714** | 1/14 |
 
 Sub-factors unchanged: `data_volume` amplifies `data_exposure`; `ai_autonomy`
 multiplies `ai_involvement`.
+
+**Regulatory exposure is DECLARED intake, not derived** (correction recorded
+during VO-6, 2026-09-03). The v1 engine carries a comment claiming derivation
+from active obligations via `resolveRegulatoryExposure()`; that function was
+never built, and `obligations` has no breach-notification attribute. Deriving a
+level would require inventing a count→level mapping — a methodology constant.
+The dimension, weight and levels are unchanged; only the SOURCE is declared, as
+the shipped v1 engagement intake already does. Derivation is a follow-on that
+needs an owner-ruled mapping.
 
 **No double-count.** No business-dependency concept remains in v2. The one pair
 that sounds similar measures opposite directions: `fourth_party_exposure` is

@@ -15,13 +15,18 @@
 --     substitutability, process_coupling, concentration
 --
 --   EXPOSURE facts (inherent risk v2):
---     data_sensitivity, data_volume, access_level, ai_involvement,
---     ai_autonomy, hosting_model, fourth_party_exposure
+--     data_sensitivity, data_volume, access_level, regulatory_exposure,
+--     regulatory_breach_notification, ai_involvement, ai_autonomy,
+--     hosting_model, fourth_party_exposure
 --
--- regulatory_exposure and regulatory_breach_notification are NOT intake. They
--- are DERIVED from the organisation's active obligations at compute time
--- (inherentRisk.ts: "Derived from the org's ACTIVE obligations, not declared")
--- and are recorded in the stored basis, never asked.
+-- regulatory_exposure is DECLARED, exactly as the shipped v1 engagement intake
+-- declares it. inherentRisk.ts carries a comment saying it is "derived from
+-- the org's ACTIVE obligations" via resolveRegulatoryExposure() — that function
+-- was never built, and `obligations` has no breach-notification attribute to
+-- derive the duty from. Deriving a LEVEL would mean inventing a count->level
+-- mapping, a methodology constant nobody has approved. So it is asked, as
+-- today, and derivation is recorded as a follow-on needing an owner-ruled
+-- mapping. Nothing is manufactured.
 --
 -- ── Append-only, versioned ──────────────────────────────────────────────────
 -- Every submission is a new version. Nothing is updated in place, because a
@@ -68,6 +73,11 @@ CREATE TABLE IF NOT EXISTS vendor_relationship_intake (
                               CHECK (data_volume IN ('minimal', 'moderate', 'large', 'mass')),
   access_level              TEXT        NOT NULL
                               CHECK (access_level IN ('none', 'read_only', 'read_write', 'admin', 'network_access')),
+  regulatory_exposure       TEXT        NOT NULL
+                              CHECK (regulatory_exposure IN ('none', 'low', 'moderate', 'high')),
+  -- True when an active obligation in scope carries a breach-notification duty.
+  -- Declared, and the trigger for the inherent floor E3.
+  regulatory_breach_notification BOOLEAN NOT NULL,
   ai_involvement            TEXT        NOT NULL
                               CHECK (ai_involvement IN ('none', 'embedded', 'core')),
   ai_autonomy               TEXT        NOT NULL

@@ -49,6 +49,8 @@ const PROF = 'requireEntitlement("professional")';
 const BUCKET_A_PREMIUM: Record<string, number> = {
   // vendor / third-party-risk surface (#233 + #244)
   "vendors.ts": 9,
+  // Onboarding 2.0: one GUARDS const shared by the six relationship routes.
+  "vendorRelationships.ts": 1,
   // 27 = 26 routes + 1 header comment reference. VA-1 added the CUEC
   // promote-to-finding route; VA-S4-P2 added the GET and POST assurance-opinion
   // routes; VA-S4-4C-3 added the assurance-outcomes read plus the two governed
