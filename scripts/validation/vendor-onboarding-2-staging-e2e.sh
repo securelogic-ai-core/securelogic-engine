@@ -111,7 +111,9 @@ JAR=$(mktemp)
 SESS=$(curl -s --max-time 60 -c "$JAR" -o /dev/null -w '%{http_code}' -H "Content-Type: application/json" -X POST "$ENGINE_URL/api/vendor-portal/session" -d "{\"token\":\"$INV\"}")
 [ "$SESS" = "200" ] && ok "portal: invite exchanged for an engagement-scoped session (credential != contact)" || bad "portal exchange" "HTTP $SESS"
 PE=$(curl -s --max-time 60 -b "$JAR" "$ENGINE_URL/api/vendor-portal/engagement")
-[ "$(echo "$PE" | j "d.get('engagement',d).get('id')")" = "$EID" ] && ok "portal: the vendor sees exactly the engagement opened from the relationship" || bad "portal engagement" "$(echo "$PE" | head -c 200)"
+# The portal view deliberately carries NO engagement id (anti-enumeration): the
+# vendor sees title/vendor/status only. Match on the title we set.
+[ "$(echo "$PE" | j "d.get('title')")" = "VO2 E2E $STAMP" ] && [ "$(echo "$PE" | j "d.get('accepting_responses')")" = "True" ] && ok "portal: the vendor sees the engagement opened from the relationship, accepting responses" || bad "portal engagement" "$(echo "$PE" | head -c 200)"
 PQ=$(curl -s --max-time 60 -b "$JAR" -o /dev/null -w '%{http_code}' "$ENGINE_URL/api/vendor-portal/questions")
 [ "$PQ" = "200" ] && ok "portal: questionnaire composed from the derived tier is readable by the vendor" || bad "portal questions" "HTTP $PQ"
 rm -f "$JAR"
@@ -121,7 +123,9 @@ for path in responses assurance-coverage evidence integrity; do
   [ "$code" = "200" ] && ok "continuity: GET /vendor-engagements/:id/$path = 200" || bad "continuity $path" "HTTP $code"
 done
 ST=$(api "$ENGINE_URL/api/vendor-engagements/$EID" | j "d.get('status') or d.get('engagement',{}).get('status')")
-[ "$ST" = "issued" ] && ok "state machine: engagement is 'issued' after the invite (existing lifecycle unchanged)" || bad "state" "$ST"
+# issue -> issued; the vendor's first session exchange -> in_progress. Both are
+# the EXISTING state machine acting on a VO2 engagement.
+[ "$ST" = "in_progress" ] && ok "state machine: issued -> in_progress on the vendor's first portal session (existing lifecycle unchanged)" || bad "state" "$ST"
 # an engagement from an intake_required relationship must be refused
 R3=$(api -X POST "$ENGINE_URL/api/vendors/$VID/relationships" -d '{"name":"Unassessed service"}')
 RID3=$(echo "$R3" | j "d['relationship']['id']")
