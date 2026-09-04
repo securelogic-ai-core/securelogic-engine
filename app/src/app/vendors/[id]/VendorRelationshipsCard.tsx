@@ -23,6 +23,7 @@ import type { VendorRelationship, AssessmentTierValue, RelationshipIntakeInput, 
 import { ASSESSMENT_TIER_VALUES } from "@/lib/api";
 import { DEPENDENCY_FIELDS, EXPOSURE_FIELDS, TIER_LABELS, type IntakeFieldDef } from "@/lib/vendorRelationshipIntake";
 import { addVendorRelationship, recordRelationshipIntake, setRelationshipPolicy, openAssessmentForRelationship } from "@/app/actions/vendorRelationships";
+import { TRANSPORT_FAILURE } from "./VendorContactsCard";
 
 const card: React.CSSProperties = { background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, padding: 16 };
 const input = (): React.CSSProperties => ({ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#0b1220", color: "#e2e8f0", fontSize: 12 });
@@ -120,7 +121,16 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
         onClick={() => {
           setError(null);
           start(async () => {
-            const r = await recordRelationshipIntake(vendorId, relationship.id, { ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">), regulatory_breach_notification: breach });
+            // Same rule as the contacts card: a rejected action call (the POST
+            // never reached the app) is reported HERE, not thrown into the
+            // route, which has no error boundary and would crash the page.
+            let r: Awaited<ReturnType<typeof recordRelationshipIntake>>;
+            try {
+              r = await recordRelationshipIntake(vendorId, relationship.id, { ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">), regulatory_breach_notification: breach });
+            } catch {
+              setError(TRANSPORT_FAILURE);
+              return;
+            }
             if (!r.ok) { setError(r.error); return; }
             onDone(`Classified: ${r.relationship?.criticality_band} criticality, ${r.relationship?.inherent_band} inherent risk → ${TIER_LABELS[r.relationship?.assessment_tier ?? ""] ?? r.relationship?.assessment_tier}.`);
           });
@@ -147,7 +157,13 @@ export function VendorRelationshipsCard({ vendorId, relationships, loadFailed, m
   function run(fn: () => Promise<{ ok: boolean; error?: string; engagementId?: string }>, success: string, after?: (id?: string) => void): void {
     setError(null); setNotice(null);
     start(async () => {
-      const r = await fn();
+      let r: { ok: boolean; error?: string; engagementId?: string };
+      try {
+        r = await fn();
+      } catch {
+        setError(TRANSPORT_FAILURE);
+        return;
+      }
       if (!r.ok) { setError(r.error ?? "That didn't work."); return; }
       setNotice(success);
       after?.(r.engagementId);

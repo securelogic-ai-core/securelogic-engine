@@ -40,6 +40,14 @@ const ROLE_LABELS: Record<VendorContactRole, string> = {
   other: "Other",
 };
 
+/**
+ * Shown when the request never got an answer (rejected fetch), as opposed to
+ * an answer that refused (`{ ok: false }`). Exported so the render test pins
+ * the exact sentence the customer sees.
+ */
+export const TRANSPORT_FAILURE =
+  "The request did not reach SecureLogic, so nothing was saved. Check your connection and try again.";
+
 function input(): React.CSSProperties {
   return {
     width: "100%",
@@ -76,7 +84,23 @@ export function VendorContactsCard({
     setError(null);
     setNotice(null);
     start(async () => {
-      const result = await fn();
+      // A server action call can REJECT before any request reaches the app —
+      // the browser fails the POST at the transport layer (Safari reports it
+      // as `TypeError: Load failed` on a stale keep-alive socket; any browser
+      // does on a dropped connection or a deploy in flight). Under React 19
+      // an unhandled rejection inside a transition is re-thrown during render
+      // and, with no error boundary on this route, replaces the whole vendor
+      // page with Next's "Application error: a client-side exception has
+      // occurred" screen. That is the VO 2.0 walkthrough crash. The refusal
+      // belongs in this card, with the form intact so the customer can retry
+      // — nothing was recorded, and the message must say so.
+      let result: { ok: boolean; error?: string };
+      try {
+        result = await fn();
+      } catch {
+        setError(TRANSPORT_FAILURE);
+        return;
+      }
       if (!result.ok) {
         setError(result.error ?? "That didn't work.");
         return;
