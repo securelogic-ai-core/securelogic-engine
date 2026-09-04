@@ -95,14 +95,16 @@ import {
   type ResponseStatus,
 } from "../lib/vendorRisk/controlEffectiveness.js";
 import { computeResidualRisk } from "../lib/vendorRisk/residualRisk.js";
-import { RISK_BANDS, type RiskBand } from "../lib/vendorRisk/riskBands.js";
+import { RISK_BANDS, type RiskBand, type AssessmentTier } from "../lib/vendorRisk/riskBands.js";
 import {
   canTransition,
   isScopeMutable,
   isInherentOverridable,
   type EngagementState,
 } from "../lib/vendorRisk/engagementStateMachine.js";
-import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION } from "../lib/vendorRisk/methodologyVersion.js";
+import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION, INHERENT_METHODOLOGY_VERSION_V2 } from "../lib/vendorRisk/methodologyVersion.js";
+import { v1FactsFromRelationship } from "../lib/vendorRisk/relationshipEngagementBridge.js";
+import type { RelationshipIntakeFacts } from "../lib/vendorRisk/relationshipClassification.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js";
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
@@ -307,6 +309,79 @@ export function validateIntake(body: unknown): IntakeValidation {
   return { ok: true, input: out as unknown as InherentRiskInput };
 }
 
+/**
+ * The methodology stamp an engagement was SCORED under. Audit payloads must
+ * echo this, never the current constant: a VO2 engagement is stamped "2.0.0"
+ * and labelling its events "1.0.0" would misdescribe how its rating was made.
+ */
+async function storedMethodologyVersion(organizationId: string, engagementId: string): Promise<string> {
+  const r = await pg.query<{ methodology_version: string }>(
+    `SELECT methodology_version FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [engagementId, organizationId]
+  );
+  return r.rows[0]?.methodology_version ?? METHODOLOGY_VERSION;
+}
+
+/* =========================================================
+   Vendor Onboarding 2.0 (VO-7): opening an engagement FROM a relationship.
+
+   When the body names a relationship_id, the customer is NOT asked the intake
+   again. The engagement inherits the relationship's v2 classification — the
+   inherent score/band/basis and the JOINT assessment tier — stamped "2.0.0",
+   and its v1-vocabulary fact columns are populated through the scoping bridge
+   so the existing scope resolver behaves unchanged. Nothing is rescored by v1.
+   ========================================================= */
+type RelationshipSeed = {
+  relationshipId: string;
+  facts: InherentRiskInput;
+  inherent: { score: number; band: RiskBand; arithmetic_band: RiskBand; basis: unknown };
+  tier: AssessmentTier;
+};
+
+async function seedFromRelationship(
+  organizationId: string,
+  vendorId: string,
+  relationshipId: string
+): Promise<{ ok: true; seed: RelationshipSeed } | { ok: false; status: number; error: string; message?: string }> {
+  const rel = await pg.query<{
+    id: string; assessment_tier: AssessmentTier | null; criticality_band: RiskBand | null;
+    inherent_score: number | null; inherent_band: RiskBand | null; inherent_arithmetic_band: RiskBand | null;
+    inherent_basis: unknown; classification_intake_id: string | null; status: string;
+  }>(
+    `SELECT id, status, assessment_tier, criticality_band, inherent_score, inherent_band,
+            inherent_arithmetic_band, inherent_basis, classification_intake_id
+       FROM vendor_relationships WHERE id = $1 AND organization_id = $2 AND vendor_id = $3 LIMIT 1`,
+    [relationshipId, organizationId, vendorId]
+  );
+  const r = rel.rows[0];
+  if (!r) return { ok: false, status: 404, error: "relationship_not_found" };
+  if (r.status !== "active") return { ok: false, status: 409, error: "relationship_inactive" };
+  if (!r.assessment_tier || !r.classification_intake_id || !r.criticality_band || r.inherent_score === null) {
+    return {
+      ok: false, status: 409, error: "intake_required",
+      message: "This relationship has no factual intake yet, so it has no classification to assess against. Complete the intake first.",
+    };
+  }
+  const intake = await pg.query<RelationshipIntakeFacts>(
+    `SELECT max_tolerable_disruption, operational_dependency, business_reach, substitutability, process_coupling, concentration,
+            data_sensitivity, data_volume, access_level, regulatory_exposure, regulatory_breach_notification,
+            ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure
+       FROM vendor_relationship_intake WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+    [r.classification_intake_id, organizationId]
+  );
+  const facts = intake.rows[0];
+  if (!facts) return { ok: false, status: 409, error: "intake_required" };
+  return {
+    ok: true,
+    seed: {
+      relationshipId: r.id,
+      facts: v1FactsFromRelationship(facts, r.criticality_band),
+      inherent: { score: r.inherent_score, band: r.inherent_band!, arithmetic_band: r.inherent_arithmetic_band!, basis: r.inherent_basis },
+      tier: r.assessment_tier,
+    },
+  };
+}
+
 /* =========================================================
    POST /api/vendor-engagements — open an engagement.
 
@@ -335,15 +410,30 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
     return;
   }
 
-  const intake = validateIntake(body.intake ?? body);
-  if (!intake.ok) {
-    // Deliberately explicit about WHICH fields. A generic 400 on a twelve-field
-    // form is a support ticket.
-    res.status(400).json(intake);
-    return;
-  }
+  const relationshipId = typeof body.relationship_id === "string" ? body.relationship_id.trim() : "";
 
-  const inherent = computeVendorInherentRisk(intake.input);
+  // Two ways in. The v1 path asks the twelve-field intake and scores it with
+  // the v1 engine (methodology 1.0.0) — unchanged, still the path for
+  // engagements not yet attached to a relationship. The VO2 path names a
+  // relationship and inherits its classification.
+  let scoring: { score: number; band: RiskBand; arithmetic_band: RiskBand; basis: unknown; tier: AssessmentTier };
+  let facts: InherentRiskInput;
+  let methodologyVersion: string;
+  if (!relationshipId) {
+    const intake = validateIntake(body.intake ?? body);
+    if (!intake.ok) {
+      // Deliberately explicit about WHICH fields. A generic 400 on a twelve-field
+      // form is a support ticket.
+      res.status(400).json(intake);
+      return;
+    }
+    const inherent = computeVendorInherentRisk(intake.input);
+    scoring = { score: inherent.score, band: inherent.band, arithmetic_band: inherent.arithmetic_band, basis: inherent.basis, tier: inherent.tier };
+    facts = intake.input;
+    methodologyVersion = METHODOLOGY_VERSION;
+  } else {
+    facts = undefined as never; scoring = undefined as never; methodologyVersion = ""; // assigned below inside try
+  }
 
   try {
     const vendor = await pg.query<{ id: string; name: string }>(
@@ -355,6 +445,17 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
       return;
     }
 
+    if (relationshipId) {
+      const seeded = await seedFromRelationship(organizationId, vendorId, relationshipId);
+      if (!seeded.ok) {
+        res.status(seeded.status).json(seeded.message ? { error: seeded.error, message: seeded.message } : { error: seeded.error });
+        return;
+      }
+      facts = seeded.seed.facts;
+      scoring = { ...seeded.seed.inherent, tier: seeded.seed.tier };
+      methodologyVersion = INHERENT_METHODOLOGY_VERSION_V2;
+    }
+
     const inserted = await pg.query<{ id: string }>(
       `INSERT INTO vendor_engagements
          (organization_id, vendor_id, engagement_type, status, title,
@@ -364,7 +465,7 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
           recoverability, business_criticality, regulatory_exposure,
           regulatory_breach_notification,
           ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure,
-          concentration_snapshot, concentration_snapshot_at)
+          concentration_snapshot, concentration_snapshot_at, relationship_id)
        VALUES ($1, $2, $3, 'draft', $4,
                $5, $6, $7, $8::jsonb,
                $9, $10, $11, $12,
@@ -372,7 +473,7 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
                $17, $18, $19,
                $20,
                $21, $22, $23, $24,
-               $25, NOW())
+               $25, NOW(), $26)
        RETURNING id`,
       [
         organizationId,
@@ -381,27 +482,28 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
         typeof body.title === "string" && body.title.trim()
           ? body.title.trim().slice(0, 300)
           : `${vendor.rows[0]!.name} assurance review`,
-        inherent.score,
-        inherent.band,
-        inherent.arithmetic_band,
-        JSON.stringify(inherent.basis),
-        inherent.tier,
-        METHODOLOGY_VERSION,
+        scoring.score,
+        scoring.band,
+        scoring.arithmetic_band,
+        JSON.stringify(scoring.basis),
+        scoring.tier,
+        methodologyVersion,
         SCOPE_RULE_VERSION,
         userOf(req),
-        intake.input.data_sensitivity,
-        intake.input.data_volume,
-        intake.input.access_level,
-        intake.input.operational_dependency,
-        intake.input.recoverability,
-        intake.input.business_criticality,
-        intake.input.regulatory_exposure,
-        intake.input.regulatory_breach_notification,
-        intake.input.ai_involvement,
-        intake.input.ai_autonomy,
-        intake.input.hosting_model,
-        intake.input.fourth_party_exposure,
-        intake.input.concentration,
+        facts.data_sensitivity,
+        facts.data_volume,
+        facts.access_level,
+        facts.operational_dependency,
+        facts.recoverability,
+        facts.business_criticality,
+        facts.regulatory_exposure,
+        facts.regulatory_breach_notification,
+        facts.ai_involvement,
+        facts.ai_autonomy,
+        facts.hosting_model,
+        facts.fourth_party_exposure,
+        facts.concentration,
+        relationshipId || null,
       ]
     );
 
@@ -416,10 +518,10 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
       payload: {
         vendor_id: vendorId,
         engagement_type: engagementType,
-        inherent_score: inherent.score,
-        inherent_rating: inherent.band,
-        tier: inherent.tier,
-        methodology_version: METHODOLOGY_VERSION,
+        inherent_score: scoring.score,
+        inherent_rating: scoring.band,
+        tier: scoring.tier,
+        methodology_version: methodologyVersion,
       },
       ipAddress: req.ip ?? null,
     });
@@ -428,13 +530,13 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
       id,
       status: "draft",
       inherent: {
-        score: inherent.score,
-        rating: inherent.band,
-        arithmetic_rating: inherent.arithmetic_band,
-        tier: inherent.tier,
+        score: scoring.score,
+        rating: scoring.band,
+        arithmetic_rating: scoring.arithmetic_band,
+        tier: scoring.tier,
         // The whole explanation travels with the number. A reviewer must never
         // have to re-derive anything to understand a rating.
-        basis: inherent.basis,
+        basis: scoring.basis,
       },
     });
   } catch (err) {
@@ -1343,7 +1445,7 @@ export async function recomputeRisk(req: Request, res: Response): Promise<void> 
         residual_score: residual.score,
         residual_rating: residual.rating,
         inherent_understated: residual.inherent_understated,
-        methodology_version: METHODOLOGY_VERSION,
+        methodology_version: await storedMethodologyVersion(organizationId, id),
       },
       ipAddress: req.ip ?? null,
     });
@@ -1798,7 +1900,7 @@ export async function promoteEngagementFindings(req: Request, res: Response): Pr
         supersede_equivalence_undetermined: {
           count: observation.equivalence_undetermined.length,
         },
-        methodology_version: METHODOLOGY_VERSION,
+        methodology_version: await storedMethodologyVersion(organizationId, id),
       },
       ipAddress: req.ip ?? null,
     });

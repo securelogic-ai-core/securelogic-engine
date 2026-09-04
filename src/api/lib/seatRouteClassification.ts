@@ -138,6 +138,9 @@ export const WIRED_DENY_ROUTE_FILES: readonly string[] = [
   // governance act, and the family has no per-Contributor ownership predicate
   // worth trusting — same posture as the engagement routes it feeds.
   "vendorContacts.ts",
+  // Onboarding 2.0. Deny-all: declaring what the organisation depends on, and
+  // how much, is a governance act — same posture as the engagement routes.
+  "vendorRelationships.ts",
   // Every route carries denyContributor(): opening an engagement, overriding an
   // inherent rating, issuing a vendor credential and recording a governance
   // decision are all owner/admin actions, and issuing in particular mints a

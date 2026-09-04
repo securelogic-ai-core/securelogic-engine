@@ -80,6 +80,7 @@ import vendorAssuranceDocumentsRouter from "./vendorAssuranceDocuments.js";
 import vendorSignalContextRouter from "./vendorSignalContext.js";
 import vendorPortalRouter from "./vendorPortal.js";
 import vendorContactsRouter from "./vendorContacts.js";
+import vendorRelationshipsRouter from "./vendorRelationships.js";
 import vendorEngagementsRouter from "./vendorEngagements.js";
 import controlComplianceContextRouter from "./controlComplianceContext.js";
 import obligationComplianceContextRouter from "./obligationComplianceContext.js";
@@ -504,6 +505,8 @@ export function buildRoutes(opts: RoutesOptions): Router {
   router.use("/api", vendorAssessmentAnalysisRouter);
   router.use("/api", vendorAssuranceDocumentsRouter);
   router.use("/api", vendorContactsRouter);
+  // Vendor Onboarding 2.0: the relationship grain + factual intake -> classification.
+  router.use("/api", vendorRelationshipsRouter);
   router.use("/api", vendorEngagementsRouter);
   router.use("/api", vendorSignalContextRouter);
   // EXTERNAL surface — reachable without a platform account. Every route inside
