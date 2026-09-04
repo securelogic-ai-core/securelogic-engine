@@ -5,12 +5,12 @@ import { vendorAssuranceEnabled } from "@/lib/vendorAssuranceFeatureFlag";
 import { isPlatformEntitled } from "@/lib/entitlements";
 import {
   getVendorEngagement,
+  getVendorEngagementComposition,
   getVendorEngagementResponses,
   listVendorEngagementEvidence,
   listVendorEngagementComments,
-  type VendorEngagementDetail,
-  type VendorEngagementQuestionnaire,
-  type VendorEngagementRelationshipContext,
+  listVendorContacts,
+  type VendorEngagementDetailResponse,
   VENDOR_ASSESSMENT_DOMAINS,
   VENDOR_ASSESSMENT_DOMAIN_LABELS,
   type VendorEngagementEvidenceRow,
@@ -25,6 +25,7 @@ import {
   type EngagementState,
 } from "@/lib/vendorEngagements";
 import EngagementActionPanel from "@/components/vendorEngagements/EngagementActionPanel";
+import AssessmentCompositionSection from "@/components/vendorEngagements/AssessmentCompositionSection";
 import EngagementRelationshipContext from "@/components/vendorEngagements/EngagementRelationshipContext";
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
@@ -107,12 +108,8 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp, responsesResp] = await Promise.all([
-    getVendorEngagement(token, id) as Promise<{
-      engagement: VendorEngagementDetail;
-      questionnaire: VendorEngagementQuestionnaire;
-      relationship: VendorEngagementRelationshipContext | null;
-    } | null>,
+  const [detail, evidenceResp, commentsResp, responsesResp, compositionResp] = await Promise.all([
+    getVendorEngagement(token, id) as Promise<VendorEngagementDetailResponse | null>,
     listVendorEngagementEvidence(token, id) as Promise<{
       evidence: VendorEngagementEvidenceRow[];
       count: number;
@@ -122,6 +119,8 @@ export default async function VendorEngagementPage({
       count: number;
     } | null>,
     getVendorEngagementResponses(token, id),
+    // Assessment Composition v1: what SecureLogic selected and why.
+    getVendorEngagementComposition(token, id),
   ]);
 
   if (!detail) {
@@ -147,6 +146,15 @@ export default async function VendorEngagementPage({
   const overdue = state === "monitoring" && isReviewOverdue(e.next_review_due);
   const evidence = evidenceResp?.evidence ?? [];
   const comments = commentsResp?.comments ?? [];
+  // Goal §A: the questionnaire recipient comes from the vendor's contact
+  // directory, so the page carries it to the issuance flow. Loaded after the
+  // engagement resolves its vendor; a failed load is reported in the flow,
+  // never hidden behind an empty list.
+  const contactsResp = await listVendorContacts(token, e.vendor_id);
+  const contacts = contactsResp?.contacts ?? [];
+  const contactsLoadFailed = contactsResp === null;
+  const invite = detail.invite ?? null;
+  const organizationName = session.organizationName ?? "Your organization";
 
   return (
     <main style={{ padding: 32, maxWidth: 1100, margin: "0 auto", color: "#e5e7eb" }}>
@@ -347,10 +355,22 @@ export default async function VendorEngagementPage({
           </section>
         )}
 
+        <AssessmentCompositionSection
+          composition={compositionResp?.composition ?? null}
+          loadFailed={compositionResp === null}
+          state={state}
+        />
+
         <EngagementActionPanel
           engagementId={e.id}
           state={state}
           inherentRating={e.inherent_rating}
+          vendorId={e.vendor_id}
+          vendorName={e.vendor_name}
+          organizationName={organizationName}
+          contacts={contacts}
+          contactsLoadFailed={contactsLoadFailed}
+          invite={invite}
         />
 
         <ResponsesSection responses={responsesResp} loadFailed={responsesResp === null} />

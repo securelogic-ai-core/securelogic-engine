@@ -7746,18 +7746,55 @@ export async function listVendorEngagements(
   }
 }
 
+/**
+ * The customer-visible invitation record (goal §B). Never carries token
+ * material — the engine projects metadata only.
+ */
+export const VENDOR_INVITE_DELIVERY_STATES = ["not_attempted", "sent", "failed", "suppressed", "disabled"] as const;
+export type VendorInviteDeliveryState = (typeof VENDOR_INVITE_DELIVERY_STATES)[number];
+
+export type VendorEngagementInviteStatus = {
+  id: string;
+  contact_id: string | null;
+  contact_email: string;
+  contact_name: string | null;
+  message: string | null;
+  due_date: string | null;
+  email_delivery_state: VendorInviteDeliveryState;
+  email_delivery_at: string | null;
+  email_provider_message_id: string | null;
+  email_delivery_detail: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+export type VendorEngagementInviteSummary = {
+  active: VendorEngagementInviteStatus | null;
+  latest: VendorEngagementInviteStatus | null;
+  history_count: number;
+};
+
+export type VendorEngagementDetailResponse = {
+  engagement: VendorEngagementDetail;
+  questionnaire: VendorEngagementQuestionnaire;
+  relationship: VendorEngagementRelationshipContext | null;
+  /** Optional during rolling deploy: older engines omit it. */
+  invite?: VendorEngagementInviteSummary;
+};
+
 export async function getVendorEngagement(
   token: string,
   id: string
-): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire; relationship: VendorEngagementRelationshipContext | null } | null> {
+): Promise<VendorEngagementDetailResponse | null> {
   try {
     const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
     if (!res.ok) return null;
-    return res.json() as Promise<{
-      engagement: VendorEngagementDetail;
-      questionnaire: VendorEngagementQuestionnaire;
-      relationship: VendorEngagementRelationshipContext | null;
-    }>;
+    return res.json() as Promise<VendorEngagementDetailResponse>;
   } catch {
     return null;
   }
@@ -7841,41 +7878,178 @@ export async function resolveVendorEngagementScope(
  * token exactly once (only its hash is stored). The caller must show it once
  * and never persist it.
  */
+/**
+ * Issue the questionnaire (goal §A/§B). The recipient is a directory CONTACT
+ * (`contactId`, the primary workflow) or a raw address (still supported for a
+ * customer without a directory entry). SecureLogic composes and SENDS the
+ * invitation unless `sendEmail` is false; the raw token still comes back ONCE
+ * as the secondary "copy secure link" recovery path.
+ */
+export type VendorEngagementIssueInput = {
+  contactId?: string;
+  contactEmail?: string;
+  contactName?: string;
+  message?: string;
+  dueDate?: string;
+  sendEmail?: boolean;
+};
+
+export type VendorEngagementIssued = {
+  ok: true;
+  status: "issued";
+  invite_id: string;
+  invite_token: string;
+  expires_at: string;
+  contact_id: string | null;
+  contact_email: string;
+  due_date: string | null;
+  email_delivery: VendorInviteDeliveryState;
+  email_delivery_detail: string | null;
+};
+
+function issueBody(input: VendorEngagementIssueInput): Record<string, unknown> {
+  return {
+    ...(input.contactId
+      ? { contact_id: input.contactId }
+      : { contact_email: input.contactEmail, ...(input.contactName ? { contact_name: input.contactName } : {}) }),
+    ...(input.message ? { message: input.message } : {}),
+    ...(input.dueDate ? { due_date: input.dueDate } : {}),
+    ...(input.sendEmail === false ? { send_email: false } : {}),
+  };
+}
+
 export async function issueVendorEngagement(
   token: string,
   id: string,
-  contactEmail: string,
-  contactName?: string,
-  /** VA-C1: address the invitation to a person in the supplier's directory. */
-  contactId?: string
-): Promise<
-  VendorEngagementResult<{ ok: true; status: "issued"; invite_token: string; expires_at: string }>
-> {
+  input: VendorEngagementIssueInput
+): Promise<VendorEngagementResult<VendorEngagementIssued>> {
   try {
-    const res = await engineFetch(
-      `/api/vendor-engagements/${encodeURIComponent(id)}/issue`,
-      token,
-      {
-        method: "POST",
-        body: JSON.stringify(
-          contactId
-            ? { contact_id: contactId }
-            : {
-                contact_email: contactEmail,
-                ...(contactName ? { contact_name: contactName } : {}),
-              }
-        ),
-      }
-    );
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/issue`, token, {
+      method: "POST",
+      body: JSON.stringify(issueBody(input)),
+    });
     if (!res.ok) return engagementFailureFrom(res, "issue_failed");
-    return (await res.json()) as {
-      ok: true;
-      status: "issued";
-      invite_token: string;
-      expires_at: string;
-    };
+    return (await res.json()) as VendorEngagementIssued;
   } catch {
     return { failure: { error: "issue_failed" } };
+  }
+}
+
+/** Resend / change recipient: mints a replacement credential and sends it; the prior one dies. */
+export async function reissueVendorEngagementInvite(
+  token: string,
+  id: string,
+  input: VendorEngagementIssueInput
+): Promise<VendorEngagementResult<VendorEngagementIssued & { prior_invites_revoked: number }>> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/invite/reissue`, token, {
+      method: "POST",
+      body: JSON.stringify(issueBody(input)),
+    });
+    if (!res.ok) return engagementFailureFrom(res, "invite_reissue_failed");
+    return (await res.json()) as VendorEngagementIssued & { prior_invites_revoked: number };
+  } catch {
+    return { failure: { error: "invite_reissue_failed" } };
+  }
+}
+
+export async function revokeVendorEngagementInvite(
+  token: string,
+  id: string,
+  reason?: string
+): Promise<VendorEngagementResult<{ ok: true; invites_revoked: number; sessions_revoked: number }>> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/invite/revoke`, token, {
+      method: "POST",
+      body: JSON.stringify(reason ? { reason } : {}),
+    });
+    if (!res.ok) return engagementFailureFrom(res, "invite_revoke_failed");
+    return (await res.json()) as { ok: true; invites_revoked: number; sessions_revoked: number };
+  } catch {
+    return { failure: { error: "invite_revoke_failed" } };
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Assessment Composition v1 — what SecureLogic composed and why.
+   GET /api/vendor-engagements/:id/composition returns the latest immutable
+   snapshot; null `composition` means the scope has never been resolved.
+   ───────────────────────────────────────────────────────────── */
+
+export type CompositionReason = { rule_id: string; rule_family: string; rationale: string };
+export type CompositionCoreObjective = {
+  reference: string;
+  title: string;
+  requirement_id: string | null;
+  outcome: "asked" | "evidence_satisfied" | "not_applicable" | "not_provisioned";
+  depth: "full" | "confirm" | "attest" | null;
+  domain: VendorAssessmentDomain | null;
+  rule_id: string | null;
+  rationale: string;
+  basis: { signals?: Record<string, boolean>; facts?: Record<string, unknown> } | null;
+  evidence: Record<string, unknown> | null;
+  reasons: CompositionReason[];
+};
+export type CompositionAdditionalItem = {
+  requirement_id: string;
+  reference: string;
+  title: string;
+  framework: string;
+  framework_key: string | null;
+  domain: VendorAssessmentDomain | null;
+  depth: "full" | "confirm" | "attest";
+  outcome: "asked" | "evidence_satisfied";
+  evidence: Record<string, unknown> | null;
+  reasons: CompositionReason[];
+};
+export type VendorEngagementComposition = {
+  id: string;
+  hash: string;
+  snapshot_version: string;
+  scope_rule_version: string;
+  tier: string;
+  core_assurance_version: string | null;
+  resolved_at: string;
+  summary: {
+    asked: number;
+    asked_full: number;
+    asked_confirm: number;
+    asked_attest: number;
+    evidence_satisfied: number;
+    core_applicable: number;
+    core_not_applicable: number;
+    core_missing: number;
+    additional_asked: number;
+    excluded_by_rules: number;
+    truncated: { cap: number; dropped: number } | null;
+    nominal_target: number | null;
+    mandatory_overage: number | null;
+    no_questionnaire_required: boolean;
+  };
+  domains: Array<{ domain: VendorAssessmentDomain; asked: number; evidence_satisfied: number }>;
+  core_assurance: { version: string; framework_key: string; objectives: CompositionCoreObjective[] } | null;
+  additional: CompositionAdditionalItem[];
+  dropped: Array<{ requirement_id: string; reference: string; title: string; framework: string }>;
+  coverage: { computed: boolean; applied: boolean; version: string | null; as_of: string | null; covered_count: number; gap_count: number };
+};
+export type VendorEngagementCompositionResponse = {
+  engagement_id: string;
+  status: string;
+  scope_rule_version: string | null;
+  composition: VendorEngagementComposition | null;
+  history_count: number;
+};
+
+export async function getVendorEngagementComposition(
+  token: string,
+  id: string
+): Promise<VendorEngagementCompositionResponse | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/composition`, token);
+    if (!res.ok) return null;
+    return (await res.json()) as VendorEngagementCompositionResponse;
+  } catch {
+    return null;
   }
 }
 

@@ -310,3 +310,38 @@ export function bandColors(band: string | null | undefined): {
 export function portalInviteUrl(origin: string, token: string): string {
   return `${origin.replace(/\/$/, "")}/portal/accept/${encodeURIComponent(token)}`;
 }
+
+// ── Invitation composition (goal §B) ─────────────────────────────────────────
+
+function formatDueDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * The professional default invitation the customer reviews and may edit.
+ * MIRRORS `defaultInviteMessage` in the engine (src/api/lib/vendorPortal/
+ * inviteEmail.ts): the engine falls back to the same text when a message is
+ * omitted, so what the customer previews is what SecureLogic would send.
+ * Keep the two in step.
+ */
+export function defaultInvitationMessage(args: {
+  contactName: string | null;
+  organizationName: string;
+  vendorName: string;
+  dueDate?: string | null;
+}): string {
+  const greeting = args.contactName ? `Hello ${args.contactName.split(" ")[0]},` : "Hello,";
+  const due = args.dueDate ? ` We would appreciate your response by ${formatDueDate(args.dueDate)}.` : "";
+  return (
+    `${greeting}\n\n` +
+    `${args.organizationName} assesses the security and governance posture of its vendors, and ` +
+    `${args.vendorName} has been selected for an assessment. SecureLogic AI has assembled a ` +
+    `questionnaire tailored to the service you provide us; it asks only what applies to this ` +
+    `relationship, and you can attach supporting evidence where it helps.${due}\n\n` +
+    `Please use the secure link below to open the questionnaire. If someone else at ` +
+    `${args.vendorName} is better placed to respond, please let us know.\n\n` +
+    `Thank you,\n${args.organizationName}`
+  );
+}

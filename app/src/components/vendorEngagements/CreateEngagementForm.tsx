@@ -56,12 +56,20 @@ export default function CreateEngagementForm({ vendors, defaultVendorId }: Props
       regulatory_breach_notification: breachNotification === "yes",
     } as unknown as VendorEngagementIntakeInput;
     startTransition(async () => {
-      const r = await createEngagement({
-        vendor_id: vendorId,
-        engagement_type: engagementType,
-        ...(title.trim() ? { title: title.trim() } : {}),
-        intake,
-      });
+      // A rejected action call (the POST never reached the app) is reported
+      // here with the form intact — never thrown into the route.
+      let r: Awaited<ReturnType<typeof createEngagement>>;
+      try {
+        r = await createEngagement({
+          vendor_id: vendorId,
+          engagement_type: engagementType,
+          ...(title.trim() ? { title: title.trim() } : {}),
+          intake,
+        });
+      } catch {
+        setError("The request did not reach SecureLogic, so nothing was created. Check your connection and try again.");
+        return;
+      }
       if (r.ok) {
         router.push(`/vendor-engagements/${r.id}`);
       } else {

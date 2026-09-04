@@ -11,9 +11,14 @@
  * own reason string is shown verbatim, and the page re-render from the server
  * action's revalidate brings the panel back in sync.
  *
- * The issue flow displays the vendor invite link EXACTLY ONCE: the engine
- * returns the raw token a single time (only its hash is stored), so the URL is
- * built client-side at display time and never persisted anywhere in the app.
+ * Issuance (goal §A/§B) is the IssueQuestionnaireFlow: recipient chosen from
+ * the vendor's contact directory, invitation composed and SENT by SecureLogic.
+ * The raw token still comes back once as the secondary "copy secure link"
+ * recovery path — built client-side at display time, never persisted here.
+ *
+ * Every transition awaits its server action inside try/catch (the VO 2.0
+ * walkthrough crash class): a call that rejects before reaching the app is
+ * reported in this panel, never thrown into the route.
  */
 
 import { useState, useTransition } from "react";
@@ -25,13 +30,18 @@ import {
   isTerminal,
   ENGAGEMENT_STATE_LABELS,
   RISK_BANDS,
-  portalInviteUrl,
 } from "@/lib/vendorEngagements";
-import { VENDOR_ENGAGEMENT_DECISIONS, type VendorEngagementDecision } from "@/lib/api";
+import {
+  VENDOR_ENGAGEMENT_DECISIONS,
+  type VendorEngagementDecision,
+  type VendorContact,
+  type VendorEngagementInviteSummary,
+} from "@/lib/api";
+import IssueQuestionnaireFlow, { DELIVERY_COPY } from "./IssueQuestionnaireFlow";
 import {
   resolveScope,
   overrideInherent,
-  issueEngagement,
+  revokeInvite,
   beginReview,
   completeAnalysis,
   recomputeRisk,
@@ -44,9 +54,23 @@ type Props = {
   engagementId: string;
   state: EngagementState;
   inherentRating: string | null;
+  /** Goal §A: the recipient comes from the vendor's contact directory. */
+  vendorId: string;
+  vendorName: string;
+  organizationName: string;
+  contacts: VendorContact[];
+  contactsLoadFailed: boolean;
+  /** Goal §B: whether and how the current invitation was delivered. */
+  invite: VendorEngagementInviteSummary | null;
 };
 
-type OpenForm = "none" | "issue" | "override" | "decide" | "monitoring";
+type OpenForm = "none" | "issue" | "reissue" | "revoke" | "override" | "decide" | "monitoring";
+
+export const TRANSPORT_FAILURE =
+  "The request did not reach SecureLogic, so nothing was changed. Check your connection and try again.";
+
+/** States in which a vendor can still use a link, so an invitation can be replaced or revoked. */
+const INVITE_OPEN_STATES: readonly EngagementState[] = ["issued", "in_progress", "clarification_requested"];
 
 const DECISION_LABELS: Record<VendorEngagementDecision, string> = {
   approved: "Approved",
@@ -59,18 +83,20 @@ export default function EngagementActionPanel({
   engagementId,
   state,
   inherentRating,
+  vendorId,
+  vendorName,
+  organizationName,
+  contacts,
+  contactsLoadFailed,
+  invite,
 }: Props): JSX.Element {
   const [openForm, setOpenForm] = useState<OpenForm>("none");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-  const [inviteExpires, setInviteExpires] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
 
   // Form fields
-  const [contactEmail, setContactEmail] = useState("");
-  const [contactName, setContactName] = useState("");
+  const [revokeReason, setRevokeReason] = useState("");
   const [overrideRating, setOverrideRating] = useState(inherentRating ?? "");
   const [overrideRationale, setOverrideRationale] = useState("");
   const [decision, setDecision] = useState<VendorEngagementDecision>("approved");
@@ -83,7 +109,20 @@ export default function EngagementActionPanel({
     setError(null);
     setNotice(null);
     startTransition(async () => {
-      const r = await fn();
+      // A server-action call can REJECT before any request reaches the app
+      // (Safari's `TypeError: Load failed`, a dropped connection, a deploy in
+      // flight). Under React 19 an unhandled rejection inside a transition is
+      // re-thrown during render and, with no error boundary on this route,
+      // replaces the whole page with Next's "client-side exception" screen —
+      // the VO 2.0 walkthrough crash. The refusal belongs here, with the form
+      // intact, and the message must say nothing was changed.
+      let r: { ok: boolean } & Record<string, unknown>;
+      try {
+        r = await fn();
+      } catch {
+        setError(TRANSPORT_FAILURE);
+        return;
+      }
       if (r.ok) {
         setOpenForm("none");
         if (onOk) onOk(r as never);
@@ -119,13 +158,17 @@ export default function EngagementActionPanel({
         <ActionRow
           action="resolve_scope"
           state={state}
-          label={state === "scoped" ? "Re-resolve questionnaire scope" : "Resolve questionnaire scope"}
+          label={state === "scoped" ? "Recompose assessment" : "Compose assessment"}
           pending={pending}
           onClick={() =>
             run(
               () => resolveScope(engagementId),
               (r: { scoped: number; excluded: number }) =>
-                setNotice(`Scope resolved: ${r.scoped} requirements in scope, ${r.excluded} excluded.`)
+                setNotice(
+                  r.scoped === 0
+                    ? "Composed: no formal questionnaire is required for this relationship — see the composition below."
+                    : `Composed: ${r.scoped} requirement${r.scoped === 1 ? "" : "s"} selected, ${r.excluded} not applicable or not required. Review the composition below before sending.`
+                )
             )
           }
         />
@@ -184,55 +227,23 @@ export default function EngagementActionPanel({
         <ActionRow
           action="issue"
           state={state}
-          label="Issue to vendor"
+          label="Send questionnaire to vendor"
           pending={pending}
           active={openForm === "issue"}
           onClick={() => toggleForm("issue")}
         />
         {openForm === "issue" && (
-          <InlineForm>
-            <label style={lbl()}>
-              Vendor contact email
-              <input
-                type="email"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                disabled={pending}
-                style={input()}
-                placeholder="security@vendor.example"
-              />
-            </label>
-            <label style={lbl()}>
-              Contact name (optional)
-              <input
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                disabled={pending}
-                style={input()}
-              />
-            </label>
-            <FormButtons
-              pending={pending}
-              submitLabel="Issue questionnaire"
-              disabled={!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())}
-              onCancel={() => setOpenForm("none")}
-              onSubmit={() =>
-                run(
-                  () =>
-                    issueEngagement(
-                      engagementId,
-                      contactEmail.trim(),
-                      contactName.trim() || undefined
-                    ),
-                  (r: { inviteToken: string; expiresAt: string }) => {
-                    setInviteUrl(portalInviteUrl(window.location.origin, r.inviteToken));
-                    setInviteExpires(r.expiresAt);
-                    setCopied(false);
-                  }
-                )
-              }
-            />
-          </InlineForm>
+          <IssueQuestionnaireFlow
+            engagementId={engagementId}
+            vendorId={vendorId}
+            vendorName={vendorName}
+            organizationName={organizationName}
+            contacts={contacts}
+            contactsLoadFailed={contactsLoadFailed}
+            previousRecipientIds={invite?.latest?.contact_id ? [invite.latest.contact_id] : []}
+            mode="issue"
+            onCancel={() => setOpenForm("none")}
+          />
         )}
 
         <ActionRow
@@ -454,58 +465,89 @@ export default function EngagementActionPanel({
         />
       </div>
 
-      {inviteUrl && (
+      {invite?.latest && INVITE_OPEN_STATES.includes(state) && (
         <div
-          style={{
-            marginTop: 14,
-            padding: 14,
-            borderRadius: 8,
-            border: "1px solid #a16207",
-            background: "rgba(161,98,7,0.12)",
-          }}
+          style={{ marginTop: 14, padding: 12, border: "1px solid #1f2937", borderRadius: 8, background: "#0b1220" }}
+          aria-label="Invitation"
         >
-          <div style={{ color: "#fcd34d", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-            Vendor invite link — shown once, copy it now
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+            <span style={{ color: "#6b7280", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>Invitation</span>
+            <span style={{ fontSize: 11, color: "#6b7280" }}>
+              {invite.history_count > 1 && `${invite.history_count} invitations · `}
+              {invite.active ? `expires ${new Date(invite.active.expires_at).toLocaleDateString()}` : "no active link"}
+            </span>
           </div>
-          <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 8 }}>
-            Only a hash of this token is stored. Once you leave this page the link cannot be
-            recovered — send it to the vendor contact now.
-            {inviteExpires && ` Expires ${new Date(inviteExpires).toLocaleDateString()}.`}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <code
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                background: "#020617",
-                border: "1px solid #374151",
-                color: "#e5e7eb",
-                fontSize: 12,
-                wordBreak: "break-all",
-                flex: "1 1 320px",
-              }}
-            >
-              {inviteUrl}
-            </code>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(inviteUrl).then(() => setCopied(true));
-              }}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 6,
-                border: "1px solid #a16207",
-                background: copied ? "rgba(22,101,52,0.2)" : "transparent",
-                color: copied ? "#86efac" : "#fcd34d",
-                cursor: "pointer",
-                fontSize: 13,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {copied ? "Copied" : "Copy link"}
+          {(() => {
+            const cur = invite.active ?? invite.latest!;
+            const delivery = DELIVERY_COPY[cur.email_delivery_state];
+            const tone = delivery.tone === "ok" ? "#86efac" : delivery.tone === "warn" ? "#fde68a" : "#9ca3af";
+            return (
+              <>
+                <div style={{ fontSize: 13, color: "#e5e7eb", marginTop: 4 }}>
+                  {cur.contact_name ?? cur.contact_email}
+                  <span style={{ color: "#9ca3af" }}> · {cur.contact_email}</span>
+                  {cur.due_date && <span style={{ color: "#9ca3af" }}> · response due {cur.due_date}</span>}
+                </div>
+                <div style={{ fontSize: 12, color: tone, marginTop: 2 }}>
+                  {invite.active ? delivery.text : cur.revoked_at ? `Access revoked${cur.revocation_reason ? ` — ${cur.revocation_reason}` : ""}.` : "The link has expired."}
+                  {cur.email_delivery_detail && invite.active && <span style={{ color: "#9ca3af" }}> ({cur.email_delivery_detail})</span>}
+                  {invite.active && (
+                    <span style={{ color: "#9ca3af" }}>
+                      {" "}
+                      · {cur.exchange_count === 0 ? "not opened yet" : `opened ${cur.exchange_count} time${cur.exchange_count === 1 ? "" : "s"}`}
+                    </span>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button type="button" disabled={pending} onClick={() => toggleForm("reissue")} style={smallButton(openForm === "reissue")}>
+              {invite.active ? "Resend or change recipient" : "Send a new invitation"}
             </button>
+            {invite.active && (
+              <button type="button" disabled={pending} onClick={() => toggleForm("revoke")} style={smallButton(openForm === "revoke")}>
+                Revoke access
+              </button>
+            )}
           </div>
+          {openForm === "reissue" && (
+            <IssueQuestionnaireFlow
+              engagementId={engagementId}
+              vendorId={vendorId}
+              vendorName={vendorName}
+              organizationName={organizationName}
+              contacts={contacts}
+              contactsLoadFailed={contactsLoadFailed}
+              previousRecipientIds={invite.latest.contact_id ? [invite.latest.contact_id] : []}
+              mode="reissue"
+              onCancel={() => setOpenForm("none")}
+            />
+          )}
+          {openForm === "revoke" && (
+            <InlineForm>
+              <label style={lbl()}>
+                Reason (optional — recorded on the invitation)
+                <input value={revokeReason} onChange={(e) => setRevokeReason(e.target.value)} disabled={pending} style={input()} />
+              </label>
+              <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>
+                Revoking stops the link and any open vendor session immediately. Answers already given are kept.
+              </p>
+              <FormButtons
+                pending={pending}
+                submitLabel="Revoke access"
+                disabled={false}
+                onCancel={() => setOpenForm("none")}
+                onSubmit={() =>
+                  run(
+                    () => revokeInvite(engagementId, revokeReason.trim() || undefined),
+                    (r: { sessionsRevoked: number }) =>
+                      setNotice(`Access revoked${r.sessionsRevoked > 0 ? ` (${r.sessionsRevoked} open session${r.sessionsRevoked === 1 ? "" : "s"} ended)` : ""}. Send a new invitation when ready.`)
+                  )
+                }
+              />
+            </InlineForm>
+          )}
         </div>
       )}
 
@@ -517,6 +559,18 @@ export default function EngagementActionPanel({
       )}
     </section>
   );
+}
+
+function smallButton(active: boolean): React.CSSProperties {
+  return {
+    padding: "5px 12px",
+    borderRadius: 6,
+    border: active ? "1px solid #2563eb" : "1px solid #374151",
+    background: active ? "rgba(37,99,235,0.15)" : "transparent",
+    color: active ? "#93c5fd" : "#d1d5db",
+    fontSize: 12,
+    cursor: "pointer",
+  };
 }
 
 function ActionRow({
