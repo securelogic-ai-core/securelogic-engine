@@ -80,16 +80,24 @@ async function setup() {
   });
   const relationshipId = r.body.relationship?.id;
 
+  // A MODERATE-exposure relationship on purpose (tier_3, ~23 questions rather
+  // than the ~79 a tier_1 payments relationship composes to). The portal's
+  // DB-backed limiter is 120 requests per minute PER SESSION
+  // (requirePortalSession.ts), and answering 79 questions plus the reads around
+  // them walks straight into it — a rate-limited run would report a product
+  // failure that is really a harness failure. Composition breadth is proven by
+  // the composition journey; what this script needs is enough questions to
+  // answer, not the widest possible set.
   await engine(`/api/vendors/${vendorId}/relationships/${relationshipId}/intake`, {
     method: "POST",
     body: JSON.stringify({
-      max_tolerable_disruption: "lt_24_hours", operational_dependency: "essential",
-      business_reach: "enterprise_wide", substitutability: "replaceable_months",
-      process_coupling: "in_critical_path", concentration: "moderate",
-      data_sensitivity: "restricted", data_volume: "large", access_level: "read_write",
-      regulatory_exposure: "high", regulatory_breach_notification: false,
+      max_tolerable_disruption: "1_week_to_1_month", operational_dependency: "supporting",
+      business_reach: "single_function", substitutability: "replaceable_weeks",
+      process_coupling: "peripheral", concentration: "low",
+      data_sensitivity: "internal", data_volume: "minimal", access_level: "read_only",
+      regulatory_exposure: "low", regulatory_breach_notification: false,
       ai_involvement: "none", ai_autonomy: "none", hosting_model: "saas",
-      fourth_party_exposure: "moderate",
+      fourth_party_exposure: "low",
     }),
   });
 
@@ -126,8 +134,15 @@ async function main() {
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
   // ── 1. Vendor opens the secure link ──
+  //
+  // Wait for the EXCHANGE, not merely for a /portal URL. `/portal/accept/<token>`
+  // already matches `/\/portal(\/|$)/`, so that pattern is satisfied by the page
+  // we are standing on and returns before the client-side POST has run — the
+  // next navigation then races it and lands on "Secure link required". On
+  // success AcceptClient does `router.replace("/portal")`, so the honest signal
+  // is the bare /portal path.
   await page.goto(acceptUrl);
-  await page.waitForURL(/\/portal(\/|$)/, { timeout: 60_000 });
+  await page.waitForURL(/\/portal\/?$/, { timeout: 60_000 });
   ok(`vendor: invitation exchanged for a portal session (${BROWSER})`);
 
   await page.goto(`${APP}/portal/questionnaire`);
@@ -156,7 +171,7 @@ async function main() {
 
   // ── 4. WA-1: choosing a negative answer prompts immediately (optimistic) ──
   const first = fieldsets.nth(0);
-  await first.getByRole("button", { name: "Partially in place" }).click();
+  await first.getByRole("button", { name: "Partially in place", exact: true }).click();
   await page.getByText(/An explanation is required before this questionnaire can be submitted/i)
     .first().waitFor({ timeout: 20_000 })
     .then(() => ok("WA-1: 'Partially in place' prompts for an explanation on the click"))
@@ -171,7 +186,7 @@ async function main() {
 
   // Answer everything else affirmatively so ONLY the explanation blocks.
   for (let i = 1; i < qCount; i++) {
-    await fieldsets.nth(i).getByRole("button", { name: "In place" }).click();
+    await fieldsets.nth(i).getByRole("button", { name: "In place", exact: true }).click();
     await page.waitForTimeout(150);
   }
   await page.waitForTimeout(2500);
