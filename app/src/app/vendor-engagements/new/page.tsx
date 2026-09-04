@@ -3,8 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { vendorAssuranceEnabled } from "@/lib/vendorAssuranceFeatureFlag";
 import { isPlatformEntitled } from "@/lib/entitlements";
-import { getVendors } from "@/lib/api";
+import { getVendors, listVendorRelationships } from "@/lib/api";
 import CreateEngagementForm from "@/components/vendorEngagements/CreateEngagementForm";
+import OpenFromRelationship from "@/components/vendorEngagements/OpenFromRelationship";
 
 /**
  * /vendor-engagements/new — open an engagement.
@@ -36,6 +37,10 @@ export default async function NewVendorEngagementPage({
   // the form validates it against the fetched vendor list before honoring it.
   const sp = searchParams ? await searchParams : {};
   const defaultVendorId = sp.vendorId;
+  // Vendor Onboarding 2.0: if the vendor already has relationships, offer to
+  // open from one (inheriting its derived classification) before the pre-2.0
+  // form that re-asks the intake.
+  const relationships = defaultVendorId ? (await listVendorRelationships(token, defaultVendorId))?.relationships ?? [] : [];
 
   return (
     <main style={{ padding: "32px", maxWidth: 860, margin: "0 auto", color: "#e5e7eb" }}>
@@ -56,10 +61,13 @@ export default async function NewVendorEngagementPage({
           No active vendors on record. <Link href="/vendors/new" style={{ color: "#93c5fd" }}>Add a vendor</Link> first.
         </div>
       ) : (
-        <CreateEngagementForm
-          vendors={vendors}
-          {...(defaultVendorId !== undefined ? { defaultVendorId } : {})}
-        />
+        <>
+          {defaultVendorId && <OpenFromRelationship vendorId={defaultVendorId} relationships={relationships} />}
+          <CreateEngagementForm
+            vendors={vendors}
+            {...(defaultVendorId !== undefined ? { defaultVendorId } : {})}
+          />
+        </>
       )}
     </main>
   );

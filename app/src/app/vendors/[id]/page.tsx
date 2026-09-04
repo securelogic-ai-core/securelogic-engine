@@ -12,6 +12,7 @@ import {
   getVendorAiDependencies,
   listVendorAssuranceDocuments,
   listVendorContacts,
+  listVendorRelationships,
   getVendorAssuranceExtraction,
   getFrameworks,
   getFrameworkRequirements,
@@ -27,6 +28,7 @@ import {
   type VendorAssuranceExtractionResponse,
 } from "@/lib/api";
 import { VendorContactsCard } from "./VendorContactsCard";
+import { VendorRelationshipsCard } from "./VendorRelationshipsCard";
 import { HistorySection } from "@/components/HistorySection";
 import { CompleteReviewSection } from "./CompleteReviewSection";
 import { RecalculateScoreButton } from "./RecalculateScoreButton";
@@ -895,7 +897,7 @@ export default async function VendorDetailPage({
     entitlementLevel === "team";
   if (!isPlatformUser) redirect("/dashboard");
 
-  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps, contactsData] = await Promise.all([
+  const [vendor, assessmentsData, reviewsData, vendorFindingsData, linkedSignals, aiDeps, contactsData, relationshipsData] = await Promise.all([
     getVendor(token, id),
     getVendorAssessmentsForVendor(token, id, 20),
     getVendorReviews(token, id, 20),
@@ -912,6 +914,11 @@ export default async function VendorDetailPage({
     // VA-C1: the supplier's contact directory. null means the read FAILED —
     // the card renders that differently from an empty directory.
     listVendorContacts(token, id),
+    // Vendor Onboarding 2.0: what we buy from this vendor and the DERIVED
+    // classification of each relationship. null = load failure, rendered as
+    // such; a relationship with no intake renders as intake_required, never
+    // as a zero.
+    listVendorRelationships(token, id),
   ]);
 
   if (!vendor) redirect("/vendors");
@@ -1025,6 +1032,17 @@ export default async function VendorDetailPage({
       <div className="flex flex-col lg:flex-row gap-8">
         {/* Left: main content */}
         <div className="flex-1 min-w-0 space-y-8">
+          {/* Vendor Onboarding 2.0 — the front door. Relationships, factual
+              intake, and the derived Criticality / Inherent risk / Assessment
+              tier sit FIRST: everything below is downstream of them. The
+              manual vendors.criticality is shown by the details card as a
+              legacy classification and is not consumed here. */}
+          <VendorRelationshipsCard
+            vendorId={vendor.id}
+            relationships={relationshipsData?.relationships ?? []}
+            loadFailed={relationshipsData === null}
+            manualCriticality={vendor.criticality ?? null}
+          />
           <OpenFindingsSectionClient findings={activeFindings} vendorId={vendor.id} />
           <ExternalIntelligenceSection
             signals={linkedSignals}

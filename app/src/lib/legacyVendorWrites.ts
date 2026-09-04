@@ -21,10 +21,14 @@ export function legacyVendorWritesEnabled(): boolean {
 /** The canonical replacement CTA for every demoted legacy write surface. */
 export function engagementCta(vendorId?: string): { href: string; label: string } {
   return {
+    // Vendor Onboarding 2.0: the canonical way in is the vendor page — record
+    // the relationship's factual intake, get the derived classification, and
+    // open the assessment at the derived tier. /vendor-engagements/new
+    // re-asks the intake and is the pre-2.0 path.
     href: vendorId
-      ? `/vendor-engagements/new?vendorId=${encodeURIComponent(vendorId)}`
-      : "/vendor-engagements/new",
-    label: "Open an engagement",
+      ? `/vendors/${encodeURIComponent(vendorId)}#relationships`
+      : "/vendors",
+    label: "Classify and assess from the vendor page",
   };
 }
 
