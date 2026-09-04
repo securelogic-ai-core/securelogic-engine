@@ -7,14 +7,16 @@
  * tier, with the manual legacy classification labelled as such and unused.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
-vi.mock("@/app/actions/vendorRelationships", () => ({
+const actions = vi.hoisted(() => ({
   addVendorRelationship: vi.fn(), recordRelationshipIntake: vi.fn(), setRelationshipPolicy: vi.fn(), openAssessmentForRelationship: vi.fn(),
 }));
+vi.mock("@/app/actions/vendorRelationships", () => actions);
 
 import { VendorRelationshipsCard } from "../VendorRelationshipsCard";
+import { TRANSPORT_FAILURE } from "../VendorContactsCard";
 import type { VendorRelationship } from "@/lib/api";
 
 const base: VendorRelationship = {
@@ -58,6 +60,16 @@ describe("VendorRelationshipsCard", () => {
     expect(screen.getByText(/manual classification/)).toBeTruthy();
     expect(screen.getByText(/not used to derive/)).toBeTruthy();
     expect(screen.getByText("Open assessment")).toBeTruthy();
+  });
+  it("reports a REJECTED action call inside the card instead of throwing into the route (same class as the contact-add crash)", async () => {
+    actions.addVendorRelationship.mockRejectedValue(new TypeError("Load failed"));
+    render(<VendorRelationshipsCard vendorId="v-1" relationships={[base]} loadFailed={false} manualCriticality={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Add relationship" }));
+    fireEvent.change(screen.getByPlaceholderText(/What you buy from this vendor/), { target: { value: "Card processing" } });
+    const buttons = screen.getAllByRole("button", { name: /Add relationship|Save/ });
+    fireEvent.click(buttons[buttons.length - 1]!);
+    await waitFor(() => expect(screen.getByText(TRANSPORT_FAILURE)).toBeTruthy());
+    expect(screen.getByText("Intake required")).toBeTruthy();
   });
   it("distinguishes a load failure from an empty list", () => {
     render(<VendorRelationshipsCard vendorId="v-1" relationships={[]} loadFailed={true} manualCriticality={null} />);
