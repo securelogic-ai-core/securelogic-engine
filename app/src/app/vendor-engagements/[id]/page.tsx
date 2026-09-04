@@ -10,6 +10,7 @@ import {
   listVendorEngagementComments,
   type VendorEngagementDetail,
   type VendorEngagementQuestionnaire,
+  type VendorEngagementRelationshipContext,
   VENDOR_ASSESSMENT_DOMAINS,
   VENDOR_ASSESSMENT_DOMAIN_LABELS,
   type VendorEngagementEvidenceRow,
@@ -24,6 +25,7 @@ import {
   type EngagementState,
 } from "@/lib/vendorEngagements";
 import EngagementActionPanel from "@/components/vendorEngagements/EngagementActionPanel";
+import EngagementRelationshipContext from "@/components/vendorEngagements/EngagementRelationshipContext";
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
@@ -109,6 +111,7 @@ export default async function VendorEngagementPage({
     getVendorEngagement(token, id) as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      relationship: VendorEngagementRelationshipContext | null;
     } | null>,
     listVendorEngagementEvidence(token, id) as Promise<{
       evidence: VendorEngagementEvidenceRow[];
@@ -136,6 +139,8 @@ export default async function VendorEngagementPage({
 
   const e = detail.engagement;
   const q = detail.questionnaire;
+  // VO-11: the relationship this engagement assesses, as STORED. null = pre-2.0.
+  const rel = detail.relationship ?? null;
   const state: EngagementState = isEngagementState(e.status) ? e.status : "draft";
   const stateLabel = isEngagementState(e.status) ? ENGAGEMENT_STATE_LABELS[e.status] : e.status;
   const coverage = e.analysis_coverage ? analysisCoverageCopy(e.analysis_coverage) : null;
@@ -175,6 +180,17 @@ export default async function VendorEngagementPage({
           · {e.engagement_type} engagement · tier {e.assessment_tier ?? "—"} · opened{" "}
           {fmtDate(e.created_at)} · methodology {e.methodology_version}
         </p>
+
+        {/* VO-11: which relationship / service this engagement assesses, and the
+            derived classification it was opened at — read from the stored
+            relationship row, never recalculated here. */}
+        <EngagementRelationshipContext
+          vendorId={e.vendor_id}
+          vendorName={e.vendor_name}
+          relationship={rel}
+          methodologyVersion={e.methodology_version}
+          domains={q.domains}
+        />
 
         <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
           <BandChip label="Inherent" band={e.inherent_rating} score={e.inherent_score} />
