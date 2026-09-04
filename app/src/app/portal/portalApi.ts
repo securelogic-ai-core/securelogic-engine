@@ -28,6 +28,9 @@ export type ScopeReason = {
   rationale: string;
 };
 
+/** `question_versions.evidence_policy` — what the QUESTION demands. */
+export type EvidencePolicy = "none" | "optional" | "required_on_pass" | "required_always";
+
 export type PortalQuestion = {
   requirement_id: string;
   reference: string;
@@ -39,6 +42,18 @@ export type PortalQuestion = {
   why_we_are_asking: ScopeReason[] | null;
   answer: string | null;
   notes: string | null;
+  /** WA-1 completeness contract, decided by the engine. */
+  evidence_policy: EvidencePolicy;
+  /** Artifacts already attached to THIS question. */
+  evidence_count: number;
+  /**
+   * NULL until the question is answered — the requirement is a property of the
+   * answer. Never recomputed here: the engine's submit gate and this flag come
+   * from one module (src/api/lib/vendorPortal/responseCompleteness.ts), so the
+   * prompt a vendor sees and the refusal they would hit cannot disagree.
+   */
+  explanation_required: boolean | null;
+  evidence_required: boolean | null;
 };
 
 export type PortalEvidenceFile = {
@@ -67,7 +82,70 @@ export type PortalErrorBody = {
   detail?: string;
   allowed?: string[];
   unanswered_required?: number;
+  /** WA-1: the rest of the `incomplete` refusal. Additive — see vendorPortal.ts. */
+  explanations_missing?: number;
+  evidence_missing?: number;
+  items?: Array<{ requirement_id: string; reference: string; reason: string }>;
+  items_truncated?: boolean;
 };
+
+/**
+ * What a vendor must still do to one question before the questionnaire can be
+ * submitted. Mirrors `IncompleteReason` in responseCompleteness.ts.
+ */
+export type IncompleteReason = "unanswered" | "explanation_missing" | "evidence_missing";
+
+/** The prompt beside a question that needs words. Answer-specific on purpose. */
+export const EXPLANATION_PROMPT: Record<string, string> = {
+  partial: "Describe what is in place and what is not.",
+  fail: "Explain why this is not in place, and any compensating control or plan.",
+  not_applicable: "Explain why this does not apply to the service you provide.",
+  pass: "Describe how this is implemented for the service you provide.",
+};
+
+/**
+ * The ONE client-side mirror of the engine's explanation rule.
+ *
+ * `PortalQuestion.explanation_required` is authoritative, but it is computed
+ * against the answer the engine has STORED. The questionnaire updates answers
+ * optimistically, so between the click and the next read the stored answer and
+ * the answer on screen differ — and a vendor who selects "Partially in place"
+ * must be told an explanation is needed at that moment, not one fetch later.
+ *
+ * So this function exists, it is the only copy of the rule on this side of the
+ * wire, and it mirrors `explanationRequired` in
+ * src/api/lib/vendorPortal/responseCompleteness.ts. If that rule changes, this
+ * changes with it — which is why the rule lives in one named function in each
+ * process rather than inline in a component.
+ */
+export function explanationRequiredForAnswer(
+  answer: string | null,
+  policy: EvidencePolicy
+): boolean {
+  if (answer === null) return false;
+  if (answer === "partial" || answer === "fail" || answer === "not_applicable") return true;
+  return answer === "pass" && (policy === "required_on_pass" || policy === "required_always");
+}
+
+/**
+ * The client-side view of the submit gate, for the pre-submit review screen.
+ *
+ * Uses the engine's `evidence_required` verbatim (nothing optimistic can change
+ * it — attaching a file re-reads the list) and the mirror above for the
+ * explanation, so the review list matches what Submit would refuse.
+ */
+export function questionBlocker(
+  q: PortalQuestion,
+  notes?: string | null
+): IncompleteReason | null {
+  const text = notes === undefined ? q.notes : notes;
+  if (q.answer === null) return q.mandatory ? "unanswered" : null;
+  if (explanationRequiredForAnswer(q.answer, q.evidence_policy) && !(text ?? "").trim()) {
+    return "explanation_missing";
+  }
+  if (q.evidence_required && q.evidence_count <= 0) return "evidence_missing";
+  return null;
+}
 
 // ── Vocabulary (labels only — wire values are the engine's, verbatim) ───────
 

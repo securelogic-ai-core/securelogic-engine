@@ -17,6 +17,8 @@ import {
   answerLabel,
   errorMessage,
   portalFetch,
+  questionBlocker,
+  type IncompleteReason,
   type PortalQuestion,
 } from "../portalApi";
 
@@ -121,9 +123,40 @@ export default function ReviewPage() {
     );
   }
 
-  const unansweredRequired = questions.filter((q) => q.mandatory && q.answer === null);
   const answered = questions.filter((q) => q.answer !== null);
-  const ready = unansweredRequired.length === 0;
+
+  // WA-1: the review screen now lists EVERY blocker the engine's submit gate
+  // would refuse on, not just unanswered required questions. `questionBlocker`
+  // reads the same two engine-decided flags the gate uses
+  // (responseCompleteness.ts), so this list and the 422 cannot disagree.
+  const blocked = questions
+    .map((q) => ({ q, reason: questionBlocker(q) }))
+    .filter((b): b is { q: PortalQuestion; reason: IncompleteReason } => b.reason !== null);
+  const ready = blocked.length === 0;
+
+  const BLOCKER_COPY: Record<IncompleteReason, string> = {
+    unanswered: "Needs an answer",
+    explanation_missing: "Needs an explanation",
+    evidence_missing: "Needs supporting evidence",
+  };
+  const blockerCounts = {
+    unanswered: blocked.filter((b) => b.reason === "unanswered").length,
+    explanation_missing: blocked.filter((b) => b.reason === "explanation_missing").length,
+    evidence_missing: blocked.filter((b) => b.reason === "evidence_missing").length,
+  };
+  const headline = [
+    blockerCounts.unanswered > 0
+      ? `${blockerCounts.unanswered} unanswered required question${blockerCounts.unanswered === 1 ? "" : "s"}`
+      : null,
+    blockerCounts.explanation_missing > 0
+      ? `${blockerCounts.explanation_missing} answer${blockerCounts.explanation_missing === 1 ? "" : "s"} without an explanation`
+      : null,
+    blockerCounts.evidence_missing > 0
+      ? `${blockerCounts.evidence_missing} answer${blockerCounts.evidence_missing === 1 ? "" : "s"} without required evidence`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="space-y-6">
@@ -137,20 +170,22 @@ export default function ReviewPage() {
       </section>
 
       {/* Blocking items */}
-      {unansweredRequired.length > 0 ? (
+      {blocked.length > 0 ? (
         <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-5">
-          <h3 className="text-sm font-semibold text-amber-300">
-            {unansweredRequired.length} required question
-            {unansweredRequired.length === 1 ? "" : "s"} still unanswered
-          </h3>
+          <h3 className="text-sm font-semibold text-amber-300">{headline}</h3>
           <p className="mt-1 text-sm leading-6 text-amber-100/90">
-            These must be answered before you can submit:
+            These must be completed before you can submit. &ldquo;Partially in place&rdquo;,
+            &ldquo;Not in place&rdquo; and &ldquo;Not applicable&rdquo; each need a short
+            explanation so the reviewer can act on your answer.
           </p>
           <ul className="mt-3 space-y-2">
-            {unansweredRequired.map((q) => (
+            {blocked.map(({ q, reason }) => (
               <li key={q.requirement_id} className="text-sm leading-6 text-amber-100/90">
                 <span className="mr-2 font-mono text-xs text-amber-300/80">{q.reference}</span>
                 {q.title}
+                <span className="ml-2 rounded-full border border-amber-400/40 px-2 py-0.5 text-xs text-amber-200">
+                  {BLOCKER_COPY[reason]}
+                </span>
               </li>
             ))}
           </ul>
@@ -164,7 +199,7 @@ export default function ReviewPage() {
       ) : (
         <section className="rounded-xl border border-brand-teal/40 bg-brand-teal/10 p-5">
           <h3 className="text-sm font-semibold text-brand-teal">
-            All required questions answered
+            Everything required is complete
           </h3>
           <p className="mt-1 text-sm leading-6 text-slate-300">
             You can still go back and adjust anything before submitting.

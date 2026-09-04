@@ -7,7 +7,9 @@
  *  - with everything answered, submit POSTs /submit and navigates to
  *    /portal/done;
  *  - the engine's blocking errors (422) surface inline, verbatim;
- *  - an already-submitted engagement shows the submitted state, not a button.
+ *  - an already-submitted engagement shows the submitted state, not a button;
+ *  - WA-1: an answered question with no explanation blocks submission just as
+ *    an unanswered one does, and says which of the two it is.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -35,6 +37,10 @@ const UNANSWERED_REQUIRED = {
   why_we_are_asking: [],
   answer: null,
   notes: null,
+  evidence_policy: "optional",
+  evidence_count: 0,
+  explanation_required: null,
+  evidence_required: null,
 };
 
 const ANSWERED = {
@@ -47,6 +53,29 @@ const ANSWERED = {
   why_we_are_asking: [],
   answer: "pass",
   notes: null,
+  evidence_policy: "optional",
+  evidence_count: 0,
+  // `pass` under an `optional` policy needs nothing further — this fixture is
+  // the "ready to submit" case.
+  explanation_required: false,
+  evidence_required: false,
+};
+
+/** WA-1: answered "Partially in place" with nothing said about the gap. */
+const PARTIAL_NO_EXPLANATION = {
+  requirement_id: "req-3",
+  reference: "CAS-06",
+  title: "Access authorized on business need and least privilege",
+  guidance: null,
+  depth: "full",
+  mandatory: true,
+  why_we_are_asking: [],
+  answer: "partial",
+  notes: null,
+  evidence_policy: "optional",
+  evidence_count: 0,
+  explanation_required: true,
+  evidence_required: false,
 };
 
 type Handler = (init?: RequestInit) => { status: number; body: unknown };
@@ -100,17 +129,79 @@ describe("portal review & submit", () => {
     renderReview();
 
     expect(
-      await screen.findByText(/1 required question still unanswered/i)
+      await screen.findByText(/1 unanswered required question/i)
     ).toBeInTheDocument();
     expect(screen.getByText("AC-2")).toBeInTheDocument();
     expect(
       screen.getByText("User access reviews are performed quarterly")
     ).toBeInTheDocument();
+    expect(screen.getByText(/needs an answer/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /submit responses/i })).toBeDisabled();
     // A path back to fix it — no dead ends.
     expect(
       screen.getByRole("link", { name: /go to the questionnaire/i })
     ).toHaveAttribute("href", "/portal/questionnaire");
+  });
+
+  it("blocks submission on an answered question with no explanation (WA-1)", async () => {
+    // The owner-walkthrough shape: every question answered, the negatives
+    // unexplained. Before WA-1 this submitted cleanly and produced 8 findings
+    // with no vendor statement behind any of them.
+    stubPortalFetch({
+      "GET /api/vendor-portal/questions": () => ({
+        status: 200,
+        body: { questions: [ANSWERED, PARTIAL_NO_EXPLANATION] },
+      }),
+    });
+    renderReview();
+
+    expect(
+      await screen.findByText(/1 answer without an explanation/i)
+    ).toBeInTheDocument();
+    // Twice: once in the blocker list, once in "Your answers" — it IS answered,
+    // it is just not explained, and both facts are true at the same time.
+    expect(screen.getAllByText("CAS-06")).toHaveLength(2);
+    // The reason is named, so the vendor knows this is not "unanswered".
+    expect(screen.getByText(/needs an explanation/i)).toBeInTheDocument();
+    expect(screen.queryByText(/needs an answer/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /submit responses/i })).toBeDisabled();
+  });
+
+  it("clears the block once the explanation is present", async () => {
+    stubPortalFetch({
+      "GET /api/vendor-portal/questions": () => ({
+        status: 200,
+        body: {
+          questions: [
+            ANSWERED,
+            { ...PARTIAL_NO_EXPLANATION, notes: "MFA is enforced for admins only." },
+          ],
+        },
+      }),
+    });
+    renderReview();
+
+    const button = await screen.findByRole("button", { name: /submit responses/i });
+    expect(button).toBeEnabled();
+    expect(screen.getByText(/everything required is complete/i)).toBeInTheDocument();
+  });
+
+  it("counts unanswered and unexplained separately in one headline", async () => {
+    stubPortalFetch({
+      "GET /api/vendor-portal/questions": () => ({
+        status: 200,
+        body: { questions: [UNANSWERED_REQUIRED, PARTIAL_NO_EXPLANATION] },
+      }),
+    });
+    renderReview();
+
+    // Two different problems, reported as two different facts — a single
+    // "2 incomplete" would send the vendor looking for the wrong thing.
+    expect(
+      await screen.findByText(
+        /1 unanswered required question · 1 answer without an explanation/i
+      )
+    ).toBeInTheDocument();
   });
 
   it("submits and navigates to /portal/done on success", async () => {
@@ -123,7 +214,7 @@ describe("portal review & submit", () => {
 
     const button = await screen.findByRole("button", { name: /submit responses/i });
     expect(button).toBeEnabled();
-    expect(screen.getByText(/all required questions answered/i)).toBeInTheDocument();
+    expect(screen.getByText(/everything required is complete/i)).toBeInTheDocument();
     fireEvent.click(button);
 
     await waitFor(() => {
