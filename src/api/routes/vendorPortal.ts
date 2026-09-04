@@ -270,16 +270,20 @@ export async function getPortalEngagement(req: PortalRequest, res: Response): Pr
         org_name: string;
         next_review_due: string | null;
       }>(
+        // The due date the vendor sees is the one the customer asked for on
+        // THIS invitation (goal §B), falling back to the review cadence.
         `SELECT e.status, e.title,
                 v.name  AS vendor_name,
                 o.name  AS org_name,
-                e.next_review_due
+                COALESCE(i.due_date::text, e.next_review_due::text) AS next_review_due
            FROM vendor_engagements e
            JOIN vendors       v ON v.id = e.vendor_id
            JOIN organizations o ON o.id = e.organization_id
+           LEFT JOIN vendor_engagement_invites i
+                  ON i.id = $3 AND i.organization_id = e.organization_id
           WHERE e.id = $1 AND e.organization_id = $2
           LIMIT 1`,
-        [ctx.engagementId, ctx.organizationId]
+        [ctx.engagementId, ctx.organizationId, ctx.inviteId]
       )
     );
 

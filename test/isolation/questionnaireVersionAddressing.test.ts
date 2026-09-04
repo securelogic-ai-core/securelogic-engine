@@ -63,6 +63,11 @@ async function seedOrg(orgId: string, label: string): Promise<Fx> {
 async function openIssuedEngagement(who: typeof asA, fx: Fx, title: string) {
   const created = await who("post", "/api/vendor-engagements").send({ ...TIER1_INTAKE, vendor_id: fx.vendorId, title });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
+  // Pinned to the 1.1.0 corpus this suite proves (Assessment Composition v1
+  // stamps new engagements 1.2.0, which provisions the sixteen Core Assurance
+  // objectives and re-bases the S1 floor; the stamp selects the corpus, and the
+  // 1.2.0 route path has its own suite: assessmentComposition.test.ts).
+  await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [created.body.id]);
   const id = created.body.id as string;
   const scoped = await who("post", `/api/vendor-engagements/${id}/scope`).send({});
   expect(scoped.status, JSON.stringify(scoped.body)).toBe(200);
@@ -253,6 +258,7 @@ describe("VA-Q1 P2 · the R3 proof: a library edit after issue changes nothing t
 describe("VA-Q1 P2 · verdict vocabulary and tenant boundary", () => {
   it("a draft engagement is 'unissued'; a pre-P2 item set is 'unstamped'", async () => {
     const created = await asA("post", "/api/vendor-engagements").send({ ...TIER1_INTAKE, vendor_id: fxA.vendorId, title: "p2-draft" });
+    await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [created.body.id]);
     const draft = await asA("get", `/api/vendor-engagements/${created.body.id}/integrity`);
     expect(draft.body.verdict).toBe("unissued");
 

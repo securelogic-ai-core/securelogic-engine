@@ -63,7 +63,16 @@ import {
   computeVendorInherentRisk,
   type InherentRiskInput,
 } from "../lib/vendorRisk/inherentRisk.js";
-import { resolveEngagementScopeWithApplicability } from "../lib/vendorRisk/scopeResolver.js";
+import {
+  resolveEngagementScopeWithApplicability,
+  scopeVersionRunsCoreAssurance,
+} from "../lib/vendorRisk/scopeResolver.js";
+import { ensureCoreAssuranceSet } from "../lib/vendorRisk/coreAssuranceProvisioning.js";
+import {
+  buildCompositionSnapshot,
+  loadLatestCompositionSnapshot,
+  recordCompositionSnapshot,
+} from "../lib/vendorRisk/compositionSnapshot.js";
 import { resolveAssuranceCoverage, type AssuranceCoverage } from "../lib/vendorAssurance/assuranceCoverage.js";
 import { evidenceLifecycleV2Enabled } from "../lib/evidenceLifecycleFlag.js";
 import { recordApplicability } from "../lib/vendorRisk/applicabilityStore.js";
@@ -110,6 +119,7 @@ import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js
 import { computeAnalysisCoverage } from "../lib/vendorRisk/analysisCoverage.js";
 import { scheduleVendorScoreRecompute } from "../lib/vendorRiskScoreRecompute.js";
 import { mintInviteToken } from "../lib/vendorPortal/portalTokens.js";
+import { defaultInviteMessage, sendVendorInviteEmail } from "../lib/vendorPortal/inviteEmail.js";
 import { sqlFindingActive } from "../lib/metricDefinitions.js";
 
 const router = Router();
@@ -686,9 +696,15 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       relationship = rel.rows[0] ?? null;
     }
 
+    // Goal §B: whether and how the invitation was delivered, and whether the
+    // vendor ever opened it. Metadata only — token material never leaves the
+    // invites table.
+    const invite = await loadInviteStatus(organizationId, id);
+
     res.status(200).json({
       engagement: result.rows[0],
       relationship,
+      invite,
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),
@@ -834,7 +850,20 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Requirements of every ACTIVATED framework, with their applicability tags.
+    // Assessment Composition v1: the STAMPED corpus decides whether the Core
+    // Assurance Set is the baseline. At >= 1.2.0 the tenant's library must
+    // hold the sixteen objectives before the resolver reads it — provisioned
+    // lazily, idempotently, on this tenant connection. An engagement stamped
+    // 1.1.0 or 1.0.0 neither provisions nor reads them.
+    const stampedScopeRuleVersion =
+      typeof row.scope_rule_version === "string" ? row.scope_rule_version : "1.0.0";
+    if (scopeVersionRunsCoreAssurance(stampedScopeRuleVersion)) {
+      await ensureCoreAssuranceSet(pg, organizationId);
+    }
+
+    // Requirements of every ACTIVATED framework, with their applicability tags
+    // and the framework's canonical identity + display name (the snapshot
+    // records what was composed BY VALUE).
     const requirements = await pg.query<{
       requirement_id: string;
       framework_id: string;
@@ -842,9 +871,12 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       title: string;
       description: string | null;
       scope_tags: string[];
+      framework_key: string | null;
+      framework_name: string;
     }>(
       `SELECT r.id AS requirement_id, r.framework_id, r.reference_id, r.title, r.description,
-              COALESCE(r.scope_tags, '{}') AS scope_tags
+              COALESCE(r.scope_tags, '{}') AS scope_tags,
+              f.framework_key, f.name AS framework_name
          FROM requirements r
          JOIN frameworks f ON f.id = r.framework_id
         WHERE f.organization_id = $1`,
@@ -957,7 +989,7 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       // "recompute reads the stamped values"). An engagement stamped 1.0.0
       // re-resolves under 1.0.0 — S5 never runs for it — so a pre-Q2
       // questionnaire cannot change under a customer's feet.
-      scopeRuleVersion: typeof row.scope_rule_version === "string" ? row.scope_rule_version : "1.0.0",
+      scopeRuleVersion: stampedScopeRuleVersion,
       requirements: requirements.rows,
       obligationEdges: edges.rows,
       ...(s4Applied && s4Coverage
@@ -1024,6 +1056,32 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       records: applicability,
     });
 
+    // Assessment Composition v1: the customer-readable, immutable record of
+    // what was composed and why — including what was NOT asked and on what
+    // facts, which no other record carries. Written for every corpus version
+    // (a 1.1.0 snapshot simply has no core_assurance block).
+    const resolvedAt = new Date().toISOString();
+    const compositionSnapshot = buildCompositionSnapshot({
+      resolution,
+      requirements: requirements.rows,
+      coverage: {
+        computed: s4Coverage !== null,
+        applied: s4Applied,
+        version: s4Coverage?.version ?? null,
+        as_of: s4Coverage?.asOf ?? null,
+        covered_count: s4Coverage?.covered.length ?? 0,
+        gap_count: s4Coverage?.gaps.length ?? 0,
+      },
+      resolvedAt,
+    });
+    const snapshotRow = await recordCompositionSnapshot(pg, {
+      organizationId,
+      engagementId: id,
+      snapshot: compositionSnapshot.snapshot,
+      hash: compositionSnapshot.hash,
+      createdByUserId: userOf(req),
+    });
+
     await pg.query(
       `UPDATE vendor_engagements
           SET status = 'scoped', scope_resolved_at = NOW(), updated_at = NOW()
@@ -1053,6 +1111,8 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
         },
         scope_rule_version: resolution.scope_rule_version,
         tier: resolution.tier,
+        composition_snapshot_id: snapshotRow.id,
+        composition_snapshot_hash: compositionSnapshot.hash,
       },
       ipAddress: req.ip ?? null,
     });
@@ -1062,6 +1122,13 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
       excluded: resolution.excluded.length,
       tier: resolution.tier,
       scope_rule_version: resolution.scope_rule_version,
+      // Assessment Composition v1: the headline of what was composed, and the
+      // snapshot to read for the whole explanation.
+      composition_snapshot: {
+        id: snapshotRow.id,
+        hash: compositionSnapshot.hash,
+        summary: compositionSnapshot.snapshot.summary,
+      },
       // Caps are surfaced, never silent — a truncated questionnaire that looks
       // complete is the failure this field exists to prevent. (VA-6 repaired
       // this line: it previously read a `notes` field the resolver has never
@@ -1099,6 +1166,178 @@ export async function resolveScope(req: Request, res: Response): Promise<void> {
    That snapshot is the historical record of who we mailed at the address we
    used, and editing the contact row two years later must not rewrite it.
    ========================================================= */
+
+/**
+ * The customer-visible invite record (goal §B). NEVER includes token material.
+ * `message` is the customer's own text and `email_delivery_state` is what
+ * SecureLogic did with it — both are theirs to see.
+ */
+const INVITE_STATUS_SELECT = `
+  id, contact_id, contact_email, contact_name, message, due_date::text AS due_date,
+  email_delivery_state, email_delivery_at, email_provider_message_id, email_delivery_detail,
+  created_at, expires_at, revoked_at, revocation_reason,
+  first_exchanged_at, last_exchanged_at, exchange_count`;
+
+type InviteStatusRow = {
+  id: string;
+  contact_id: string | null;
+  contact_email: string;
+  contact_name: string | null;
+  message: string | null;
+  due_date: string | null;
+  email_delivery_state: string;
+  email_delivery_at: string | null;
+  email_provider_message_id: string | null;
+  email_delivery_detail: string | null;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  first_exchanged_at: string | null;
+  last_exchanged_at: string | null;
+  exchange_count: number;
+};
+
+async function loadInviteStatus(
+  organizationId: string,
+  engagementId: string
+): Promise<{ active: InviteStatusRow | null; latest: InviteStatusRow | null; history_count: number }> {
+  const rows = await pg.query<InviteStatusRow>(
+    `SELECT ${INVITE_STATUS_SELECT}
+       FROM vendor_engagement_invites
+      WHERE engagement_id = $1 AND organization_id = $2
+      ORDER BY created_at DESC`,
+    [engagementId, organizationId]
+  );
+  const active =
+    rows.rows.find((r) => r.revoked_at === null && new Date(r.expires_at).getTime() > Date.now()) ?? null;
+  return { active, latest: rows.rows[0] ?? null, history_count: rows.rowCount ?? 0 };
+}
+
+/**
+ * The invitation's COMPOSITION inputs (goal §B): the customer's message and
+ * the requested due date. Both optional; the message defaults to the
+ * professional template when omitted, and a due date must be a calendar date
+ * that has not already passed.
+ */
+function parseInviteComposition(
+  body: Record<string, unknown>
+): { ok: true; message: string | null; dueDate: string | null; sendEmail: boolean } | { ok: false; error: string; message: string } {
+  const rawMessage = typeof body.message === "string" ? body.message.trim() : "";
+  if (rawMessage.length > 4000) {
+    return { ok: false, error: "message_too_long", message: "Keep the invitation message under 4,000 characters." };
+  }
+  const rawDue = typeof body.due_date === "string" ? body.due_date.trim() : "";
+  let dueDate: string | null = null;
+  if (rawDue) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDue) || Number.isNaN(new Date(`${rawDue}T00:00:00Z`).getTime())) {
+      return { ok: false, error: "invalid_due_date", message: "The due date must be a calendar date (YYYY-MM-DD)." };
+    }
+    if (rawDue < new Date().toISOString().slice(0, 10)) {
+      return { ok: false, error: "due_date_in_past", message: "The due date has already passed." };
+    }
+    dueDate = rawDue;
+  }
+  // Sending is the normal workflow; a caller must opt OUT to get a copy-link-only issue.
+  const sendEmail = body.send_email !== false;
+  return { ok: true, message: rawMessage || null, dueDate, sendEmail };
+}
+
+/**
+ * Mint, store and (when asked) send one invitation for an engagement whose
+ * transition has ALREADY been made by the caller inside the same tenant
+ * transaction. Shared by issue and re-issue so the two can never drift.
+ *
+ * The send happens INSIDE the transaction, after the credential row exists.
+ * If the send fails, the credential still stands and the row records the
+ * failure (the customer resends or copies the link). If the transaction
+ * later fails to commit — the only step after this is the response — the
+ * vendor holds a token whose hash was never stored, which exchanges as
+ * `not_found`; nothing usable survives.
+ */
+async function mintAndDeliverInvite(args: {
+  req: Request;
+  organizationId: string;
+  engagementId: string;
+  addressee: InviteAddressee;
+  composition: { message: string | null; dueDate: string | null; sendEmail: boolean };
+}): Promise<{
+  inviteId: string;
+  token: string;
+  expiresAt: Date;
+  message: string;
+  emailDelivery: string;
+  emailDetail: string | null;
+}> {
+  const { organizationId, engagementId, addressee, composition } = args;
+  const names = await pg.query<{ org_name: string; vendor_name: string }>(
+    `SELECT o.name AS org_name, v.name AS vendor_name
+       FROM vendor_engagements e
+       JOIN organizations o ON o.id = e.organization_id
+       JOIN vendors v ON v.id = e.vendor_id
+      WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
+    [engagementId, organizationId]
+  );
+  const organizationName = names.rows[0]?.org_name ?? "Your customer";
+  const vendorName = names.rows[0]?.vendor_name ?? "your organisation";
+  const message =
+    composition.message ??
+    defaultInviteMessage({
+      contactName: addressee.name,
+      organizationName,
+      vendorName,
+      dueDate: composition.dueDate,
+    });
+
+  const invite = mintInviteToken();
+  const inserted = await pg.query<{ id: string }>(
+    `INSERT INTO vendor_engagement_invites
+       (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
+        expires_at, created_by_user_id, contact_id, message, due_date, email_delivery_state)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'not_attempted')
+     RETURNING id`,
+    [
+      organizationId,
+      engagementId,
+      invite.tokenHash,
+      addressee.email,
+      addressee.name,
+      invite.expiresAt,
+      userOf(args.req),
+      addressee.contactId,
+      message,
+      composition.dueDate,
+    ]
+  );
+  const inviteId = inserted.rows[0]!.id;
+
+  let emailDelivery = "not_attempted";
+  let emailDetail: string | null = null;
+  if (composition.sendEmail) {
+    const delivery = await sendVendorInviteEmail({
+      organizationId,
+      inviteId,
+      contactEmail: addressee.email,
+      organizationName,
+      vendorName,
+      message,
+      rawToken: invite.token,
+      expiresAt: invite.expiresAt,
+      dueDate: composition.dueDate,
+    });
+    emailDelivery = delivery.state;
+    emailDetail = delivery.detail;
+    await pg.query(
+      `UPDATE vendor_engagement_invites
+          SET email_delivery_state = $3, email_delivery_at = NOW(),
+              email_provider_message_id = $4, email_delivery_detail = $5
+        WHERE id = $1 AND organization_id = $2`,
+      [inviteId, organizationId, delivery.state, delivery.providerMessageId, delivery.detail]
+    );
+  }
+
+  return { inviteId, token: invite.token, expiresAt: invite.expiresAt, message, emailDelivery, emailDetail };
+}
 
 type InviteAddressee = {
   email: string;
@@ -1180,7 +1419,12 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
       );
       return;
     }
-    const { email, name, contactId } = addressee.addressee;
+    const { email, contactId } = addressee.addressee;
+    const composition = parseInviteComposition(body);
+    if (!composition.ok) {
+      res.status(400).json({ error: composition.error, message: composition.message });
+      return;
+    }
 
     // #946. LOCK the row for the rest of the transaction. This — not the
     // rowCount assertion further down — is the primary serialization
@@ -1285,14 +1529,16 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
     // and GRANTs INSERT to app_request (20260923_vendor_portal_access.sql).
     // The ELEVATED channel is still required for the pre-auth READ at exchange
     // time (vendorPortal.ts), a different operation, and is unchanged.
-    const invite = mintInviteToken();
-    await pg.query(
-      `INSERT INTO vendor_engagement_invites
-         (organization_id, engagement_id, invite_token_hash, contact_email, contact_name,
-          expires_at, created_by_user_id, contact_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [organizationId, id, invite.tokenHash, email, name, invite.expiresAt, userOf(req), contactId]
-    );
+    // Goal §B: SecureLogic composes and sends the invitation itself. The
+    // credential is minted, stored with the customer's message and due date,
+    // and mailed through the shared transport — all inside this transaction.
+    const invite = await mintAndDeliverInvite({
+      req,
+      organizationId,
+      engagementId: id,
+      addressee: addressee.addressee,
+      composition,
+    });
 
     // #946: deferred to AFTER COMMIT. writeAuditEvent goes to the elevated
     // pool, so calling it inline would record an issuance that a later
@@ -1308,9 +1554,12 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
         // The token is NEVER in the audit payload. An audit log readable by more
         // people than the vendor's mailbox must not contain a working credential.
         payload: {
+          invite_id: invite.inviteId,
           contact_email: email,
           contact_id: contactId,
           expires_at: invite.expiresAt.toISOString(),
+          due_date: composition.dueDate,
+          email_delivery: invite.emailDelivery,
         },
         ipAddress: req.ip ?? null,
       })
@@ -1321,13 +1570,229 @@ export async function issueEngagement(req: Request, res: Response): Promise<void
     res.status(200).json({
       ok: true,
       status: "issued",
-      // Returned ONCE. Only the hash is stored.
+      invite_id: invite.inviteId,
+      // Returned ONCE. Only the hash is stored. The app keeps it as the
+      // SECONDARY recovery path ("copy secure link"); the email is the
+      // primary delivery.
       invite_token: invite.token,
       expires_at: invite.expiresAt,
+      contact_id: contactId,
+      contact_email: email,
+      due_date: composition.dueDate,
+      // "sent" | "failed" | "suppressed" | "disabled" | "not_attempted" — the
+      // customer is told the truth about whether anything left the building.
+      email_delivery: invite.emailDelivery,
+      email_delivery_detail: invite.emailDetail,
     });
   } catch (err) {
     logger.error({ event: "vendor_engagement_issue_failed", organizationId, err }, "Engagement issue failed");
     res.status(500).json({ error: "issue_failed" });
+  }
+}
+
+/* =========================================================
+   Invite lifecycle (goal §A/§B; lineage VA-L1, owner ruling 2026-08-23):
+   ACCESS IS REVOKED, HISTORY IS PRESERVED.
+
+   Revoking kills the invite AND its live sessions (the portal middleware
+   treats invite revocation as authoritative on every request) and touches
+   nothing else: responses, revisions, evidence, comments and audit rows stay
+   exactly as they were, attributed to the invite they were made under.
+
+   Re-issue is the RESEND and the RECOVERY path. Only a hash survives
+   issuance, so "send it again" means minting a replacement; the prior
+   credential and its sessions die when the replacement is born (single
+   active invite per engagement — the duplicate-invitation rule), and the
+   new one is addressed to a directory contact (or a raw address) and sent
+   exactly like the first.
+   ========================================================= */
+
+export async function revokeEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  // The schema's CHECK requires a non-empty reason whenever revoked_at is set
+  // (20260923); the UI marks the reason optional, so an omitted reason gets
+  // the honest default rather than a 23514 the customer cannot act on.
+  const reason =
+    typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 500)
+      : "revoked by customer";
+
+  try {
+    const eng = await pg.query<{ id: string }>(
+      `SELECT id FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const revoked = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_invites
+          SET revoked_at = NOW(), revoked_by_user_id = $3, revocation_reason = $4
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req), reason]
+    );
+    if (revoked.rowCount === 0) {
+      res.status(404).json({ error: "no_active_invite" });
+      return;
+    }
+
+    const sessions = await pg.query<{ id: string }>(
+      `UPDATE vendor_portal_sessions
+          SET revoked_at = NOW()
+        WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [revoked.rows.map((r) => r.id), organizationId]
+    );
+
+    registerAfterCommit(() =>
+      writeAuditEvent({
+        organizationId,
+        actorUserId: userOf(req),
+        eventType: "vendor_engagement.invite_revoked",
+        resourceType: "vendor_engagement",
+        resourceId: id,
+        payload: {
+          invite_ids: revoked.rows.map((r) => r.id),
+          invites_revoked: revoked.rowCount,
+          sessions_revoked: sessions.rowCount,
+          reason,
+        },
+        ipAddress: req.ip ?? null,
+      })
+    );
+
+    res.status(200).json({
+      ok: true,
+      invites_revoked: revoked.rowCount,
+      sessions_revoked: sessions.rowCount,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_revoke_failed", organizationId, err }, "Invite revoke failed");
+    res.status(500).json({ error: "invite_revoke_failed" });
+  }
+}
+
+export async function reissueEngagementInvite(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  try {
+    const addressee = await resolveInviteAddressee(organizationId, id, body);
+    if (!addressee.ok) {
+      res.status(addressee.status).json(
+        addressee.message ? { error: addressee.error, message: addressee.message } : { error: addressee.error }
+      );
+      return;
+    }
+    const composition = parseInviteComposition(body);
+    if (!composition.ok) {
+      res.status(400).json({ error: composition.error, message: composition.message });
+      return;
+    }
+
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements
+        WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const from = eng.rows[0]!.status as EngagementState;
+    // Re-issue replaces the credential for an ALREADY-ISSUED engagement. A
+    // never-issued engagement uses /issue; a submitted one has nothing for a
+    // vendor to do with a link.
+    if (!["issued", "in_progress", "clarification_requested"].includes(from)) {
+      res.status(409).json({
+        error: "cannot_reissue",
+        from,
+        message:
+          from === "draft" || from === "scoping" || from === "scoped"
+            ? "This engagement has not been issued yet — issue it first."
+            : "The questionnaire is no longer open for vendor work — a new link would have nothing to do.",
+      });
+      return;
+    }
+
+    // Single-active-invite rule: the prior credential (and its live sessions)
+    // die when the replacement is born. History stays.
+    const prior = await pg.query<{ id: string }>(
+      `UPDATE vendor_engagement_invites
+          SET revoked_at = NOW(), revoked_by_user_id = $3,
+              revocation_reason = 'superseded by re-issue'
+        WHERE engagement_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+        RETURNING id`,
+      [id, organizationId, userOf(req)]
+    );
+    if ((prior.rowCount ?? 0) > 0) {
+      await pg.query(
+        `UPDATE vendor_portal_sessions
+            SET revoked_at = NOW()
+          WHERE invite_id = ANY($1::uuid[]) AND organization_id = $2 AND revoked_at IS NULL`,
+        [prior.rows.map((r) => r.id), organizationId]
+      );
+    }
+
+    const invite = await mintAndDeliverInvite({
+      req,
+      organizationId,
+      engagementId: id,
+      addressee: addressee.addressee,
+      composition,
+    });
+
+    registerAfterCommit(() =>
+      writeAuditEvent({
+        organizationId,
+        actorUserId: userOf(req),
+        eventType: "vendor_engagement.invite_reissued",
+        resourceType: "vendor_engagement",
+        resourceId: id,
+        // Token NEVER in the payload — same rule as issue.
+        payload: {
+          invite_id: invite.inviteId,
+          contact_email: addressee.addressee.email,
+          contact_id: addressee.addressee.contactId,
+          expires_at: invite.expiresAt.toISOString(),
+          due_date: composition.dueDate,
+          email_delivery: invite.emailDelivery,
+          prior_invites_revoked: prior.rowCount,
+        },
+        ipAddress: req.ip ?? null,
+      })
+    );
+
+    res.status(200).json({
+      ok: true,
+      invite_id: invite.inviteId,
+      // Returned ONCE, same contract as issue.
+      invite_token: invite.token,
+      expires_at: invite.expiresAt,
+      contact_id: addressee.addressee.contactId,
+      contact_email: addressee.addressee.email,
+      due_date: composition.dueDate,
+      prior_invites_revoked: prior.rowCount,
+      email_delivery: invite.emailDelivery,
+      email_delivery_detail: invite.emailDetail,
+    });
+  } catch (err) {
+    logger.error({ event: "invite_reissue_failed", organizationId, err }, "Invite re-issue failed");
+    res.status(500).json({ error: "invite_reissue_failed" });
   }
 }
 
@@ -2812,6 +3277,7 @@ router.get("/vendor-engagements/:id", ...chain, asTenant(getEngagement));
 router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInherent));
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
 router.get("/vendor-engagements/:id/assurance-coverage", ...chain, asTenant(getAssuranceCoverage));
+router.get("/vendor-engagements/:id/composition", ...chain, asTenant(getComposition));
 router.get("/vendor-engagements/:id/facts", ...chain, asTenant(getEngagementFacts));
 router.put("/vendor-engagements/:id/facts", ...chain, asTenant(putEngagementFacts));
 router.post("/vendor-engagements/:id/recompute", ...chain, asTenant(recomputeRisk));
@@ -2840,6 +3306,8 @@ router.post("/vendor-engagements/:id/monitoring", ...chain, asTenant(startMonito
 // transition is durable. The pre-auth READ of the invite at exchange time is
 // still elevated; that lives in vendorPortal.ts and is unchanged.
 router.post("/vendor-engagements/:id/issue", ...chain, asTenant(issueEngagement));
+router.post("/vendor-engagements/:id/invite/revoke", ...chain, asTenant(revokeEngagementInvite));
+router.post("/vendor-engagements/:id/invite/reissue", ...chain, asTenant(reissueEngagementInvite));
 
 
 /* =========================================================
@@ -2899,6 +3367,46 @@ export async function checkQuestionnaireIntegrity(req: Request, res: Response): 
   } catch (err) {
     logger.error({ err, organizationId, engagementId: id }, "GET /vendor-engagements/:id/integrity failed");
     res.status(500).json({ error: "internal_error" });
+  }
+}
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/composition — what SecureLogic composed
+   for this engagement and why (Assessment Composition v1).
+
+   The LATEST immutable snapshot, plus how many resolves preceded it. Null
+   when the scope has never been resolved. Cross-tenant answers 404, never an
+   empty body — same rule as the coverage surface.
+   ========================================================= */
+export async function getComposition(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) { res.status(403).json({ error: "organization_context_missing" }); return; }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string; scope_rule_version: string | null }>(
+      `SELECT status, scope_rule_version FROM vendor_engagements WHERE id = $1 AND organization_id = $2`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) { res.status(404).json({ error: "engagement_not_found" }); return; }
+
+    const { latest, history_count } = await loadLatestCompositionSnapshot(pg, organizationId, id);
+    res.status(200).json({
+      engagement_id: id,
+      status: eng.rows[0]!.status,
+      scope_rule_version: eng.rows[0]!.scope_rule_version,
+      composition: latest
+        ? {
+            ...latest.snapshot,
+            id: latest.id,
+            hash: latest.snapshot_hash,
+          }
+        : null,
+      history_count,
+    });
+  } catch (err) {
+    logger.error({ err, organizationId, engagementId: id }, "GET /vendor-engagements/:id/composition failed");
+    res.status(500).json({ error: "composition_unavailable" });
   }
 }
 

@@ -69,6 +69,7 @@ import type { AssessmentDomain } from "./requirementDomain.js";
 import { domainForScopeTags } from "./requirementDomain.js";
 import type { ScopeTag, ScopeTagSource } from "./requirementScopeTags.js";
 import { deriveScopeTags } from "./requirementScopeTags.js";
+import { CORE_ASSURANCE_OBJECTIVES, CORE_ASSURANCE_TEMPLATE_KEY } from "./coreAssuranceSet.js";
 
 export type CuratedRequirementTagging = {
   /** Tags a curator stands behind. Every one is in `SCOPE_TAG_VOCABULARY`. */
@@ -229,11 +230,36 @@ export const CURATED_FRAMEWORK_TAGS: Readonly<
 };
 
 /** The template keys this module curates. */
-export const CURATED_TEMPLATE_KEYS = Object.keys(CURATED_FRAMEWORK_TAGS);
+/**
+ * Assessment Composition v1: the SecureLogic Core Assurance Set is curated by
+ * construction — its tags, intended domain and rationale live on the objective
+ * itself (`coreAssuranceSet.ts`) and are projected here so `resolveScopeTags`
+ * treats it like any other curated template. Security entries are marked
+ * `deliberate_security` because a human (the methodology) put them there.
+ */
+const CORE_ASSURANCE_CURATION: Readonly<Record<string, CuratedRequirementTagging>> =
+  Object.fromEntries(
+    CORE_ASSURANCE_OBJECTIVES.map((o) => [
+      o.reference,
+      {
+        tags: o.tags,
+        domain: o.domain,
+        why: o.why,
+        ...(o.domain === "security" ? { deliberate_security: true as const } : {}),
+      } satisfies CuratedRequirementTagging,
+    ])
+  );
+
+/** Every curated template, the three regulatory/AI ones plus the Core Assurance Set. */
+export const ALL_CURATED_FRAMEWORK_TAGS: Readonly<
+  Record<string, Readonly<Record<string, CuratedRequirementTagging>>>
+> = { ...CURATED_FRAMEWORK_TAGS, [CORE_ASSURANCE_TEMPLATE_KEY]: CORE_ASSURANCE_CURATION };
+
+export const CURATED_TEMPLATE_KEYS = Object.keys(ALL_CURATED_FRAMEWORK_TAGS);
 
 /** Is this template curated end to end? */
 export function isCuratedTemplate(templateKey: string): boolean {
-  return Object.prototype.hasOwnProperty.call(CURATED_FRAMEWORK_TAGS, templateKey);
+  return Object.prototype.hasOwnProperty.call(ALL_CURATED_FRAMEWORK_TAGS, templateKey);
 }
 
 /** The curation for one requirement, or null when it is not curated. */
@@ -242,7 +268,7 @@ export function curatedTaggingFor(
   referenceId: string
 ): CuratedRequirementTagging | null {
   if (!templateKey) return null;
-  const template = CURATED_FRAMEWORK_TAGS[templateKey];
+  const template = ALL_CURATED_FRAMEWORK_TAGS[templateKey];
   if (!template) return null;
   return template[referenceId] ?? null;
 }

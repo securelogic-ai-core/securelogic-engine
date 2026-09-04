@@ -83,6 +83,8 @@ export const CANONICAL_FRAMEWORK_VERSIONS: readonly CanonicalFrameworkIdentity[]
   { framework_key: "ny-dfs-23-nycrr-500", framework_version: "2024",  display_name: "NY DFS 23 NYCRR 500" },
   { framework_key: "eu-ai-act",           framework_version: "2024",  display_name: "EU AI Act" },
   { framework_key: "hitrust-csf",         framework_version: "11.0",  display_name: "HITRUST CSF" },
+  // Assessment Composition v1 (20261088): SecureLogic's own presumptive baseline.
+  { framework_key: "securelogic-core-assurance", framework_version: "1.0", display_name: "SecureLogic Core Assurance Set" },
 ] as const;
 
 /** Mirrors canonical_framework_versions_key_grammar_check in 20261068. */

@@ -876,9 +876,13 @@ describe("step 5 — sufficient assurance reduces question depth, end to end", (
     // S4 offset only ever touches items the applicability rules chose, which
     // is the "applicability cannot disappear because evidence exists" boundary
     // working. The beforeAll requirements carry no scope tags, so tag the
-    // covered one as core baseline; coverage then REDUCES it, never adds it.
+    // covered one so a rule chooses it; coverage then REDUCES it, never adds
+    // it. Under scope-rule 1.2.0 (Assessment Composition v1) a legacy `core`
+    // tag is no longer unconditional baseline below tier 1, so the tag that
+    // makes it applicable here is access-control: the intake declares
+    // read_write access and S2.access chooses it.
     await pool.query(
-      `UPDATE requirements SET scope_tags = '{core}'
+      `UPDATE requirements SET scope_tags = '{core,access-control}'
         WHERE id = $1`,
       [coveredRequirementId]
     );

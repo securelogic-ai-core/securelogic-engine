@@ -44,7 +44,21 @@ export default function OpenFromRelationship({ vendorId, relationships }: { vend
                 <div style={{ fontSize: 11, color: "#9ca3af" }}>Criticality {r.criticality_band} · Inherent {r.inherent_band} · {TIER_LABELS[r.assessment_tier ?? ""] ?? r.assessment_tier}</div>
               </div>
               <button type="button" disabled={pending} style={{ fontSize: 12, color: "#93c5fd", background: "rgba(30,58,138,0.25)", border: "1px solid #334155", borderRadius: 6, padding: "6px 12px", cursor: "pointer" }}
-                onClick={() => { setError(null); start(async () => { const res = await openAssessmentForRelationship(vendorId, r.id); if (!res.ok) { setError(res.error); return; } if (res.engagementId) router.push(`/vendor-engagements/${res.engagementId}`); }); }}>
+                onClick={() => {
+                  setError(null);
+                  start(async () => {
+                    // A rejected action call is reported here, never thrown into the route.
+                    let res: Awaited<ReturnType<typeof openAssessmentForRelationship>>;
+                    try {
+                      res = await openAssessmentForRelationship(vendorId, r.id);
+                    } catch {
+                      setError("The request did not reach SecureLogic, so nothing was opened. Check your connection and try again.");
+                      return;
+                    }
+                    if (!res.ok) { setError(res.error); return; }
+                    if (res.engagementId) router.push(`/vendor-engagements/${res.engagementId}`);
+                  });
+                }}>
                 {pending ? "Opening…" : "Open assessment"}
               </button>
             </li>

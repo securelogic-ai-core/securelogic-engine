@@ -162,6 +162,12 @@ describe("STEP 1 — intake and inherent risk", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     flow.engagementId = res.body.id;
+    // This suite proves the assurance LIFECYCLE over a closed eight-requirement
+    // fixture library under the 1.1.0 corpus. Assessment Composition v1 stamps
+    // new engagements 1.2.0 (which provisions the sixteen Core Assurance
+    // objectives into the library); the stamp selects the corpus, so pin it —
+    // the 1.2.0 route behaviour has its own suite (assessmentComposition).
+    await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [flow.engagementId]);
     flow.inherentScore = res.body.inherent.score;
     flow.inherentRating = res.body.inherent.rating;
 
@@ -210,6 +216,11 @@ describe("STEP 2 — scope resolution and freeze", () => {
       .post("/api/vendor-engagements")
       .send({ vendor_id: empty, intake: INTAKE });
     expect(created.status).toBe(201);
+    // Pinned to 1.1.0 for the same reason as above: under 1.2.0 the Core
+    // Assurance Set is provisioned for every tenant, so "no activated
+    // frameworks" no longer means "nothing to ask" — the nominal-relationship
+    // case in assessmentComposition.test.ts proves the 1.2.0 empty path.
+    await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [created.body.id]);
 
     await asOrgB.post(`/api/vendor-engagements/${created.body.id}/scope`).send({});
     const res = await asOrgB

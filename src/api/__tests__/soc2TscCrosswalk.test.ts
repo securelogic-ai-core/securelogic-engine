@@ -151,9 +151,9 @@ describe("the classification is general, and both directions are pinned", () => 
 });
 
 describe("the corpus registry", () => {
-  it("carries both curated frameworks, each exactly once", () => {
+  it("carries the three curated frameworks, each exactly once", () => {
     const keys = CROSSWALK_CORPORA.map((c) => `${c.framework_key}@${c.framework_version}`);
-    expect(keys).toEqual(["nist-csf@1.1", "soc2@2017"]);
+    expect(keys).toEqual(["nist-csf@1.1", "soc2@2017", "securelogic-core-assurance@1.0"]);
   });
 
   it("every corpus in the registry names a framework identity the FK will accept", () => {

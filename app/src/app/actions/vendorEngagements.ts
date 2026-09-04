@@ -22,6 +22,8 @@ import {
   overrideVendorEngagementInherent,
   resolveVendorEngagementScope,
   issueVendorEngagement,
+  reissueVendorEngagementInvite,
+  revokeVendorEngagementInvite,
   recomputeVendorEngagementRisk,
   recordVendorEngagementDecision,
   reviewVendorEngagementEvidence,
@@ -33,6 +35,8 @@ import {
   isEngagementFailure,
   vendorEngagementFailureText,
   type VendorEngagementIntakeInput,
+  type VendorEngagementIssueInput,
+  type VendorInviteDeliveryState,
   type VendorEngagementDecision,
   type VendorEngagementPromotionResult,
 } from "@/lib/api";
@@ -94,26 +98,100 @@ export async function resolveScope(
 }
 
 /**
- * Issues the engagement and passes the RAW invite token through for its
- * one-time display. Never logged, never persisted here — the engine keeps only
- * the SHA-256, so this return value is the only time anyone sees it.
+ * Goal §A/§B: issue to a directory contact with a composed invitation that
+ * SecureLogic sends. The raw token still passes through ONCE as the
+ * secondary "copy secure link" recovery path — never written anywhere here.
  */
+export type IssueEngagementResult =
+  | {
+      ok: true;
+      inviteId: string;
+      inviteToken: string;
+      expiresAt: string;
+      contactId: string | null;
+      contactEmail: string;
+      dueDate: string | null;
+      emailDelivery: VendorInviteDeliveryState;
+      emailDeliveryDetail: string | null;
+    }
+  | { ok: false; error: string };
+
+const ISSUE_MESSAGES: Record<string, string> = {
+  contact_not_found: "That contact is not in this vendor's directory.",
+  contact_inactive: "That contact is marked inactive. Reactivate them or choose someone else.",
+  valid_contact_email_required: "Choose a contact, or enter a valid email address.",
+  due_date_in_past: "The due date has already passed.",
+  invalid_due_date: "Enter the due date as a calendar date.",
+  message_too_long: "Keep the invitation message under 4,000 characters.",
+  empty_scope: "Compose the assessment first — an empty questionnaire cannot be sent.",
+  no_active_invite: "There is no active invitation to revoke.",
+};
+
+function issueText(f: { error: string; message?: string; reason?: string }): string {
+  return ISSUE_MESSAGES[f.error] ?? vendorEngagementFailureText(f as never);
+}
+
 export async function issueEngagement(
   id: string,
-  contactEmail: string,
-  contactName?: string
-): Promise<
-  | { ok: true; inviteToken: string; expiresAt: string }
-  | { ok: false; error: string }
-> {
+  input: VendorEngagementIssueInput
+): Promise<IssueEngagementResult> {
   const token = await sessionToken();
   if (!token) return { ok: false, error: "Not authenticated" };
-  const result = await issueVendorEngagement(token, id, contactEmail, contactName);
+  const result = await issueVendorEngagement(token, id, input);
   if (isEngagementFailure(result)) {
-    return { ok: false, error: vendorEngagementFailureText(result.failure) };
+    return { ok: false, error: issueText(result.failure) };
   }
   revalidateEngagement(id);
-  return { ok: true, inviteToken: result.invite_token, expiresAt: result.expires_at };
+  return {
+    ok: true,
+    inviteId: result.invite_id,
+    inviteToken: result.invite_token,
+    expiresAt: result.expires_at,
+    contactId: result.contact_id,
+    contactEmail: result.contact_email,
+    dueDate: result.due_date,
+    emailDelivery: result.email_delivery,
+    emailDeliveryDetail: result.email_delivery_detail,
+  };
+}
+
+/** Resend / change recipient — a replacement credential; the prior one dies. */
+export async function reissueInvite(
+  id: string,
+  input: VendorEngagementIssueInput
+): Promise<IssueEngagementResult> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await reissueVendorEngagementInvite(token, id, input);
+  if (isEngagementFailure(result)) {
+    return { ok: false, error: issueText(result.failure) };
+  }
+  revalidateEngagement(id);
+  return {
+    ok: true,
+    inviteId: result.invite_id,
+    inviteToken: result.invite_token,
+    expiresAt: result.expires_at,
+    contactId: result.contact_id,
+    contactEmail: result.contact_email,
+    dueDate: result.due_date,
+    emailDelivery: result.email_delivery,
+    emailDeliveryDetail: result.email_delivery_detail,
+  };
+}
+
+export async function revokeInvite(
+  id: string,
+  reason?: string
+): Promise<{ ok: true; sessionsRevoked: number } | { ok: false; error: string }> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await revokeVendorEngagementInvite(token, id, reason);
+  if (isEngagementFailure(result)) {
+    return { ok: false, error: issueText(result.failure) };
+  }
+  revalidateEngagement(id);
+  return { ok: true, sessionsRevoked: result.sessions_revoked };
 }
 
 export async function beginReview(id: string): Promise<EngagementActionState> {
