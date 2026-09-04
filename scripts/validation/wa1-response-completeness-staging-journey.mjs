@@ -145,6 +145,18 @@ async function main() {
   await page.waitForURL(/\/portal\/?$/, { timeout: 60_000 });
   ok(`vendor: invitation exchanged for a portal session (${BROWSER})`);
 
+  // Let the shell's own engagement fetch FINISH before navigating away.
+  //
+  // Landing on /portal starts PortalShell's GET /api/vendor-portal/engagement;
+  // navigating immediately cancels it, and WebKit reports a cancelled fetch as
+  // a PAGEERROR ("Fetch API cannot load … due to access control checks") while
+  // Chromium reports nothing. That made the no-client-exceptions assertion
+  // FLAKY — it failed one WebKit run and passed the next on identical code,
+  // which is the worst kind of validation signal. Settling here removes the
+  // cause instead of filtering the symptom, so the assertion stays strict and
+  // a real client-side exception still fails the run.
+  await page.waitForLoadState("networkidle").catch(() => {});
+
   await page.goto(`${APP}/portal/questionnaire`);
   const fieldsets = page.locator("fieldset");
   await fieldsets.first().waitFor({ timeout: 60_000 });
