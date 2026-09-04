@@ -409,6 +409,63 @@ Billing note:
 
 ## Active package
 
+> **DOC-SYNC 2026-09-04 — ASSESSMENT COMPOSITION v1 + CONTACT-BASED ISSUANCE
+> SENT FROM SECURELOGIC: owner-approved methodology, BUILT (migrations
+> `20261088`, `20261089`; scope-rule corpus `1.2.0`). Design record:
+> `docs/design/assessment-composition-v1.md`.**
+>
+> Completes the Vendor Onboarding 2.0 customer workflow end to end:
+> relationship → contacts → intake → Criticality/IR/domains/tier →
+> **composition** → **recipient from the contact directory** → **invitation
+> reviewed and sent by SecureLogic** → portal → questionnaire/evidence →
+> existing lifecycle. What was built, and where it sits in the architecture:
+>
+> - **Core Assurance Set v1** — sixteen presumptive control objectives as a
+>   SecureLogic-authored framework template with a canonical identity
+>   (`securelogic-core-assurance` / `1.0`), curated tags, and crosswalk rows to
+>   canonical controls. Provisioned per tenant lazily at composition. Declared
+>   ONCE (`coreAssuranceSet.ts`); template, curation and crosswalk are
+>   projections of that declaration.
+> - **Composition** lives in the ONE resolver (`scopeResolver.ts`) at corpus
+>   **1.2.0**: per-objective factual applicability decided first (facts only —
+>   never tier, criticality or inherent band), applicable objectives are the S1
+>   floor, non-applicable ones leave the universe every later rule sees. A
+>   legacy `core` tag on any OTHER framework is no longer unconditional
+>   baseline below tier 1 (still reachable through every other rule).
+>   Engagements stamped ≤ 1.1.0 re-resolve exactly as before. The 1.1.0 unit
+>   and isolation suites are pinned to their corpus; 1.2.0 has its own.
+> - **Composition snapshot** (`vendor_engagement_composition_snapshots`,
+>   append-only, hashed): the customer-readable record of what was selected
+>   and why — including what was NOT asked and on what facts, which no prior
+>   record carried. `GET /vendor-engagements/:id/composition`.
+>   `engagement_applicability` unchanged (records only what applied, by ruling).
+> - **Evidence-aware**: no change to the S4 chain; the crosswalk makes the
+>   objectives candidates for governed SOC determinations, so the existing
+>   counting predicate reaches them (depth → `confirm`, never removal).
+> - **Issuance**: `POST …/issue` takes a `contact_id` (primary path), a
+>   `message`, a `due_date`; SecureLogic mints the credential and SENDS the
+>   invitation through the shared mailer (`inviteEmail.ts`, purpose
+>   `vendor.invite`); the invite row records delivery state. `…/invite/reissue`
+>   (resend / change recipient, supersedes the prior credential) and
+>   `…/invite/revoke` (access revoked, history preserved; invite revocation is
+>   authoritative in the portal middleware). Flag
+>   `SECURELOGIC_VENDOR_INVITE_EMAIL_ENABLED`: staging engine `true`,
+>   production `false`.
+> - **App**: `AssessmentCompositionSection` (explainability before issuance),
+>   `IssueQuestionnaireFlow` (contact picker with add-contact, invitation review,
+>   delivery truth, secure link as collapsed recovery), invitation status with
+>   resend/revoke on the engagement page. The walkthrough-crash class
+>   (await-without-catch inside a transition) is closed on every surface this
+>   package touches; not widened app-wide.
+>
+> **Owner-visible interpretation (recorded, not hidden):** the Core Assurance
+> Set IS the presumptive baseline; the previous heuristic `core` fallback was
+> the tier-4 baseline only because nothing curated existed.
+>
+> **Open, owner-only:** a nominal relationship composes to no questionnaire and
+> cannot be issued (422); closing such an engagement without issuance needs a
+> lifecycle ruling (`engagementStateMachine` untouched). Production untouched.
+
 > **DOC-SYNC 2026-09-02 — D2-D14 EVIDENCE-VALIDITY RATIFICATION: owner-ratified
 > and BUILT (migration `20261085`).**
 >
