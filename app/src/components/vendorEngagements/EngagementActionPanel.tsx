@@ -474,7 +474,10 @@ export default function EngagementActionPanel({
             <span style={{ color: "#6b7280", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>Invitation</span>
             <span style={{ fontSize: 11, color: "#6b7280" }}>
               {invite.history_count > 1 && `${invite.history_count} invitations · `}
-              {invite.active ? `expires ${new Date(invite.active.expires_at).toLocaleDateString()}` : "no active link"}
+              {/* ISO calendar date, not toLocaleDateString(): this client component is
+                  server-rendered too, and locale/timezone formatting that differs between
+                  the server and the browser is a React hydration mismatch (#418). */}
+              {invite.active ? `expires ${invite.active.expires_at.slice(0, 10)}` : "no active link"}
             </span>
           </div>
           {(() => {

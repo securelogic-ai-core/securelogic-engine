@@ -98,6 +98,12 @@ describe("EngagementActionPanel", () => {
     expect(block.textContent).toContain("Invitation sent from SecureLogic.");
     expect(block.textContent).toContain("response due 2026-09-25");
     expect(block.textContent).toContain("not opened yet");
+    // Deterministic expiry: an ISO calendar date, never a locale-formatted one.
+    // This client component is server-rendered too, and locale/timezone date
+    // formatting that differs between the server and the browser is a React
+    // hydration mismatch (#418) — seen on staging on the first issued engagement.
+    expect(block.textContent).toContain("expires 2026-10-04");
+    expect(block.textContent).not.toMatch(/10\/4\/2026|04\/10\/2026/);
     fireEvent.click(screen.getByRole("button", { name: "Resend or change recipient" }));
     expect(screen.getByLabelText("Resend invitation")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Revoke access" }));

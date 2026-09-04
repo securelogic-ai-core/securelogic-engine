@@ -22,6 +22,11 @@ const ledger = [];
 let fails = 0;
 const ok = (m) => { ledger.push(`PASS  ${m}`); console.log("PASS ", m); };
 const bad = (m, d = "") => { fails++; ledger.push(`FAIL  ${m} :: ${d}`); console.log("FAIL ", m, d); };
+// Human pacing: each app page fans out several engine calls under the same org
+// key, and the engine's per-org limiter counts per 60 s window. A burst from an
+// automated run refuses what a person clicking through never would.
+const PACE_MS = Number(process.env.PACE_MS ?? 12_000);
+const pace = (page) => page.waitForTimeout(PACE_MS);
 const shot = async (page, name) => { try { await page.screenshot({ path: `${OUT}/${STAMP}-${name}.png`, fullPage: true }); } catch {} };
 
 const engine = (path, opts = {}) =>
@@ -39,9 +44,10 @@ async function main() {
   await page.goto(`${APP}/login`);
   await page.fill("#email", EMAIL);
   await page.fill("#password", PASSWORD);
-  await page.getByRole("button", { name: /^Sign in$/ }).first().click();
+  await page.getByRole("button", { name: /^Sign In$/i }).first().click();
   await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
   ok(`signed in (${BROWSER})`);
+  await pace(page);
 
   // ── 2. Add vendor (factual master data, no criticality asked) ──
   await page.goto(`${APP}/vendors/new`);
@@ -56,6 +62,7 @@ async function main() {
   await page.waitForURL(/\/vendors\/[0-9a-f-]{36}/, { timeout: 60_000 });
   const vendorId = page.url().match(/\/vendors\/([0-9a-f-]{36})/)[1];
   ok(`vendor created through the UI (${vendorId})`);
+  await pace(page);
   await shot(page, "01-vendor");
 
   // ── 3. Relationship ──
@@ -65,6 +72,7 @@ async function main() {
   await page.getByRole("button", { name: "Add relationship" }).last().click();
   await page.getByText(/Card processing added/).waitFor({ timeout: 60_000 });
   ok("relationship added through the UI");
+  await pace(page);
 
   // ── 4. Contacts ──
   await page.getByRole("button", { name: "Add contact" }).first().click();
@@ -74,9 +82,13 @@ async function main() {
   await page.getByRole("button", { name: "Add contact" }).last().click();
   await page.getByText(/Jane Okafor added to the directory/).waitFor({ timeout: 60_000 });
   ok(`contact added through the UI (${RECIPIENT})`);
+  await pace(page);
   await shot(page, "02-contact");
 
   // ── 5. Factual intake → classification ──
+  // The contact add triggers a route refresh; start the intake from a settled page.
+  await page.reload();
+  await page.getByRole("button", { name: "Record factual intake" }).first().waitFor({ timeout: 60_000 });
   await page.getByRole("button", { name: "Record factual intake" }).first().click();
   const intake = {
     "Maximum tolerable disruption": "lt_24_hours", "Operational dependency": "essential", "Business reach": "enterprise_wide",
@@ -88,9 +100,28 @@ async function main() {
     const sel = page.getByLabel(label, { exact: true });
     if (await sel.count()) await sel.selectOption(value); else bad(`intake field missing: ${label}`);
   }
-  await page.getByRole("button", { name: "Record intake and classify" }).click();
-  await page.getByText(/Classified: Critical criticality, High inherent risk/).waitFor({ timeout: 60_000 });
+  const classify = page.getByRole("button", { name: "Record intake and classify" });
+  await classify.waitFor({ timeout: 30_000 });
+  await classify.scrollIntoViewIfNeeded();
+  await classify.click({ force: true });
+  // The engine's per-IP limiter (60 s window) can refuse a burst from an
+  // automated run; the card reports it in place. Wait a window and retry once.
+  const limited = page.getByText(/rate_limit_exceeded/);
+  if (await limited.waitFor({ timeout: 8_000 }).then(() => true).catch(() => false)) {
+    ok("rate-limited refusal was reported in the card (no crash); waiting for the window");
+    await page.waitForTimeout(65_000);
+    await classify.click({ force: true });
+  }
+  try {
+    await page.getByText(/Classified: Critical criticality, High inherent risk/).waitFor({ timeout: 90_000 });
+  } catch (e) {
+    await shot(page, "03-intake-failed");
+    const card = await page.getByText("Relationships & classification").locator("xpath=ancestor::section[1]").textContent().catch(() => "");
+    bad("intake did not classify", (card ?? "").slice(0, 400));
+    throw e;
+  }
   ok("intake recorded: Criticality Critical / IR High / tier derived (UI)");
+  await pace(page);
   await shot(page, "03-classified");
 
   // ── 6. Open assessment from the relationship ──
@@ -98,12 +129,14 @@ async function main() {
   await page.waitForURL(/\/vendor-engagements\/[0-9a-f-]{36}/, { timeout: 60_000 });
   const engagementId = page.url().match(/\/vendor-engagements\/([0-9a-f-]{36})/)[1];
   ok(`engagement opened from the relationship (${engagementId})`);
+  await pace(page);
   (await page.getByText("Relationship under assessment").count()) ? ok("engagement page names the relationship") : bad("relationship context missing");
   (await page.getByText(/Not composed yet/).count()) ? ok("composition section: not composed yet") : bad("composition section missing before compose");
 
   // ── 7. Compose ──
   await page.getByRole("button", { name: "Compose assessment" }).click();
   await page.getByText(/^Composed: /).waitFor({ timeout: 60_000 });
+  await pace(page);
   await page.waitForTimeout(1500);
   await page.reload();
   const objectives = await page.getByLabel("Core assurance objectives").locator("li").count();
@@ -128,7 +161,7 @@ async function main() {
   await page.getByLabel("Response due (optional)").fill(due);
   await ta.fill(`${draft}\n\nWalkthrough ${STAMP}: customised line.`);
   await shot(page, "05-compose-invite");
-  await page.getByRole("button", { name: "Send questionnaire" }).click();
+  await page.getByRole("button", { name: "Send questionnaire", exact: true }).click();
   const status = page.getByRole("status");
   await status.waitFor({ timeout: 60_000 });
   const statusText = await status.textContent();
@@ -137,7 +170,10 @@ async function main() {
   /\/portal\/accept\/[0-9a-f]{64}$/.test(link) ? ok("secure link available as recovery (shown once)") : bad("secure link", link);
   await shot(page, "06-sent");
 
-  // customer-side invite status after refresh
+  // customer-side invite status after refresh — let the post-send router
+  // refresh settle first; reloading mid-stream is a hydration race, not a page defect.
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await pace(page);
   await page.reload();
   const inv = page.getByLabel("Invitation");
   await inv.waitFor({ timeout: 60_000 });
@@ -152,6 +188,7 @@ async function main() {
   await vpage.goto(link);
   await vpage.waitForURL(/\/portal(\/|$)/, { timeout: 60_000 });
   ok("vendor: invitation link exchanged for a portal session");
+  await pace(page);
   await vpage.goto(`${APP}/portal/engagement`).catch(() => {});
   await vpage.goto(`${APP}/portal/questionnaire`);
   await vpage.getByRole("button", { name: /Review/ }).first().waitFor({ timeout: 60_000 }).catch(() => {});
@@ -168,8 +205,9 @@ async function main() {
   }
   await vpage.waitForTimeout(2000);
   ok("vendor: answered every question");
+  await pace(page);
   await vpage.goto(`${APP}/portal/review`);
-  await vpage.getByRole("button", { name: "Submit responses" }).click();
+  await vpage.getByRole("button", { name: "Submit responses", exact: true }).click();
   await vpage.waitForURL(/\/portal\/done/, { timeout: 60_000 }).catch(() => {});
   (await vpage.textContent("body")).match(/submitted|Thank you/i) ? ok("vendor: responses submitted") : bad("submit", vpage.url());
   await shot(vpage, "08-vendor-submitted");
@@ -178,7 +216,7 @@ async function main() {
   await page.reload();
   const st = await page.textContent("body");
   st.includes("Submitted") ? ok("customer: engagement state = Submitted") : bad("customer state", st.slice(0, 100));
-  (await page.getByText(/Responses/).count()) ? ok("customer: responses section present") : bad("responses missing");
+  (await page.getByText(/Questionnaire responses/).count()) ? ok("customer: responses section present") : bad("responses missing");
   await shot(page, "09-customer-after-submit");
 
   // ── 11. Ledger truth from the engine (read-only) ──
