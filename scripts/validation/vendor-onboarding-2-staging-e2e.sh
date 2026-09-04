@@ -99,6 +99,8 @@ if [ -z "$EID" ]; then EID="00000000-0000-0000-0000-000000000000"; fi
 G=$(api "$ENGINE_URL/api/vendor-engagements/$EID")
 [ "$(echo "$G" | j "d.get('methodology_version') or d.get('engagement',{}).get('methodology_version')")" = "2.0.0" ] && ok "engagement stamped methodology 2.0.0" || bad "engagement stamp" "$(echo "$G" | head -c 300)"
 [ "$(echo "$G" | j "d.get('relationship_id') or d.get('engagement',{}).get('relationship_id')")" = "$RID" ] && ok "engagement.relationship_id set" || bad "relationship_id" "$(echo "$G" | head -c 200)"
+# VO-11: the engagement read carries the relationship's STORED classification, so a customer never needs the API
+[ "$(echo "$G" | j "d.get('relationship',{}).get('name')")" = "Card processing" ] && [ "$(echo "$G" | j "d.get('relationship',{}).get('assessment_tier')")" = "tier_1_critical" ] && [ "$(echo "$G" | j "d.get('relationship',{}).get('criticality_band')")" = "Critical" ] && ok "VO-11: engagement read names the relationship with its stored Criticality/IR/tier" || bad "VO-11 context" "$(echo "$G" | j "d.get('relationship')")"
 S=$(api -X POST "$ENGINE_URL/api/vendor-engagements/$EID/scope" -d '{}')
 SC=$(echo "$S" | j "d.get('resolution',{}).get('items') and len(d['resolution']['items']) or d.get('scope_item_count') or d.get('count') or (d.get('scope') and len(d['scope']))")
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -H "Authorization: Bearer $TOK" -X POST "$ENGINE_URL/api/vendor-engagements/$EID/scope" -H 'Content-Type: application/json' -d '{}')" = "200" ] && ok "scope resolved through the existing resolver (items=$SC)" || bad "scope" "$(echo "$S" | head -c 300)"
