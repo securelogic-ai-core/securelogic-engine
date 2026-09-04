@@ -26,6 +26,11 @@ import {
   SOC2_FRAMEWORK_KEY,
   SOC2_FRAMEWORK_VERSION,
 } from "./soc2TscCrosswalk.js";
+import {
+  CORE_ASSURANCE_1_0_CROSSWALK,
+  CORE_ASSURANCE_CROSSWALK_FRAMEWORK_KEY,
+  CORE_ASSURANCE_CROSSWALK_FRAMEWORK_VERSION,
+} from "./coreAssuranceCrosswalk.js";
 
 export type CrosswalkCorpus = {
   /** Must exist in CANONICAL_FRAMEWORK_VERSIONS; the publisher enforces it. */
@@ -44,6 +49,13 @@ export const CROSSWALK_CORPORA: readonly CrosswalkCorpus[] = [
     framework_key: SOC2_FRAMEWORK_KEY,
     framework_version: SOC2_FRAMEWORK_VERSION,
     entries: SOC2_TSC_2017_CROSSWALK,
+  },
+  // Assessment Composition v1: the Core Assurance Set, so governed SOC evidence
+  // can reach SecureLogic's own baseline objectives through the same chain.
+  {
+    framework_key: CORE_ASSURANCE_CROSSWALK_FRAMEWORK_KEY,
+    framework_version: CORE_ASSURANCE_CROSSWALK_FRAMEWORK_VERSION,
+    entries: CORE_ASSURANCE_1_0_CROSSWALK,
   },
 ] as const;
 

@@ -76,6 +76,12 @@ async function createEngagement(who: typeof asA, fx: Fx, title: string): Promise
     ...INTAKE, vendor_id: fx.vendorId, engagement_type: "targeted", title,
   });
   expect(r.status, JSON.stringify(r.body)).toBe(201);
+  // This suite proves #926 on the 1.1.0 corpus over a closed fixture library.
+  // Assessment Composition v1 stamps NEW engagements 1.2.0 (Core Assurance
+  // provisioning + a re-based S1 floor); the stamp selects the corpus, so pin
+  // it the way the 1.0.0 case below already does. 1.2.0 has its own suite
+  // (assessmentComposition.test.ts).
+  await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [r.body.id]);
   return r.body.id as string;
 }
 

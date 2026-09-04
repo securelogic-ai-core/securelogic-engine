@@ -55,7 +55,16 @@
  * would read as "we asked everything that applies" when it did not.
  */
 
-import { SCOPE_RULE_VERSION, SCOPE_RULE_VERSION_S5 } from "./methodologyVersion.js";
+import { SCOPE_RULE_VERSION, SCOPE_RULE_VERSION_CORE, SCOPE_RULE_VERSION_S5 } from "./methodologyVersion.js";
+import {
+  CORE_ASSURANCE_FRAMEWORK_KEY,
+  CORE_ASSURANCE_REFERENCES,
+  CORE_ASSURANCE_SET_VERSION,
+  coreAssuranceObjective,
+  decideCoreApplicability,
+  deriveExposureSignals,
+  type CoreApplicabilityDecision,
+} from "./coreAssuranceSet.js";
 import type { AssessmentTier } from "./riskBands.js";
 import type {
   AccessLevel,
@@ -99,6 +108,13 @@ export type ScopableRequirement = {
   reference_id: string;
   title: string;
   scope_tags: string[];
+  /**
+   * The framework's CANONICAL identity (`frameworks.framework_key`), when it
+   * has one. Read by the >= 1.2.0 corpus to recognise the Core Assurance Set;
+   * absent or null for customer-authored frameworks, which is a legitimate
+   * state and changes nothing below 1.2.0.
+   */
+  framework_key?: string | null;
 };
 
 /** An obligation→requirement edge, read from the shipped obligation_mappings table. */
@@ -236,6 +252,25 @@ export type ScopeResolution = {
      */
     mandatory_overage: number;
   };
+  /**
+   * Assessment Composition v1 (>= 1.2.0 only; absent below so the frozen
+   * goldens and the 1.1.0 output are untouched). The Core Assurance Set's
+   * per-objective applicability decisions, BY VALUE — including the objectives
+   * that did NOT apply and the facts that said so. This is the one place a
+   * "why not" is recorded: `engagement_applicability` records only what
+   * applied, by owner ruling, and the composition snapshot is built from here.
+   */
+  core_assurance?: {
+    version: string;
+    framework_key: string;
+    decisions: CoreAssuranceDecision[];
+    /** Objectives the set defines that the corpus did not contain (should be empty once provisioned). */
+    missing: string[];
+  };
+};
+
+export type CoreAssuranceDecision = CoreApplicabilityDecision & {
+  requirement_id: string;
 };
 
 /**
@@ -302,7 +337,9 @@ function triggerFactBasis(facts: FactSet, ruleId: string): Record<string, unknow
 
 /** Is this item on the assessment floor? */
 function isFloorItem(item: ScopeItem): boolean {
-  return item.reasons.some((r) => FLOOR_RULE_IDS.has(r.rule_id));
+  // >= 1.2.0: every applicable Core Assurance objective (S1.core.*) is the
+  // floor — it is what SecureLogic asks because of the methodology itself.
+  return item.reasons.some((r) => FLOOR_RULE_IDS.has(r.rule_id) || r.rule_id.startsWith("S1.core."));
 }
 
 /**
@@ -679,6 +716,11 @@ export function scopeVersionRunsS5(scopeRuleVersion: string): boolean {
   return versionAtLeast(scopeRuleVersion, SCOPE_RULE_VERSION_S5);
 }
 
+/** Whether the Core Assurance Set is the S1 baseline for a stamped version (>= 1.2.0). */
+export function scopeVersionRunsCoreAssurance(scopeRuleVersion: string): boolean {
+  return versionAtLeast(scopeRuleVersion, SCOPE_RULE_VERSION_CORE);
+}
+
 // ── The resolver ────────────────────────────────────────────────────────────
 
 function matchesTags(req: ScopableRequirement, tags: readonly string[]): boolean {
@@ -721,6 +763,46 @@ function resolveInternal(
   // read it THROUGH the facts (identical predicates, VA-Q0 §6.2).
   const facts: FactSet = input.facts ?? resolveFacts(factsFromInherent(input.inherent));
   const inherent = inherentFromFacts(facts, input.inherent);
+
+  // ── Assessment Composition v1 (>= 1.2.0): Core Assurance applicability ──
+  //
+  // Decided FIRST, from facts alone, before any rule runs. An objective that
+  // does not apply is removed from the universe every later rule sees, so no
+  // tier tag, fact trigger, obligation or domain activation can put it back:
+  // applicability determines WHAT needs assurance, and it is decided once.
+  // Tier, criticality, inherent risk and policy decide only HOW MUCH.
+  const runCore = scopeVersionRunsCoreAssurance(scopeRuleVersion);
+  const coreApplicable = new Map<string, CoreAssuranceDecision>();
+  const coreNotApplicable = new Map<string, CoreAssuranceDecision>();
+  let coreAssurance: ScopeResolution["core_assurance"] = undefined;
+  let universe: ScopableRequirement[] = requirements;
+  if (runCore) {
+    const signals = deriveExposureSignals(facts);
+    const decisions: CoreAssuranceDecision[] = [];
+    const present = new Set<string>();
+    for (const req of requirements) {
+      if (req.framework_key !== CORE_ASSURANCE_FRAMEWORK_KEY) continue;
+      const objective = coreAssuranceObjective(req.reference_id);
+      // A reference the set does not define is ordinary framework content and
+      // falls through to the ordinary rules.
+      if (!objective) continue;
+      present.add(req.reference_id);
+      const decision: CoreAssuranceDecision = {
+        ...decideCoreApplicability(objective, facts, signals),
+        requirement_id: req.requirement_id,
+      };
+      decisions.push(decision);
+      (decision.applicable ? coreApplicable : coreNotApplicable).set(req.requirement_id, decision);
+    }
+    decisions.sort((a, b) => a.reference.localeCompare(b.reference));
+    universe = requirements.filter((r) => !coreNotApplicable.has(r.requirement_id));
+    coreAssurance = {
+      version: CORE_ASSURANCE_SET_VERSION,
+      framework_key: CORE_ASSURANCE_FRAMEWORK_KEY,
+      decisions,
+      missing: CORE_ASSURANCE_REFERENCES.filter((ref) => !present.has(ref)),
+    };
+  }
 
   /** requirement_id -> accumulating item */
   const chosen = new Map<string, ScopeItem>();
@@ -773,8 +855,24 @@ function resolveInternal(
   // S1 — tier baseline
   const baselineTags = TIER_BASELINE_TAGS[tier];
   const baselineDepth = TIER_BASELINE_DEPTH[tier];
-  for (const req of requirements) {
-    if (!matchesTags(req, baselineTags)) continue;
+  // >= 1.2.0: `core` means the Core Assurance Set. A legacy `core` tag on any
+  // other framework — curated or heuristic — is no longer an unconditional
+  // baseline below tier 1; those requirements still enter through every other
+  // tag, trigger, obligation and domain rule exactly as before.
+  const s1Tags = runCore ? baselineTags.filter((t) => t !== "core") : baselineTags;
+  for (const req of universe) {
+    const coreDecision = runCore ? coreApplicable.get(req.requirement_id) : undefined;
+    if (coreDecision) {
+      include(
+        req,
+        { rule_id: coreDecision.rule_id, rule_family: "S1", rationale: coreDecision.rationale },
+        baselineDepth,
+        true,
+        { tier, ...coreDecision.basis }
+      );
+      continue;
+    }
+    if (!matchesTags(req, s1Tags)) continue;
     include(
       req,
       {
@@ -794,7 +892,7 @@ function resolveInternal(
   // S2 — context triggers
   for (const trigger of CONTEXT_TRIGGERS) {
     if (!trigger.applies(inherent)) continue;
-    for (const req of requirements) {
+    for (const req of universe) {
       if (!matchesTags(req, trigger.tags)) continue;
       include(
         req,
@@ -807,7 +905,7 @@ function resolveInternal(
   }
 
   // S3 — regulatory derivation, through the shipped obligation_mappings edges
-  const byId = new Map(requirements.map((r) => [r.requirement_id, r]));
+  const byId = new Map(universe.map((r) => [r.requirement_id, r]));
   for (const edge of obligationEdges) {
     const req = byId.get(edge.requirement_id);
     if (!req) continue;
@@ -830,7 +928,7 @@ function resolveInternal(
   if (runS5) {
     for (const trigger of FACT_CONTEXT_TRIGGERS) {
       if (!trigger.applies(facts)) continue;
-      for (const req of requirements) {
+      for (const req of universe) {
         if (!matchesTags(req, trigger.tags)) continue;
         include(
           req,
@@ -851,7 +949,7 @@ function resolveInternal(
     for (const rule of DOMAIN_ACTIVATION) {
       if (!rule.applies(ctx)) continue;
       const tags = DOMAIN_TAGS[rule.domain];
-      for (const req of requirements) {
+      for (const req of universe) {
         if (!matchesTags(req, tags)) continue;
         // Security's baseline is S1's `core` set: S5.security adds no item S1
         // did not already ask, it only records the activation on those items.
@@ -978,12 +1076,23 @@ function resolveInternal(
   const includedIds = new Set(items.map((i) => i.requirement_id));
   const excluded = requirements
     .filter((r) => !includedIds.has(r.requirement_id))
-    .map((r) => ({
-      requirement_id: r.requirement_id,
-      rationale: chosen.has(r.requirement_id)
-        ? `Dropped by the ${tier.replace(/_/g, " ")} question cap of ${cap}.`
-        : `No rule in scope-rule-set ${scopeRuleVersion} includes this requirement for a ${tier.replace(/_/g, " ")} vendor.`,
-    }));
+    .map((r) => {
+      const notApplicable = coreNotApplicable.get(r.requirement_id);
+      let rationale: string;
+      if (notApplicable) {
+        rationale = notApplicable.rationale;
+      } else if (chosen.has(r.requirement_id)) {
+        rationale = `Dropped by the ${tier.replace(/_/g, " ")} question cap of ${cap}.`;
+      } else if (runCore && r.scope_tags.includes("core") && !baselineTags.includes("*")) {
+        rationale =
+          `The baseline at ${tier.replace(/_/g, " ")} is the SecureLogic Core Assurance Set; ` +
+          `this framework requirement is included only when a relationship fact, obligation or ` +
+          `assessment domain requires it, and none did.`;
+      } else {
+        rationale = `No rule in scope-rule-set ${scopeRuleVersion} includes this requirement for a ${tier.replace(/_/g, " ")} vendor.`;
+      }
+      return { requirement_id: r.requirement_id, rationale };
+    });
 
   return {
     scope_rule_version: scopeRuleVersion,
@@ -994,5 +1103,6 @@ function resolveInternal(
     // Spread so the key is ABSENT (not `undefined`) under 1.0.0 — the golden
     // equivalence test compares JSON.stringify of the whole object.
     ...(composition === undefined ? {} : { composition }),
+    ...(coreAssurance === undefined ? {} : { core_assurance: coreAssurance }),
   };
 }

@@ -61,11 +61,19 @@ const CORPUS: ScopableRequirement[] = [
   req("obscure-1", ["niche-topic"]),
 ];
 
+/**
+ * This suite exercises the 1.1.0 corpus (S1–S5). Assessment Composition v1
+ * bumped the CURRENT constant to 1.2.0, where `core` means the Core Assurance
+ * Set; that corpus has its own suite (coreAssuranceComposition.test.ts). The
+ * stamp selects the corpus, so pinning it here freezes exactly what this file
+ * always tested.
+ */
 const base = (over: Partial<ScopeResolverInput> = {}): ScopeResolverInput => ({
   tier: "tier_3_moderate",
   inherent: benign,
   requirements: CORPUS,
   obligationEdges: [],
+  scopeRuleVersion: "1.1.0",
   ...over,
 });
 
@@ -83,8 +91,10 @@ describe("scope resolution — determinism", () => {
     expect(a).toBe(b);
   });
 
-  it("stamps the scope-rule version", () => {
-    expect(resolveEngagementScope(base()).scope_rule_version).toBe(SCOPE_RULE_VERSION);
+  it("stamps the scope-rule version — the STAMP it was given, or the current constant when unstamped", () => {
+    expect(resolveEngagementScope(base()).scope_rule_version).toBe("1.1.0");
+    const { scopeRuleVersion: _pinned, ...unstamped } = base();
+    expect(resolveEngagementScope(unstamped).scope_rule_version).toBe(SCOPE_RULE_VERSION);
   });
 
   it("output order is stable regardless of input order", () => {
@@ -622,9 +632,10 @@ describe("VA-Q2 — engagements stamped 1.0.0 re-resolve BYTE-IDENTICALLY", () =
     expect(scopeVersionRunsS5(SCOPE_RULE_VERSION)).toBe(true);
   });
 
-  it("the current constant is 1.1.0 and a new engagement defaults to it", () => {
-    expect(SCOPE_RULE_VERSION).toBe("1.1.0");
-    expect(resolveEngagementScope(base()).scope_rule_version).toBe("1.1.0");
+  it("the current constant is 1.2.0 and a new engagement defaults to it", () => {
+    expect(SCOPE_RULE_VERSION).toBe("1.2.0");
+    const { scopeRuleVersion: _pinned, ...unstamped } = base();
+    expect(resolveEngagementScope(unstamped).scope_rule_version).toBe("1.2.0");
   });
 });
 
@@ -1067,7 +1078,7 @@ describe("VA-Q2 P2 — every 1.1.0 item is stamped with a domain; 1.0.0 stamps n
     obligationEdges: [{ obligation_id: "o-1", obligation_title: "GDPR", requirement_id: "obl-1" }],
   });
 
-  it("under the current corpus (1.1.0) every item carries a domain from the closed set", () => {
+  it("under the 1.1.0 corpus every item carries a domain from the closed set", () => {
     const r = resolveEngagementScope(withObligation);
     expect(r.scope_rule_version).toBe("1.1.0");
     expect(r.items.length).toBeGreaterThan(0);

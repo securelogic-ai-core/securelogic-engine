@@ -33,17 +33,30 @@ const SQL_68 = readFileSync(
   "utf8"
 );
 
-/** The seeded registry, read out of the migration's VALUES list. */
-function seededRegistry(): Array<[string, string, string]> {
-  const start = SQL_68.indexOf("INSERT INTO canonical_framework_versions");
+const SQL_88 = readFileSync(
+  join(process.cwd(), "db", "migrations", "20261088_core_assurance_composition.sql"),
+  "utf8"
+);
+
+function registryBlock(sql: string): Array<[string, string, string]> {
+  const start = sql.indexOf("INSERT INTO canonical_framework_versions");
   expect(start).toBeGreaterThan(-1);
-  const end = SQL_68.indexOf("ON CONFLICT (framework_key, framework_version)", start);
-  const block = SQL_68.slice(start, end);
+  const end = sql.indexOf("ON CONFLICT (framework_key, framework_version)", start);
+  const block = sql.slice(start, end);
   return [...block.matchAll(/\('([^']+)',\s*'([^']+)',\s*'([^']+)'\)/g)].map((m) => [
     m[1]!,
     m[2]!,
     m[3]!,
   ]);
+}
+
+/**
+ * The seeded registry, read out of every migration that seeds it: 20261068
+ * (the original eighteen) and 20261088 (Assessment Composition v1's Core
+ * Assurance Set).
+ */
+function seededRegistry(): Array<[string, string, string]> {
+  return [...registryBlock(SQL_68), ...registryBlock(SQL_88)];
 }
 
 describe("module ↔ migration 20261068 registry lockstep", () => {

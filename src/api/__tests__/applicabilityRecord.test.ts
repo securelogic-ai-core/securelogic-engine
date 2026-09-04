@@ -48,6 +48,9 @@ const CROWDED: ScopableRequirement[] = [
 
 const base = (over: Partial<ScopeResolverInput> = {}): ScopeResolverInput => ({
   tier: "tier_4_low",
+  // The 1.1.0 corpus: this suite is about applicability-vs-composition on the
+  // legacy `core` floor. The 1.2.0 Core Assurance corpus has its own suite.
+  scopeRuleVersion: "1.1.0",
   inherent: benign,
   requirements: CROWDED,
   obligationEdges: [],

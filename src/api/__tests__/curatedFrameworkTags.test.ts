@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CURATED_FRAMEWORK_TAGS,
+  ALL_CURATED_FRAMEWORK_TAGS,
   CURATED_TEMPLATE_KEYS,
   curatedDomain,
   curatedTaggingFor,
@@ -36,14 +36,19 @@ import { ASSESSMENT_DOMAINS } from "../lib/vendorRisk/requirementDomain.js";
 
 /** Every curated (templateKey, reference_id, entry) triple, flattened. */
 const ALL_ENTRIES = CURATED_TEMPLATE_KEYS.flatMap((key) =>
-  Object.entries(CURATED_FRAMEWORK_TAGS[key]!).map(
+  Object.entries(ALL_CURATED_FRAMEWORK_TAGS[key]!).map(
     ([referenceId, entry]) => ({ key, referenceId, entry }) as const
   )
 );
 
 describe("the curated map covers its templates exactly", () => {
-  it("curates exactly the three shipped regulatory/AI templates", () => {
-    expect([...CURATED_TEMPLATE_KEYS].sort()).toEqual(["ccpa", "gdpr", "nist_ai_rmf"]);
+  it("curates exactly the three shipped regulatory/AI templates plus the Core Assurance Set", () => {
+    expect([...CURATED_TEMPLATE_KEYS].sort()).toEqual([
+      "ccpa",
+      "gdpr",
+      "nist_ai_rmf",
+      "securelogic_core_assurance",
+    ]);
   });
 
   it("every curated template key is a real framework template", () => {
@@ -56,7 +61,7 @@ describe("the curated map covers its templates exactly", () => {
     "%s: every shipped requirement is curated — none can fall back",
     (key) => {
       const shipped = FRAMEWORK_TEMPLATES[key]!.requirements.map((r) => r.reference_id);
-      const curatedRefs = Object.keys(CURATED_FRAMEWORK_TAGS[key]!);
+      const curatedRefs = Object.keys(ALL_CURATED_FRAMEWORK_TAGS[key]!);
       // Both directions. A requirement added to the template without a curation
       // entry would silently become a security question; a curation entry for a
       // requirement that no longer ships is dead reference data.
@@ -64,8 +69,9 @@ describe("the curated map covers its templates exactly", () => {
     }
   );
 
-  it("covers all 24 currently shipped requirements", () => {
-    expect(ALL_ENTRIES).toHaveLength(24);
+  it("covers all 40 currently shipped requirements (24 regulatory/AI + 16 Core Assurance)", () => {
+    expect(ALL_ENTRIES).toHaveLength(40);
+    expect(FRAMEWORK_TEMPLATES["securelogic_core_assurance"]!.requirements).toHaveLength(16);
     expect(FRAMEWORK_TEMPLATES["gdpr"]!.requirements).toHaveLength(12);
     expect(FRAMEWORK_TEMPLATES["ccpa"]!.requirements).toHaveLength(8);
     expect(FRAMEWORK_TEMPLATES["nist_ai_rmf"]!.requirements).toHaveLength(4);
@@ -109,11 +115,15 @@ describe("every curated requirement is asked under the domain it was curated for
     }
   });
 
-  it("the only deliberate security classifications are the two security-in-a-privacy-law articles", () => {
+  it("the only deliberate security classifications are the two security-in-a-privacy-law articles and the Core Assurance security objectives", () => {
     const deliberate = ALL_ENTRIES.filter((e) => e.entry.deliberate_security).map(
       (e) => `${e.key}/${e.referenceId}`
     );
-    expect(deliberate.sort()).toEqual(["ccpa/CCPA-8", "gdpr/Art-32"]);
+    const coreSecurity = ALL_ENTRIES.filter(
+      (e) => e.key === "securelogic_core_assurance" && e.entry.domain === "security"
+    ).map((e) => `${e.key}/${e.referenceId}`);
+    expect(coreSecurity.length).toBe(13);
+    expect(deliberate.sort()).toEqual(["ccpa/CCPA-8", "gdpr/Art-32", ...coreSecurity].sort());
   });
 });
 
@@ -145,14 +155,16 @@ describe("the regressions that made this package necessary", () => {
     expect(entry.tags).not.toContain("privacy");
   });
 
-  it("the curated corpus reaches four domains", () => {
+  it("the curated corpus reaches five domains (resilience arrives with the Core Assurance Set)", () => {
     const domains = new Set(ALL_ENTRIES.map((e) => curatedDomain(e.entry)));
-    expect([...domains].sort()).toEqual(["ai", "nth_party", "privacy", "security"]);
+    expect([...domains].sort()).toEqual(["ai", "nth_party", "privacy", "resilience", "security"]);
   });
 
-  it("security gains exactly the two deliberate requirements, not eleven", () => {
+  it("security gains exactly the two deliberate regulatory requirements plus the thirteen Core Assurance security objectives, not eleven accidental ones", () => {
     const security = ALL_ENTRIES.filter((e) => curatedDomain(e.entry) === "security");
-    expect(security).toHaveLength(2);
+    const regulatory = security.filter((e) => e.key !== "securelogic_core_assurance");
+    expect(regulatory).toHaveLength(2);
+    expect(security).toHaveLength(15);
   });
 });
 

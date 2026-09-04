@@ -47,7 +47,7 @@ const spec = (k: string): FactSpec => FACT_REGISTRY[k as keyof typeof FACT_REGIS
 describe("fact registry — closed and versioned", () => {
   it("is versioned with the scope-rule corpus", () => {
     expect(FACT_REGISTRY_VERSION).toBe(SCOPE_RULE_VERSION);
-    expect(SCOPE_RULE_VERSION).toBe("1.1.0");
+    expect(SCOPE_RULE_VERSION).toBe("1.2.0");
   });
 
   it("every key matches the P3 DB key shape, has a type, ≥1 allowed origin and ≥1 domain", () => {

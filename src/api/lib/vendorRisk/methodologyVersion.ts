@@ -45,8 +45,15 @@ export const METHODOLOGY_VERSION = "1.0.0" as const;
  *   1.1.0  VA-Q2 P1: fact registry; S5 domain activation; `domain` on items.
  *          S5 runs ONLY for engagements stamped >= 1.1.0 — an engagement
  *          stamped 1.0.0 re-resolves byte-identically (golden-tested).
+ *   1.2.0  Assessment Composition v1 (2026-09-04): the SecureLogic Core
+ *          Assurance Set is the presumptive S1 baseline (S1.core.* with
+ *          per-objective factual applicability); a legacy `core` tag on any
+ *          other framework no longer makes a requirement unconditional
+ *          baseline below tier 1; `not_applicable` and `core_assurance` ride
+ *          the resolution. Engagements stamped <= 1.1.0 re-resolve exactly as
+ *          before — the corpus is selected by the STAMP, never the constant.
  */
-export const SCOPE_RULE_VERSION = "1.1.0" as const;
+export const SCOPE_RULE_VERSION = "1.2.0" as const;
 
 /**
  * Vendor Onboarding 2.0 (methodology FROZEN 2026-09-03, docs/design/
@@ -65,6 +72,9 @@ export const TIER_METHODOLOGY_VERSION = "1.0.0" as const;
 
 /** The version at which S5 domain activation entered the corpus. */
 export const SCOPE_RULE_VERSION_S5 = "1.1.0" as const;
+
+/** The version at which the Core Assurance Set became the S1 baseline. */
+export const SCOPE_RULE_VERSION_CORE = "1.2.0" as const;
 
 /**
  * The shared, versioned explainability envelope.

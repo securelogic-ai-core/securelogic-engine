@@ -268,6 +268,11 @@ describe("the set of modules that touch requirements.scope_tags stays closed", (
       // its consumers are the two WRITERS below, which VA-6 ruled are premium
       // + org-admin rather than flag-gated. It reaches the resolver only the
       // way any tag does, through the rows those writers persist.
+      // Assessment Composition v1: the lazy, idempotent WRITER that provisions
+      // the Core Assurance Set into a tenant's library at composition — the
+      // same INSERT shape as frameworkActivation.ts, reached only through
+      // resolveScope (flag-gated) and never by a vendor.
+      "api/lib/vendorRisk/coreAssuranceProvisioning.ts",
       "api/lib/vendorRisk/curatedFrameworkTags.ts",
       "api/lib/vendorRisk/methodologyVersion.ts",
       // VA-Q2 P1: the promoted requirement→domain rule (pure; the reader the

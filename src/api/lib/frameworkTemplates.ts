@@ -5,6 +5,13 @@
  * Used by the frameworkActivation route to bootstrap org framework libraries.
  */
 
+import {
+  CORE_ASSURANCE_DISPLAY_NAME,
+  CORE_ASSURANCE_FRAMEWORK_VERSION,
+  CORE_ASSURANCE_OBJECTIVES,
+  CORE_ASSURANCE_TEMPLATE_KEY,
+} from "./vendorRisk/coreAssuranceSet.js";
+
 export type FrameworkTemplate = {
   name: string;
   version: string;
@@ -440,4 +447,22 @@ export const FRAMEWORK_TEMPLATES: Record<string, FrameworkTemplate> = {
       { reference_id: "MANAGE",  title: "Prioritize and Address AI Risks Based on Assessments", description: "Put processes in place to respond to identified AI risks — mitigating harms, adjusting or decommissioning systems that cause unacceptable risk, and tracking residual risks. A documented AI risk treatment plan with prioritized mitigations, an AI incident log, and a regular review cycle to reassess AI system risk profiles would satisfy this." },
     ],
   },
+  // Assessment Composition v1 (2026-09-04): the SecureLogic Core Assurance Set —
+  // SecureLogic-authored, presumptively applicable control objectives. Derived
+  // from `coreAssuranceSet.ts` so the template, the applicability rules and the
+  // crosswalk can never disagree about which objectives exist. Provisioned for
+  // every tenant lazily at composition (coreAssuranceProvisioning.ts); also
+  // activatable explicitly like any other template.
+  [CORE_ASSURANCE_TEMPLATE_KEY]: {
+    name: CORE_ASSURANCE_DISPLAY_NAME,
+    version: CORE_ASSURANCE_FRAMEWORK_VERSION,
+    description:
+      "SecureLogic's presumptive baseline of sixteen control objectives every vendor assessment starts from. Each objective carries a deterministic applicability rule; objectives that demonstrably do not apply to a relationship are excluded with the reason recorded.",
+    requirements: CORE_ASSURANCE_OBJECTIVES.map((o) => ({
+      reference_id: o.reference,
+      title: o.title,
+      description: o.description,
+    })),
+  },
+
 };

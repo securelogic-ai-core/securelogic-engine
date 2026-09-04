@@ -85,6 +85,13 @@ async function seedOrg(orgId: string, label: string): Promise<Fx> {
 async function createEngagement(who: typeof asA, fx: Fx, title: string): Promise<string> {
   const created = await who("post", "/api/vendor-engagements").send({ ...TIER1_INTAKE, vendor_id: fx.vendorId, title });
   expect(created.status, JSON.stringify(created.body)).toBe(201);
+  // This suite proves the VA-Q2 P2 semantics of the 1.1.0 corpus over a
+  // closed fixture library. Assessment Composition v1 stamps NEW engagements
+  // 1.2.0 (which provisions the sixteen Core Assurance objectives and
+  // re-bases the S1 floor); the stamp selects the corpus, so pin it the way
+  // the 1.0.0 case below already does. The 1.2.0 route behaviour has its own
+  // suite (assessmentComposition.test.ts).
+  await pool.query(`UPDATE vendor_engagements SET scope_rule_version = '1.1.0' WHERE id = $1`, [created.body.id]);
   return created.body.id as string;
 }
 
