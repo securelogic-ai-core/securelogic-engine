@@ -133,6 +133,20 @@ async function main() {
   (await page.getByText("Relationship under assessment").count()) ? ok("engagement page names the relationship") : bad("relationship context missing");
   (await page.getByText(/Not composed yet/).count()) ? ok("composition section: not composed yet") : bad("composition section missing before compose");
 
+  // ── 7a. A dropped request is refused IN the panel, never a page crash ──
+  // Fail the next server-action POST at the transport layer (what a stale
+  // keep-alive socket or a deploy in flight does), exactly the VO 2.0 crash.
+  let aborted = false;
+  await page.route("**/vendor-engagements/**", (route) => {
+    if (!aborted && route.request().method() === "POST" && route.request().headers()["next-action"]) { aborted = true; return route.abort("connectionfailed"); }
+    return route.continue();
+  });
+  await page.getByRole("button", { name: "Compose assessment" }).click();
+  await page.getByText(/did not reach SecureLogic/).waitFor({ timeout: 30_000 });
+  await page.unroute("**/vendor-engagements/**");
+  ok("dropped request: refusal shown in the panel, page intact (no client crash)");
+  await pace(page);
+
   // ── 7. Compose ──
   await page.getByRole("button", { name: "Compose assessment" }).click();
   await page.getByText(/^Composed: /).waitFor({ timeout: 60_000 });
@@ -181,11 +195,27 @@ async function main() {
   invText.includes("Jane Okafor") && invText.includes("Invitation sent from SecureLogic") ? ok("invitation status persisted on the engagement page") : bad("invite status", invText);
   invText.includes(`response due ${due}`) ? ok("due date persisted") : bad("due date", invText);
 
+  // ── 8b. Resend from the Invitation block (UI): a replacement link; the old one dies ──
+  await page.getByRole("button", { name: "Resend or change recipient" }).click();
+  await page.getByLabel("Resend invitation").waitFor();
+  await page.getByRole("button", { name: /Continue with Jane Okafor/ }).click();
+  await page.getByRole("button", { name: "Send new invitation", exact: true }).click();
+  await page.getByRole("status").waitFor({ timeout: 60_000 });
+  const link2 = (await page.getByTestId("secure-link").textContent()).trim();
+  link2 !== link && /\/portal\/accept\/[0-9a-f]{64}$/.test(link2) ? ok("resend (UI): a new secure link was issued") : bad("resend link", link2);
+  const oldTok = link.split("/portal/accept/")[1];
+  const dead = await engine("/api/vendor-portal/session", { method: "POST", body: JSON.stringify({ token: oldTok }) });
+  dead.status === 401 ? ok("resend (UI): the previous link no longer exchanges (401)") : bad("old link still live", String(dead.status));
+  await shot(page, "06b-resent");
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await pace(page);
+  const linkForVendor = link2;
+
   // ── 9. Vendor side: receive/access the invitation (the emailed link) ──
   const vctx = await browser.newContext({ viewport: { width: 1100, height: 900 } });
   const vpage = await vctx.newPage();
   vpage.on("pageerror", (e) => bad("vendor portal client-side exception", String(e)));
-  await vpage.goto(link);
+  await vpage.goto(linkForVendor);
   await vpage.waitForURL(/\/portal(\/|$)/, { timeout: 60_000 });
   ok("vendor: invitation link exchanged for a portal session");
   await pace(page);
