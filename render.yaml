@@ -365,6 +365,16 @@ services:
       - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
         value: "true"   # production-authorized value; Wave 1 target is recorded in docs/validation/develop-to-main-promotion-audit.md §12, NOT here
 
+      # Assessment Composition v1 / contact-based issuance (2026-09-04): when
+      # "true", SecureLogic SENDS the vendor-portal invitation email itself
+      # through the shared transactional mailer (src/api/lib/vendorPortal/
+      # inviteEmail.ts). Anything else = dark: issuing still works, the invite
+      # row records `disabled`, and the customer's shown-once link is the
+      # delivery path. Production stays dark until the owner enables Vendor
+      # Assurance there; validated on staging first.
+      - key: SECURELOGIC_VENDOR_INVITE_EMAIL_ENABLED
+        value: "false"
+
       # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
       # POST /api/ask from the eight-query snapshot to the platform tool
       # registry, where the model calls canonical routes in the caller's own
@@ -783,6 +793,13 @@ services:
       # operator flips it.
       - key: SECURELOGIC_LEGACY_VENDOR_WRITES_ENABLED
         value: "false"
+
+      # Assessment Composition v1 / contact-based issuance (2026-09-04): the
+      # staging engine SENDS vendor-portal invitations (Resend, staging key)
+      # so the customer workflow is validated end to end here before any
+      # production decision. Prod declares "false".
+      - key: SECURELOGIC_VENDOR_INVITE_EMAIL_ENABLED
+        value: "true"
 
       # Ask retrieval path — DARK LAUNCH (Sept-15 program, Ask A1). Switches
       # POST /api/ask from the eight-query snapshot to the platform tool
