@@ -18,4 +18,11 @@ chk  "vendor page shows a derived tier or intake-required state" "$V" "Tier [1-4
 chk  "vendor page labels the manual classification as legacy (if present)" "$V" "not used to derive\|Relationships &amp; classification"
 nchk "Add Vendor no longer asks for a criticality classification" "$N" "Select criticality"
 chk  "Add Vendor still collects factual master data" "$N" 'name="data_sensitivity"'
+if [ -n "${ENGAGEMENT_ID:-}" ]; then
+  G=$(curl -s -b "$CK" --max-time 60 "$APP_URL/vendor-engagements/$ENGAGEMENT_ID")
+  chk "engagement page renders 'Relationship under assessment'" "$G" "Relationship under assessment"
+  chk "engagement page names the relationship" "$G" "Card processing"
+  chk "engagement page shows the joint tier" "$G" "Tier 1 — Critical"
+  chk "engagement page shows applicable domains" "$G" "Resilience [0-9]"
+fi
 rm -f "$CK"

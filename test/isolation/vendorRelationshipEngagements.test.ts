@@ -105,6 +105,24 @@ describe("VO-7 — an engagement from a classified relationship", () => {
     expect(res.status).toBe(200);
     expect(res.body.relationship_id ?? res.body.engagement?.relationship_id).toBe(classified);
   });
+  it("VO-11: the engagement read carries the relationship's STORED classification — read, not recalculated", async () => {
+    const res = await as(seed.orgA.apiKey).get(`/api/vendor-engagements/${engagement}`);
+    expect(res.status).toBe(200);
+    const stored = (await pool.query(`SELECT * FROM vendor_relationships WHERE id = $1`, [classified])).rows[0];
+    const r = res.body.relationship;
+    expect(r).not.toBeNull();
+    expect(r).toMatchObject({
+      id: classified, name: "Card processing", is_primary: true,
+      criticality_score: stored.criticality_score, criticality_band: stored.criticality_band,
+      inherent_score: stored.inherent_score, inherent_band: stored.inherent_band,
+      assessment_tier: stored.assessment_tier, tier_calculated_minimum: stored.tier_calculated_minimum,
+      criticality_methodology_version: "1.0.0", inherent_methodology_version: "2.0.0",
+    });
+    // A customer can tell which relationship this engagement assesses without the API.
+    expect(r.classification_computed_at).not.toBeNull();
+    // No basis JSON here — the vendor page owns the full "Why?"; this is context.
+    expect(r.criticality_basis).toBeUndefined();
+  });
 });
 
 describe("VO-7 — refusals", () => {
@@ -132,5 +150,8 @@ describe("VO-7 — the v1 path is unchanged", () => {
     expect(e.relationship_id).toBeNull();
     expect(e.methodology_version).toBe("1.0.0");
     expect(e.inherent_basis.method).toBe("vendor_inherent_v1");
+    // VO-11: a pre-2.0 engagement is honestly unlinked — relationship is null, never invented.
+    const read = await as(seed.orgA.apiKey).get(`/api/vendor-engagements/${res.body.id}`);
+    expect(read.body.relationship).toBeNull();
   });
 });

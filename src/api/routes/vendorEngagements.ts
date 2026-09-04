@@ -666,8 +666,29 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
     );
     const observation = await listFindingsSupersededBySource(organizationId, id);
 
+    // Vendor Onboarding 2.0 (VO-11): the relationship this engagement assesses,
+    // with its STORED derived classification. Read, never recalculated — the
+    // engine that produced these values stamped its version into the row, and
+    // this surface only repeats what it recorded. NULL for engagements opened
+    // before 2.0, which are honestly unlinked rather than backfilled.
+    const relationshipId = (result.rows[0] as { relationship_id?: string | null }).relationship_id ?? null;
+    let relationship: Record<string, unknown> | null = null;
+    if (relationshipId) {
+      const rel = await pg.query(
+        `SELECT id, name, service_description, is_primary, status, policy_minimum_tier,
+                criticality_score, criticality_band, criticality_arithmetic_band, criticality_methodology_version,
+                inherent_score, inherent_band, inherent_arithmetic_band, inherent_methodology_version,
+                assessment_tier, tier_calculated_minimum, tier_methodology_version,
+                classification_computed_at
+           FROM vendor_relationships WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+        [relationshipId, organizationId]
+      );
+      relationship = rel.rows[0] ?? null;
+    }
+
     res.status(200).json({
       engagement: result.rows[0],
+      relationship,
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
         answered: Number(scope.rows[0]?.answered ?? "0"),

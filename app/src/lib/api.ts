@@ -7552,6 +7552,32 @@ export type VendorEngagementListRow = {
 };
 
 /** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name + criticality. */
+/**
+ * VO-11: the relationship an engagement assesses, with its STORED derived
+ * classification as the engine recorded it. Context for the engagement page;
+ * the vendor page owns the full basis ("Why?").
+ */
+export type VendorEngagementRelationshipContext = {
+  id: string;
+  name: string;
+  service_description: string | null;
+  is_primary: boolean;
+  status: "active" | "inactive";
+  policy_minimum_tier: AssessmentTierValue | null;
+  criticality_score: number | null;
+  criticality_band: RiskBandValue | null;
+  criticality_arithmetic_band: RiskBandValue | null;
+  criticality_methodology_version: string | null;
+  inherent_score: number | null;
+  inherent_band: RiskBandValue | null;
+  inherent_arithmetic_band: RiskBandValue | null;
+  inherent_methodology_version: string | null;
+  assessment_tier: AssessmentTierValue | null;
+  tier_calculated_minimum: AssessmentTierValue | null;
+  tier_methodology_version: string | null;
+  classification_computed_at: string | null;
+};
+
 export type VendorEngagementDetail = {
   id: string;
   organization_id: string;
@@ -7723,13 +7749,14 @@ export async function listVendorEngagements(
 export async function getVendorEngagement(
   token: string,
   id: string
-): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire } | null> {
+): Promise<{ engagement: VendorEngagementDetail; questionnaire: VendorEngagementQuestionnaire; relationship: VendorEngagementRelationshipContext | null } | null> {
   try {
     const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}`, token);
     if (!res.ok) return null;
     return res.json() as Promise<{
       engagement: VendorEngagementDetail;
       questionnaire: VendorEngagementQuestionnaire;
+      relationship: VendorEngagementRelationshipContext | null;
     }>;
   } catch {
     return null;
