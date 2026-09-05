@@ -72,10 +72,14 @@ const engine = (path, opts = {}) =>
  * questions is enough to carry every attention reason this journey needs.
  */
 const MODEST = {
-  max_tolerable_disruption: "lt_1_week", operational_dependency: "important",
+  // Level names come from the real tables — MTD_LEVELS, CRITICALITY_DEPENDENCY_LEVELS
+  // and DATA_VOLUME_BANDS. The first draft of this fixture invented
+  // `lt_1_week` / `important` / `small`, which the intake correctly rejected as
+  // `invalid`. Read the enum, do not guess it.
+  max_tolerable_disruption: "1_week_to_1_month", operational_dependency: "supporting",
   business_reach: "single_team", substitutability: "replaceable_months",
   process_coupling: "peripheral", concentration: "none",
-  data_sensitivity: "internal", data_volume: "small", access_level: "read_only",
+  data_sensitivity: "internal", data_volume: "minimal", access_level: "read_only",
   regulatory_exposure: "low", regulatory_breach_notification: false,
   ai_involvement: "none", ai_autonomy: "none", hosting_model: "saas",
   fourth_party_exposure: "low",
@@ -129,7 +133,7 @@ async function findingsForEngagement(engagementId) {
  * so the submit gate (WA-1) is satisfied and the attention reasons that survive
  * are the ones about the ASSESSMENT rather than about its completeness.
  */
-async function attentionEngagement(label) {
+async function attentionEngagement(label, { clean = false } = {}) {
   const vendorId = await ensureHarnessVendor();
   const r = await engine(`/api/vendors/${vendorId}/relationships`, {
     method: "POST",
@@ -182,10 +186,12 @@ async function attentionEngagement(label) {
 
   for (let n = 0; n < items.length; n += 1) {
     const it = items[n];
-    const answer =
-      n === 0 ? { status: "fail", notes: "Not implemented for this service; scheduled for next quarter." }
+    const PASS = { status: "pass", notes: "Implemented and operating for the service described." };
+    const answer = clean
+      ? PASS
+      : n === 0 ? { status: "fail", notes: "Not implemented for this service; scheduled for next quarter." }
       : n === 1 ? { status: "partial", notes: "In place for production only; the staging estate is not covered." }
-      : { status: "pass", notes: "Implemented and operating for the service described." };
+      : PASS;
     // PUT /questions/:requirementId with { answer, notes } — the shape
     // savePortalAnswer actually reads (vendorPortal.ts:462-465).
     const saved = await portal(`/api/vendor-portal/questions/${encodeURIComponent(it.requirement_id)}`, {
@@ -201,13 +207,42 @@ async function attentionEngagement(label) {
   return { vendorId, relationshipId, engagementId, questionCount: items.length };
 }
 
+/**
+ * The monitored-entity count, read the way the product meters it.
+ *
+ * `enforceEntityLimit` counts rows that EXIST in `vendors` + `ai_systems` for
+ * the org against one cap. There is no endpoint that exposes the number, so
+ * the harness reconstructs it from the two list surfaces rather than asserting
+ * it from a database it is not supposed to reach. Reported, never enforced —
+ * the journey must not raise, bypass or weaken the cap to go green.
+ */
+async function monitoredEntities() {
+  const v = await engine("/api/vendors?limit=200");
+  const a = await engine("/api/ai-systems?limit=200");
+  const vendors = Number(v.body.total ?? (v.body.vendors ?? []).length);
+  const aiSystems = Number(a.body.count ?? (a.body.ai_systems ?? []).length);
+  return { vendors, aiSystems, total: vendors + aiSystems };
+}
+
 async function setup() {
   const login = await engine("/api/auth/login", { method: "POST", body: JSON.stringify({ email: EMAIL, password: PASSWORD }) });
   TOK = login.body.token;
   if (!TOK) throw new Error(`login failed: ${login.status} ${JSON.stringify(login.body).slice(0, 200)}`);
 
+  const before = await monitoredEntities();
+  const existing = await engine("/api/vendors?limit=200");
+  const adopted = (existing.body.vendors ?? []).some(
+    (v) => v.name === HARNESS_VENDOR || (typeof v.name === "string" && v.name.startsWith("WA4 "))
+  );
+
   const target = await attentionEngagement("triage");
-  return { target };
+  // The negative control: same org, same window, same template — every answer
+  // a `pass` that carries its explanation. If THIS lands in the queue, the
+  // queue means nothing.
+  const control = await attentionEngagement("control", { clean: true });
+
+  const after = await monitoredEntities();
+  return { target, control, entities: { before, after, adopted } };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -220,6 +255,113 @@ async function main() {
   findingsBefore === 0
     ? ok("baseline: the fixture engagement starts with zero findings")
     : bad(`baseline is not clean: ${findingsBefore} finding(s) already exist for the fixture`);
+
+  // ── Fixture metering (owner gate 4) ──────────────────────────────────────
+  const { before, after, adopted } = s.entities;
+  console.log(
+    `fixture: monitored entities ${before.total} -> ${after.total} ` +
+    `(cap is per-org; vendors ${before.vendors}->${after.vendors}, ai_systems ${before.aiSystems}->${after.aiSystems}); ` +
+    `harness vendor ${adopted ? "ADOPTED" : "CREATED"}`
+  );
+  adopted
+    ? ok(`fixture: an existing harness vendor was adopted — no new monitored entity (${before.total} -> ${after.total})`)
+    : ok(`fixture: no harness vendor existed, one was created once (${before.total} -> ${after.total})`);
+  after.total - before.total <= (adopted ? 0 : 1)
+    ? ok("fixture: the run added no monitored entity beyond the one the vendor requires")
+    : bad(`fixture: the run added ${after.total - before.total} monitored entities`);
+
+  // ── Derivation, BOTH directions, before a browser is involved ────────────
+  // The positive direction is what the UI sections re-prove through the screen.
+  // The negative direction has no other home: an engagement that should NOT be
+  // flagged cannot be found by looking at the ones that are.
+  const posAttn = await engine(`/api/vendor-engagements/${s.target.engagementId}/attention`);
+  const pos = posAttn.body.attention ?? {};
+  pos.needs_attention === true
+    ? ok("derivation: the mixed engagement needs attention")
+    : bad("derivation: the mixed engagement was not flagged", JSON.stringify(pos).slice(0, 200));
+  (pos.reasons ?? []).includes("control_not_in_place") && (pos.reasons ?? []).includes("partial_response")
+    ? ok(`derivation: the reasons name the canonical conditions — ${(pos.reasons ?? []).join(", ")}`)
+    : bad("derivation: the canonical conditions are not in the reasons", JSON.stringify(pos.reasons));
+  posAttn.body.in_attention_window === true
+    ? ok("derivation: a submitted engagement is inside the attention window")
+    : bad("derivation: a submitted engagement is outside the window", String(posAttn.body.in_attention_window));
+
+  const negAttn = await engine(`/api/vendor-engagements/${s.control.engagementId}/attention`);
+  const neg = negAttn.body.attention ?? {};
+  neg.needs_attention === false
+    ? ok("FALSE-POSITIVE PROOF: an engagement whose answers are all explained passes is NOT flagged")
+    : bad("FALSE-POSITIVE: a clean engagement was flagged", JSON.stringify(neg).slice(0, 300));
+  (neg.reasons ?? []).length === 0
+    ? ok("FALSE-POSITIVE PROOF: the clean engagement carries zero reasons")
+    : bad("the clean engagement carries reasons", JSON.stringify(neg.reasons));
+  neg.digest === "none"
+    ? ok("FALSE-POSITIVE PROOF: its digest is `none`, so a disposition against it records an honest zero")
+    : bad("the clean engagement's digest is not `none`", String(neg.digest));
+  negAttn.body.in_attention_window === true
+    ? ok("FALSE-POSITIVE PROOF: and it is INSIDE the window — it is unflagged on its merits, not by exclusion")
+    : bad("the control engagement is outside the window, so it proves nothing", String(negAttn.body.in_attention_window));
+
+  // The queue itself must agree with the per-engagement derivation.
+  const queue = await engine("/api/vendor-engagements?needs_attention=true&limit=200");
+  const queueIds = (queue.body.engagements ?? queue.body.items ?? []).map((e) => e.id);
+  queueIds.includes(s.target.engagementId)
+    ? ok("queue: the mixed engagement is in the needs-attention list")
+    : bad("queue: the mixed engagement is missing from the list");
+  !queueIds.includes(s.control.engagementId)
+    ? ok("FALSE-POSITIVE PROOF: the clean engagement is ABSENT from the needs-attention list")
+    : bad("FALSE-POSITIVE: the clean engagement appears in the needs-attention list");
+
+  // ── The sort whitelist, exercised as an attacker would (owner gate 8) ────
+  const defaultOrder = (await engine("/api/vendor-engagements?limit=50")).body;
+  const defaultIds = (defaultOrder.engagements ?? defaultOrder.items ?? []).map((e) => e.id);
+  const INJECTIONS = [
+    "e.id; DROP TABLE vendor_engagement_dispositions; --",
+    "(SELECT CASE WHEN (SELECT COUNT(*) FROM users) > 0 THEN 1 ELSE 1/0 END)",
+    "created_at DESC, (SELECT password_hash FROM users LIMIT 1)",
+    "nonexistent_column",
+    "1",
+  ];
+  //
+  // A payload can be neutralised in two legitimate places, and the harness must
+  // not confuse one for a defect. Cloudflare sits in front of staging and
+  // answers a SQL-shaped query string with its own 403 HTML block page — the
+  // request never reaches the engine at all, which is the STRONGEST outcome
+  // available, not a failure. Anything that does reach the app must fall back
+  // to the default sort. Both are counted; neither is waived.
+  let sortFails = 0;
+  let blockedAtEdge = 0;
+  for (const payload of INJECTIONS) {
+    const r = await engine(`/api/vendor-engagements?limit=50&sort=${encodeURIComponent(payload)}`);
+    const ids = (r.body.engagements ?? r.body.items ?? []).map((e) => e.id);
+    if (r.status === 403 && Object.keys(r.body).length === 0) { blockedAtEdge++; continue; }
+    if (r.status !== 200) { sortFails++; bad(`sort whitelist: an unapproved sort returned ${r.status}`, payload); continue; }
+    if (JSON.stringify(ids) !== JSON.stringify(defaultIds)) {
+      sortFails++;
+      bad("sort whitelist: an unapproved sort key CHANGED the order — it reached the query", payload);
+      continue;
+    }
+    if (r.body.query?.sort !== "risk") {
+      sortFails++;
+      bad(`sort whitelist: the server echoed sort=${r.body.query?.sort}, not the default`, payload);
+    }
+  }
+  const badOrder = await engine("/api/vendor-engagements?limit=50&order=%27%3B%20--");
+  badOrder.status === 200 &&
+    JSON.stringify((badOrder.body.engagements ?? []).map((e) => e.id)) === JSON.stringify(defaultIds)
+    ? ok("sort whitelist: an unapproved ORDER direction falls back to the default too")
+    : bad(`sort whitelist: a crafted order direction was not neutralised (${badOrder.status})`);
+  sortFails === 0
+    ? ok(
+        `sort whitelist: ${INJECTIONS.length} unapproved/crafted sort keys ALL neutralised — ` +
+        `${INJECTIONS.length - blockedAtEdge} fell back to the default order inside the app, ` +
+        `${blockedAtEdge} never reached it (edge block)`
+      )
+    : bad(`${sortFails} of ${INJECTIONS.length} crafted sort keys were not neutralised`);
+  INJECTIONS.length - blockedAtEdge >= 2
+    ? ok(`sort whitelist: proven INSIDE the app on ${INJECTIONS.length - blockedAtEdge} payloads — the edge is not carrying this proof`)
+    : bad("sort whitelist: every payload was blocked at the edge, so the application-level fallback is unproven");
+
+  await new Promise((r) => setTimeout(r, PACE_MS));
 
   const browser = await (BROWSER === "webkit" ? webkit : chromium).launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -274,11 +416,29 @@ async function main() {
     : bad("explainability: the row does not name the partial", rowText.slice(0, 200));
 
   // Ruling E's other half: plain English, and no internal identifiers.
+  //
+  // Scoped to what WA-4 PUTS on the screen — the attention chips and the row it
+  // derived — and NOT to the whole document. The first draft scanned
+  // page.content() and failed on `S2`, which turned out to be inside
+  // `[VA-Q2-P4 ACCEPTANCE] S2 S2.subprocessors`: an engagement TITLE typed by a
+  // 2026-08 acceptance harness. Ruling E constrains WA-4's own vocabulary; a
+  // title someone else wrote is that record's content, not this feature's
+  // rendering, and a proof that fails on it is measuring the wrong thing.
   const RULE_ID = /\b(S[0-9]{1,2}(\.[a-z_]+)?|rule_id|rule_family|attention\.[a-z_]+)\b/;
-  const listMarkup = await page.content();
-  RULE_ID.test(listMarkup.replace(/securelogic-core-assurance/g, ""))
-    ? bad("RULING E VIOLATED: an internal rule identifier reached the portfolio screen", (listMarkup.match(RULE_ID) ?? [])[0])
-    : ok("explainability: no internal rule identifier reaches the portfolio screen");
+  const chipText = (
+    await page.locator("tbody [title]").evaluateAll((els) =>
+      els.map((e) => `${e.getAttribute("title") ?? ""} ${e.textContent ?? ""}`)
+    )
+  ).join(" | ");
+  chipText.length > 0
+    ? ok("explainability: the queue renders attention chips carrying their own explanation")
+    : bad("explainability: no attention chip was rendered on the queue");
+  !RULE_ID.test(chipText)
+    ? ok("explainability: no internal rule identifier reaches any attention chip on the portfolio screen")
+    : bad("RULING E VIOLATED: a rule identifier is in an attention chip", (chipText.match(RULE_ID) ?? [])[0]);
+  !RULE_ID.test(rowText.replace(/securelogic-core-assurance/g, ""))
+    ? ok("explainability: no internal rule identifier reaches the derived row itself")
+    : bad("RULING E VIOLATED: a rule identifier is in the engagement's own row", (rowText.match(RULE_ID) ?? [])[0]);
   await shot(page, "02-needs-attention");
 
   /* ── 4. Sort, without losing the filter ────────────────────────────────── */
@@ -310,6 +470,31 @@ async function main() {
   JSON.stringify(firstPass) === JSON.stringify(secondPass)
     ? ok("navigation: the same query returns the same order — sorting is deterministic")
     : bad("navigation: the order changed between two identical requests", `${firstPass.length} vs ${secondPass.length}`);
+  // The same screen, in the negative: the clean engagement must not be on it.
+  const hrefs = secondPass.map((h) => String(h));
+  hrefs.some((h) => h.includes(s.target.engagementId))
+    ? ok("portfolio: the mixed engagement is on the filtered screen")
+    : bad("portfolio: the mixed engagement is not on the filtered screen", hrefs.slice(0, 5).join(" "));
+  !hrefs.some((h) => h.includes(s.control.engagementId))
+    ? ok("FALSE-POSITIVE PROOF (on screen): the all-pass engagement is NOT on the needs-attention screen")
+    : bad("FALSE-POSITIVE: the all-pass engagement appears on the needs-attention screen");
+
+  // And it IS reachable when the filter is dropped — absence above is the
+  // filter working, not the engagement missing from the portfolio.
+  //
+  // Sorted newest-first rather than asking for a bigger page: the list renders a
+  // fixed PAGE_SIZE with real Previous/Next links and correctly ignores a
+  // caller-supplied `limit`, so `?limit=200` proves nothing except that the
+  // control engagement sorts below the first page by risk. This also exercises a
+  // second whitelisted sort through the UI.
+  await page.goto(`${APP}/vendor-engagements?sort=created&order=desc`);
+  await page.waitForLoadState("networkidle");
+  const allHrefs = (await page.locator('tbody a[href^="/vendor-engagements/"]').evaluateAll((els) =>
+    els.map((el) => el.getAttribute("href") ?? "")
+  ));
+  allHrefs.some((h) => h.includes(s.control.engagementId))
+    ? ok("portfolio: the all-pass engagement IS in the unfiltered portfolio, newest-first — the filter excluded it, nothing hid it")
+    : bad("portfolio: the all-pass engagement is missing from the unfiltered portfolio too");
   await shot(page, "03-sorted");
   await page.waitForTimeout(PACE_MS);
 
@@ -401,6 +586,33 @@ async function main() {
     ? ok("disposition: every decision names the person who made it")
     : bad("disposition: an unattributed decision is in the trail");
 
+  // Time, not just actor. An audit trail whose timestamps are absent, unparseable
+  // or out of order is not a trail.
+  const times = dispositions.map((d) => Date.parse(d.disposed_at ?? d.created_at ?? ""));
+  times.every((t) => Number.isFinite(t))
+    ? ok("disposition: every decision carries a parseable timestamp")
+    : bad("disposition: a decision has no usable timestamp", JSON.stringify(dispositions).slice(0, 200));
+  times.every((t) => Math.abs(Date.now() - t) < 60 * 60 * 1000)
+    ? ok("disposition: the timestamps are the server's own clock, within the hour of this run")
+    : bad("disposition: a timestamp is not from this run", JSON.stringify(times));
+  times[0] >= times[times.length - 1]
+    ? ok("disposition: the trail is ordered newest-first BY TIME, matching the order it was written")
+    : bad("disposition: the trail's time order contradicts its position order", JSON.stringify(times));
+  dispositions.every((d) => typeof d.attention_digest === "string" && d.attention_digest.length > 0)
+    ? ok("disposition: each decision records the derived state it was made against")
+    : bad("disposition: a decision has no attention digest");
+
+  // The decision must not have rewritten what it was a decision ABOUT.
+  const afterDispositions = await engine(`/api/vendor-engagements/${s.target.engagementId}/attention`);
+  const stillAttn = afterDispositions.body.attention ?? {};
+  stillAttn.needs_attention === true &&
+  JSON.stringify((stillAttn.reasons ?? []).slice().sort()) === JSON.stringify((pos.reasons ?? []).slice().sort())
+    ? ok("disposition: recording two decisions did NOT alter the underlying assessment truth — the same reasons derive")
+    : bad("the derived state changed after a disposition was recorded", JSON.stringify(stillAttn.reasons));
+  stillAttn.digest === pos.digest
+    ? ok("disposition: the digest is unchanged, so the vendor's responses and evidence were untouched")
+    : bad(`digest moved from ${pos.digest} to ${stillAttn.digest} without a response changing`);
+
   /* ── 9. THE NEGATIVE PROOF ─────────────────────────────────────────────── */
   mark("9-no-auto-finding");
   // The strongest form: record the disposition most likely to be mistaken for a
@@ -416,9 +628,32 @@ async function main() {
     ? ok("NEGATIVE PROOF (API): the engine states created_finding=false for finding_confirmed")
     : bad("the engine did not state created_finding=false", JSON.stringify(confirmed.body).slice(0, 200));
 
+  // PROPOSED must be a different, separately readable decision from CONFIRMED —
+  // otherwise "we think this might be a finding" and "this is a finding" are the
+  // same record, and the trail cannot tell an owner which one a person meant.
+  const proposed = await engine(`/api/vendor-engagements/${s.target.engagementId}/disposition`, {
+    method: "POST",
+    body: JSON.stringify({ disposition: "finding_proposed", rationale: "Proposing this for the committee to consider; not yet agreed as a finding." }),
+  });
+  proposed.status === 201
+    ? ok("disposition: finding_proposed is recordable")
+    : bad(`finding_proposed refused (${proposed.status})`, JSON.stringify(proposed.body).slice(0, 200));
+  proposed.body?.created_finding === false
+    ? ok("NEGATIVE PROOF (API): finding_proposed also states created_finding=false")
+    : bad("finding_proposed did not state created_finding=false", JSON.stringify(proposed.body).slice(0, 200));
+
+  const trail2 = await engine(`/api/vendor-engagements/${s.target.engagementId}/dispositions`);
+  const kinds = (trail2.body.dispositions ?? []).map((d) => d.disposition);
+  kinds.includes("finding_proposed") && kinds.includes("finding_confirmed")
+    ? ok("disposition: PROPOSED and CONFIRMED are stored as two distinct decisions, both readable")
+    : bad("proposed/confirmed are not both in the trail", JSON.stringify(kinds));
+  kinds.filter((k) => k === "finding_proposed").length === 1 && kinds.filter((k) => k === "finding_confirmed").length === 1
+    ? ok("disposition: neither collapsed into the other — one row each")
+    : bad("proposed/confirmed collapsed or duplicated", JSON.stringify(kinds));
+
   const engFindings = await findingsForEngagement(s.target.engagementId);
   engFindings === 0
-    ? ok("NEGATIVE PROOF: a failed control, a partial control and FIVE dispositions produced ZERO findings for this engagement")
+    ? ok(`NEGATIVE PROOF: a failed control, a partial control and ${kinds.length} recorded dispositions — including finding_proposed AND finding_confirmed — produced ZERO findings for this engagement`)
     : bad(`${engFindings} finding(s) exist for this engagement — something promoted automatically`);
 
   // Belt and braces: the engagement's own scope items are still unpromoted, so
