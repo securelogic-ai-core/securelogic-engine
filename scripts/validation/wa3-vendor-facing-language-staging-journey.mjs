@@ -83,21 +83,54 @@ const LOW = {
   change_reason: `Scope reduced to a read-only reporting feed (${STAMP}).`,
 };
 
-async function newVendorWithEngagement(label, intake, { issue = false } = {}) {
-  const v = await engine("/api/vendors", {
+/**
+ * ONE reusable vendor for the whole harness, created once and found by name
+ * afterwards.
+ *
+ * A vendor per run is what exhausted the org: monitored entities (vendors + AI
+ * systems) are plan-limited, the limit is 75, and repeated journey runs walked
+ * straight into it — a harness that degrades the environment it validates.
+ * Relationships carry no such limit, so each run gets FRESH relationships on
+ * this one vendor, which is all the isolation the journey actually needs: every
+ * assertion is per-engagement, and each engagement gets its own relationship.
+ */
+const HARNESS_VENDOR = "WA3 journey harness";
+let harnessVendorId = null;
+
+async function ensureHarnessVendor() {
+  if (harnessVendorId) return harnessVendorId;
+  const list = await engine(`/api/vendors?limit=200`);
+  const vendors = list.body.vendors ?? list.body.items ?? [];
+  // Prefer the named harness vendor; otherwise ADOPT one left behind by an
+  // earlier run rather than creating another. The org is plan-limited to 75
+  // monitored entities and earlier runs had already consumed the headroom, so
+  // creating is the last resort, not the first move.
+  const found =
+    vendors.find((v) => v.name === HARNESS_VENDOR) ??
+    vendors.find((v) => typeof v.name === "string" && v.name.startsWith("WA3 "));
+  if (found) {
+    harnessVendorId = found.id;
+    return harnessVendorId;
+  }
+  const created = await engine("/api/vendors", {
     method: "POST",
     body: JSON.stringify({
-      name: `WA3 ${label} ${STAMP}`, category: "Payment Processing",
+      name: HARNESS_VENDOR, category: "Payment Processing",
       service_description: "Card acquiring", data_sensitivity: "restricted",
       access_level: "read_write", website: "https://example.test",
     }),
   });
-  const vendorId = v.body.vendor?.id;
-  if (!vendorId) throw new Error(`vendor create failed: ${JSON.stringify(v.body).slice(0, 300)}`);
+  harnessVendorId = created.body.vendor?.id;
+  if (!harnessVendorId) throw new Error(`vendor create failed: ${JSON.stringify(created.body).slice(0, 300)}`);
+  return harnessVendorId;
+}
+
+async function newVendorWithEngagement(label, intake, { issue = false } = {}) {
+  const vendorId = await ensureHarnessVendor();
 
   const r = await engine(`/api/vendors/${vendorId}/relationships`, {
     method: "POST",
-    body: JSON.stringify({ name: `${label} service`, service_description: "Online card acquiring" }),
+    body: JSON.stringify({ name: `${label} service ${STAMP}`, service_description: "Online card acquiring" }),
   });
   const relationshipId = r.body.relationship?.id;
   const i = await engine(`/api/vendors/${vendorId}/relationships/${relationshipId}/intake`, {
