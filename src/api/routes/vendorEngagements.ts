@@ -40,6 +40,24 @@ import {
   loadQuestionSetItems,
   questionSetHash,
 } from "../lib/questionnaire/bridgeQuestions.js";
+import {
+  ATTENTION_REASONS,
+  ATTENTION_REASON_LABELS,
+  ATTENTION_REASON_DETAIL,
+  ATTENTION_WINDOW_STATES,
+  DISPOSITIONS,
+  RATIONALE_MIN,
+  RATIONALE_MAX,
+  deriveAttention,
+  digestOf,
+  dispositionStale,
+  emptyCounts,
+  inAttentionWindow,
+  isDisposition,
+  rationaleRequired,
+  type AttentionCounts,
+  type AttentionReason,
+} from "../lib/vendorRisk/attentionSignals.js";
 import { requireApiKey } from "../middleware/requireApiKey.js";
 import { attachOrganizationContext } from "../middleware/attachOrganizationContext.js";
 import { requireEntitlement } from "../middleware/requireEntitlement.js";
@@ -564,6 +582,177 @@ export async function createEngagement(req: Request, res: Response): Promise<voi
 /* =========================================================
    GET /api/vendor-engagements — the reviewer's queue.
    ========================================================= */
+/* ────────────────────────────────────────────────────────────────────────────
+   WA-4 — the portfolio queue.
+
+   Attention is DERIVED here in SQL rather than by calling deriveAttention()
+   per row, and the reason is pagination correctness: filtering by attention
+   after the query returns fewer rows than the caller's limit and makes offset
+   meaningless. attentionSignals.ts remains the vocabulary authority and the
+   reference implementation; test/isolation/attentionSqlEquivalence.test.ts runs
+   both over the same fixtures and fails the build on any disagreement.
+
+   The predicates below mirror the module exactly:
+     - an ANSWER is one of pass/partial/fail/not_applicable; anything else
+       (including the legacy `not_assessed`) is unanswered, matching
+       isResponseAnswer;
+     - an explanation is required for partial/fail/not_applicable always, and
+       for pass only where the question's evidence_policy asks for more,
+       matching explanationRequired;
+     - an explanation EXISTS when the trimmed note is non-empty, matching
+       hasExplanation.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+const ATTENTION_ANSWERS = "('pass', 'partial', 'fail', 'not_applicable')";
+
+const ATTENTION_COUNTS_SQL = `
+  LEFT JOIN LATERAL (
+    SELECT
+      COUNT(*) FILTER (WHERE rr.status = 'fail')::int    AS control_not_in_place,
+      COUNT(*) FILTER (WHERE rr.status = 'partial')::int AS partial_response,
+      COUNT(*) FILTER (
+        WHERE (
+                rr.status IN ('partial', 'fail', 'not_applicable')
+                OR (rr.status = 'pass'
+                    AND COALESCE(qv.evidence_policy, 'optional')
+                        IN ('required_on_pass', 'required_always'))
+              )
+          AND COALESCE(length(trim(rr.notes)), 0) = 0
+      )::int AS explanation_missing,
+      COUNT(*) FILTER (
+        WHERE si.mandatory
+          AND (rr.status IS NULL OR rr.status NOT IN ${ATTENTION_ANSWERS})
+      )::int AS unanswered_mandatory
+      FROM vendor_engagement_scope_items si
+      LEFT JOIN requirement_responses rr
+             ON rr.requirement_id  = si.requirement_id
+            AND rr.engagement_id   = si.engagement_id
+            AND rr.organization_id = si.organization_id
+      LEFT JOIN question_versions qv
+             ON qv.id = si.question_version_id
+     WHERE si.engagement_id   = e.id
+       AND si.organization_id = e.organization_id
+  ) items ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*)::int AS evidence_unreviewed
+      FROM evidence ev
+     WHERE ev.organization_id = e.organization_id
+       AND ev.engagement_id   = e.id
+       AND ev.reviewed_at IS NULL
+  ) ev ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*)::int AS active_finding
+      FROM findings f
+     WHERE f.organization_id = e.organization_id
+       AND f.source_type     = 'vendor_engagement'
+       AND f.source_id::text = e.id::text
+       AND ${sqlFindingActive("f.operational_status")}
+  ) fnd ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT d.disposition, d.rationale, d.attention_digest, d.created_at,
+           u.name AS disposed_by_name
+      FROM vendor_engagement_dispositions d
+      LEFT JOIN users u ON u.id = d.disposed_by_user_id AND u.organization_id = d.organization_id
+     WHERE d.organization_id = e.organization_id
+       AND d.engagement_id   = e.id
+     ORDER BY d.created_at DESC
+     LIMIT 1
+  ) disp ON TRUE
+`;
+
+/**
+ * Zero every count outside the attention window, so the window rule lives in
+ * ONE place per implementation rather than being repeated at each call site.
+ */
+const IN_WINDOW_SQL = `(e.status = ANY(ARRAY[${ATTENTION_WINDOW_STATES.map((s) => `'${s}'`).join(", ")}]))`;
+
+const ATTENTION_SELECT_SQL = `
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(items.control_not_in_place, 0) ELSE 0 END AS a_control_not_in_place,
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(items.partial_response,     0) ELSE 0 END AS a_partial_response,
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(items.explanation_missing,  0) ELSE 0 END AS a_explanation_missing,
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(items.unanswered_mandatory, 0) ELSE 0 END AS a_unanswered_mandatory,
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(ev.evidence_unreviewed,     0) ELSE 0 END AS a_evidence_unreviewed,
+  CASE WHEN ${IN_WINDOW_SQL} THEN COALESCE(fnd.active_finding,         0) ELSE 0 END AS a_active_finding
+`;
+
+/** The total, used for the needs_attention predicate and the `attention` sort. */
+const ATTENTION_TOTAL_SQL = `
+  CASE WHEN ${IN_WINDOW_SQL} THEN
+    COALESCE(items.control_not_in_place, 0) + COALESCE(items.partial_response, 0)
+  + COALESCE(items.explanation_missing, 0)  + COALESCE(items.unanswered_mandatory, 0)
+  + COALESCE(ev.evidence_unreviewed, 0)     + COALESCE(fnd.active_finding, 0)
+  ELSE 0 END
+`;
+
+/**
+ * The sort whitelist.
+ *
+ * A closed map from a caller-supplied key to a FIXED SQL fragment. No client
+ * string ever reaches the query — an unknown key falls back to the default
+ * rather than being interpolated, so there is no path from a query parameter to
+ * a SQL fragment even if validation upstream were removed.
+ *
+ * Every fragment ends with `e.id` so ordering is total. Without that tiebreak a
+ * page boundary between two engagements with equal scores can repeat or skip a
+ * row, which is exactly the bug an offset-paginated queue must not have.
+ */
+const ENGAGEMENT_SORTS = {
+  risk: {
+    desc: "COALESCE(e.residual_score, e.inherent_score, 0) DESC, e.created_at DESC, e.id DESC",
+    asc: "COALESCE(e.residual_score, e.inherent_score, 0) ASC, e.created_at ASC, e.id ASC",
+  },
+  attention: {
+    desc: `${ATTENTION_TOTAL_SQL} DESC, COALESCE(e.residual_score, e.inherent_score, 0) DESC, e.id DESC`,
+    asc: `${ATTENTION_TOTAL_SQL} ASC, COALESCE(e.residual_score, e.inherent_score, 0) ASC, e.id ASC`,
+  },
+  updated: { desc: "e.updated_at DESC, e.id DESC", asc: "e.updated_at ASC, e.id ASC" },
+  created: { desc: "e.created_at DESC, e.id DESC", asc: "e.created_at ASC, e.id ASC" },
+  next_review: {
+    desc: "e.next_review_due DESC NULLS LAST, e.id DESC",
+    asc: "e.next_review_due ASC NULLS LAST, e.id ASC",
+  },
+  vendor: { desc: "v.name DESC, e.id DESC", asc: "v.name ASC, e.id ASC" },
+} as const;
+
+export type EngagementSort = keyof typeof ENGAGEMENT_SORTS;
+export const ENGAGEMENT_SORT_KEYS = Object.keys(ENGAGEMENT_SORTS) as EngagementSort[];
+const DEFAULT_SORT: EngagementSort = "risk";
+
+/** Sorts whose natural reading is "smallest first" when no direction is given. */
+const ASCENDING_BY_NATURE: readonly EngagementSort[] = ["next_review", "vendor"];
+
+function resolveSort(rawSort: unknown, rawOrder: unknown): { sort: EngagementSort; order: "asc" | "desc"; sql: string } {
+  const sort: EngagementSort =
+    typeof rawSort === "string" && (ENGAGEMENT_SORT_KEYS as string[]).includes(rawSort)
+      ? (rawSort as EngagementSort)
+      : DEFAULT_SORT;
+  const order: "asc" | "desc" =
+    rawOrder === "asc" ? "asc" : rawOrder === "desc" ? "desc" : ASCENDING_BY_NATURE.includes(sort) ? "asc" : "desc";
+  return { sort, order, sql: ENGAGEMENT_SORTS[sort][order] };
+}
+
+function countsFromRow(row: Record<string, unknown>): AttentionCounts {
+  const counts = emptyCounts();
+  counts.control_not_in_place = Number(row["a_control_not_in_place"] ?? 0);
+  counts.partial_response = Number(row["a_partial_response"] ?? 0);
+  counts.explanation_missing = Number(row["a_explanation_missing"] ?? 0);
+  counts.unanswered_mandatory = Number(row["a_unanswered_mandatory"] ?? 0);
+  counts.evidence_unreviewed = Number(row["a_evidence_unreviewed"] ?? 0);
+  counts.active_finding = Number(row["a_active_finding"] ?? 0);
+  return counts;
+}
+
+function attentionFromRow(row: Record<string, unknown>): {
+  needs_attention: boolean;
+  reasons: AttentionReason[];
+  counts: AttentionCounts;
+  digest: string;
+} {
+  const counts = countsFromRow(row);
+  const reasons = ATTENTION_REASONS.filter((r) => counts[r] > 0);
+  return { needs_attention: reasons.length > 0, reasons: [...reasons], counts, digest: digestOf(counts) };
+}
+
 export async function listEngagements(req: Request, res: Response): Promise<void> {
   const organizationId = orgOf(req);
   if (!organizationId) {
@@ -572,9 +761,27 @@ export async function listEngagements(req: Request, res: Response): Promise<void
   }
 
   const status = typeof req.query.status === "string" ? req.query.status : null;
-  const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 50) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
+  const { sort, order, sql: orderBy } = resolveSort(req.query.sort, req.query.order);
+
+  // Tri-state: absent means "no attention filter", which is not the same as
+  // needs_attention=false ("show me only the settled ones").
+  const attentionParam = typeof req.query.needs_attention === "string" ? req.query.needs_attention : null;
+  const needsAttentionFilter = attentionParam === "true" ? true : attentionParam === "false" ? false : null;
+
+  const undisposedOnly = req.query.undisposed === "true";
 
   try {
+    const filters: string[] = [];
+    if (needsAttentionFilter === true) filters.push(`(${ATTENTION_TOTAL_SQL}) > 0`);
+    if (needsAttentionFilter === false) filters.push(`(${ATTENTION_TOTAL_SQL}) = 0`);
+    // "Nobody has looked at this yet." Deliberately the simple predicate: an
+    // engagement whose disposition was recorded against an assessment that has
+    // since MOVED is not hidden here — it is returned with `stale: true`, so a
+    // superseded decision is visible rather than filtered out of the queue.
+    if (undisposedOnly) filters.push("disp.disposition IS NULL");
+
     const result = await pg.query(
       `SELECT e.id, e.status, e.title, e.engagement_type,
               e.inherent_score, e.inherent_rating, e.assessment_tier,
@@ -586,22 +793,69 @@ export async function listEngagements(req: Request, res: Response): Promise<void
               (e.status = 'monitoring' AND e.next_review_due < CURRENT_DATE) AS review_overdue,
               e.reassessment_recommended_at,
               v.id AS vendor_id, v.name AS vendor_name,
-              e.created_at, e.updated_at
+              e.created_at, e.updated_at,
+              ${ATTENTION_SELECT_SQL},
+              disp.disposition       AS disposition,
+              disp.rationale         AS disposition_rationale,
+              disp.attention_digest  AS disposition_digest,
+              disp.created_at        AS disposition_at,
+              disp.disposed_by_name  AS disposition_by
          FROM vendor_engagements e
          JOIN vendors v ON v.id = e.vendor_id
+         ${ATTENTION_COUNTS_SQL}
         WHERE e.organization_id = $1
           AND ($2::text IS NULL OR e.status = $2)
-        ORDER BY
-          -- Highest residual first, then highest inherent for engagements that
-          -- have not been scored yet. A queue ordered by date buries the vendor
-          -- that matters under the vendor that arrived most recently.
-          COALESCE(e.residual_score, e.inherent_score, 0) DESC,
-          e.created_at DESC
-        LIMIT $3`,
-      [organizationId, status, limit]
+          ${filters.length > 0 ? `AND ${filters.join(" AND ")}` : ""}
+        ORDER BY ${orderBy}
+        LIMIT $3 OFFSET $4`,
+      [organizationId, status, limit, offset]
     );
 
-    res.status(200).json({ engagements: result.rows, count: result.rowCount });
+    const engagements = result.rows.map((row: Record<string, unknown>) => {
+      const attention = attentionFromRow(row);
+      const {
+        a_control_not_in_place, a_partial_response, a_explanation_missing,
+        a_unanswered_mandatory, a_evidence_unreviewed, a_active_finding,
+        disposition, disposition_rationale, disposition_digest, disposition_at, disposition_by,
+        ...rest
+      } = row as Record<string, unknown>;
+      void a_control_not_in_place; void a_partial_response; void a_explanation_missing;
+      void a_unanswered_mandatory; void a_evidence_unreviewed; void a_active_finding;
+      return {
+        ...rest,
+        attention,
+        disposition:
+          typeof disposition === "string"
+            ? {
+                disposition,
+                rationale: (disposition_rationale as string | null) ?? null,
+                attention_digest: (disposition_digest as string | null) ?? null,
+                disposed_at: disposition_at ?? null,
+                disposed_by: (disposition_by as string | null) ?? null,
+                stale: dispositionStale((disposition_digest as string | null) ?? null, attention.digest),
+              }
+            : null,
+      };
+    });
+
+    res.status(200).json({
+      engagements,
+      count: result.rowCount,
+      // Echoed so the caller can render its own controls from the server's
+      // answer rather than from what it thinks it asked for.
+      query: {
+        ...(status !== null ? { status } : {}),
+        sort,
+        order,
+        limit,
+        offset,
+        ...(needsAttentionFilter !== null ? { needs_attention: needsAttentionFilter } : {}),
+        ...(undisposedOnly ? { undisposed: true } : {}),
+      },
+      // A full page means there may be more. Cheaper and more honest than a
+      // COUNT(*) over the whole derivation on every keystroke.
+      has_more: (result.rowCount ?? 0) === limit,
+    });
   } catch (err) {
     logger.error({ event: "vendor_engagement_list_failed", organizationId, err }, "Engagement list failed");
     res.status(500).json({ error: "engagement_list_failed" });
@@ -3564,6 +3818,322 @@ export async function putEngagementFacts(req: Request, res: Response): Promise<v
   }
 }
 
+/* =========================================================
+   GET /api/vendor-engagements/:id/attention
+
+   WHY an engagement needs an analyst, item by item.
+
+   The list endpoint answers "which ones" in SQL. This answers "why this one",
+   and it does so through the PURE reference implementation — deriveAttention()
+   over the actual scope items — because here the cost is one engagement and
+   the value is that the detail surface and the module can never disagree about
+   a single row.
+
+   Returns the reasons WITH the requirement references behind them, so the
+   analyst sees `CC6.1 — control reported not in place`, not a red badge.
+   Rule identifiers are deliberately absent: labels come from
+   ATTENTION_REASON_LABELS, which is plain English about the assessment.
+   ========================================================= */
+export async function getEngagementAttention(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT e.status FROM vendor_engagements e
+        WHERE e.id = $1 AND e.organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const status = eng.rows[0]!.status;
+
+    const items = await pg.query<{
+      requirement_id: string;
+      reference_id: string;
+      title: string;
+      mandatory: boolean;
+      status: string | null;
+      notes: string | null;
+      evidence_policy: string | null;
+    }>(
+      `SELECT si.requirement_id, r.reference_id, r.title, si.mandatory,
+              rr.status, rr.notes, qv.evidence_policy
+         FROM vendor_engagement_scope_items si
+         JOIN requirements r ON r.id = si.requirement_id
+         LEFT JOIN requirement_responses rr
+                ON rr.requirement_id  = si.requirement_id
+               AND rr.engagement_id   = si.engagement_id
+               AND rr.organization_id = si.organization_id
+         LEFT JOIN question_versions qv ON qv.id = si.question_version_id
+        WHERE si.engagement_id = $1 AND si.organization_id = $2
+        ORDER BY r.reference_id`,
+      [id, organizationId]
+    );
+
+    const evidence = await pg.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM evidence
+        WHERE organization_id = $1 AND engagement_id = $2 AND reviewed_at IS NULL`,
+      [organizationId, id]
+    );
+    const findings = await pg.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM findings f
+        WHERE f.organization_id = $1
+          AND f.source_type = 'vendor_engagement'
+          AND f.source_id::text = $2
+          AND ${sqlFindingActive("f.operational_status")}`,
+      [organizationId, id]
+    );
+
+    const state = deriveAttention(
+      items.rows.map((row) => ({
+        requirement_id: row.requirement_id,
+        mandatory: row.mandatory,
+        answer: row.status,
+        notes: row.notes,
+        evidence_policy: row.evidence_policy,
+      })),
+      {
+        status,
+        unreviewed_evidence_count: parseInt(evidence.rows[0]?.n ?? "0", 10),
+        active_finding_count: parseInt(findings.rows[0]?.n ?? "0", 10),
+      }
+    );
+
+    // Which requirements sit behind each item-level reason. Evidence and
+    // findings are engagement-level and carry no requirement list here — the
+    // engagement's own evidence and findings surfaces already own that detail.
+    const perReason: Partial<Record<AttentionReason, Array<{ reference: string; title: string }>>> = {};
+    if (inAttentionWindow(status)) {
+      const push = (reason: AttentionReason, row: { reference_id: string; title: string }) => {
+        (perReason[reason] ??= []).push({ reference: row.reference_id, title: row.title });
+      };
+      const derivedPerItem = items.rows.map((row) => ({
+        row,
+        single: deriveAttention(
+          [{
+            requirement_id: row.requirement_id,
+            mandatory: row.mandatory,
+            answer: row.status,
+            notes: row.notes,
+            evidence_policy: row.evidence_policy,
+          }],
+          { status, unreviewed_evidence_count: 0, active_finding_count: 0 }
+        ),
+      }));
+      for (const { row, single } of derivedPerItem) {
+        for (const reason of single.reasons) push(reason, row);
+      }
+    }
+
+    const latest = await pg.query(
+      `SELECT d.disposition, d.rationale, d.attention_digest, d.created_at,
+              u.name AS disposed_by_name
+         FROM vendor_engagement_dispositions d
+         LEFT JOIN users u ON u.id = d.disposed_by_user_id AND u.organization_id = d.organization_id
+        WHERE d.organization_id = $1 AND d.engagement_id = $2
+        ORDER BY d.created_at DESC LIMIT 1`,
+      [organizationId, id]
+    );
+    const disp = latest.rows[0] ?? null;
+
+    res.status(200).json({
+      engagement_id: id,
+      status,
+      in_attention_window: inAttentionWindow(status),
+      attention: {
+        ...state,
+        explanations: state.reasons.map((r) => ({
+          reason: r,
+          label: ATTENTION_REASON_LABELS[r],
+          detail: ATTENTION_REASON_DETAIL[r],
+          count: state.counts[r],
+          requirements: perReason[r] ?? [],
+        })),
+      },
+      disposition: disp
+        ? {
+            disposition: disp.disposition,
+            rationale: disp.rationale,
+            attention_digest: disp.attention_digest,
+            disposed_at: disp.created_at,
+            disposed_by: disp.disposed_by_name,
+            stale: dispositionStale(disp.attention_digest, state.digest),
+          }
+        : null,
+      // Said out loud, on the surface an analyst reads, because it is the whole
+      // point of ruling C: this is triage, not a finding.
+      note: "Needs Attention is triage. No response state creates a Finding on its own — promotion stays an explicit analyst action.",
+    });
+  } catch (err) {
+    logger.error({ event: "engagement_attention_failed", organizationId, err }, "Attention derivation failed");
+    res.status(500).json({ error: "attention_failed" });
+  }
+}
+
+/* =========================================================
+   POST /api/vendor-engagements/:id/disposition
+
+   The human half of ruling 5. Append-only: this never updates a previous
+   decision, it records a new one beside it.
+
+   It writes to exactly ONE table. It does not touch a response, an evidence
+   row, a scope item, a score, a lifecycle state or a Finding — including for
+   `finding_proposed` and `finding_confirmed`, which record a decision ABOUT a
+   finding and are read by nothing.
+   ========================================================= */
+export async function recordDisposition(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const userId = userOf(req);
+  if (!userId) {
+    // NOT NULL + RESTRICT on disposed_by_user_id: a governance act is never
+    // anonymous, so an API-key-only caller is refused here rather than at the
+    // database, with a message that says why.
+    res.status(403).json({
+      error: "user_context_required",
+      detail: "A disposition is attributed to a named person. Authenticate as a user, not with an API key alone.",
+    });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  const body = (req.body ?? {}) as { disposition?: unknown; rationale?: unknown };
+  if (!isDisposition(body.disposition)) {
+    res.status(400).json({ error: "invalid_disposition", allowed: DISPOSITIONS });
+    return;
+  }
+  const disposition = body.disposition;
+  const rationaleRaw = typeof body.rationale === "string" ? body.rationale.trim() : "";
+  if (rationaleRequired(disposition) && rationaleRaw.length < RATIONALE_MIN) {
+    res.status(400).json({
+      error: "rationale_required",
+      detail: `"${disposition}" asserts a judgement, so it carries a reason of at least ${RATIONALE_MIN} characters.`,
+    });
+    return;
+  }
+  if (rationaleRaw.length > RATIONALE_MAX) {
+    res.status(400).json({ error: "rationale_too_long", max: RATIONALE_MAX });
+    return;
+  }
+
+  try {
+    const eng = await pg.query<{ status: string }>(
+      `SELECT status FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const status = eng.rows[0]!.status;
+    if (!inAttentionWindow(status)) {
+      res.status(409).json({
+        error: "outside_attention_window",
+        detail: `An engagement in "${status}" is not awaiting analyst triage. Dispositions are recorded while the analyst owns the work.`,
+        window: ATTENTION_WINDOW_STATES,
+      });
+      return;
+    }
+
+    // The digest is computed HERE, from current truth, and never taken from the
+    // caller. A client-supplied digest would let a stale screen record a
+    // decision against a state that no longer exists.
+    const counts = await pg.query(
+      `SELECT ${ATTENTION_SELECT_SQL}
+         FROM vendor_engagements e
+         ${ATTENTION_COUNTS_SQL}
+        WHERE e.id = $1 AND e.organization_id = $2`,
+      [id, organizationId]
+    );
+    const digest = digestOf(countsFromRow((counts.rows[0] ?? {}) as Record<string, unknown>));
+
+    const inserted = await pg.query<{ id: string; created_at: string }>(
+      `INSERT INTO vendor_engagement_dispositions
+         (organization_id, engagement_id, disposition, rationale, attention_digest, disposed_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, created_at`,
+      [organizationId, id, disposition, rationaleRaw.length > 0 ? rationaleRaw : null, digest, userId]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userId,
+      eventType: "vendor_engagement.disposition_recorded",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: { disposition, attention_digest: digest, rationale_present: rationaleRaw.length > 0 },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(201).json({
+      disposition: {
+        id: inserted.rows[0]!.id,
+        disposition,
+        rationale: rationaleRaw.length > 0 ? rationaleRaw : null,
+        attention_digest: digest,
+        disposed_at: inserted.rows[0]!.created_at,
+      },
+      // Stated in the response body, not only in the docs, because this is the
+      // exact place a future caller would assume otherwise.
+      created_finding: false,
+      note: "Recorded. No Finding was created — promotion remains an explicit, separate analyst action.",
+    });
+  } catch (err) {
+    logger.error({ event: "engagement_disposition_failed", organizationId, err }, "Disposition write failed");
+    res.status(500).json({ error: "disposition_failed" });
+  }
+}
+
+/* =========================================================
+   GET /api/vendor-engagements/:id/dispositions — the full trail.
+
+   Append-only means the history IS the table. Newest first.
+   ========================================================= */
+export async function listDispositions(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+
+  try {
+    const eng = await pg.query(
+      `SELECT 1 FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    const rows = await pg.query(
+      `SELECT d.id, d.disposition, d.rationale, d.attention_digest, d.created_at,
+              u.name AS disposed_by
+         FROM vendor_engagement_dispositions d
+         LEFT JOIN users u ON u.id = d.disposed_by_user_id AND u.organization_id = d.organization_id
+        WHERE d.organization_id = $1 AND d.engagement_id = $2
+        ORDER BY d.created_at DESC`,
+      [organizationId, id]
+    );
+
+    res.status(200).json({ dispositions: rows.rows, count: rows.rowCount });
+  } catch (err) {
+    logger.error({ event: "engagement_dispositions_list_failed", organizationId, err }, "Disposition list failed");
+    res.status(500).json({ error: "disposition_list_failed" });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Router wiring — every route behind the same chain.
 // ---------------------------------------------------------------------------
@@ -3695,6 +4265,13 @@ router.post("/vendor-engagements/:id/invite/reissue", ...chain, asTenant(reissue
 // path — see the handler header and owner ruling 2.
 router.post("/vendor-engagements/:id/applicability-challenges", ...chain, asTenant(raiseApplicabilityChallenge));
 router.get("/vendor-engagements/:id/applicability-challenges", ...chain, asTenant(listApplicabilityChallenges));
+
+// WA-4 — portfolio triage. Same chain as every other engagement route: the
+// activation flag first (a disabled capability 404s before it 401s), then key,
+// org context, entitlement, and denyContributor.
+router.get("/vendor-engagements/:id/attention", ...chain, asTenant(getEngagementAttention));
+router.post("/vendor-engagements/:id/disposition", ...chain, asTenant(recordDisposition));
+router.get("/vendor-engagements/:id/dispositions", ...chain, asTenant(listDispositions));
 
 
 /* =========================================================

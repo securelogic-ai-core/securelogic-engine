@@ -16,6 +16,7 @@ import {
   VENDOR_ASSESSMENT_DOMAIN_LABELS,
   type VendorEngagementEvidenceRow,
   type VendorEngagementComment,
+  getEngagementAttention,
 } from "@/lib/api";
 import {
   ENGAGEMENT_STATE_LABELS,
@@ -33,6 +34,7 @@ import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
 import ApplicabilityChallenges from "@/components/vendorEngagements/ApplicabilityChallenges";
+import AttentionPanel from "@/components/vendorEngagements/AttentionPanel";
 
 /**
  * /vendor-engagements/[id] — the reviewer's workspace for one engagement.
@@ -111,7 +113,8 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp, responsesResp, compositionResp, challengesResp] = await Promise.all([
+  const [detail, evidenceResp, commentsResp, responsesResp, compositionResp, challengesResp, attentionResp] =
+    await Promise.all([
     getVendorEngagement(token, id) as Promise<VendorEngagementDetailResponse | null>,
     listVendorEngagementEvidence(token, id) as Promise<{
       evidence: VendorEngagementEvidenceRow[];
@@ -128,6 +131,10 @@ export default async function VendorEngagementPage({
     // page that already fans out; measured against the per-JWT limiter in the
     // rate-limit note on this surface.
     listApplicabilityChallenges(token, id),
+    // WA-4: the derived attention state and the latest human disposition. One
+    // more read on the same fan-out; the same limiter note applies, and the
+    // journey paces accordingly.
+    getEngagementAttention(token, id),
   ]);
 
   if (!detail) {
@@ -403,6 +410,12 @@ export default async function VendorEngagementPage({
             ]}
           />
         )}
+
+        {/* WA-4 — the derived queue signal and the human decision, above the
+            actions, because triage precedes acting on it. Absent rather than
+            empty when the read failed: a panel that says "nothing outstanding"
+            because a fetch 500'd is worse than no panel. */}
+        {attentionResp && <AttentionPanel engagementId={e.id} detail={attentionResp} />}
 
         <EngagementActionPanel
           engagementId={e.id}

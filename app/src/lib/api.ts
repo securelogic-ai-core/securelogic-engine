@@ -7613,6 +7613,86 @@ export type VendorEngagementListRow = {
   vendor_name: string;
   created_at: string;
   updated_at: string;
+  /**
+   * WA-4. DERIVED on every read from canonical assessment truth — never stored,
+   * never edited, never "cleared". Empty and `needs_attention: false` for any
+   * engagement outside the analyst attention window.
+   */
+  attention: EngagementAttention;
+  /**
+   * WA-4. The latest HUMAN disposition, or null when nobody has recorded one.
+   * `stale` means the assessment moved after the decision was made — the
+   * decision is kept and flagged, never silently discarded.
+   */
+  disposition: EngagementDisposition | null;
+};
+
+/** WA-4 — the derived attention vocabulary. Mirrors the engine's attentionSignals.ts. */
+export const ATTENTION_REASONS = [
+  "control_not_in_place",
+  "partial_response",
+  "explanation_missing",
+  "unanswered_mandatory",
+  "evidence_unreviewed",
+  "active_finding",
+] as const;
+export type AttentionReason = (typeof ATTENTION_REASONS)[number];
+
+export type EngagementAttention = {
+  needs_attention: boolean;
+  reasons: AttentionReason[];
+  counts: Record<AttentionReason, number>;
+  digest: string;
+};
+
+export const ENGAGEMENT_DISPOSITIONS = [
+  "reviewed",
+  "accepted",
+  "escalated",
+  "finding_proposed",
+  "finding_confirmed",
+] as const;
+export type EngagementDispositionValue = (typeof ENGAGEMENT_DISPOSITIONS)[number];
+
+export type EngagementDisposition = {
+  disposition: EngagementDispositionValue;
+  rationale: string | null;
+  attention_digest: string | null;
+  disposed_at: string | null;
+  disposed_by: string | null;
+  stale: boolean;
+};
+
+/** The whitelisted portfolio sorts. The engine falls back to `risk` on anything else. */
+export const ENGAGEMENT_SORTS = ["risk", "attention", "updated", "created", "next_review", "vendor"] as const;
+export type EngagementSort = (typeof ENGAGEMENT_SORTS)[number];
+
+export type VendorEngagementListQuery = {
+  status?: string;
+  sort: EngagementSort;
+  order: "asc" | "desc";
+  limit: number;
+  offset: number;
+  needs_attention?: boolean;
+  undisposed?: boolean;
+};
+
+/** GET /api/vendor-engagements/:id/attention — WHY this one needs an analyst. */
+export type EngagementAttentionDetail = {
+  engagement_id: string;
+  status: string;
+  in_attention_window: boolean;
+  attention: EngagementAttention & {
+    explanations: Array<{
+      reason: AttentionReason;
+      label: string;
+      detail: string;
+      count: number;
+      requirements: Array<{ reference: string; title: string }>;
+    }>;
+  };
+  disposition: EngagementDisposition | null;
+  note: string;
 };
 
 /** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name + criticality. */
@@ -7804,18 +7884,112 @@ export type VendorEngagementCreated = {
 
 export async function listVendorEngagements(
   token: string,
-  opts?: { status?: string; limit?: number }
-): Promise<{ engagements: VendorEngagementListRow[]; count: number } | null> {
+  opts?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+    sort?: string;
+    order?: string;
+    needsAttention?: boolean;
+    undisposed?: boolean;
+  }
+): Promise<{
+  engagements: VendorEngagementListRow[];
+  count: number;
+  query: VendorEngagementListQuery;
+  has_more: boolean;
+} | null> {
   const params = new URLSearchParams();
   if (opts?.status) params.set("status", opts.status);
   if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  // Passed through as given. The engine holds the whitelist and falls back to
+  // its default on anything it does not recognise, so the client never needs to
+  // validate a sort key — and cannot become a second, drifting authority on
+  // what the valid ones are.
+  if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.order) params.set("order", opts.order);
+  if (opts?.needsAttention !== undefined) params.set("needs_attention", String(opts.needsAttention));
+  if (opts?.undisposed) params.set("undisposed", "true");
   const qs = params.toString();
   try {
     const res = await engineFetch(`/api/vendor-engagements${qs ? `?${qs}` : ""}`, token);
     if (!res.ok) return null;
-    return res.json() as Promise<{ engagements: VendorEngagementListRow[]; count: number }>;
+    return res.json() as Promise<{
+      engagements: VendorEngagementListRow[];
+      count: number;
+      query: VendorEngagementListQuery;
+      has_more: boolean;
+    }>;
   } catch {
     return null;
+  }
+}
+
+/** GET /api/vendor-engagements/:id/attention — the per-engagement explanation. */
+export async function getEngagementAttention(
+  token: string,
+  id: string
+): Promise<EngagementAttentionDetail | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/attention`, token);
+    if (!res.ok) return null;
+    return res.json() as Promise<EngagementAttentionDetail>;
+  } catch {
+    return null;
+  }
+}
+
+/** GET /api/vendor-engagements/:id/dispositions — the append-only trail. */
+export async function listEngagementDispositions(
+  token: string,
+  id: string
+): Promise<{
+  dispositions: Array<{
+    id: string;
+    disposition: EngagementDispositionValue;
+    rationale: string | null;
+    attention_digest: string;
+    created_at: string;
+    disposed_by: string | null;
+  }>;
+  count: number;
+} | null> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/dispositions`, token);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /api/vendor-engagements/:id/disposition — record a human decision.
+ *
+ * Returns the engine's error body rather than null on refusal: the rationale
+ * and attention-window rules are things the analyst must be able to read, and
+ * collapsing them to "something went wrong" is how WA-2's re-intake gate
+ * shipped as a dead end.
+ */
+export async function recordEngagementDisposition(
+  token: string,
+  id: string,
+  body: { disposition: string; rationale?: string }
+): Promise<{ ok: true; created_finding: boolean } | { ok: false; error: string; detail?: string }> {
+  try {
+    const res = await engineFetch(`/api/vendor-engagements/${encodeURIComponent(id)}/disposition`, token, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: String(json?.error ?? "disposition_failed"), detail: json?.detail };
+    }
+    return { ok: true, created_finding: Boolean(json?.created_finding) };
+  } catch {
+    return { ok: false, error: "disposition_failed" };
   }
 }
 

@@ -498,10 +498,88 @@ Billing note:
 >   shown to the vendor); US-English and editorial pass over the Core Assurance
 >   Set and `frameworkTemplates.ts`. Sequenced before activation because a
 >   content edit after go-live permanently forks the question library.
-> - **WA-4 — portfolio navigation and triage.** Needs Attention DERIVED from
->   canonical truth; durable, audited human disposition persisted separately
->   (owner ruling 5); engagement-list query params with a whitelisted sort. No
->   automatic promotion of any response to a formal Finding.
+> - **WA-4 — portfolio navigation and triage. BUILT** (migration `20261093`).
+>   Design record: `docs/design/wa4-portfolio-triage.md`.
+>
+>   **Needs Attention is DERIVED and is stored nowhere.** `attentionSignals.ts`
+>   computes it from canonical assessment truth on every read: a failed control,
+>   a partial control, an answer missing the explanation WA-1 requires (the
+>   predicate is imported from `responseCompleteness.ts`, never re-decided), a
+>   required question left unanswered, evidence attached but not reviewed
+>   (`evidence.reviewed_at IS NULL`), and an active finding already raised from
+>   the assessment (`sqlFindingActive()`, the platform-wide predicate converged
+>   in #645). Evaluated only inside the analyst attention window — `submitted`,
+>   `in_review`, `clarification_requested`, `analysis_complete`,
+>   `decision_pending` — because before `submitted` the vendor is still
+>   answering and after `decided` the engagement carries its own signals.
+>   `not_applicable` is deliberately NOT a reason on its own: WA-1 already makes
+>   it carry an explanation, so an unexplained one surfaces as the honest reason
+>   and an explained one is a decision the analyst can read.
+>
+>   There is no `needs_attention` column and there must never be one. A stored
+>   triage flag is a second copy of the truth that drifts from the first.
+>
+>   **Human disposition is PERSISTED, separately** —
+>   `vendor_engagement_dispositions`, append-only through the SHARED
+>   `worm_guard_mutation`, `app_request` holding SELECT+INSERT only, tenant
+>   isolated by RLS and re-checked by an INSERT trigger, attributed to a NOT NULL
+>   user with ON DELETE RESTRICT. Changing your mind writes a new row and the
+>   previous decision stays readable, which is a stronger reading of "preserve
+>   meaningful disposition history" than an UPDATE plus a shadow table. Every
+>   disposition but `reviewed` carries a rationale at the same 10-character bar
+>   as `overrideInherent`, the WA-2 challenge and the WA-3 reseed. The stored
+>   `attention_digest` records the derived state the decision was made against,
+>   so a decision the assessment has since outrun is FLAGGED rather than
+>   silently invalidated.
+>
+>   **No automatic Finding creation.** `promoteEngagementFindings` gains no new
+>   caller; `finding_proposed` and `finding_confirmed` record a human decision
+>   ABOUT a finding and are read by nothing; the disposition response says
+>   `created_finding: false` in its own body; and the finding count is measured
+>   before and after every triage operation in both the isolation suite and the
+>   deployed browser journey.
+>
+>   **Portfolio navigation** adds `sort` / `order` / `offset` /
+>   `needs_attention` / `undisposed` to `GET /api/vendor-engagements`, through a
+>   CLOSED map from key to a fixed SQL fragment — no client string reaches the
+>   query, and an unknown key falls back to the default rather than being
+>   interpolated. Every fragment ends with `e.id`, making the order total, which
+>   is what stops an offset page boundary repeating or skipping a row. The app's
+>   controls all link through a query-merging helper, so choosing a sort cannot
+>   discard the filter just set.
+>
+>   **One compromise, stated not hidden:** the list derives attention in SQL
+>   (filtering and sorting must happen in the database or pagination stops being
+>   correct) while the detail endpoint uses the pure module. Two implementations
+>   of one rule — pinned by `test/isolation/vendorEngagementTriage.test.ts`,
+>   which runs both over the same fixtures and fails the build on disagreement.
+
+> **TRACKED, NOT SCHEDULED — two records raised during WA-4 and deliberately
+> kept out of it.**
+>
+> - **IA-1 — internal assessment content versioning**
+>   (`docs/backlog/IA-1-internal-assessment-content-versioning.md`). SPLIT OUT of
+>   WA-4 by owner ruling. `POST /api/requirement-responses` binds an answer to
+>   `requirement_id` only, while `requirements.description` is mutable in place
+>   with no version row and no `updated_at` — the class WA-3 corrected for Vendor
+>   Assurance, and the class WA-3's freeze deliberately did not cover (migration
+>   `20261091` joins on `rr.engagement_id`, so NULL-engagement rows were out of
+>   scope by construction). Measured read-only on staging: 6 rows, 1 org (a seed
+>   validation org), zero demonstrated drift, no consequential downstream state,
+>   and 6/6 remediable without fabricating any historical text. The path is LIVE.
+>   **Recommended P2 — not a blocker for WA-4 and not a blocker for Vendor
+>   Assurance production activation**, with the triggers that would reopen that
+>   judgement written down. The production population is UNMEASURED and
+>   owner-owed, not zero-by-assertion.
+> - **FIXTURE-LIFECYCLE-1 — a vendor's monitored-entity slot can never be
+>   released** (`docs/backlog/FIXTURE-LIFECYCLE-1-monitored-entity-exhaustion.md`).
+>   `entityLimit.ts` counts rows that exist and documents "to stop paying for one,
+>   delete it", but there is no vendor DELETE route anywhere in the engine and
+>   `vendors.status` is excluded from the count. Customers cannot reduce a
+>   metered count; journeys exhausting the staging org is the symptom, not the
+>   defect. The 2026-09-05 staging cleanup (75/75 → 26/75,
+>   `docs/validation/wa4-fixture-cleanup-2026-09-05.md`) is maintenance and is
+>   explicitly NOT closure, nor justification for changing the 75-entity cap.
 
 > **DOC-SYNC 2026-09-04 — ASSESSMENT COMPOSITION v1 + CONTACT-BASED ISSUANCE
 > SENT FROM SECURELOGIC: owner-approved methodology, BUILT (migrations

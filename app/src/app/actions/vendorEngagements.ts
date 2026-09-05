@@ -41,6 +41,7 @@ import {
   type VendorInviteDeliveryState,
   type VendorEngagementDecision,
   type VendorEngagementPromotionResult,
+  recordEngagementDisposition,
 } from "@/lib/api";
 
 export type EngagementActionState = { ok: true } | { ok: false; error: string };
@@ -397,4 +398,39 @@ export async function reseedFromRelationship(
     })),
     nextStep: result.next_step.message,
   };
+}
+
+/**
+ * WA-4 ruling 5 — record the analyst's disposition of an engagement.
+ *
+ * Returns the engine's own refusal text rather than a generic failure: the
+ * rationale floor and the attention-window rule are things the analyst has to
+ * be able to act on, and WA-2's re-intake gate is the standing lesson about
+ * shipping a refusal with nowhere to answer it.
+ *
+ * `created_finding` is passed straight through so the UI can state, from the
+ * server's own answer rather than from a local assumption, that recording a
+ * disposition did not promote anything.
+ */
+export async function recordDisposition(
+  id: string,
+  input: { disposition: string; rationale?: string }
+): Promise<{ ok: true; createdFinding: boolean } | { ok: false; error: string }> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await recordEngagementDisposition(token, id, input);
+  if (!result.ok) {
+    return {
+      ok: false,
+      error:
+        result.detail ??
+        (result.error === "rationale_required"
+          ? "This disposition asserts a judgement, so it needs a reason of at least 10 characters."
+          : result.error === "outside_attention_window"
+            ? "This engagement is not awaiting analyst triage."
+            : `That didn't work (${result.error}).`),
+    };
+  }
+  revalidateEngagement(id);
+  return { ok: true, createdFinding: result.created_finding };
 }
