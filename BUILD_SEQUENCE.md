@@ -498,7 +498,10 @@ Billing note:
 >   shown to the vendor); US-English and editorial pass over the Core Assurance
 >   Set and `frameworkTemplates.ts`. Sequenced before activation because a
 >   content edit after go-live permanently forks the question library.
-> - **WA-4 — portfolio navigation and triage. BUILT** (migration `20261093`).
+> - **WA-4 — portfolio navigation and triage. COMPLETE / PASS 2026-09-05**
+>   (migration `20261093`; PR #1016, `develop` `c4519e79`; Chromium 63/63 and
+>   WebKit 63/63 against deployed staging at that SHA — record:
+>   `docs/validation/wa4-portfolio-triage-staging-2026-09-05.md`).
 >   Design record: `docs/design/wa4-portfolio-triage.md`.
 >
 >   **Needs Attention is DERIVED and is stored nowhere.** `attentionSignals.ts`
