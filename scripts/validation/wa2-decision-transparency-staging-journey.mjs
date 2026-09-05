@@ -112,8 +112,37 @@ async function setup() {
   const scoped = await engine(`/api/vendor-engagements/${engagementId}/scope`, { method: "POST", body: JSON.stringify({}) });
   if (scoped.status !== 200) throw new Error(`scope failed: ${JSON.stringify(scoped.body).slice(0, 300)}`);
 
+  // A SECOND, deliberately low relationship. The tier_1 engagement above
+  // excludes nothing, so it cannot demonstrate that the composition reports
+  // what it did NOT ask. A tier_4 relationship excludes the whole library.
+  const lowRel = await engine(`/api/vendors/${vendorId}/relationships`, {
+    method: "POST",
+    body: JSON.stringify({ name: "Office catering", service_description: "On-site catering" }),
+  });
+  const lowRelationshipId = lowRel.body.relationship?.id;
+  const lowIntake = await engine(`/api/vendors/${vendorId}/relationships/${lowRelationshipId}/intake`, {
+    method: "POST",
+    body: JSON.stringify({
+      max_tolerable_disruption: "gt_1_month", operational_dependency: "incidental",
+      business_reach: "single_team", substitutability: "interchangeable",
+      process_coupling: "peripheral", concentration: "none",
+      data_sensitivity: "none", data_volume: "minimal", access_level: "none",
+      regulatory_exposure: "none", regulatory_breach_notification: false,
+      ai_involvement: "none", ai_autonomy: "none", hosting_model: "saas",
+      fourth_party_exposure: "none",
+    }),
+  });
+  if (lowIntake.status !== 201) throw new Error(`low intake failed: ${JSON.stringify(lowIntake.body).slice(0, 300)}`);
+  const lowE = await engine("/api/vendor-engagements", {
+    method: "POST",
+    body: JSON.stringify({ vendor_id: vendorId, relationship_id: lowRelationshipId, engagement_type: "initial", title: `WA2 journey low ${STAMP}` }),
+  });
+  const lowEngagementId = lowE.body.id;
+  const lowScoped = await engine(`/api/vendor-engagements/${lowEngagementId}/scope`, { method: "POST", body: JSON.stringify({}) });
+  if (lowScoped.status !== 200) throw new Error(`low scope failed: ${JSON.stringify(lowScoped.body).slice(0, 300)}`);
+
   return {
-    vendorId, relationshipId, engagementId,
+    vendorId, relationshipId, engagementId, lowEngagementId,
     typoContactId: typo.body.contact.id,
     retiredEmail: `sam.retired+${STAMP}@vendor.test`,
   };
@@ -127,7 +156,21 @@ async function main() {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   const page = await ctx.newPage();
   const pageErrors = [];
-  page.on("pageerror", (e) => pageErrors.push(String(e)));
+  // Record WHERE a page error fired and WHAT was in flight, not just what it
+  // said. WebKit reports a fetch cancelled by navigation as a pageerror
+  // ("TypeError: Load failed") while Chromium reports nothing, so a bare
+  // message cannot distinguish a real client bug from the harness navigating
+  // away from a page whose fan-out was still running. `page.url()` alone is
+  // not enough either: it is read when the error SURFACES, which for a
+  // cancelled fetch is already the destination page. The failed-request log
+  // below names the actual request and its errorText, which is decisive.
+  let section = "0-preamble";
+  const mark = (m) => { section = m; };
+  const failedRequests = [];
+  page.on("pageerror", (e) => pageErrors.push(`${String(e)} @ ${page.url()} [${section}]`));
+  page.on("requestfailed", (r) =>
+    failedRequests.push(`${r.method()} ${r.url()} :: ${r.failure()?.errorText ?? "?"} [${section}]`)
+  );
 
   // ── 1. Sign in ──
   await page.goto(`${APP}/login`);
@@ -139,6 +182,7 @@ async function main() {
   await page.waitForTimeout(PACE_MS);
 
   // ── 2. The engagement page defends its own rating ──
+  mark("2-engagement-main");
   await page.goto(`${APP}/vendor-engagements/${s.engagementId}`);
   await page.getByLabel("Relationship under assessment").waitFor({ timeout: 60_000 });
   // Guarded: a FAILED assertion must not abort the run. The whole point of
@@ -177,10 +221,53 @@ async function main() {
   /Independent assurance coverage/.test(composition)
     ? ok("WA-2: independent assurance coverage is shown")
     : bad("coverage line missing", composition.slice(0, 200));
-  /excluded because no rule in this scope-rule set/.test(composition)
-    ? ok("WA-2: requirements the rules excluded are reported")
-    : bad("rule exclusions not reported");
+  // This engagement is tier_1 and excludes NOTHING (`excluded_by_rules: 0`), so
+  // the exclusions sentence is correctly absent here. Asserting its presence on
+  // this fixture was a harness defect: it failed for a fixture reason both
+  // before and after WA-2, so it never tested the feature. Assert the UI agrees
+  // with the snapshot instead, and prove the positive on a fixture that HAS
+  // exclusions (section 3b).
+  const mainExcluded = (await engine(`/api/vendor-engagements/${s.engagementId}/composition`))
+    .body.composition.summary.excluded_by_rules;
+  const claimsExclusions = /excluded because no rule in this scope-rule set/.test(composition);
+  mainExcluded === 0 && !claimsExclusions
+    ? ok("WA-2: with nothing excluded, the composition claims no exclusions")
+    : bad("composition disagrees with its snapshot", `excluded_by_rules=${mainExcluded} rendered=${claimsExclusions}`);
   await shot(page, "02-composition-not-asked");
+  await page.waitForTimeout(PACE_MS);
+
+  // ── 3b. The positive case: a composition that DID exclude, says so ──
+  //
+  // A tier_4 relationship asks nothing and excludes the whole library, which is
+  // exactly the case where "what we did not ask" has to be legible.
+  mark("3b-low-engagement");
+  await page.goto(`${APP}/vendor-engagements/${s.lowEngagementId}`);
+  const lowSection = page.getByLabel("Assessment composition");
+  await lowSection.waitFor({ timeout: 60_000 });
+  const lowText = await lowSection.textContent();
+  const lowExcluded = (await engine(`/api/vendor-engagements/${s.lowEngagementId}/composition`))
+    .body.composition.summary.excluded_by_rules;
+  lowExcluded > 0
+    ? ok(`WA-2: the low-tier fixture genuinely excludes (${lowExcluded}) — the arm is not vacuous`)
+    : bad("low-tier fixture excluded nothing; this arm proves nothing", String(lowExcluded));
+  /excluded because no rule in this scope-rule set/.test(lowText)
+    ? ok("WA-2: requirements the rules excluded ARE reported, with the count")
+    : bad("rule exclusions not reported", lowText.slice(0, 200));
+  new RegExp(`${lowExcluded} requirements? in the library`).test(lowText)
+    ? ok("WA-2: the exclusion count rendered matches the snapshot")
+    : bad("exclusion count does not match the snapshot", String(lowExcluded));
+  await shot(page, "02b-exclusions-reported");
+  // Settle before leaving. This page fans out, and Next.js also fires RSC
+  // prefetches for the links on it; navigating while those are in flight
+  // cancels them, and WebKit surfaces a cancelled fetch as a pageerror
+  // ("TypeError: Load failed") where Chromium stays silent. Proven by the
+  // requestfailed log: four `Load request cancelled` entries, all stamped
+  // 3b-back-to-main. The fix is to settle the load, NOT to filter the
+  // pageerror — the no-client-exceptions assertion stays exactly as strict.
+  await page.waitForLoadState("networkidle", { timeout: 30_000 });
+  mark("3b-back-to-main");
+  await page.goto(`${APP}/vendor-engagements/${s.engagementId}`);
+  await page.getByLabel("Applicability challenges").waitFor({ timeout: 60_000 }).catch(() => {});
   await page.waitForTimeout(PACE_MS);
 
   // ── 4. Challenge: recorded, and offering no way to remove anything ──
@@ -191,9 +278,10 @@ async function main() {
     .catch(() => false);
   if (!hasChallenges) {
     bad("no challenge surface on a composed engagement");
-    await finish(browser, page, pageErrors, s);
+    await finish(browser, page, pageErrors, s, failedRequests);
     return;
   }
+  mark("4-challenge");
   ok("WA-2: the challenge surface is present on a composed engagement");
   await page.getByRole("button", { name: /Disagree with a determination/ }).click();
   const formText = await chal.textContent();
@@ -231,6 +319,16 @@ async function main() {
     ? ok("WA-2: THE FLOOR HOLDS — the composition is byte-identical after a challenge")
     : bad("composition changed after a challenge", `${beforeHash} -> ${afterHash}`);
 
+  mark("4-reload");
+  // "Record disagreement" is a Next.js server action, and a server action
+  // schedules a router revalidation AFTER it resolves. `networkidle` alone
+  // returns immediately here — at that instant the page genuinely is idle —
+  // and the reload then cancels the revalidation POST that starts a moment
+  // later. WebKit surfaces that cancellation as a pageerror; Chromium logs
+  // the same abort and says nothing. Give the revalidation time to start,
+  // then settle, then reload. The assertion below is unchanged.
+  await page.waitForTimeout(3_000);
+  await page.waitForLoadState("networkidle", { timeout: 30_000 });
   await page.reload();
   const listed = await page.getByLabel("Applicability challenges").textContent();
   /SecureLogic determined:/.test(listed) && listed.includes(`Walkthrough ${STAMP}`)
@@ -239,6 +337,8 @@ async function main() {
   await page.waitForTimeout(PACE_MS);
 
   // ── 5. Correcting a mistyped contact address ──
+  await page.waitForLoadState("networkidle", { timeout: 30_000 });
+  mark("5-vendor-page");
   await page.goto(`${APP}/vendors/${s.vendorId}`);
   await page.getByRole("button", { name: "Edit" }).first().waitFor({ timeout: 60_000 });
   ok("WA-2: contacts can be EDITED (the path that did not exist)");
@@ -266,8 +366,8 @@ async function main() {
   // The exact defect from the walkthrough: the list shows only active
   // contacts, the unique index covers every row.
   await page.getByRole("button", { name: "Add contact" }).first().click();
-  await page.getByPlaceholderText("Full name").fill("Sam Retired");
-  await page.getByPlaceholderText("Email address").fill(s.retiredEmail);
+  await page.getByPlaceholder("Full name").fill("Sam Retired");
+  await page.getByPlaceholder("Email address").fill(s.retiredEmail);
   const addButtons = await page.getByRole("button", { name: "Add contact" }).all();
   await addButtons[addButtons.length - 1].click();
 
@@ -318,15 +418,19 @@ async function main() {
     await shot(page, "06-reintake-reason");
   }
 
-  await finish(browser, page, pageErrors, s);
+  await finish(browser, page, pageErrors, s, failedRequests);
 }
 
 /** Single exit: an early return must still write the ledger and the artifacts. */
-async function finish(browser, page, pageErrors, s) {
+async function finish(browser, page, pageErrors, s, failedRequestLog = []) {
   pageErrors.length === 0
     ? ok(`no client-side exceptions (${BROWSER})`)
     : bad(`client-side exceptions (${BROWSER})`, pageErrors.join(" | "));
   await shot(page, "99-final");
+  if (failedRequestLog.length) {
+    console.log("\nFAILED REQUESTS (diagnostic, not an assertion):");
+    for (const f of failedRequestLog) console.log("  " + f);
+  }
   await browser.close();
   console.log("\n" + ledger.join("\n"));
   console.log(`\nBROWSER=${BROWSER} PASS=${ledger.length - fails} FAIL=${fails} vendor=${s.vendorId} engagement=${s.engagementId}`);
