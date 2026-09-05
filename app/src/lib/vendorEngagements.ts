@@ -345,3 +345,89 @@ export function defaultInvitationMessage(args: {
     `Thank you,\n${args.organizationName}`
   );
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   WA-4 — portfolio triage vocabulary.
+
+   The engine already sends `label` and `detail` on the attention DETAIL
+   endpoint. These exist for the LIST, which returns reason keys only (sending
+   six labels on every one of a hundred rows is repeating a constant down the
+   wire), and they are kept byte-identical to the engine's
+   ATTENTION_REASON_LABELS. Plain English about the assessment — never a rule
+   identifier, which tells the reader nothing and leaks internal vocabulary onto
+   a customer surface.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+import type { AttentionReason, EngagementDispositionValue } from "@/lib/api";
+
+export const ATTENTION_REASON_LABELS: Record<AttentionReason, string> = {
+  control_not_in_place: "Control reported not in place",
+  partial_response: "Control only partially in place",
+  explanation_missing: "Answer given without the required explanation",
+  unanswered_mandatory: "Required question left unanswered",
+  evidence_unreviewed: "Evidence attached but not yet reviewed",
+  active_finding: "Active finding from this assessment",
+};
+
+/** The short form for a chip, where the row already gives the context. */
+export const ATTENTION_REASON_CHIPS: Record<AttentionReason, string> = {
+  control_not_in_place: "Not in place",
+  partial_response: "Partial",
+  explanation_missing: "Unexplained",
+  unanswered_mandatory: "Unanswered",
+  evidence_unreviewed: "Evidence to review",
+  active_finding: "Active finding",
+};
+
+/**
+ * Chip colour by weight, not by category. A failing control and an unreviewed
+ * document are both "attention", but they are not the same news.
+ */
+export function attentionTone(reason: AttentionReason): "high" | "medium" | "low" {
+  switch (reason) {
+    case "control_not_in_place":
+      return "high";
+    case "partial_response":
+    case "explanation_missing":
+    case "unanswered_mandatory":
+      return "medium";
+    case "evidence_unreviewed":
+    case "active_finding":
+      return "low";
+  }
+}
+
+export const ATTENTION_TONE_COLORS: Record<"high" | "medium" | "low", { bg: string; fg: string; border: string }> = {
+  high: { bg: "rgba(127,29,29,0.25)", fg: "#fca5a5", border: "#b91c1c" },
+  medium: { bg: "rgba(161,98,7,0.2)", fg: "#fcd34d", border: "#a16207" },
+  low: { bg: "rgba(31,41,55,0.7)", fg: "#d1d5db", border: "#374151" },
+};
+
+export const DISPOSITION_LABELS: Record<EngagementDispositionValue, string> = {
+  reviewed: "Reviewed",
+  accepted: "Accepted as-is",
+  escalated: "Escalated",
+  finding_proposed: "Finding proposed",
+  finding_confirmed: "Finding confirmed",
+};
+
+/**
+ * Which dispositions assert a judgement and therefore need a reason. Mirrors
+ * the engine's DISPOSITIONS_REQUIRING_RATIONALE so the form asks for the reason
+ * BEFORE the engine refuses without one — the WA-2 lesson about a gate with
+ * nowhere to answer it.
+ */
+export function dispositionNeedsRationale(d: EngagementDispositionValue): boolean {
+  return d !== "reviewed";
+}
+
+export const DISPOSITION_RATIONALE_MIN = 10;
+
+export const ENGAGEMENT_SORT_LABELS: Record<string, string> = {
+  risk: "Highest risk",
+  attention: "Most to review",
+  updated: "Recently updated",
+  created: "Recently opened",
+  next_review: "Next review due",
+  vendor: "Vendor name",
+};
