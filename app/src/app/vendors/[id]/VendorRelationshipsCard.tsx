@@ -24,6 +24,7 @@ import { ASSESSMENT_TIER_VALUES } from "@/lib/api";
 import { DEPENDENCY_FIELDS, EXPOSURE_FIELDS, TIER_LABELS, type IntakeFieldDef } from "@/lib/vendorRelationshipIntake";
 import { addVendorRelationship, recordRelationshipIntake, setRelationshipPolicy, openAssessmentForRelationship } from "@/app/actions/vendorRelationships";
 import { TRANSPORT_FAILURE } from "./VendorContactsCard";
+import ClassificationBasisPanel from "@/components/vendorRisk/ClassificationBasisPanel";
 
 const card: React.CSSProperties = { background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, padding: 16 };
 const input = (): React.CSSProperties => ({ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#0b1220", color: "#e2e8f0", fontSize: 12 });
@@ -37,37 +38,6 @@ function Band({ label, band, score }: { label: string; band: string | null; scor
       <div style={{ fontSize: 13, color: band ? BAND_COLOR[band] ?? "#e2e8f0" : "#475569" }}>
         {band ?? "—"}{score !== null && band ? <span style={{ color: "#64748b", fontSize: 11 }}> · {score}</span> : null}
       </div>
-    </div>
-  );
-}
-
-function Basis({ title, basis }: { title: string; basis: ClassificationBasis }): JSX.Element {
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ fontSize: 11, color: "#94a3b8" }}>{title} <span style={{ color: "#475569" }}>· {basis.method} v{basis.methodology_version}</span></div>
-      <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11, color: "#cbd5e1" }}>
-        {basis.factors.map((f) => (
-          <li key={f.dimension}>{f.explanation} <span style={{ color: "#64748b" }}>({f.raw} × {f.weight.toFixed(2)} = {f.contribution})</span></li>
-        ))}
-        {basis.adjustments.map((a) => (
-          <li key={a.rule_id} style={{ color: "#fdba74" }}>{a.rule_id}: {a.explanation}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function TierExplanation({ basis }: { basis: TierBasis }): JSX.Element {
-  return (
-    <div style={{ marginTop: 8, fontSize: 11, color: "#cbd5e1" }}>
-      <div style={{ color: "#94a3b8" }}>Assessment tier <span style={{ color: "#475569" }}>· {basis.method} v{basis.methodology_version}</span></div>
-      <div>Criticality {basis.criticality_band} × Inherent risk {basis.inherent_band} on the approved matrix.</div>
-      {basis.adjustments.map((a) => <div key={a.rule_id} style={{ color: "#fdba74" }}>{a.rule_id}: {a.explanation}</div>)}
-      {basis.policy && (
-        <div style={{ color: basis.policy.applied ? "#93c5fd" : "#94a3b8" }}>
-          Policy requested {TIER_LABELS[basis.policy.requested]}: {basis.policy.applied ? "applied." : `not applied — ${basis.policy.reason}`}
-        </div>
-      )}
     </div>
   );
 }
@@ -239,14 +209,22 @@ export function VendorRelationshipsCard({ vendorId, relationships, loadFailed, m
                 <button type="button" style={{ ...btn(true), marginTop: 8 }} disabled={pending} onClick={() => setIntakeFor(r.id)}>Record factual intake</button>
               )}
 
-              {why === r.id && r.criticality_basis && r.inherent_basis && r.tier_basis && (
+              {why === r.id && (
                 <div style={{ marginTop: 6 }}>
-                  <Basis title="Criticality" basis={r.criticality_basis} />
-                  <Basis title="Inherent risk" basis={r.inherent_basis} />
-                  <TierExplanation basis={r.tier_basis} />
-                  {r.tier_calculated_minimum && r.tier_calculated_minimum !== r.assessment_tier && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: "#93c5fd" }}>Calculated minimum {TIER_LABELS[r.tier_calculated_minimum]}; policy raised it to {TIER_LABELS[r.assessment_tier ?? ""]}.</div>
-                  )}
+                  {/* WA-2: ONE renderer, shared with the engagement page. The
+                      policy-raise line moved inside it, so both surfaces say
+                      the same sentence about the same stored envelope. */}
+                  <ClassificationBasisPanel
+                    criticalityBasis={r.criticality_basis}
+                    criticalityArithmeticBand={r.criticality_arithmetic_band}
+                    criticalityBand={r.criticality_band}
+                    inherentBasis={r.inherent_basis}
+                    inherentArithmeticBand={r.inherent_arithmetic_band}
+                    inherentBand={r.inherent_band}
+                    tierBasis={r.tier_basis}
+                    tierCalculatedMinimum={r.tier_calculated_minimum}
+                    assessmentTier={r.assessment_tier}
+                  />
                 </div>
               )}
 

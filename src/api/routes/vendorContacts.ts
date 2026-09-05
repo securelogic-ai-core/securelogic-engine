@@ -218,6 +218,56 @@ router.post(
         return;
       }
 
+      // ── WA-1/WA-2 (owner ruling 1): the HIDDEN-INACTIVE COLLISION ─────────
+      //
+      // `idx_vendor_contacts_identity` is unique on (org, vendor, lower(email))
+      // across ALL rows, but every surface that offers "add a contact" lists
+      // only ACTIVE ones. So a deactivated contact is invisible and still owns
+      // its address: the issue flow said "No active contacts yet", the customer
+      // added the person, and the write was refused with "this supplier already
+      // has a contact with that email address" — pointing at a row they could
+      // not see and could not reach from where they were standing. Reproduced
+      // on staging before this fix.
+      //
+      // The refusal was correct; it was unexplainable. It now names the row it
+      // is talking about and its status, so the caller can offer the one action
+      // that resolves it. Nothing is deleted and no history is rewritten — the
+      // owner ruling is explicit that this is not solved by destroying the
+      // record (a deactivated contact's name is attached to invites, answers
+      // and evidence that outlive their employment).
+      //
+      // PRE-FLIGHT, not a catch. Two reasons, both load-bearing:
+      //   1. after a 23505 the transaction is ABORTED, so the catch block
+      //      cannot run the SELECT it would need to describe the conflict;
+      //   2. it must run BEFORE the primary demotion below. The comment on
+      //      that demotion warns that a JS-level early return placed after it
+      //      would commit the demotion alongside the refusal and leave the
+      //      supplier with no primary contact. This return is above it.
+      //
+      // The unique index remains the backstop for the race between this read
+      // and the insert; the 23505 handler below is unchanged.
+      const clash = await pg.query<{ id: string; status: string; full_name: string }>(
+        `SELECT id, status, full_name
+           FROM vendor_contacts
+          WHERE organization_id = $1 AND vendor_id = $2 AND lower(email) = lower($3)
+          LIMIT 1`,
+        [organizationId, vendorId, email]
+      );
+      const existing = clash.rows[0];
+      if (existing) {
+        res.status(409).json({
+          error: "contact_already_exists",
+          message:
+            existing.status === "inactive"
+              ? `${existing.full_name} already holds this address but is marked inactive. Reactivate them instead of adding a duplicate — their history stays intact.`
+              : "This supplier already has a contact with that email address.",
+          contact_id: existing.id,
+          contact_status: existing.status,
+          contact_name: existing.full_name,
+        });
+        return;
+      }
+
       const wantsPrimary = body.is_primary_contact === true;
       if (wantsPrimary) {
         // One primary per supplier. Demoting here rather than letting the

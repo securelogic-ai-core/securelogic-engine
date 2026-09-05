@@ -430,18 +430,39 @@ Billing note:
 >   constant. New pure module `src/api/lib/vendorPortal/responseCompleteness.ts`
 >   is the single authority, called by the engine's submit gate and mirrored in
 >   exactly one named function on the client.
-> - **WA-2 — decision transparency and contact correction.** Analyst basis
->   panel from the stored `criticality_basis` / `inherent_basis` / `tier_basis`;
->   render the snapshot's unshown `coverage` / `dropped` / `excluded_by_rules`;
->   correct the `overrideInherent` refusal copy (its stated justification —
->   "the scope derives from it" — stopped being true under Onboarding 2.0).
->   Inline contact edit through the existing PATCH; root-fix the
->   hidden-inactive contact collision without destructive historical deletion;
->   `full_name` kept (owner ruling 4). Applicability **challenge**, never
->   removal (owner ruling 2): the SecureLogic Core Assurance floor cannot be
->   suppressed, and a fact-corrected non-applicability is recorded as a
->   determination with provenance — new intake version → re-classify →
->   re-compose → new snapshot. Adds the missing `reason` on an intake write.
+> - **WA-2 — decision transparency and contact correction. BUILT** (migration
+>   `20261090`). Analyst basis panel on the engagement page from the stored
+>   `criticality_basis` / `inherent_basis` / `tier_basis`, rendered through ONE
+>   shared component with the vendor page (`ClassificationBasisPanel`) — this
+>   deliberately REVERSES the VO-11 decision to withhold the basis there. The
+>   snapshot's previously unrendered `coverage` / `dropped` /
+>   `excluded_by_rules` are now shown. The `overrideInherent` refusal copy is
+>   corrected: its stated justification ("the scope derives from it") stopped
+>   being true under Onboarding 2.0 — the composition reads `assessment_tier`
+>   and the stored facts, and the override now only shifts promoted-finding
+>   severity. Inline contact edit through the existing PATCH; the
+>   hidden-inactive contact collision is root-fixed by a PRE-FLIGHT lookup that
+>   names the clashing row and its status (placed before the primary demotion,
+>   because a JS-level return after it would commit the demotion alongside the
+>   refusal), with a reactivate offer on both add surfaces and no destructive
+>   deletion; `full_name` kept (owner ruling 4). Applicability **challenge**,
+>   never removal (owner ruling 2): `vendor_engagement_applicability_challenges`
+>   is append-only, attributed to a human, records SecureLogic's own
+>   determination beside the objection, and is a RECORD not a mechanism —
+>   nothing reads it to decide anything and no route removes a requirement.
+>   Intake gains `change_reason`, required on a RE-intake only.
+>
+>   **OPEN RULING SURFACED BY THIS PACKAGE — the resolution path does not reach
+>   an existing engagement.** `createEngagement` copies the relationship's facts
+>   and tier onto the engagement row and `resolveScope` composes from THOSE;
+>   nothing updates them afterwards. So a corrected intake re-derives the
+>   RELATIONSHIP and applies to engagements opened afterwards, while an existing
+>   engagement keeps composing on the facts it was opened with. Whether a
+>   not-yet-issued engagement should re-read current facts is a methodology
+>   decision, not a bug fix. It is pinned by
+>   `test/isolation/applicabilityChallenge.test.ts` and stated in the
+>   challenge route's own `resolution` text, which describes what actually
+>   happens rather than what the ruling assumed.
 > - **WA-3 — vendor-facing language.** A curated vendor explanation distinct
 >   from the analyst rule trace; rule ids out of the portal; fix the
 >   second-person misdirection (customer-directed rationales are currently

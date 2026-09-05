@@ -120,8 +120,23 @@ describe("VO-7 — an engagement from a classified relationship", () => {
     });
     // A customer can tell which relationship this engagement assesses without the API.
     expect(r.classification_computed_at).not.toBeNull();
-    // No basis JSON here — the vendor page owns the full "Why?"; this is context.
-    expect(r.criticality_basis).toBeUndefined();
+
+    // WA-2 REVERSES VO-11 HERE, deliberately. VO-11 withheld the basis on the
+    // theory that "the vendor page owns the full Why?"; the owner walkthrough
+    // found that an analyst reviewing an engagement could see it was rated
+    // Critical and had to leave the engagement to defend that. The envelopes
+    // are tenant-visible by contract, stored, versioned and immutable, so
+    // repeating them on a second read surface adds a rendering, not a decision.
+    //
+    // READ, never recalculated: each envelope must equal the stored row byte
+    // for byte, or the engagement page would be showing a second opinion.
+    expect(r.criticality_basis).toEqual(stored.criticality_basis);
+    expect(r.inherent_basis).toEqual(stored.inherent_basis);
+    expect(r.tier_basis).toEqual(stored.tier_basis);
+    // And the stamps travel with them, so a v1 and a v2 rating can never be
+    // silently compared.
+    expect(r.criticality_basis.methodology_version).toBe("1.0.0");
+    expect(r.inherent_basis.methodology_version).toBe("2.0.0");
   });
 });
 

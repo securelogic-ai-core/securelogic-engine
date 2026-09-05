@@ -97,6 +97,52 @@ describe("AssessmentCompositionSection", () => {
     expect(screen.getAllByText("Not applicable", { selector: "span" })).toHaveLength(3);
   });
 
+  it("WA-2: shows what was NOT asked — coverage, rule exclusions, and the dropped list", () => {
+    // All three were carried by the snapshot and rendered nowhere before WA-2.
+    // A composition that only shows what it kept cannot be defended.
+    render(
+      <AssessmentCompositionSection
+        composition={{
+          ...base,
+          summary: { ...base.summary, truncated: { cap: 20, dropped: 2 } },
+          dropped: [
+            { requirement_id: "r-90", reference: "CC7.2", title: "Monitoring of system components", framework: "SOC 2" },
+            { requirement_id: "r-91", reference: "A.8.16", title: "Monitoring activities", framework: "ISO 27001" },
+          ],
+          coverage: { computed: true, applied: true, version: "assurance-coverage-1.1", as_of: "2026-09-04", covered_count: 3, gap_count: 2 },
+        }}
+        loadFailed={false}
+        state="scoped"
+      />
+    );
+    expect(screen.getByText(/Independent assurance coverage/)).toBeTruthy();
+    expect(screen.getByText(/3 covered/)).toBeTruthy();
+    expect(screen.getByText(/2 gaps/)).toBeTruthy();
+    expect(screen.getByText(/30 requirements in the library were excluded/)).toBeTruthy();
+    // The tier cap says HOW MANY; the disclosure says WHICH.
+    expect(screen.getByText(/2 lower-priority requirements exceeded/)).toBeTruthy();
+    expect(screen.getByText(/CC7.2 · Monitoring of system components/)).toBeTruthy();
+    expect(screen.getByText(/A.8.16 · Monitoring activities/)).toBeTruthy();
+  });
+
+  it("WA-2: says nothing about coverage that was never computed", () => {
+    render(
+      <AssessmentCompositionSection
+        composition={{
+          ...base,
+          summary: { ...base.summary, excluded_by_rules: 0 },
+          coverage: { computed: false, applied: false, version: null, as_of: null, covered_count: 0, gap_count: 0 },
+        }}
+        loadFailed={false}
+        state="scoped"
+      />
+    );
+    // "0 covered, 0 gaps" would read as a clean result rather than as an
+    // absent one — the same distinction analysisCoverageCopy exists to keep.
+    expect(screen.queryByText(/Independent assurance coverage/)).toBeNull();
+    expect(screen.queryByText(/excluded because no rule/)).toBeNull();
+  });
+
   it("explains the not-yet-composed and load-failed states", () => {
     const { unmount } = render(<AssessmentCompositionSection composition={null} loadFailed={false} state="draft" />);
     expect(screen.getByText(/Compose the assessment to see what SecureLogic selects/)).toBeTruthy();

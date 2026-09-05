@@ -681,14 +681,26 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
     // engine that produced these values stamped its version into the row, and
     // this surface only repeats what it recorded. NULL for engagements opened
     // before 2.0, which are honestly unlinked rather than backfilled.
+    //
+    // WA-2: the three BASIS envelopes now travel with it. They were withheld
+    // here on the theory that "the vendor page owns the full basis", which in
+    // practice meant an analyst looking at an engagement could see that it was
+    // rated Critical but had to leave the engagement to find out why — and the
+    // walkthrough found exactly that gap. The envelopes are already
+    // tenant-visible by contract (methodologyVersion.ts: "this envelope is
+    // TENANT-VISIBLE. Anything added to it must be safe to show the customer")
+    // and are stored, versioned and immutable, so repeating them on a second
+    // read surface adds a rendering, not a decision.
     const relationshipId = (result.rows[0] as { relationship_id?: string | null }).relationship_id ?? null;
     let relationship: Record<string, unknown> | null = null;
     if (relationshipId) {
       const rel = await pg.query(
         `SELECT id, name, service_description, is_primary, status, policy_minimum_tier,
                 criticality_score, criticality_band, criticality_arithmetic_band, criticality_methodology_version,
+                criticality_basis,
                 inherent_score, inherent_band, inherent_arithmetic_band, inherent_methodology_version,
-                assessment_tier, tier_calculated_minimum, tier_methodology_version,
+                inherent_basis,
+                assessment_tier, tier_calculated_minimum, tier_methodology_version, tier_basis,
                 classification_computed_at
            FROM vendor_relationships WHERE id = $1 AND organization_id = $2 LIMIT 1`,
         [relationshipId, organizationId]
@@ -770,13 +782,28 @@ export async function overrideInherent(req: Request, res: Response): Promise<voi
     }
     const state = current.rows[0]!.status as EngagementState;
 
-    // The tier derives from inherent and the frozen scope derives from the tier.
-    // Changing inherent after issue would leave a questionnaire that no longer
-    // matches the assessment it belongs to.
+    // WA-2: this refusal used to say "the scope derives from it". Under
+    // methodology 1.0.0 that was true. Under Vendor Onboarding 2.0 it is NOT:
+    // the questionnaire is composed from `vendor_engagements.assessment_tier`
+    // (the JOINT tier inherited from the relationship) and from the stored fact
+    // columns — never from `inherent_rating`. See resolveScope, which reads
+    // `row.assessment_tier` and builds `inherent` from the facts.
+    //
+    // What this override actually does today is change the band that
+    // `promoteFindings` uses to set finding SEVERITY. That is worth having and
+    // worth being honest about; telling an analyst it reshapes the
+    // questionnaire would send them here expecting a different set of
+    // questions and leave them wondering why nothing changed.
+    //
+    // The window is unchanged (scope-mutable states only): re-rating an
+    // engagement after its answers exist would restate the severity of findings
+    // against a questionnaire that was chosen under the old rating.
     if (!isInherentOverridable(state)) {
       res.status(409).json({
         error: "inherent_locked",
-        message: "Inherent risk cannot change once the questionnaire has been issued — the scope derives from it.",
+        message:
+          "Inherent risk cannot be re-rated once the questionnaire has been issued. " +
+          "It sets the severity of findings promoted from this assessment, and changing it now would restate findings against answers already given.",
         status: state,
       });
       return;
@@ -3365,6 +3392,11 @@ router.post("/vendor-engagements/:id/issue", ...chain, asTenant(issueEngagement)
 router.post("/vendor-engagements/:id/invite/revoke", ...chain, asTenant(revokeEngagementInvite));
 router.post("/vendor-engagements/:id/invite/reissue", ...chain, asTenant(reissueEngagementInvite));
 
+// WA-2: a recorded disagreement with a composition decision. Never a removal
+// path — see the handler header and owner ruling 2.
+router.post("/vendor-engagements/:id/applicability-challenges", ...chain, asTenant(raiseApplicabilityChallenge));
+router.get("/vendor-engagements/:id/applicability-challenges", ...chain, asTenant(listApplicabilityChallenges));
+
 
 /* =========================================================
    GET /api/vendor-engagements/:id/integrity — VA-Q1 P2.
@@ -3463,6 +3495,212 @@ export async function getComposition(req: Request, res: Response): Promise<void>
   } catch (err) {
     logger.error({ err, organizationId, engagementId: id }, "GET /vendor-engagements/:id/composition failed");
     res.status(500).json({ error: "composition_unavailable" });
+  }
+}
+
+/* =========================================================
+   Applicability CHALLENGES — WA-2, owner ruling 2 (2026-09-04).
+
+   A recorded disagreement with one composition decision. It is a RECORD, never
+   a mechanism: nothing here removes a requirement, lowers a tier, edits a
+   scope item or touches the SecureLogic Core Assurance floor. The ruling is
+   explicit that an applicable Core objective may not be suppressed — not with
+   a reason, not with a second approver — so no route offers to.
+
+   The resolution path is the ordinary product path, and the response says so:
+   correct the relationship's facts, re-record the intake (which now carries its
+   own reason), and compose again. That produces a NEW immutable snapshot
+   recording the objective as not applicable, with the facts it read — an
+   applicability determination with provenance, which is what the ruling asks
+   for, rather than an override that removed something applicable.
+   ========================================================= */
+
+/** Outcomes a composition can record for an item. Mirrors the snapshot contract. */
+const CHALLENGEABLE_OUTCOMES = new Set([
+  "asked",
+  "evidence_satisfied",
+  "not_applicable",
+  "not_provisioned",
+]);
+
+export async function raiseApplicabilityChallenge(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const reference = typeof body.requirement_reference === "string" ? body.requirement_reference.trim() : "";
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+
+  if (!reference) {
+    res.status(400).json({ error: "requirement_reference_required" });
+    return;
+  }
+  // Same bar as the inherent-risk override: a governance act carries its reason
+  // or it does not happen.
+  if (reason.length < 10) {
+    res.status(400).json({
+      error: "reason_required",
+      message: "Explain why you disagree with this determination. It is recorded against the engagement with your name.",
+    });
+    return;
+  }
+  // A challenge names a HUMAN. An API-key integration raising an anonymous
+  // objection into an audit trail is worse than no record — the 20261071
+  // posture, applied at birth rather than retrofitted.
+  const actor = userOf(req);
+  if (!actor) {
+    res.status(403).json({
+      error: "human_actor_required",
+      message: "A challenge is recorded against the person raising it, so it cannot be raised with an API key alone.",
+    });
+    return;
+  }
+
+  try {
+    const eng = await pg.query(
+      `SELECT 1 FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+
+    // The determination being challenged is read from the LATEST snapshot, not
+    // taken from the caller: the outcome and rationale must be SecureLogic's
+    // own words, or the record would preserve the objector's account of what
+    // the platform said rather than what it said.
+    const { latest } = await loadLatestCompositionSnapshot(pg, organizationId, id);
+    if (!latest) {
+      res.status(409).json({
+        error: "not_composed",
+        message: "This engagement has no composition yet, so there is no determination to challenge.",
+      });
+      return;
+    }
+    const snapshot = latest.snapshot;
+    const objective = snapshot.core_assurance?.objectives.find((o) => o.reference === reference) ?? null;
+    const additional = snapshot.additional.find((a) => a.reference === reference) ?? null;
+    if (!objective && !additional) {
+      res.status(404).json({
+        error: "determination_not_found",
+        message: "That reference is not part of this engagement's composition.",
+      });
+      return;
+    }
+    const outcome = objective ? objective.outcome : additional!.outcome;
+    if (!CHALLENGEABLE_OUTCOMES.has(outcome)) {
+      res.status(400).json({ error: "outcome_not_challengeable", outcome });
+      return;
+    }
+    const requirementId = objective ? objective.requirement_id : additional!.requirement_id;
+    const rationale = objective
+      ? objective.rationale
+      : additional!.reasons.map((r) => r.rationale).join(" ") || null;
+
+    const inserted = await pg.query<{ id: string; created_at: string }>(
+      `INSERT INTO vendor_engagement_applicability_challenges
+         (organization_id, engagement_id, snapshot_id, snapshot_hash,
+          requirement_id, requirement_reference, challenged_outcome,
+          challenged_rationale, reason, raised_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id, created_at`,
+      [organizationId, id, latest.id, latest.snapshot_hash, requirementId, reference,
+       outcome, rationale, reason.slice(0, 4000), actor]
+    );
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: actor,
+      eventType: "vendor_engagement.applicability_challenged",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        requirement_reference: reference,
+        challenged_outcome: outcome,
+        snapshot_hash: latest.snapshot_hash,
+        reason,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(201).json({
+      challenge: {
+        id: inserted.rows[0]!.id,
+        requirement_reference: reference,
+        challenged_outcome: outcome,
+        created_at: inserted.rows[0]!.created_at,
+      },
+      // Said explicitly, because the one thing a challenge must never imply is
+      // that the questionnaire just changed.
+      composition_unchanged: true,
+      // CAREFULLY WORDED. The obvious sentence here — "correct the facts and
+      // compose again" — is the ruling's resolution path and it does NOT work
+      // on an engagement that already exists: createEngagement copies the
+      // relationship's facts and tier onto the engagement row, resolveScope
+      // composes from THOSE, and nothing updates them afterwards. Telling an
+      // analyst otherwise would send them to re-record an intake, watch the
+      // composition not move, and lose confidence in the record they just
+      // made. Whether a not-yet-issued engagement should re-read current facts
+      // is an owner decision (reported, not assumed); until it is taken, this
+      // says what actually happens.
+      resolution:
+        "Recorded against this engagement's current determination. It does not change the assessment. " +
+        "If the determination rests on a fact that is wrong, correct the relationship's intake: that re-derives " +
+        "Criticality, Inherent risk and the tier on the relationship and applies to assessments opened afterwards. " +
+        "This engagement composes on the facts it was opened with, so reassessing on the corrected facts means opening a new engagement from the relationship.",
+    });
+  } catch (err) {
+    logger.error({ event: "applicability_challenge_failed", organizationId, engagementId: id, err }, "Applicability challenge failed");
+    res.status(500).json({ error: "applicability_challenge_failed" });
+  }
+}
+
+export async function listApplicabilityChallenges(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  try {
+    const eng = await pg.query(
+      `SELECT 1 FROM vendor_engagements WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [id, organizationId]
+    );
+    if (eng.rowCount === 0) {
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    // `superseded` is DERIVED, never stored: a challenge is superseded when the
+    // snapshot it disputed is no longer the current one, which means the
+    // composition has been re-run since. An append-only record with a mutable
+    // status column would be an append-only record with a lie in it.
+    const { latest } = await loadLatestCompositionSnapshot(pg, organizationId, id);
+    const rows = await pg.query(
+      `SELECT c.id, c.requirement_reference, c.requirement_id, c.challenged_outcome,
+              c.challenged_rationale, c.reason, c.snapshot_hash, c.created_at,
+              c.raised_by_user_id, u.email AS raised_by_email, u.name AS raised_by_name
+         FROM vendor_engagement_applicability_challenges c
+         LEFT JOIN users u ON u.id = c.raised_by_user_id AND u.organization_id = c.organization_id
+        WHERE c.organization_id = $1 AND c.engagement_id = $2
+        ORDER BY c.created_at DESC`,
+      [organizationId, id]
+    );
+    res.status(200).json({
+      challenges: rows.rows.map((r) => ({
+        ...r,
+        superseded: latest ? r.snapshot_hash !== latest.snapshot_hash : false,
+      })),
+      count: rows.rowCount,
+      current_snapshot_hash: latest?.snapshot_hash ?? null,
+    });
+  } catch (err) {
+    logger.error({ event: "applicability_challenge_list_failed", organizationId, engagementId: id, err }, "Applicability challenge list failed");
+    res.status(500).json({ error: "applicability_challenge_list_failed" });
   }
 }
 

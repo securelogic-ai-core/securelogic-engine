@@ -403,21 +403,51 @@ router.post(
       const rel = await resolveRelationship(organizationId, vendorId, rid);
       if (!rel) { res.status(404).json({ error: "relationship_not_found" }); return; }
 
+      // ── WA-2 / owner ruling 2: why the facts changed ────────────────────
+      //
+      // The ruling's preserve-list for a fact-corrected determination is
+      // "original determination, changed factual basis, actor, timestamp,
+      // reason, resulting determination, historical reproducibility". Every
+      // item but the REASON was already carried by this chain: the intake is
+      // append-only and versioned, it records its author and time, and the
+      // re-composition writes a new immutable snapshot beside the old one.
+      //
+      // Required only on a RE-intake. The first intake for a relationship is
+      // the baseline — there is no prior state for it to explain — and
+      // demanding an explanation for it would train people to type "initial".
+      const isReintake = (await pg.query<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM vendor_relationship_intake
+          WHERE organization_id = $1 AND relationship_id = $2`,
+        [organizationId, rid]
+      )).rows[0]!.n !== "0";
+      const rawReason = typeof (req.body as Record<string, unknown>)?.change_reason === "string"
+        ? String((req.body as Record<string, unknown>).change_reason).trim()
+        : "";
+      if (isReintake && rawReason.length < 10) {
+        res.status(400).json({
+          error: "change_reason_required",
+          message:
+            "Explain what changed about this relationship. Re-recording the intake re-derives Criticality, Inherent risk and the Assessment tier, and the reason is kept with the new facts.",
+        });
+        return;
+      }
+      const changeReason = isReintake ? rawReason.slice(0, 2000) : null;
+
       const f = v.facts;
       const inserted = await pg.query<{ id: string; version: number }>(
         `INSERT INTO vendor_relationship_intake
            (organization_id, relationship_id, version,
             max_tolerable_disruption, operational_dependency, business_reach, substitutability, process_coupling, concentration,
             data_sensitivity, data_volume, access_level, regulatory_exposure, regulatory_breach_notification,
-            ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure, created_by_user_id)
+            ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure, created_by_user_id, change_reason)
          VALUES ($1, $2,
                  (SELECT COALESCE(MAX(version), 0) + 1 FROM vendor_relationship_intake WHERE relationship_id = $2),
-                 $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                 $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING id, version`,
         [organizationId, rid,
          f.max_tolerable_disruption, f.operational_dependency, f.business_reach, f.substitutability, f.process_coupling, f.concentration,
          f.data_sensitivity, f.data_volume, f.access_level, f.regulatory_exposure, f.regulatory_breach_notification,
-         f.ai_involvement, f.ai_autonomy, f.hosting_model, f.fourth_party_exposure, userOf(req)]
+         f.ai_involvement, f.ai_autonomy, f.hosting_model, f.fourth_party_exposure, userOf(req), changeReason]
       );
       const intake = inserted.rows[0]!;
       const c = classifyRelationship(f, rel.policy_minimum_tier);
@@ -440,6 +470,7 @@ router.post(
         eventType: "vendor_relationship.classified", resourceType: "vendor", resourceId: vendorId,
         payload: {
           relationship_id: rid, intake_id: intake.id, intake_version: intake.version,
+          change_reason: changeReason,
           criticality: { score: c.criticality.score, band: c.criticality.band },
           inherent: { score: c.inherent.score, band: c.inherent.band },
           assessment_tier: c.tier.tier, tier_calculated_minimum: c.tier.calculated_minimum_tier,
@@ -475,7 +506,10 @@ router.get(
       const rows = await pg.query(
         `SELECT id, version, max_tolerable_disruption, operational_dependency, business_reach, substitutability, process_coupling, concentration,
                 data_sensitivity, data_volume, access_level, regulatory_exposure, regulatory_breach_notification,
-                ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure, created_by_user_id, created_at
+                ai_involvement, ai_autonomy, hosting_model, fourth_party_exposure, created_by_user_id, created_at,
+                -- WA-2: why the facts changed. NULL on a first intake and on
+                -- every row recorded before the column existed.
+                change_reason
            FROM vendor_relationship_intake WHERE organization_id = $1 AND relationship_id = $2 ORDER BY version DESC`,
         [organizationId, rid]
       );

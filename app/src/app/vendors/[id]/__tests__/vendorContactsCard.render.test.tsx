@@ -17,6 +17,10 @@
  *     route so the server-rendered directory is re-read.
  * The same rule covers the adjacent operations (make primary / deactivate /
  * delete), which share the transition helper.
+ *
+ * WA-2 adds the correction path the walkthrough proved was missing — editing a
+ * contact (the engine has supported it since VA-C1; only the UI was absent) and
+ * resolving an add refused by an INVISIBLE inactive row.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -137,5 +141,88 @@ describe("VendorContactsCard — adjacent operations share the rule", () => {
     await waitFor(() => expect(screen.getByText("Marcus Oyelaran is now the primary contact.")).toBeTruthy());
     expect(actions.editVendorContact).toHaveBeenCalledWith("v-1", "c-3", { is_primary_contact: true });
     expect(clientRouter.refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("VendorContactsCard — WA-2 correction paths", () => {
+  beforeEach(() => {
+    actions.addVendorContact.mockReset();
+    actions.editVendorContact.mockReset();
+    actions.removeVendorContact.mockReset();
+  });
+
+  it("edits every field the engine accepts, including the email that had no fix but Delete", () => {
+    actions.editVendorContact.mockResolvedValue({ ok: true });
+    render(<VendorContactsCard vendorId="v-1" contacts={[existing]} loadFailed={false} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    // The form opens PREFILLED — a correction starts from what is there, not blank.
+    expect((screen.getByLabelText("Full name") as HTMLInputElement).value).toBe("Dana Whitfield");
+    expect((screen.getByLabelText("Email address") as HTMLInputElement).value).toBe("dana.whitfield@example-vendor.com");
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "dana.whitfield@vendor.example" } });
+    fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "+1 555 0100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(actions.editVendorContact).toHaveBeenCalledWith("v-1", "c-1", {
+      full_name: "Dana Whitfield",
+      email: "dana.whitfield@vendor.example",
+      title: "Head of Security",
+      phone: "+1 555 0100",
+      contact_role: "security",
+    });
+  });
+
+  it("warns that a corrected address does not rewrite invitations already sent", () => {
+    render(<VendorContactsCard vendorId="v-1" contacts={[existing]} loadFailed={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.queryByText(/Past invitations keep the address/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "typo-fixed@vendor.example" } });
+    // The invite snapshot is deliberately immutable (20261056). Silently
+    // "fixing" the address everywhere would rewrite the record of who was
+    // actually mailed; saying so is the honest alternative.
+    expect(screen.getByText(/Past invitations keep the address they were actually sent to/)).toBeTruthy();
+  });
+
+  it("offers to reactivate the INVISIBLE contact that refused the add", async () => {
+    // The exact collision reproduced on staging: the list shows nothing, the
+    // unique index refuses anyway, and before WA-2 that was a dead end.
+    actions.addVendorContact.mockResolvedValue({
+      ok: false,
+      error: "Priya Raman already holds this address but is marked inactive. Reactivate them instead of adding a duplicate — their history stays intact.",
+      conflict: { id: "c-9", status: "inactive", name: "Priya Raman" },
+    });
+    actions.editVendorContact.mockResolvedValue({ ok: true });
+    render(<VendorContactsCard vendorId="v-1" contacts={[]} loadFailed={false} />);
+    fillAndSubmit();
+
+    await waitFor(() => {
+      expect(screen.getByText(/marked inactive, so they are not listed above/)).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Reactivate Priya Raman/ }));
+    // REACTIVATE, never delete-and-recreate: the owner ruling forbids solving
+    // this by destroying the history attached to that person.
+    await waitFor(() => {
+      expect(actions.editVendorContact).toHaveBeenCalledWith("v-1", "c-9", { status: "active" });
+    });
+    expect(actions.removeVendorContact).not.toHaveBeenCalled();
+  });
+
+  it("does not offer reactivation when the clashing contact is already visible", async () => {
+    actions.addVendorContact.mockResolvedValue({
+      ok: false,
+      error: "This supplier already has a contact with that email address.",
+      conflict: { id: "c-1", status: "active", name: "Dana Whitfield" },
+    });
+    render(<VendorContactsCard vendorId="v-1" contacts={[existing]} loadFailed={false} />);
+    fillAndSubmit();
+
+    await waitFor(() => {
+      expect(screen.getByText(/already has a contact with that email address/)).toBeTruthy();
+    });
+    // An active duplicate is in the list above; a "reactivate" button for it
+    // would be noise, not help.
+    expect(screen.queryByRole("button", { name: /Reactivate/ })).toBeNull();
   });
 });
