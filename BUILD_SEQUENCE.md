@@ -452,17 +452,46 @@ Billing note:
 >   nothing reads it to decide anything and no route removes a requirement.
 >   Intake gains `change_reason`, required on a RE-intake only.
 >
->   **OPEN RULING SURFACED BY THIS PACKAGE — the resolution path does not reach
->   an existing engagement.** `createEngagement` copies the relationship's facts
->   and tier onto the engagement row and `resolveScope` composes from THOSE;
->   nothing updates them afterwards. So a corrected intake re-derives the
->   RELATIONSHIP and applies to engagements opened afterwards, while an existing
->   engagement keeps composing on the facts it was opened with. Whether a
->   not-yet-issued engagement should re-read current facts is a methodology
->   decision, not a bug fix. It is pinned by
+>   **RULING R8 (owner, 2026-09-05) — CLOSES the open item this package raised.**
+>   A re-intake must never silently mutate the determination or composition
+>   basis of an already-issued engagement. **Completed:** immutable historical
+>   basis; a new intake applies prospectively. **Draft / not-issued:** MAY be
+>   explicitly recomposed against the new intake, preserving provenance of the
+>   prior basis, the new basis, the reason, actor/time and the resulting change.
+>   **Issued / in-progress:** never silently recompose — surface that a newer
+>   relationship determination exists and require an explicit analyst-controlled
+>   disposition, preserving the original basis and historical reproducibility.
+>   Vendor responses and evidence are never silently discarded or rewritten.
+>   Minimum floors remain in force.
+>
+>   **No material conflict with the current architecture (verified in code,
+>   2026-09-05).** The prohibitions already hold: `createEngagement` copies the
+>   relationship's facts and tier onto the engagement row and `resolveScope`
+>   composes from THOSE, so a re-intake cannot reach an existing engagement;
+>   `SCOPE_MUTABLE_STATES = [draft, scoping, scoped]`
+>   (`engagementStateMachine.ts:246`) gates both `POST /scope` and the inherent
+>   override; and that set is DISJOINT from
+>   `PORTAL_WRITABLE_STATES = [issued, in_progress]`, so a recompose cannot
+>   occur in any state where vendor responses can exist — the scope-item DELETE
+>   also has no FK cascade into `requirement_responses`.
+>
+>   What the ruling ADDS, as WA-3 build items rather than corrections:
+>   (1) an explicit pre-issue recompose that re-seeds the engagement's facts
+>   from the relationship — today `resolveScope` would re-derive from the
+>   engagement's own stale columns (`vendorEngagements.ts:905,985`);
+>   (2) a provenance envelope for the recompose EVENT (reason, actor, time,
+>   resulting change) — `vendor_relationship_intake.change_reason` explains why
+>   the FACTS changed, which is adjacent but not the same;
+>   (3) a derived "a newer relationship determination exists" signal plus a
+>   persisted analyst disposition — `vendor_engagements.relationship_id` exists,
+>   so staleness is derivable with no migration by diffing the engagement's
+>   stored facts and tier against the relationship's current ones. This is the
+>   shape ruling 5 already set: DERIVE the machine signal, PERSIST the human
+>   disposition.
+>
+>   The prior behaviour remains pinned by
 >   `test/isolation/applicabilityChallenge.test.ts` and stated in the
->   challenge route's own `resolution` text, which describes what actually
->   happens rather than what the ruling assumed.
+>   challenge route's own `resolution` text.
 > - **WA-3 — vendor-facing language.** A curated vendor explanation distinct
 >   from the analyst rule trace; rule ids out of the portal; fix the
 >   second-person misdirection (customer-directed rationales are currently
