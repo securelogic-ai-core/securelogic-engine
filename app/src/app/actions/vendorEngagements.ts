@@ -28,6 +28,7 @@ import {
   recordVendorEngagementDecision,
   reviewVendorEngagementEvidence,
   promoteVendorEngagementFindings,
+  raiseApplicabilityChallenge,
   postVendorEngagementComment,
   beginVendorEngagementReview,
   completeVendorEngagementAnalysis,
@@ -325,4 +326,34 @@ export async function postComment(
   }
   revalidateEngagement(id);
   return { ok: true, status: result.status };
+}
+
+/**
+ * WA-2 / owner ruling 2 — record a disagreement with a composition decision.
+ *
+ * Returns the engine's own `resolution` sentence rather than a locally-written
+ * one. What a challenge resolves to depends on engine behaviour (today: a
+ * corrected intake moves the RELATIONSHIP, and this engagement composes on the
+ * facts it was opened with), and a second copy of that explanation in the UI
+ * would drift from it the moment that behaviour is ruled on.
+ */
+export async function raiseChallenge(
+  id: string,
+  input: { requirement_reference: string; reason: string }
+): Promise<{ ok: true; resolution: string } | { ok: false; error: string }> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await raiseApplicabilityChallenge(token, id, input);
+  if ("failure" in result) {
+    return {
+      ok: false,
+      error:
+        result.failure.message ??
+        (result.failure.error === "transport"
+          ? "The request did not reach SecureLogic, so nothing was recorded."
+          : `That didn't work (${result.failure.error}).`),
+    };
+  }
+  revalidateEngagement(id);
+  return { ok: true, resolution: result.resolution };
 }

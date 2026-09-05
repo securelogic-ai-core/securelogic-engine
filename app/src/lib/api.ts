@@ -7618,8 +7618,9 @@ export type VendorEngagementListRow = {
 /** GET /api/vendor-engagements/:id — SELECT e.* + vendor_name + criticality. */
 /**
  * VO-11: the relationship an engagement assesses, with its STORED derived
- * classification as the engine recorded it. Context for the engagement page;
- * the vendor page owns the full basis ("Why?").
+ * classification as the engine recorded it. WA-2 added the three basis
+ * envelopes: the engagement page renders the same "Why?" the vendor page does,
+ * through the same component, rather than sending an analyst elsewhere.
  */
 export type VendorEngagementRelationshipContext = {
   id: string;
@@ -7640,6 +7641,14 @@ export type VendorEngagementRelationshipContext = {
   tier_calculated_minimum: AssessmentTierValue | null;
   tier_methodology_version: string | null;
   classification_computed_at: string | null;
+  /**
+   * WA-2: the stored basis envelopes now travel with the engagement read, so an
+   * analyst can see WHY this engagement is rated as it is without leaving it.
+   * Rendered by the one shared ClassificationBasisPanel, never re-derived.
+   */
+  criticality_basis: ClassificationBasis | null;
+  inherent_basis: ClassificationBasis | null;
+  tier_basis: TierBasis | null;
 };
 
 export type VendorEngagementDetail = {
@@ -8117,6 +8126,87 @@ export async function getVendorEngagementComposition(
   }
 }
 
+/**
+ * WA-2 / owner ruling 2 — a recorded disagreement with a composition decision.
+ *
+ * A RECORD, never a mechanism: raising one changes no requirement, tier or
+ * scope item, and there is deliberately no route that removes anything. The
+ * SecureLogic Core Assurance Set is a minimum assurance floor and cannot be
+ * suppressed.
+ */
+export type ApplicabilityChallenge = {
+  id: string;
+  requirement_reference: string;
+  requirement_id: string | null;
+  /** What SecureLogic determined, copied from the snapshot being disputed. */
+  challenged_outcome: "asked" | "evidence_satisfied" | "not_applicable" | "not_provisioned";
+  challenged_rationale: string | null;
+  reason: string;
+  snapshot_hash: string;
+  created_at: string;
+  raised_by_user_id: string;
+  raised_by_email: string | null;
+  raised_by_name: string | null;
+  /** DERIVED: the determination it disputed is no longer the current one. */
+  superseded: boolean;
+};
+
+export type ApplicabilityChallengesResponse = {
+  challenges: ApplicabilityChallenge[];
+  count: number;
+  current_snapshot_hash: string | null;
+};
+
+export async function listApplicabilityChallenges(
+  token: string,
+  id: string
+): Promise<ApplicabilityChallengesResponse | null> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/applicability-challenges`,
+      token
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as ApplicabilityChallengesResponse;
+  } catch {
+    return null;
+  }
+}
+
+export type RaiseChallengeResult =
+  | {
+      challenge: { id: string; requirement_reference: string; challenged_outcome: string; created_at: string };
+      composition_unchanged: boolean;
+      /**
+       * The engine's own sentence about what happens next. Rendered verbatim
+       * rather than restated in the UI: what a challenge resolves to depends on
+       * engine behaviour, and two copies of that explanation would drift.
+       */
+      resolution: string;
+    }
+  | { failure: { error: string; message?: string } };
+
+export async function raiseApplicabilityChallenge(
+  token: string,
+  id: string,
+  input: { requirement_reference: string; reason: string }
+): Promise<RaiseChallengeResult> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/applicability-challenges`,
+      token,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      return { failure: { error: body.error ?? "challenge_failed", ...(body.message ? { message: body.message } : {}) } };
+    }
+    return (await res.json()) as Exclude<RaiseChallengeResult, { failure: unknown }>;
+  } catch {
+    return { failure: { error: "transport" } };
+  }
+}
+
 /* ─────────────────────────────────────────────────────────────
    VA-C1 — the supplier's contact directory.
 
@@ -8170,15 +8260,47 @@ export async function listVendorContacts(
   }
 }
 
-export type VendorContactResult<T> = T | { failure: { error: string; message?: string } };
+/**
+ * A refused contact write.
+ *
+ * WA-2: `contact_*` carry the row a `contact_already_exists` refusal is talking
+ * about. The engine used to refuse a duplicate address without saying which
+ * contact held it, which is unresolvable when that contact is INACTIVE and
+ * therefore invisible on every add surface. Present only on that refusal.
+ */
+export type VendorContactFailure = {
+  failure: {
+    error: string;
+    message?: string;
+    contact_id?: string;
+    contact_status?: "active" | "inactive";
+    contact_name?: string;
+  };
+};
+
+export type VendorContactResult<T> = T | VendorContactFailure;
 
 async function contactFailureFrom(
   res: Response,
   fallback: string
-): Promise<{ failure: { error: string; message?: string } }> {
+): Promise<VendorContactFailure> {
   try {
-    const body = (await res.json()) as { error?: string; message?: string };
-    return { failure: { error: body.error ?? fallback, message: body.message } };
+    const body = (await res.json()) as {
+      error?: string;
+      message?: string;
+      contact_id?: string;
+      contact_status?: "active" | "inactive";
+      contact_name?: string;
+    };
+    return {
+      failure: {
+        error: body.error ?? fallback,
+        ...(body.message !== undefined ? { message: body.message } : {}),
+        ...(body.contact_id !== undefined ? { contact_id: body.contact_id } : {}),
+        ...(body.contact_status !== undefined ? { contact_status: body.contact_status } : {}),
+        ...(body.contact_name !== undefined ? { contact_name: body.contact_name } : {}),
+      },
+    };
   } catch {
     return { failure: { error: fallback } };
   }
@@ -8186,7 +8308,7 @@ async function contactFailureFrom(
 
 export function isVendorContactFailure<T>(
   value: VendorContactResult<T>
-): value is { failure: { error: string; message?: string } } {
+): value is VendorContactFailure {
   return typeof value === "object" && value !== null && "failure" in value;
 }
 
@@ -8324,6 +8446,13 @@ export type RelationshipIntakeInput = {
   ai_autonomy: string;
   hosting_model: string;
   fourth_party_exposure: string;
+  /**
+   * WA-2: why the facts changed. The engine REQUIRES it (>= 10 chars) on a
+   * re-intake and rejects it with `change_reason_required`; a first intake is
+   * the baseline and is exempt. Optional here because the same input type
+   * serves both calls.
+   */
+  change_reason?: string;
 };
 
 export type VendorRelationshipResult<T> = T | { failure: { error: string; message?: string; missing?: string[]; invalid?: string[] } };

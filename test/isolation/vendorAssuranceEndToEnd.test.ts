@@ -295,7 +295,13 @@ describe("STEP 3 — issue", () => {
     expect(res.body.error).toBe("scope_frozen");
   });
 
-  it("locks inherent risk once issued — the scope derives from it", async () => {
+  // WA-2: the LOCK is unchanged; only its stated reason was corrected. Under
+  // Onboarding 2.0 the questionnaire is composed from the joint
+  // `assessment_tier` and the stored facts, never from `inherent_rating` —
+  // what the rating actually drives is promoted-finding SEVERITY, and
+  // re-rating after the answers exist would restate findings against a
+  // questionnaire chosen under the old rating.
+  it("locks inherent risk once issued — it sets promoted-finding severity", async () => {
     const res = await asOrgA
       .patch(`/api/vendor-engagements/${flow.engagementId}/inherent`)
       .send({ rating: "Low", rationale: "Trying to soften this after the fact." });

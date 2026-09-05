@@ -97,6 +97,84 @@ describe("VA-C1 — the supplier has a contact directory", () => {
     expect(res.body.error).toBe("contact_already_exists");
   });
 
+  it("WA-2: the refusal NAMES the contact holding the address, and its status", async () => {
+    // Before WA-2 this said only "this supplier already has a contact with that
+    // email address". That is unresolvable when the holder is INACTIVE: every
+    // add surface lists active contacts only, so the customer is refused by a
+    // row they cannot see and cannot reach. Reproduced on staging.
+    const res = await create(seed.orgA.apiKey, alphaVendor, {
+      full_name: "Jane Again",
+      email: "jane@alpha.example",
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("contact_already_exists");
+    expect(res.body.contact_id).toBeTruthy();
+    expect(res.body.contact_status).toBe("active");
+    expect(res.body.contact_name).toBe("Jane Alpha");
+  });
+
+  it("WA-2: an INACTIVE holder is named as inactive, and the message says to reactivate", async () => {
+    const vendorId = await seedVendor(pool, seed.orgA.id, { name: "Epsilon Logistics" });
+    const made = await create(seed.orgA.apiKey, vendorId, {
+      full_name: "Kim Epsilon",
+      email: "kim@epsilon.example",
+      is_primary_contact: true,
+    });
+    expect(made.status).toBe(201);
+    const contactId = made.body.contact.id;
+
+    const off = await request(app)
+      .patch(`/api/vendors/${vendorId}/contacts/${contactId}`)
+      .set("X-Api-Key", seed.orgA.apiKey)
+      .send({ status: "inactive" });
+    expect(off.status).toBe(200);
+
+    const again = await create(seed.orgA.apiKey, vendorId, {
+      full_name: "Kim Epsilon",
+      email: "kim@epsilon.example",
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.contact_id).toBe(contactId);
+    expect(again.body.contact_status).toBe("inactive");
+    // The action that resolves it, named. Never a delete — the row carries the
+    // history of everything that person was sent.
+    expect(again.body.message).toMatch(/inactive/i);
+    expect(again.body.message).toMatch(/[Rr]eactivate/);
+
+    // And the row is untouched by the refused attempt: still there, still
+    // inactive, still the same person.
+    const rows = await list(seed.orgA.apiKey, vendorId);
+    expect(rows.body.contacts).toHaveLength(1);
+    expect(rows.body.contacts[0].status).toBe("inactive");
+    expect(rows.body.contacts[0].full_name).toBe("Kim Epsilon");
+  });
+
+  it("WA-2: the pre-flight refusal still leaves the standing primary standing", async () => {
+    // The collision is now caught BEFORE the primary demotion rather than by
+    // the unique index after it. That ordering is the whole reason the fix is
+    // safe: a JS-level early return placed AFTER the demotion would commit the
+    // demotion alongside the refusal (the #866 defect). This pins it.
+    const vendorId = await seedVendor(pool, seed.orgA.id, { name: "Zeta Rail" });
+    const first = await create(seed.orgA.apiKey, vendorId, {
+      full_name: "Ivy Zeta",
+      email: "ivy@zeta.example",
+      is_primary_contact: true,
+    });
+    expect(first.status).toBe(201);
+
+    const dup = await create(seed.orgA.apiKey, vendorId, {
+      full_name: "Ivy Again",
+      email: "IVY@ZETA.EXAMPLE",
+      is_primary_contact: true,
+    });
+    expect(dup.status).toBe(409);
+
+    const rows = await list(seed.orgA.apiKey, vendorId);
+    const primaries = rows.body.contacts.filter((c: { is_primary_contact: boolean }) => c.is_primary_contact);
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0].email).toBe("ivy@zeta.example");
+  });
+
   it("the SAME address at a DIFFERENT supplier is a different person", async () => {
     // One human can work at two of a customer's suppliers, and more to the
     // point: uniqueness must be scoped to the supplier or one vendor's

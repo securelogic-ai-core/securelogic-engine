@@ -24,6 +24,7 @@ import { ASSESSMENT_TIER_VALUES } from "@/lib/api";
 import { DEPENDENCY_FIELDS, EXPOSURE_FIELDS, TIER_LABELS, type IntakeFieldDef } from "@/lib/vendorRelationshipIntake";
 import { addVendorRelationship, recordRelationshipIntake, setRelationshipPolicy, openAssessmentForRelationship } from "@/app/actions/vendorRelationships";
 import { TRANSPORT_FAILURE } from "./VendorContactsCard";
+import ClassificationBasisPanel from "@/components/vendorRisk/ClassificationBasisPanel";
 
 const card: React.CSSProperties = { background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, padding: 16 };
 const input = (): React.CSSProperties => ({ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #334155", background: "#0b1220", color: "#e2e8f0", fontSize: 12 });
@@ -41,37 +42,6 @@ function Band({ label, band, score }: { label: string; band: string | null; scor
   );
 }
 
-function Basis({ title, basis }: { title: string; basis: ClassificationBasis }): JSX.Element {
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ fontSize: 11, color: "#94a3b8" }}>{title} <span style={{ color: "#475569" }}>· {basis.method} v{basis.methodology_version}</span></div>
-      <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11, color: "#cbd5e1" }}>
-        {basis.factors.map((f) => (
-          <li key={f.dimension}>{f.explanation} <span style={{ color: "#64748b" }}>({f.raw} × {f.weight.toFixed(2)} = {f.contribution})</span></li>
-        ))}
-        {basis.adjustments.map((a) => (
-          <li key={a.rule_id} style={{ color: "#fdba74" }}>{a.rule_id}: {a.explanation}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function TierExplanation({ basis }: { basis: TierBasis }): JSX.Element {
-  return (
-    <div style={{ marginTop: 8, fontSize: 11, color: "#cbd5e1" }}>
-      <div style={{ color: "#94a3b8" }}>Assessment tier <span style={{ color: "#475569" }}>· {basis.method} v{basis.methodology_version}</span></div>
-      <div>Criticality {basis.criticality_band} × Inherent risk {basis.inherent_band} on the approved matrix.</div>
-      {basis.adjustments.map((a) => <div key={a.rule_id} style={{ color: "#fdba74" }}>{a.rule_id}: {a.explanation}</div>)}
-      {basis.policy && (
-        <div style={{ color: basis.policy.applied ? "#93c5fd" : "#94a3b8" }}>
-          Policy requested {TIER_LABELS[basis.policy.requested]}: {basis.policy.applied ? "applied." : `not applied — ${basis.policy.reason}`}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Field({ def, value, onChange, disabled }: { def: IntakeFieldDef; value: string; onChange: (v: string) => void; disabled: boolean }): JSX.Element {
   return (
     <label style={{ display: "grid", gap: 3 }}>
@@ -85,13 +55,27 @@ function Field({ def, value, onChange, disabled }: { def: IntakeFieldDef; value:
   );
 }
 
+/**
+ * Mirrors the engine's re-intake gate in `vendorRelationships.ts` (a trimmed
+ * `change_reason` shorter than this is refused with `change_reason_required`).
+ * Kept client-side only to disable the button rather than let the round trip
+ * fail; the engine remains the authority.
+ */
+const REASON_MIN = 10;
+
 function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; relationship: VendorRelationship; onDone: (msg: string) => void }): JSX.Element {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [v, setV] = useState<Record<string, string>>({});
   const [breach, setBreach] = useState(false);
+  // WA-2: a re-intake must say what changed. The first intake is the baseline
+  // and is exempt, so the field only appears once a classification exists.
+  const isReintake = relationship.classification_state === "classified";
+  const [reason, setReason] = useState("");
+  const reasonOk = !isReintake || reason.trim().length >= REASON_MIN;
   const all = [...DEPENDENCY_FIELDS, ...EXPOSURE_FIELDS];
-  const complete = all.every((f) => (v[f.name] ?? "") !== "");
+  const factsComplete = all.every((f) => (v[f.name] ?? "") !== "");
+  const complete = factsComplete && reasonOk;
   const set = (k: string, val: string) => setV((s) => ({ ...s, [k]: val, ...(k === "ai_involvement" && val === "none" ? { ai_autonomy: "none" } : {}) }));
 
   return (
@@ -114,6 +98,23 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
         <input type="checkbox" checked={breach} onChange={(e) => setBreach(e.target.checked)} disabled={pending} />
         An active obligation in scope carries a breach-notification duty
       </label>
+      {isReintake && (
+        <label style={{ display: "grid", gap: 3, marginTop: 10 }}>
+          <span style={{ fontSize: 11, color: "#94a3b8" }}>What changed about this relationship?</span>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={pending}
+            rows={2}
+            aria-label="What changed about this relationship?"
+            style={{ ...input(), resize: "vertical", fontFamily: "inherit" }}
+          />
+          <span style={{ fontSize: 10, color: "#64748b" }}>
+            Re-recording the intake re-derives Criticality, Inherent risk and the Assessment tier. The reason is kept
+            with the new facts, and the previous version stays in the history.
+          </span>
+        </label>
+      )}
       <button
         type="button"
         disabled={pending || !complete}
@@ -126,7 +127,11 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
             // route, which has no error boundary and would crash the page.
             let r: Awaited<ReturnType<typeof recordRelationshipIntake>>;
             try {
-              r = await recordRelationshipIntake(vendorId, relationship.id, { ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">), regulatory_breach_notification: breach });
+              r = await recordRelationshipIntake(vendorId, relationship.id, {
+                ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">),
+                regulatory_breach_notification: breach,
+                ...(isReintake ? { change_reason: reason.trim() } : {}),
+              });
             } catch {
               setError(TRANSPORT_FAILURE);
               return;
@@ -136,7 +141,13 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
           });
         }}
       >
-        {pending ? "Deriving…" : complete ? "Record intake and classify" : "Answer every question to continue"}
+        {pending
+          ? "Deriving…"
+          : !factsComplete
+            ? "Answer every question to continue"
+            : reasonOk
+              ? "Record intake and classify"
+              : "Say what changed to continue"}
       </button>
       {error && <p style={{ marginTop: 8, fontSize: 12, color: "#fca5a5" }}>{error}</p>}
     </div>
@@ -239,14 +250,22 @@ export function VendorRelationshipsCard({ vendorId, relationships, loadFailed, m
                 <button type="button" style={{ ...btn(true), marginTop: 8 }} disabled={pending} onClick={() => setIntakeFor(r.id)}>Record factual intake</button>
               )}
 
-              {why === r.id && r.criticality_basis && r.inherent_basis && r.tier_basis && (
+              {why === r.id && (
                 <div style={{ marginTop: 6 }}>
-                  <Basis title="Criticality" basis={r.criticality_basis} />
-                  <Basis title="Inherent risk" basis={r.inherent_basis} />
-                  <TierExplanation basis={r.tier_basis} />
-                  {r.tier_calculated_minimum && r.tier_calculated_minimum !== r.assessment_tier && (
-                    <div style={{ marginTop: 4, fontSize: 11, color: "#93c5fd" }}>Calculated minimum {TIER_LABELS[r.tier_calculated_minimum]}; policy raised it to {TIER_LABELS[r.assessment_tier ?? ""]}.</div>
-                  )}
+                  {/* WA-2: ONE renderer, shared with the engagement page. The
+                      policy-raise line moved inside it, so both surfaces say
+                      the same sentence about the same stored envelope. */}
+                  <ClassificationBasisPanel
+                    criticalityBasis={r.criticality_basis}
+                    criticalityArithmeticBand={r.criticality_arithmetic_band}
+                    criticalityBand={r.criticality_band}
+                    inherentBasis={r.inherent_basis}
+                    inherentArithmeticBand={r.inherent_arithmetic_band}
+                    inherentBand={r.inherent_band}
+                    tierBasis={r.tier_basis}
+                    tierCalculatedMinimum={r.tier_calculated_minimum}
+                    assessmentTier={r.assessment_tier}
+                  />
                 </div>
               )}
 

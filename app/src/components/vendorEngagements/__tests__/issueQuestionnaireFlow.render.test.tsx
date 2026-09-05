@@ -24,7 +24,7 @@ const engagementActions = vi.hoisted(() => ({
   issueEngagement: vi.fn(),
   reissueInvite: vi.fn(),
 }));
-const contactActions = vi.hoisted(() => ({ addVendorContact: vi.fn() }));
+const contactActions = vi.hoisted(() => ({ addVendorContact: vi.fn(), editVendorContact: vi.fn() }));
 vi.mock("@/app/actions/vendorEngagements", () => engagementActions);
 vi.mock("@/app/actions/vendorContacts", () => contactActions);
 
@@ -67,6 +67,7 @@ beforeEach(() => {
   engagementActions.issueEngagement.mockReset();
   engagementActions.reissueInvite.mockReset();
   contactActions.addVendorContact.mockReset();
+  contactActions.editVendorContact.mockReset();
 });
 
 describe("recipient selection from the contact directory", () => {
@@ -121,6 +122,57 @@ describe("recipient selection from the contact directory", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(TRANSPORT_FAILURE));
     expect((screen.getByPlaceholderText("Full name") as HTMLInputElement).value).toBe("Priya Raman");
     expect(clientRouter.refresh).not.toHaveBeenCalled();
+  });
+
+  it("WA-2: offers to reactivate the invisible contact that refused the add", async () => {
+    // Exactly the collision the owner hit: the flow says "No active contacts
+    // yet", the customer adds the person, and the directory's unique index —
+    // which covers inactive rows too — refuses. Before WA-2 that was a dead end
+    // with no route to the row being described.
+    contactActions.addVendorContact.mockResolvedValue({
+      ok: false,
+      error: "Priya Raman already holds this address but is marked inactive. Reactivate them instead of adding a duplicate — their history stays intact.",
+      conflict: { id: "c-old", status: "inactive", name: "Priya Raman" },
+    });
+    contactActions.editVendorContact.mockResolvedValue({
+      ok: true,
+      contact: { ...raj, id: "c-old", full_name: "Priya Raman", email: "priya@stripe.example", title: "Privacy Officer", status: "active" },
+    });
+    mount({ contacts: [] });
+    fireEvent.change(screen.getByPlaceholderText("Full name"), { target: { value: "Priya Raman" } });
+    fireEvent.change(screen.getByPlaceholderText("Email address"), { target: { value: "priya@stripe.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/marked\s+inactive, so they are not listed above/)).toBeTruthy()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Reactivate Priya Raman and select them/ }));
+
+    // Reactivated, not recreated — recreating would orphan the invitations and
+    // answers already attached to that person.
+    await waitFor(() =>
+      expect(contactActions.editVendorContact).toHaveBeenCalledWith("v-1", "c-old", { status: "active" })
+    );
+    // And they are selected, so the customer continues rather than starting over.
+    await waitFor(() =>
+      expect((screen.getByLabelText("Priya Raman <priya@stripe.example>") as HTMLInputElement).checked).toBe(true)
+    );
+  });
+
+  it("WA-2: does not offer reactivation for a contact that is already selectable", async () => {
+    contactActions.addVendorContact.mockResolvedValue({
+      ok: false,
+      error: "This supplier already has a contact with that email address.",
+      conflict: { id: "c-jane", status: "active", name: "Jane Okafor" },
+    });
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add a contact who is not listed" }));
+    fireEvent.change(screen.getByPlaceholderText("Full name"), { target: { value: "Jane Okafor" } });
+    fireEvent.change(screen.getByPlaceholderText("Email address"), { target: { value: "jane.okafor@stripe.example" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add contact" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /Reactivate/ })).toBeNull();
   });
 
   it("opens the add form immediately when the directory is empty", () => {

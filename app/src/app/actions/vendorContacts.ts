@@ -24,10 +24,24 @@ import {
 
 export type ContactActionState =
   | { ok: true; contact?: VendorContact }
-  | { ok: false; error: string };
+  /**
+   * WA-2: a refusal may name the contact it is about. `conflict` is populated
+   * only for `contact_already_exists`, and only so the caller can offer the one
+   * action that resolves it — reactivating an invisible inactive row rather
+   * than adding a duplicate the unique index will refuse forever.
+   */
+  | {
+      ok: false;
+      error: string;
+      conflict?: { id: string; status: "active" | "inactive"; name: string };
+    };
 
 const MESSAGES: Record<string, string> = {
-  contact_already_exists: "This supplier already has a contact with that email address.",
+  // NO entry for `contact_already_exists` on purpose. `text()` resolves
+  // MESSAGES first, so a static string here would SHADOW the engine's sentence
+  // — and only the engine knows whether the clashing contact is active or
+  // inactive, which is the whole difference between "you already added them"
+  // and "reactivate the person you cannot see".
   contact_in_use:
     "This contact has been sent a questionnaire and is part of that record. Mark them inactive instead.",
   contact_not_found: "That contact no longer exists.",
@@ -62,7 +76,14 @@ export async function addVendorContact(
   if (!t) return { ok: false, error: "Not authenticated" };
   const result = await createVendorContact(t, vendorId, input);
   if (isVendorContactFailure(result)) {
-    return { ok: false, error: text(result.failure.error, result.failure.message) };
+    const f = result.failure;
+    return {
+      ok: false,
+      error: text(f.error, f.message),
+      ...(f.contact_id && f.contact_status
+        ? { conflict: { id: f.contact_id, status: f.contact_status, name: f.contact_name ?? "That contact" } }
+        : {}),
+    };
   }
   revalidatePath(`/vendors/${vendorId}`);
   return { ok: true, contact: result.contact };

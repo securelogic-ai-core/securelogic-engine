@@ -6,6 +6,7 @@ import { isPlatformEntitled } from "@/lib/entitlements";
 import {
   getVendorEngagement,
   getVendorEngagementComposition,
+  listApplicabilityChallenges,
   getVendorEngagementResponses,
   listVendorEngagementEvidence,
   listVendorEngagementComments,
@@ -30,6 +31,7 @@ import EngagementRelationshipContext from "@/components/vendorEngagements/Engage
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
+import ApplicabilityChallenges from "@/components/vendorEngagements/ApplicabilityChallenges";
 
 /**
  * /vendor-engagements/[id] — the reviewer's workspace for one engagement.
@@ -108,7 +110,7 @@ export default async function VendorEngagementPage({
 
   const { id } = await params;
 
-  const [detail, evidenceResp, commentsResp, responsesResp, compositionResp] = await Promise.all([
+  const [detail, evidenceResp, commentsResp, responsesResp, compositionResp, challengesResp] = await Promise.all([
     getVendorEngagement(token, id) as Promise<VendorEngagementDetailResponse | null>,
     listVendorEngagementEvidence(token, id) as Promise<{
       evidence: VendorEngagementEvidenceRow[];
@@ -121,6 +123,10 @@ export default async function VendorEngagementPage({
     getVendorEngagementResponses(token, id),
     // Assessment Composition v1: what SecureLogic selected and why.
     getVendorEngagementComposition(token, id),
+    // WA-2: recorded disagreements with that composition. One read added to a
+    // page that already fans out; measured against the per-JWT limiter in the
+    // rate-limit note on this surface.
+    listApplicabilityChallenges(token, id),
   ]);
 
   if (!detail) {
@@ -360,6 +366,32 @@ export default async function VendorEngagementPage({
           loadFailed={compositionResp === null}
           state={state}
         />
+
+        {/*
+          WA-2 / owner ruling 2. Rendered only once a composition exists —
+          there is nothing to disagree with before one. The picker offers only
+          references the CURRENT composition contains, so a challenge can never
+          be raised against a determination this engagement does not carry.
+        */}
+        {compositionResp?.composition && (
+          <ApplicabilityChallenges
+            engagementId={e.id}
+            challenges={challengesResp?.challenges ?? []}
+            loadFailed={challengesResp === null}
+            references={[
+              ...(compositionResp.composition.core_assurance?.objectives ?? []).map((o) => ({
+                reference: o.reference,
+                title: o.title,
+                outcome: o.outcome,
+              })),
+              ...compositionResp.composition.additional.map((a) => ({
+                reference: a.reference,
+                title: a.title,
+                outcome: a.outcome,
+              })),
+            ]}
+          />
+        )}
 
         <EngagementActionPanel
           engagementId={e.id}

@@ -1,5 +1,5 @@
 /**
- * EngagementRelationshipContext — Vendor Onboarding 2.0 (VO-11).
+ * EngagementRelationshipContext — Vendor Onboarding 2.0 (VO-11) + WA-2.
  *
  * Which relationship / service this engagement assesses, and the derived
  * classification it was opened at — Criticality and Inherent risk as PEERS,
@@ -8,6 +8,14 @@
  * is recalculated here. A customer reads this and never needs the API to know
  * what an engagement is about.
  *
+ * WA-2 adds the "Why this rating?" disclosure. VO-11 deliberately showed the
+ * bands and sent the reader to the vendor page for the basis; the owner
+ * walkthrough found that an analyst reviewing an engagement could see it was
+ * rated Critical and had no way to defend that from where they were standing.
+ * The disclosure renders the SAME stored envelopes through the SAME component
+ * the vendor page uses — collapsed by default, because the bands are the
+ * headline and the arithmetic is the follow-up question.
+ *
  * A pre-2.0 engagement has no relationship: it says so, and manufactures
  * nothing.
  */
@@ -15,6 +23,7 @@ import Link from "next/link";
 import type { VendorEngagementRelationshipContext as Ctx, VendorEngagementQuestionnaire } from "@/lib/api";
 import { VENDOR_ASSESSMENT_DOMAINS, VENDOR_ASSESSMENT_DOMAIN_LABELS } from "@/lib/api";
 import { TIER_LABELS } from "@/lib/vendorRelationshipIntake";
+import ClassificationBasisPanel from "@/components/vendorRisk/ClassificationBasisPanel";
 
 const BAND_COLOR: Record<string, string> = { Critical: "#fca5a5", High: "#fdba74", Moderate: "#fde68a", Low: "#86efac" };
 
@@ -50,6 +59,9 @@ export default function EngagementRelationshipContext({
   }
   const raised = relationship.tier_calculated_minimum && relationship.assessment_tier && relationship.tier_calculated_minimum !== relationship.assessment_tier;
   const active = domains ? VENDOR_ASSESSMENT_DOMAINS.filter((d) => (domains[d] ?? 0) > 0) : [];
+  const hasBasis = Boolean(
+    relationship.criticality_basis || relationship.inherent_basis || relationship.tier_basis
+  );
   return (
     <section style={box} aria-label="Relationship under assessment">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
@@ -83,6 +95,40 @@ export default function EngagementRelationshipContext({
           {active.length > 0 ? active.map((d) => `${VENDOR_ASSESSMENT_DOMAIN_LABELS[d]} ${domains![d]}`).join(" · ") : "Not scoped yet"}
         </Cell>
       </div>
+
+      {/*
+        WA-2. Collapsed by default: the bands are the headline, the arithmetic
+        is the follow-up. Absent entirely when the relationship has no stored
+        basis (a pre-basis classification), rather than an empty panel that
+        would read as "assessed, with no reasons".
+      */}
+      {hasBasis && (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12, color: "#93c5fd" }}>
+            Why this rating?
+          </summary>
+          <ClassificationBasisPanel
+            criticalityBasis={relationship.criticality_basis}
+            criticalityArithmeticBand={relationship.criticality_arithmetic_band}
+            criticalityBand={relationship.criticality_band}
+            inherentBasis={relationship.inherent_basis}
+            inherentArithmeticBand={relationship.inherent_arithmetic_band}
+            inherentBand={relationship.inherent_band}
+            tierBasis={relationship.tier_basis}
+            tierCalculatedMinimum={relationship.tier_calculated_minimum}
+            assessmentTier={relationship.assessment_tier}
+          />
+          <p style={{ margin: "8px 0 0", fontSize: 11, color: "#6b7280" }}>
+            SecureLogic derived this from the factual intake recorded for the
+            relationship. To change it, correct the facts and record the intake
+            again on{" "}
+            <Link href={`/vendors/${encodeURIComponent(vendorId)}#relationships`} style={{ color: "#93c5fd" }}>
+              the vendor
+            </Link>
+            ; ratings are never edited directly.
+          </p>
+        </details>
+      )}
     </section>
   );
 }

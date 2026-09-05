@@ -18,6 +18,7 @@ vi.mock("@/app/actions/vendorRelationships", () => actions);
 import { VendorRelationshipsCard } from "../VendorRelationshipsCard";
 import { TRANSPORT_FAILURE } from "../VendorContactsCard";
 import type { VendorRelationship } from "@/lib/api";
+import { DEPENDENCY_FIELDS, EXPOSURE_FIELDS } from "@/lib/vendorRelationshipIntake";
 
 const base: VendorRelationship = {
   id: "rel-1", vendor_id: "v-1", name: "Card processing", service_description: null, status: "active", is_primary: true, policy_minimum_tier: null,
@@ -26,6 +27,18 @@ const base: VendorRelationship = {
   inherent_score: null, inherent_band: null, inherent_arithmetic_band: null, inherent_basis: null, inherent_methodology_version: null,
   assessment_tier: null, tier_calculated_minimum: null, tier_basis: null, tier_methodology_version: null,
   classification_intake_id: null, classification_computed_at: null, created_at: "2026-09-04T00:00:00Z", updated_at: "2026-09-04T00:00:00Z",
+};
+
+const classified: VendorRelationship = {
+  ...base, classification_state: "classified",
+  criticality_score: 90, criticality_band: "Critical", criticality_arithmetic_band: "Critical",
+  criticality_basis: { method: "vendor_criticality_v1", version: 1, methodology_version: "1.0.0", factors: [], adjustments: [{ rule_id: "CR2", explanation: "Enterprise-wide with under a week of tolerance." }] },
+  criticality_methodology_version: "1.0.0",
+  inherent_score: 70, inherent_band: "High", inherent_arithmetic_band: "High",
+  inherent_basis: { method: "vendor_inherent_v2", version: 1, methodology_version: "2.0.0", factors: [], adjustments: [] }, inherent_methodology_version: "2.0.0",
+  assessment_tier: "tier_1_critical", tier_calculated_minimum: "tier_1_critical",
+  tier_basis: { method: "vendor_assessment_tier_v1", methodology_version: "1.0.0", criticality_band: "Critical", inherent_band: "High", adjustments: [] }, tier_methodology_version: "1.0.0",
+  classification_intake_id: "intake-1", classification_computed_at: "2026-09-04T00:00:00Z",
 };
 
 describe("VendorRelationshipsCard", () => {
@@ -37,17 +50,6 @@ describe("VendorRelationshipsCard", () => {
     expect(screen.queryByText(/· 0\b/)).toBeNull();
   });
   it("shows criticality and inherent risk as peers with the joint tier, and the basis on demand", () => {
-    const classified: VendorRelationship = {
-      ...base, classification_state: "classified",
-      criticality_score: 90, criticality_band: "Critical", criticality_arithmetic_band: "Critical",
-      criticality_basis: { method: "vendor_criticality_v1", version: 1, methodology_version: "1.0.0", factors: [], adjustments: [{ rule_id: "CR2", explanation: "Enterprise-wide with under a week of tolerance." }] },
-      criticality_methodology_version: "1.0.0",
-      inherent_score: 70, inherent_band: "High", inherent_arithmetic_band: "High",
-      inherent_basis: { method: "vendor_inherent_v2", version: 1, methodology_version: "2.0.0", factors: [], adjustments: [] }, inherent_methodology_version: "2.0.0",
-      assessment_tier: "tier_1_critical", tier_calculated_minimum: "tier_1_critical",
-      tier_basis: { method: "vendor_assessment_tier_v1", methodology_version: "1.0.0", criticality_band: "Critical", inherent_band: "High", adjustments: [] }, tier_methodology_version: "1.0.0",
-      classification_intake_id: "intake-1", classification_computed_at: "2026-09-04T00:00:00Z",
-    };
     render(<VendorRelationshipsCard vendorId="v-1" relationships={[classified]} loadFailed={false} manualCriticality="high" />);
     // The label appears as the row's tier AND as an option in the policy
     // select, so assert presence, not uniqueness.
@@ -70,6 +72,44 @@ describe("VendorRelationshipsCard", () => {
     fireEvent.click(buttons[buttons.length - 1]!);
     await waitFor(() => expect(screen.getByText(TRANSPORT_FAILURE)).toBeTruthy());
     expect(screen.getByText("Intake required")).toBeTruthy();
+  });
+  it("WA-2: a RE-record asks what changed, and will not submit without it", async () => {
+    // The engine refuses a re-intake with `change_reason_required`. Before this
+    // arm existed the form had no field for it, so "Re-record intake" was a
+    // dead end: every submission came back 400 with nowhere to answer.
+    actions.recordRelationshipIntake.mockResolvedValue({ ok: true, relationship: classified });
+    render(<VendorRelationshipsCard vendorId="v-1" relationships={[classified]} loadFailed={false} manualCriticality={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Re-record intake" }));
+
+    const reason = screen.getByLabelText("What changed about this relationship?");
+    expect(reason).toBeTruthy();
+
+    // Every fact answered, reason still empty -> the button says what is missing.
+    // Address the intake selects by their own labels: the row also carries a
+    // policy-tier select, and changing that fires an unrelated action.
+    for (const f of [...DEPENDENCY_FIELDS, ...EXPOSURE_FIELDS]) {
+      const select = screen.getByLabelText(f.label) as HTMLSelectElement;
+      if (select.disabled) continue; // ai_autonomy is pinned by ai_involvement
+      fireEvent.change(select, { target: { value: f.options[0]!.value } });
+    }
+    expect(screen.getByRole("button", { name: "Say what changed to continue" })).toBeTruthy();
+
+    // A too-short reason is still refused, matching the engine's 10-char floor.
+    fireEvent.change(reason, { target: { value: "moved" } });
+    expect(screen.getByRole("button", { name: "Say what changed to continue" })).toBeTruthy();
+
+    fireEvent.change(reason, { target: { value: "Contract amended: no customer data is shared any more." } });
+    const submit = screen.getByRole("button", { name: "Record intake and classify" });
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(actions.recordRelationshipIntake).toHaveBeenCalled());
+    const sent = actions.recordRelationshipIntake.mock.calls[0]![2] as { change_reason?: string };
+    expect(sent.change_reason).toBe("Contract amended: no customer data is shared any more.");
+  });
+  it("does not ask a FIRST intake to explain itself — there is no prior state", () => {
+    render(<VendorRelationshipsCard vendorId="v-1" relationships={[base]} loadFailed={false} manualCriticality={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Record factual intake" }));
+    expect(screen.queryByLabelText("What changed about this relationship?")).toBeNull();
   });
   it("distinguishes a load failure from an empty list", () => {
     render(<VendorRelationshipsCard vendorId="v-1" relationships={[]} loadFailed={true} manualCriticality={null} />);

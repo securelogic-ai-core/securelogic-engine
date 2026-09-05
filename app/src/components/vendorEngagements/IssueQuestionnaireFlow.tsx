@@ -25,7 +25,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { VendorContact, VendorContactRole, VendorInviteDeliveryState } from "@/lib/api";
 import { VENDOR_CONTACT_ROLES } from "@/lib/api";
-import { addVendorContact } from "@/app/actions/vendorContacts";
+import { addVendorContact, editVendorContact } from "@/app/actions/vendorContacts";
 import { issueEngagement, reissueInvite, type IssueEngagementResult } from "@/app/actions/vendorEngagements";
 import { defaultInvitationMessage, portalInviteUrl } from "@/lib/vendorEngagements";
 
@@ -102,6 +102,15 @@ export default function IssueQuestionnaireFlow({
 
   // Add-contact form (the same directory the vendor page manages).
   const [adding, setAdding] = useState(active.length === 0 && !contactsLoadFailed);
+  /**
+   * WA-2 (owner ruling 1). This list shows only ACTIVE contacts, but the
+   * directory's unique index covers every row — so a deactivated person still
+   * owns their address while being invisible here. Adding them looked like the
+   * obvious move and was refused with a message about a contact that was
+   * nowhere on screen. The engine now names that row; this offers the one
+   * action that resolves it.
+   */
+  const [conflict, setConflict] = useState<{ id: string; status: "active" | "inactive"; name: string } | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [title, setTitle] = useState("");
@@ -117,6 +126,7 @@ export default function IssueQuestionnaireFlow({
 
   function addContact(): void {
     setError(null);
+    setConflict(null);
     start(async () => {
       let r: Awaited<ReturnType<typeof addVendorContact>>;
       try {
@@ -133,12 +143,48 @@ export default function IssueQuestionnaireFlow({
       }
       if (!r.ok) {
         setError(r.error);
+        // Only an INACTIVE clash has an action behind it; an active duplicate
+        // is already selectable in the list above.
+        setConflict(r.conflict && r.conflict.status === "inactive" ? r.conflict : null);
         return;
       }
       if (r.contact) {
         setContacts((cur) => [...cur, r.contact!]);
         setSelectedId(r.contact.id);
       }
+      setAdding(false);
+      setFullName("");
+      setEmail("");
+      setTitle("");
+      router.refresh();
+    });
+  }
+
+  /** Reactivate the invisible contact that refused the add, then select them. */
+  function reactivateConflict(): void {
+    if (!conflict) return;
+    const target = conflict;
+    setError(null);
+    start(async () => {
+      let r: Awaited<ReturnType<typeof editVendorContact>>;
+      try {
+        r = await editVendorContact(vendorId, target.id, { status: "active" });
+      } catch {
+        setError(TRANSPORT_FAILURE);
+        return;
+      }
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      // The reactivated row carries its OWN stored details — name, title, role,
+      // history — not the half-typed ones from the add form. Take the engine's
+      // record, never the draft.
+      if (r.contact) {
+        setContacts((cur) => [...cur.filter((c) => c.id !== r.contact!.id), r.contact!]);
+        setSelectedId(r.contact.id);
+      }
+      setConflict(null);
       setAdding(false);
       setFullName("");
       setEmail("");
@@ -279,6 +325,28 @@ export default function IssueQuestionnaireFlow({
                   </option>
                 ))}
               </select>
+              {/*
+                WA-2 (owner ruling 1): the add was refused by a contact this
+                list cannot show. Reactivating restores the person WITH their
+                history — never a delete-and-recreate, which would orphan the
+                invitations and answers already attached to them.
+              */}
+              {conflict && (
+                <div style={{ padding: 8, border: "1px dashed #a16207", borderRadius: 6, background: "rgba(161,98,7,0.12)" }}>
+                  <div style={{ fontSize: 12, color: "#fde68a" }}>
+                    {conflict.name} is already in {vendorName}&apos;s directory but marked
+                    inactive, so they are not listed above.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={reactivateConflict}
+                    disabled={pending}
+                    style={{ marginTop: 6, fontSize: 12, color: "#fde68a", background: "transparent", border: "1px solid #a16207", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
+                  >
+                    Reactivate {conflict.name} and select them
+                  </button>
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8 }}>
                 <button type="button" onClick={addContact} disabled={pending || !fullName.trim() || !emailValid} style={primary()}>
                   {pending ? "Saving…" : "Add contact"}

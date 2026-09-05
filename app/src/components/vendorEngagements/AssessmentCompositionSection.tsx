@@ -193,11 +193,70 @@ export default function AssessmentCompositionSection({
         </div>
       )}
 
-      {s.truncated && s.truncated.dropped > 0 && (
-        <p style={{ ...muted, marginTop: 10, color: "#fde68a" }}>
-          {s.truncated.dropped} lower-priority requirement{s.truncated.dropped === 1 ? "" : "s"} exceeded the tier&apos;s question target of{" "}
-          {s.truncated.cap} and {s.truncated.dropped === 1 ? "was" : "were"} left out; the core objectives and obligations are never dropped.
+      {/*
+        WA-2. What was NOT asked, and on what independent assurance. All three
+        of these were already carried by the snapshot and rendered nowhere:
+        an analyst could see the questions but not the coverage that removed
+        some of them, nor the requirements the rules or the tier cap left out.
+        A composition that only shows what it kept cannot be defended.
+      */}
+      {composition.coverage.computed && (
+        <p style={{ ...muted, marginTop: 10 }}>
+          Independent assurance coverage{" "}
+          <span style={{ color: "#6b7280" }}>
+            (as of {composition.coverage.as_of ?? "—"}
+            {composition.coverage.version && `, ${composition.coverage.version}`})
+          </span>
+          :{" "}
+          <span style={{ color: composition.coverage.covered_count > 0 ? "#86efac" : "#9ca3af" }}>
+            {composition.coverage.covered_count} covered
+          </span>
+          {" · "}
+          <span style={{ color: composition.coverage.gap_count > 0 ? "#fde68a" : "#9ca3af" }}>
+            {composition.coverage.gap_count} gap{composition.coverage.gap_count === 1 ? "" : "s"}
+          </span>
+          {!composition.coverage.applied && (
+            <span style={{ color: "#6b7280" }}>
+              {" "}
+              — computed but not applied to this composition.
+            </span>
+          )}
         </p>
+      )}
+
+      {s.excluded_by_rules > 0 && (
+        <p style={{ ...muted, marginTop: 6 }}>
+          {s.excluded_by_rules} requirement{s.excluded_by_rules === 1 ? "" : "s"} in the library
+          {s.excluded_by_rules === 1 ? " was" : " were"} excluded because no rule in this
+          scope-rule set includes {s.excluded_by_rules === 1 ? "it" : "them"} for this
+          relationship.
+        </p>
+      )}
+
+      {s.truncated && s.truncated.dropped > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <p style={{ ...muted, color: "#fde68a", margin: 0 }}>
+            {s.truncated.dropped} lower-priority requirement{s.truncated.dropped === 1 ? "" : "s"} exceeded the tier&apos;s question target of{" "}
+            {s.truncated.cap} and {s.truncated.dropped === 1 ? "was" : "were"} left out; the core objectives and obligations are never dropped.
+          </p>
+          {composition.dropped.length > 0 && (
+            <details style={{ marginTop: 4 }}>
+              <summary style={{ cursor: "pointer", fontSize: 12, color: "#9ca3af" }}>
+                Which ones
+              </summary>
+              <ul style={{ listStyle: "none", padding: "6px 0 0 12px", margin: 0, display: "grid", gap: 3 }}>
+                {composition.dropped.map((d) => (
+                  <li key={d.requirement_id} style={{ fontSize: 12, color: "#9ca3af" }}>
+                    <span style={{ color: "#d1d5db" }}>
+                      {d.reference} · {d.title}
+                    </span>{" "}
+                    <span style={{ color: "#6b7280" }}>({d.framework})</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       )}
     </section>
   );
