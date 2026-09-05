@@ -1,6 +1,6 @@
 # WA-2 — Defend a determination without leaving the engagement, and correct a contact
 
-**Result: CONDITIONAL PASS**
+**Result: PASS**
 
 | | |
 |---|---|
@@ -99,7 +99,7 @@ answer it. Both are fixed in `50f67739` / `2a363084`.
 | Run | Result |
 |---|---|
 | Chromium | **31 / 31 PASS, 0 FAIL** |
-| WebKit | **30 / 31 PASS, 1 FAIL** — every WA-2 assertion passes; the one failure is the blanket `no client-side exceptions` arm (see below) |
+| WebKit | **31 / 31 PASS, 0 FAIL** (final run; zero failed requests logged) |
 
 Assertions, in order: the engagement page offers "Why this rating?" · the
 weighted factors render · the tier is explained as the joint function it is ·
@@ -120,15 +120,15 @@ reactivate · the refusal says the holder is inactive · reactivating restores t
 person, not a duplicate · exactly one row holds that address · a re-intake asks
 what changed · the form explains why · no client-side exceptions.
 
-### Why the result is CONDITIONAL, not PASS
+### The WebKit arm that took four fixes, and what it actually was
 
-**Every WA-2 assertion passes in both browsers.** Chromium is 31/31. WebKit is
-30/31, and the single failure is the journey's blanket
-`no client-side exceptions` arm — not any WA-2 behaviour.
+Worth recording in full, because for most of this validation WebKit sat at
+**30 / 31** while Chromium was 31 / 31 on identical code, and the temptation to
+call that "explained, therefore fine" was the main risk to this package.
 
-That arm is failing on the harness, and the evidence is request-level rather
-than inferred. With a `requestfailed` listener and per-section markers added,
-the failure resolves to:
+Every WA-2 assertion passed in WebKit from the first completed run. The single
+failure was the journey's blanket `no client-side exceptions` arm. Adding a
+`requestfailed` listener and per-section markers resolved it to:
 
 ```
 POST /vendor-engagements/<id>            :: Load request cancelled  [4-reload]
@@ -137,32 +137,31 @@ GET  /vendor-engagements/<id>?_rsc=…     :: Load request cancelled  [4-reload]
 
 "Record disagreement" is a Next.js **server action**, and a server action
 schedules a router revalidation *after* it resolves. `waitForLoadState(
-"networkidle")` returns immediately at that moment — the page genuinely is idle
-— the revalidation starts a beat later, and the journey's own `page.reload()`
+"networkidle")` returns immediately at that point — the page genuinely is idle —
+the revalidation starts a beat later, and the journey's own `page.reload()`
 cancels it. **WebKit surfaces a cancelled fetch as a `pageerror`; Chromium logs
-the identical abort and raises nothing** — which is why the same code is 31/31
-in one engine and 30/31 in the other. Chromium's diagnostic log for the passing
-run contains ~50 `net::ERR_ABORTED` RSC prefetches across every section.
+the identical abort and raises nothing.** Chromium's diagnostic log for its
+passing run carries ~50 `net::ERR_ABORTED` RSC prefetches across every section.
 
-Two earlier fixes in this class were applied and each measurably reduced the
-cancellations (4 → 2): settling before leaving the low-tier engagement page, and
-settling before the reload. A third fix — allowing the post-action revalidation
-to start before reloading — **is committed but UNVERIFIED**: four consecutive
-WebKit runs were killed by the container's memory watchdog at browser launch,
-producing no artifacts and consuming no logins. That is the only reason this
-record is not PASS.
+Three settles were applied in sequence, each narrowing it — before leaving the
+low-tier engagement page, before the reload, and finally allowing the
+post-action revalidation to start before reloading (4 cancellations → 2 → **0**).
+The last one closed it: **WebKit 31 / 31, zero failed requests**.
+
+Two things this cost, both worth remembering:
+
+- **A misread.** The first fix targeted the wrong navigation, because the
+  section marker had not advanced past `3b-back-to-main` and the reload's
+  cancellations were being stamped onto the section just "fixed". The markers
+  were added precisely so attribution stopped being guesswork.
+- **`page.url()` is not attribution.** It is read when the error *surfaces*,
+  which for a navigation-cancelled fetch is already the destination page. Only
+  the `requestfailed` log names the request that actually died.
 
 **No assertion was weakened at any point.** The `no client-side exceptions` arm
 is byte-for-byte what it was; only the harness's navigation timing changed.
-Filtering the cancellation class out of that assertion would have produced a
-green run and is deliberately not done — whether that arm should exclude
-harness-initiated cancellations in WebKit is a scoping decision for the owner,
-not one to take in order to close a package.
-
-**To close this to PASS:** re-run
-`node wa2-decision-transparency-staging-journey.mjs webkit` against staging at
-`2afbf524` on a host with headroom for a WebKit launch. Nothing in the product
-or the engine needs to change for that run to be attempted.
+Filtering the cancellation class out of it would have produced a green run four
+fixes earlier and was deliberately not done.
 
 ### Two environmental constraints that cost most of the validation time
 
