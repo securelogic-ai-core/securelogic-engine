@@ -162,9 +162,21 @@ describe("VO-6 — factual intake produces the deterministic classification", ()
     expect(relRow.rows[0].inherent_basis).toEqual(JSON.parse(JSON.stringify(fresh.inherent.basis)));
     expect(relRow.rows[0].tier_basis).toEqual(JSON.parse(JSON.stringify(fresh.tier.basis)));
   });
-  it("a second intake is version 2, re-classifies, and provenance moves to it", async () => {
+  it("WA-2: a RE-intake will not be recorded without saying what changed", async () => {
+    // The first intake is a baseline and is exempt; this relationship already
+    // has one, so the reason is the price of re-deriving the classification.
     const res = await api(seed.orgA.apiKey).intake(vendorB, rel, OFFICE_CATERING);
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("change_reason_required");
+    const h = await api(seed.orgA.apiKey).history(vendorB, rel);
+    expect(h.body.count).toBe(1); // refused, not partially written
+  });
+  it("a second intake is version 2, re-classifies, and provenance moves to it", async () => {
+    const res = await api(seed.orgA.apiKey).intake(vendorB, rel, {
+      ...OFFICE_CATERING,
+      change_reason: "Contract renegotiated: the catering service no longer handles any customer data.",
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(res.body.intake.version).toBe(2);
     expect(res.body.relationship.assessment_tier).toBe("tier_4_low");
     expect(res.body.relationship.criticality_score).toBe(10);
@@ -173,6 +185,8 @@ describe("VO-6 — factual intake produces the deterministic classification", ()
     expect(h.body.count).toBe(2);
     expect(h.body.current_version).toBe(2);
     expect(h.body.intake[1].id).toBe(intakeV1); // v1 is still there, untouched
+    expect(h.body.intake[1].change_reason).toBeNull(); // the baseline explains nothing
+    expect(h.body.intake[0].change_reason).toContain("no longer handles any customer data");
   });
   it("APPEND-ONLY: the intake history cannot be rewritten or deleted (shared WORM guard)", async () => {
     await expect(pool.query(`UPDATE vendor_relationship_intake SET data_sensitivity = 'none' WHERE id = $1`, [intakeV1])).rejects.toThrow(/append-only/);
