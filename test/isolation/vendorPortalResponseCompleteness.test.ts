@@ -484,3 +484,47 @@ describe("WA-1 ruling 6 — portal authorization ends at analysis_complete, enga
     expect(payload!.portal_sessions_revoked).toBe(1);
   });
 });
+
+describe("WA-3 ruling 1 — the vendor is told WHY, never SecureLogic's rule id", () => {
+  /**
+   * A presentation-boundary change, so it is proven at the boundary: against a
+   * real scope item whose stored `si.reasons` carries a rule_id, the portal
+   * payload must contain the rationale and no internal identifier, and the
+   * stored provenance must be exactly as it was.
+   *
+   * Both halves matter. Dropping the fields from the RESPONSE rather than only
+   * from the markup is what stops a vendor reading them out of the network
+   * tab; keeping them in the ROW is what preserves composition determinism,
+   * analyst explainability and historical reconstruction.
+   */
+  it("serves the rationale, ships no rule_id, and leaves si.reasons untouched", async () => {
+    const f = await seedIssued(seed.orgA.id, "wa3-reasons");
+    const cookie = await sessionCookie(f.token);
+
+    const before = await pool.query<{ reasons: unknown }>(
+      `SELECT reasons FROM vendor_engagement_scope_items WHERE engagement_id = $1`,
+      [f.engagementId]
+    );
+    // The fixture stores a real rule id, so neither assertion below is vacuous.
+    expect(JSON.stringify(before.rows)).toContain("S1.baseline");
+
+    const res = await request(app).get("/api/vendor-portal/questions").set("Cookie", cookie);
+    expect(res.status).toBe(200);
+
+    const wire = JSON.stringify(res.body);
+    expect(wire).toContain("Baseline for this tier.");
+    expect(wire).not.toContain("S1.baseline");
+    expect(wire).not.toContain("rule_id");
+    expect(wire).not.toContain("rule_family");
+
+    const question = res.body.questions[0];
+    expect(question.why_we_are_asking).toEqual([{ rationale: "Baseline for this tier." }]);
+
+    // Reading the portal must not rewrite the provenance it read from.
+    const after = await pool.query<{ reasons: unknown }>(
+      `SELECT reasons FROM vendor_engagement_scope_items WHERE engagement_id = $1`,
+      [f.engagementId]
+    );
+    expect(after.rows).toEqual(before.rows);
+  });
+});

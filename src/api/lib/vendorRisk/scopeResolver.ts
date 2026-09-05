@@ -609,7 +609,7 @@ export const DOMAIN_ACTIVATION: readonly DomainActivationRule[] = [
     domain: "privacy",
     depth: "full",
     applies: ({ facts }) => factList(facts, "policy.privacy_obligations_active").length > 0,
-    rationale: "A privacy obligation (such as GDPR, CCPA or HIPAA) is active for your organisation.",
+    rationale: "A privacy obligation (such as GDPR, CCPA or HIPAA) is active for your organization.",
   },
   {
     rule_id: "S5.privacy.ai_prompts",
@@ -999,6 +999,12 @@ function resolveInternal(
       rule_id: "S4.assurance",
       rule_family: "S4",
       rationale:
+        // WA-3 ruling 4: this em-dash is NOT editable. `S4.assurance` is emitted
+        // by the 1.0.0 corpus and its exact text is frozen by the 21-case
+        // golden (fixtures/scopeResolver-1.0.0.golden.json), whose contract is
+        // that engagements stamped 1.0.0 re-resolve byte-identically. Rewording
+        // it would change what pre-Q2 customers were told, so it is reported
+        // for a separate owner ruling rather than cleaned up here.
         "Covered by an approved, in-validity independent assurance report — asked as a " +
         "confirmation rather than in full.",
       ...(s4Basis !== undefined ? { basis: s4Basis } : {}),

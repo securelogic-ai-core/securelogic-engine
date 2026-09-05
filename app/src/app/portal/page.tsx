@@ -72,7 +72,7 @@ export default function PortalOverviewPage() {
         <h2 className="text-base font-semibold text-slate-100">About this request</h2>
         <p className="mt-2 text-sm leading-6 text-slate-300">
           {engagement.organization_name} uses SecureLogic AI to run its vendor assurance
-          programme. As part of its due diligence, it has asked{" "}
+          program. As part of its due diligence, it has asked{" "}
           {engagement.vendor_name} to answer a set of security and compliance questions
           scoped to the service you provide. Each question explains why it applies to you.
         </p>

@@ -29,9 +29,9 @@ const base: VendorEngagementComposition = {
     framework_key: "securelogic-core-assurance",
     objectives: [
       {
-        reference: "CAS-06", title: "Access authorised on business need and least privilege", requirement_id: "r-6",
+        reference: "CAS-06", title: "Access authorized on business need and least privilege", requirement_id: "r-6",
         outcome: "asked", depth: "full", domain: "security", rule_id: "S1.core.cas_06",
-        rationale: "The vendor holds your information or reaches your systems, so how access to it is authorised is assessed.",
+        rationale: "The vendor holds your information or reaches your systems, so how access to it is authorized is assessed.",
         basis: { signals: { handles_data: true } }, evidence: null,
         reasons: [{ rule_id: "S1.core.cas_06", rule_family: "S1", rationale: "…" }],
       },
@@ -70,7 +70,7 @@ describe("AssessmentCompositionSection", () => {
     expect(screen.getByText(/Applicable domains:/).textContent).toContain("Security 15");
     expect(screen.getByText(/Applicable domains:/).textContent).toContain("Resilience 3");
     expect(screen.getByText(/14 of 3 apply/)).toBeTruthy();
-    expect(screen.getByText(/how access to it is authorised is assessed/)).toBeTruthy();
+    expect(screen.getByText(/how access to it is authorized is assessed/)).toBeTruthy();
     expect(screen.getAllByText("Not applicable", { selector: "span" }).length).toBeGreaterThan(1);
     expect(screen.getByText(/fourth-party management is not assessed/)).toBeTruthy();
     expect(screen.getAllByText("Satisfied by evidence").length).toBeGreaterThan(1);

@@ -7852,10 +7852,35 @@ export type VendorEngagementInviteSummary = {
   history_count: number;
 };
 
+/**
+ * WA-3 / R8-3 — whether this engagement still assesses against what the
+ * relationship determines TODAY. DERIVED by the engine on every read from the
+ * seventeen values that make up the relationship-derived basis; there is no
+ * stored flag. `indeterminate` means the relationship can no longer produce a
+ * determination at all (deactivated, or its intake withdrawn) — "we cannot
+ * tell" is deliberately not reported as "it changed".
+ */
+export type RelationshipBasisChange = {
+  field: string;
+  engagement_value: unknown;
+  relationship_value: unknown;
+};
+
+export type VendorEngagementRelationshipDetermination = {
+  stale: boolean;
+  indeterminate: boolean;
+  changed_fields: RelationshipBasisChange[];
+  /** False once the engagement is issued: the basis is history from then on. */
+  reseedable?: boolean;
+  reason?: string;
+};
+
 export type VendorEngagementDetailResponse = {
   engagement: VendorEngagementDetail;
   questionnaire: VendorEngagementQuestionnaire;
   relationship: VendorEngagementRelationshipContext | null;
+  /** Optional during rolling deploy: older engines omit it. */
+  relationship_determination?: VendorEngagementRelationshipDetermination | null;
   /** Optional during rolling deploy: older engines omit it. */
   invite?: VendorEngagementInviteSummary;
 };
@@ -7943,6 +7968,54 @@ export async function resolveVendorEngagementScope(
     };
   } catch {
     return { failure: { error: "scope_resolve_failed" } };
+  }
+}
+
+/**
+ * WA-3 / R8-1 — rebase a PRE-ISSUE engagement onto its relationship's current
+ * determination.
+ *
+ * Writes the copied basis and nothing else: it does NOT resolve scope, issue,
+ * or touch a response, evidence row or finding. The caller runs the ordinary
+ * composition afterwards and reviews the resulting question set before it
+ * becomes the operative scope. The engine refuses the call once the engagement
+ * is issued, and refuses it without a reason of at least ten characters.
+ */
+export async function reseedVendorEngagementFromRelationship(
+  token: string,
+  id: string,
+  reason: string
+): Promise<
+  VendorEngagementResult<{
+    reseed: {
+      id: string;
+      created_at: string;
+      changed_fields: RelationshipBasisChange[];
+      prior_basis: Record<string, unknown>;
+      new_basis: Record<string, unknown>;
+    };
+    next_step: { action: string; message: string };
+  }>
+> {
+  try {
+    const res = await engineFetch(
+      `/api/vendor-engagements/${encodeURIComponent(id)}/reseed-from-relationship`,
+      token,
+      { method: "POST", body: JSON.stringify({ reason }) }
+    );
+    if (!res.ok) return engagementFailureFrom(res, "reseed_failed");
+    return (await res.json()) as {
+      reseed: {
+        id: string;
+        created_at: string;
+        changed_fields: RelationshipBasisChange[];
+        prior_basis: Record<string, unknown>;
+        new_basis: Record<string, unknown>;
+      };
+      next_step: { action: string; message: string };
+    };
+  } catch {
+    return { failure: { error: "reseed_failed" } };
   }
 }
 

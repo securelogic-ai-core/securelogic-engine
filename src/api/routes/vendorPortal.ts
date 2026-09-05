@@ -39,6 +39,7 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 
 import { pg, pgElevated, withTenant } from "../infra/postgres.js";
+import { vendorFacingReasons } from "../lib/vendorPortal/vendorFacingReasons.js";
 import { logger } from "../infra/logger.js";
 import { writeAuditEvent } from "../lib/auditLog.js";
 import {
@@ -408,7 +409,15 @@ export async function getPortalQuestions(req: PortalRequest, res: Response): Pro
           mandatory: row.mandatory,
           // The justification for the question. A vendor being asked 200 controls
           // deserves to know why each one applies to them.
-          why_we_are_asking: row.reasons,
+          //
+          // WA-3 ruling 1: the RATIONALE only. `rule_id` / `rule_family` are
+          // SecureLogic's internal scope-rule identifiers — they are provenance,
+          // not an explanation, and a vendor reading "S1.core.cas_06" learns
+          // nothing. They stay on `si.reasons` and on the analyst-facing
+          // engagement read, which is where composition, audit and historical
+          // reconstruction consume them; they are simply not shipped to the
+          // vendor, so they cannot leak through the payload either.
+          why_we_are_asking: vendorFacingReasons(row.reasons),
           answer: row.status,
           notes: row.notes,
           // WA-1 completeness contract. `*_required` are NULL until the vendor

@@ -22,9 +22,16 @@ export type PortalEngagement = {
   accepting_responses: boolean;
 };
 
+/**
+ * WA-3 ruling 1: what the VENDOR is told about why a question is asked.
+ *
+ * SecureLogic's internal scope-rule identifiers (`rule_id`, `rule_family`)
+ * are provenance, not explanation — a vendor reading `S1.core.cas_06` learns
+ * nothing. They are still stored on `si.reasons` and still returned on the
+ * analyst-facing engagement read; the portal simply is not sent them, so they
+ * cannot be read out of the network response either.
+ */
 export type ScopeReason = {
-  rule_id: string;
-  rule_family: string;
   rationale: string;
 };
 
