@@ -248,11 +248,22 @@ async function main() {
   mark("4-analyst-composition");
   await page.goto(`${APP}/vendor-engagements/${s.issued.engagementId}`);
   await page.getByLabel("Relationship under assessment").waitFor({ timeout: 60_000 });
-  const analystDom = await page.content();
-  RULE_ID.test(analystDom)
-    ? ok("internal provenance INTACT: the analyst's composition still shows the rule ids")
-    : bad("the analyst surface lost its rule ids — ruling 1 removed too much");
   await shot(page, "02-analyst-composition");
+
+  // Internal provenance is an API fact, not a rendered one. The analyst's
+  // composition surface deliberately renders `rationale` only
+  // (AssessmentCompositionSection.tsx:187) and never printed a rule id, so
+  // asserting against the DOM here would fail for a reason that has nothing to
+  // do with ruling 1. What ruling 1 must not have broken is the ANALYST-FACING
+  // PAYLOAD, which is where composition, audit and reconstruction read it.
+  const analystComposition = await engine(`/api/vendor-engagements/${s.issued.engagementId}/composition`);
+  const analystRaw = JSON.stringify(analystComposition.body ?? {});
+  /"rule_id"/.test(analystRaw)
+    ? ok("internal provenance INTACT: the analyst composition payload still carries rule_id")
+    : bad("the analyst composition payload lost rule_id — ruling 1 removed too much");
+  RULE_ID.test(analystRaw)
+    ? ok(`internal provenance INTACT: a real rule id value survives (${(analystRaw.match(RULE_ID) ?? [])[0]})`)
+    : bad("no rule-id VALUE in the analyst composition payload");
 
   /* ── 3. R8-3 — the staleness notice, and R8 refusal on an ISSUED one ───── */
   const issuedNotice = page.getByLabel("Relationship determination has changed");
@@ -294,8 +305,15 @@ async function main() {
     ? ok("R8-1: the control is disabled until a reason is given")
     : bad("the rebase control is enabled with no reason — the 10-char floor is not enforced in the UI");
 
+  // The composition is content-addressed. Its `hash` is a far stronger
+  // before/after than any count: if the reseed had re-run it, a new snapshot
+  // row with a different hash would exist.
   const scopeBefore = await engine(`/api/vendor-engagements/${s.draft.engagementId}/composition`);
-  const askedBefore = scopeBefore.body?.snapshot?.asked_count ?? scopeBefore.body?.asked_count ?? null;
+  const hashBefore = scopeBefore.body?.composition?.hash ?? null;
+  const historyBefore = scopeBefore.body?.history_count ?? null;
+  hashBefore
+    ? ok(`R8-1: composition hash captured before the rebase (${String(hashBefore).slice(0, 12)}…)`)
+    : bad("could not read the composition hash — the not-recomposed arm would be VACUOUS");
 
   await page.getByLabel(/Why are you rebasing/i).fill(`Rebased during the WA-3 journey ${STAMP}.`);
   await rebase.click();
@@ -306,6 +324,16 @@ async function main() {
     : bad("no next-step guidance after the rebase", String(nextStep).slice(0, 200));
   await shot(page, "05-reseed-done");
 
+  // SETTLE before moving on. The rebase is a Next.js SERVER ACTION and the
+  // component calls router.refresh() once it resolves, which starts a
+  // revalidation POST a beat LATER — `networkidle` returns immediately because
+  // the page genuinely IS idle at that instant. Navigating now cancels that
+  // POST, and a cancelled mutation is indistinguishable in the log from a
+  // mutation that failed. Settling removes the cause; the assertion below then
+  // stays strict about aborted POSTs. (Same shape as the WA-2 reload race.)
+  await page.waitForTimeout(3_000);
+  await page.waitForLoadState("networkidle").catch(() => {});
+
   // The basis moved...
   const after = await engine(`/api/vendor-engagements/${s.draft.engagementId}`);
   after.body?.engagement?.assessment_tier && after.body.engagement.assessment_tier !== "tier_1_critical"
@@ -313,10 +341,14 @@ async function main() {
     : bad("the engagement's tier did not move", JSON.stringify(after.body?.engagement?.assessment_tier));
   // ...and the composition did NOT re-run underneath the analyst.
   const scopeAfter = await engine(`/api/vendor-engagements/${s.draft.engagementId}/composition`);
-  const askedAfter = scopeAfter.body?.snapshot?.asked_count ?? scopeAfter.body?.asked_count ?? null;
-  askedBefore !== null && askedBefore === askedAfter
-    ? ok(`R8-1: the composition was NOT re-run (${askedBefore} asked, unchanged)`)
-    : bad("the composition changed as a side effect of the reseed", `${askedBefore} -> ${askedAfter}`);
+  const hashAfter = scopeAfter.body?.composition?.hash ?? null;
+  const historyAfter = scopeAfter.body?.history_count ?? null;
+  hashBefore && hashAfter && hashBefore === hashAfter
+    ? ok("R8-1: the composition was NOT re-run — its content hash is unchanged")
+    : bad("the composition changed as a side effect of the reseed", `${hashBefore} -> ${hashAfter}`);
+  historyBefore !== null && historyBefore === historyAfter
+    ? ok(`R8-1: no new composition snapshot was written (history ${historyBefore}, unchanged)`)
+    : bad("a new composition snapshot appeared", `${historyBefore} -> ${historyAfter}`);
 
   // R8-2: the provenance envelope exists and carries the reason.
   const det = after.body?.relationship_determination;
@@ -344,9 +376,34 @@ async function main() {
   pageErrors.length === 0
     ? ok("no client-side exceptions across the journey")
     : bad(`${pageErrors.length} client-side exception(s)`, pageErrors.slice(0, 5).join(" | "));
-  failedRequests.length === 0
-    ? ok("no failed requests")
-    : bad(`${failedRequests.length} failed request(s)`, failedRequests.slice(0, 5).join(" | "));
+  // A request the BROWSER cancelled because the harness navigated away is not a
+  // product failure: Next.js fires RSC prefetches (`?_rsc=`) on hover and
+  // navigation, and Chromium logged ~50 of these in WA-2's PASSING run. They are
+  // counted and reported, never silently dropped.
+  //
+  // Everything else still fails the run — a refused connection, a DNS failure, a
+  // CORS rejection, a timeout. Scoping the assertion to what it can actually
+  // detect is not the same as weakening it, and the client-side EXCEPTION
+  // assertion above stays strict and unfiltered.
+  const ABORTED = /net::ERR_ABORTED|NS_BINDING_ABORTED|Load request cancelled|net::ERR_FAILED, aborted/i;
+  const abortedRequests = failedRequests.filter((r) => ABORTED.test(r));
+  const realFailures = failedRequests.filter((r) => !ABORTED.test(r));
+  fs.writeFileSync(
+    `${OUT}/${STAMP}-wa3-${BROWSER}-failed-requests.txt`,
+    failedRequests.join("\n") + "\n"
+  );
+  realFailures.length === 0
+    ? ok(`no failed requests other than ${abortedRequests.length} navigation-cancelled prefetch(es)`)
+    : bad(`${realFailures.length} genuinely failed request(s)`, realFailures.slice(0, 5).join(" | "));
+
+  // A cancelled GET prefetch is browser housekeeping. A cancelled POST is a
+  // mutation or a revalidation that did not finish, and in a log it looks
+  // exactly like one that failed — so it is asserted separately rather than
+  // absorbed into the tolerated class.
+  const abortedPosts = abortedRequests.filter((r) => r.startsWith("POST "));
+  abortedPosts.length === 0
+    ? ok("no aborted POST: every mutation and revalidation ran to completion")
+    : bad(`${abortedPosts.length} aborted POST(s)`, abortedPosts.join(" | "));
 
   await browser.close();
 
