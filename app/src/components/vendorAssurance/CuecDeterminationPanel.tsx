@@ -107,7 +107,7 @@ export default function CuecDeterminationPanel({
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BORDER}` }}>
       <div style={{ fontSize: 11, color: MUTED, marginBottom: 6 }}>
-        Does this apply to your organisation, and do you meet it?
+        Does this apply to your organization, and do you meet it?
       </div>
 
       {/* ── recorded determination ─────────────────────────────────────── */}

@@ -37,6 +37,16 @@ const QUESTIONS = [
     guidance: "Describe how access recertification is done.",
     depth: "full",
     mandatory: true,
+    // WA-3 ruling 1: the portal payload carries the RATIONALE only — the engine
+    // projects `si.reasons` through vendorFacingReasons() and never ships
+    // `rule_id` / `rule_family`.
+    //
+    // This fixture deliberately still CARRIES them. The app and the engine
+    // deploy as separate services, so during a rolling deploy the portal can be
+    // served a payload from an engine that has not yet been updated. The page
+    // must refuse to render an internal identifier it is handed, not merely
+    // decline to ask for one — and a fixture without them would let the old
+    // badge markup pass this test vacuously.
     why_we_are_asking: [
       {
         rule_id: "S2-access-control",
@@ -149,6 +159,28 @@ describe("portal questionnaire", () => {
     expect(inPlaceButtons[1]).toHaveAttribute("aria-pressed", "true");
     // 1 of 2 answered.
     expect(screen.getByText("1 of 2 answered")).toBeInTheDocument();
+  });
+
+  it("WA-3 ruling 1: shows the reason and NOT SecureLogic's internal rule id", async () => {
+    // The badge that used to sit beside every rationale printed `rule_id`
+    // verbatim — provenance, not an explanation. A vendor reading
+    // "S2-access-control" learns nothing, so it is gone from the payload and
+    // from the markup. The sentence it accompanied stays.
+    //
+    // The fixture above still carries `rule_id`/`rule_family` on purpose, so
+    // this arm fails against the pre-WA-3 page (which rendered the badge) and
+    // is not satisfied merely by the engine no longer sending them.
+    stubPortalFetch();
+    renderQuestionnaire();
+
+    expect(
+      await screen.findByText(/processes customer PII, so access-control requirements apply/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Why we're asking/i)).toBeInTheDocument();
+    // Asserted against the whole rendered document, so a rule id cannot survive
+    // anywhere on the page — badge, tooltip, title attribute or otherwise.
+    expect(document.body.textContent).not.toMatch(/S2-access-control/);
+    expect(document.body.innerHTML).not.toMatch(/rule_id|rule_family/);
   });
 
   it("saves an answer with the engine's exact vocabulary value", async () => {

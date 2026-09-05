@@ -183,12 +183,9 @@ function WhyWeAreAsking({ reasons }: { reasons: ScopeReason[] | null }) {
       <summary className="cursor-pointer text-xs font-medium text-slate-400 hover:text-slate-200">
         Why we&apos;re asking
       </summary>
-      <ul className="mt-2 space-y-1.5">
+      <ul className="mt-2 list-disc space-y-1.5 pl-4">
         {reasons.map((r, i) => (
-          <li key={`${r.rule_id}-${i}`} className="text-xs leading-5 text-slate-300">
-            <span className="mr-2 inline-block rounded border border-brand-line px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
-              {r.rule_id}
-            </span>
+          <li key={`${r.rationale}-${i}`} className="text-xs leading-5 text-slate-300">
             {r.rationale}
           </li>
         ))}

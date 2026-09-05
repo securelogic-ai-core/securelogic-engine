@@ -29,6 +29,7 @@ import {
   reviewVendorEngagementEvidence,
   promoteVendorEngagementFindings,
   raiseApplicabilityChallenge,
+  reseedVendorEngagementFromRelationship,
   postVendorEngagementComment,
   beginVendorEngagementReview,
   completeVendorEngagementAnalysis,
@@ -356,4 +357,44 @@ export async function raiseChallenge(
   }
   revalidateEngagement(id);
   return { ok: true, resolution: result.resolution };
+}
+
+/**
+ * WA-3 / R8-1 — rebase a pre-issue engagement onto its relationship's current
+ * determination.
+ *
+ * Returns the changed fields so the analyst sees WHAT moved, and the engine's
+ * own next-step sentence rather than a copy of it here: the reseed deliberately
+ * does not recompose, and the engine is the one place that says so.
+ */
+export async function reseedFromRelationship(
+  id: string,
+  reason: string
+): Promise<
+  | { ok: true; changed: { field: string; from: unknown; to: unknown }[]; nextStep: string }
+  | { ok: false; error: string }
+> {
+  const token = await sessionToken();
+  if (!token) return { ok: false, error: "Not authenticated" };
+  const result = await reseedVendorEngagementFromRelationship(token, id, reason);
+  if ("failure" in result) {
+    return {
+      ok: false,
+      error:
+        result.failure.message ??
+        (result.failure.error === "transport"
+          ? "The request did not reach SecureLogic, so nothing was changed."
+          : `That didn't work (${result.failure.error}).`),
+    };
+  }
+  revalidateEngagement(id);
+  return {
+    ok: true,
+    changed: result.reseed.changed_fields.map((c) => ({
+      field: c.field,
+      from: c.engagement_value,
+      to: c.relationship_value,
+    })),
+    nextStep: result.next_step.message,
+  };
 }

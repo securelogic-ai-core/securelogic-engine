@@ -89,7 +89,9 @@ describe("the set", () => {
       Array.from({ length: 16 }, (_, i) => `CAS-${String(i + 1).padStart(2, "0")}`)
     );
     const titles = CORE_ASSURANCE_OBJECTIVES.map((o) => o.title.toLowerCase());
-    expect(titles[0]).toContain("information-security programme");
+    // WA-3 ruling 3: "programme" -> "program". SecureLogic-authored prose is
+    // US English; official external framework names are not touched.
+    expect(titles[0]).toContain("information-security program");
     expect(titles[2]).toContain("screening");
     expect(titles[10]).toContain("subcontractors");
     expect(titles[15]).toContain("obligations");

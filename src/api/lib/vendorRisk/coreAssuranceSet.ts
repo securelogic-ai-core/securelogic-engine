@@ -183,9 +183,16 @@ export type CoreAssuranceObjective = {
   readonly signals: readonly (keyof ExposureSignals)[];
   /** Deterministic applicability over the derived signals. */
   readonly applies: (s: ExposureSignals) => boolean;
-  /** Customer-facing: why it applies. */
+  /**
+   * Shown to the VENDOR. This text is carried by `decideCoreApplicability`
+   * into a scope item's `reasons`, and the portal renders it as "why we're
+   * asking" (scopeResolver.ts -> si.reasons -> getPortalQuestions). It is
+   * therefore written about the customer in the third person: a second-person
+   * "your systems" reads to the vendor as the VENDOR's systems, which is the
+   * misdirected-subject defect WA-3 ruling 2 corrects.
+   */
   readonly applicable_rationale: string;
-  /** Customer-facing: why it does not apply. */
+  /** Shown to the vendor. Same audience rule as `applicable_rationale`. */
   readonly not_applicable_rationale: string;
 };
 
@@ -194,9 +201,9 @@ const SIG = (...keys: (keyof ExposureSignals)[]) => keys;
 export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
   {
     reference: "CAS-01",
-    title: "A documented information-security programme appropriate to the service and its risk",
+    title: "A documented information-security program appropriate to the service and its risk",
     description:
-      "The vendor maintains a written information-security programme — policies, standards and a governance cadence — proportionate to the service it provides and the information it handles. A current security policy set with an owner, a review date and evidence that it is communicated to staff would satisfy this.",
+      "The vendor maintains a written information-security program covering policies, standards and a governance cadence, proportionate to the service it provides and the information it handles. A current security policy set with an owner, a review date and evidence that it is communicated to staff would satisfy this.",
     tags: ["core"],
     domain: "security",
     why: "The baseline governance objective; security domain by definition.",
@@ -204,9 +211,9 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
     signals: SIG("any_exposure"),
     applies: (s) => s.any_exposure,
     applicable_rationale:
-      "The relationship involves your data, access to your systems, an operational dependency or AI, so the vendor's security programme is assessed.",
+      "The relationship involves customer data, access to customer systems, an operational dependency or AI, so the vendor's security program is assessed.",
     not_applicable_rationale:
-      "The relationship involves no customer or sensitive information, no access to your systems, no operational dependency and no AI, so a security programme is not assessed for it.",
+      "The relationship involves no customer or sensitive information, no access to your systems, no operational dependency and no AI, so a security program is not assessed for it.",
   },
   {
     reference: "CAS-02",
@@ -274,7 +281,7 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
   },
   {
     reference: "CAS-06",
-    title: "Access authorised on business need and least privilege",
+    title: "Access authorized on business need and least privilege",
     description:
       "Access to customer information and to the systems that provide the service is granted only on documented business need, at the least privilege required, and reviewed periodically. An access-request procedure with approval records and evidence of periodic access reviews would satisfy this.",
     tags: ["core", "access-control", "iam"],
@@ -284,9 +291,9 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
     signals: SIG("handles_data", "system_access"),
     applies: (s) => s.handles_data || s.system_access,
     applicable_rationale:
-      "The vendor holds your information or reaches your systems, so how access to it is authorised is assessed.",
+      "The vendor holds your information or reaches your systems, so how access to it is authorized is assessed.",
     not_applicable_rationale:
-      "The vendor holds none of your information and reaches none of your systems, so access authorisation is not assessed.",
+      "The vendor holds none of your information and reaches none of your systems, so access authorization is not assessed.",
   },
   {
     reference: "CAS-07",
@@ -332,9 +339,9 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
     signals: SIG("handles_data", "system_access", "operational_dependency"),
     applies: (s) => s.handles_data || s.system_access || s.operational_dependency,
     applicable_rationale:
-      "You would need to know about an incident affecting your information, systems or a service you depend on, so the vendor's notification commitment is assessed.",
+      "The customer would need to know about an incident affecting customer information, systems or a service the customer depends on, so the vendor's notification commitment is assessed.",
     not_applicable_rationale:
-      "No incident at the vendor would affect your information, systems or a service you depend on, so customer notification is not assessed.",
+      "No incident at the vendor would affect customer information, systems or a service the customer depends on, so customer notification is not assessed.",
   },
   {
     reference: "CAS-10",
@@ -348,9 +355,9 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
     signals: SIG("operational_dependency"),
     applies: (s) => s.operational_dependency,
     applicable_rationale:
-      "Your operations depend on this service, so the vendor's ability to continue or recover it is assessed.",
+      "Customer operations depend on this service, so the vendor's ability to continue or recover it is assessed.",
     not_applicable_rationale:
-      "Your operations do not materially depend on this service, so continuity and recovery are not assessed.",
+      "Customer operations do not materially depend on this service, so continuity and recovery are not assessed.",
   },
   {
     reference: "CAS-11",
@@ -436,7 +443,7 @@ export const CORE_ASSURANCE_OBJECTIVES: readonly CoreAssuranceObjective[] = [
     reference: "CAS-16",
     title: "Processes for applicable legal, regulatory, contractual and privacy obligations",
     description:
-      "The vendor identifies and meets the legal, regulatory, contractual and privacy obligations that apply to the service. A register of applicable obligations, an owner for compliance and evidence of how obligations are met (for example, a privacy programme or regulatory attestations) would satisfy this.",
+      "The vendor identifies and meets the legal, regulatory, contractual and privacy obligations that apply to the service. A register of applicable obligations, an owner for compliance and evidence of how obligations are met (for example, a privacy program or regulatory attestations) would satisfy this.",
     tags: ["core", "privacy"],
     domain: "privacy",
     why: "Obligation-management objective; asked under privacy because privacy and regulatory duties are what trigger it.",

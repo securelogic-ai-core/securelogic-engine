@@ -28,6 +28,7 @@ import {
 import EngagementActionPanel from "@/components/vendorEngagements/EngagementActionPanel";
 import AssessmentCompositionSection from "@/components/vendorEngagements/AssessmentCompositionSection";
 import EngagementRelationshipContext from "@/components/vendorEngagements/EngagementRelationshipContext";
+import RelationshipDeterminationNotice from "@/components/vendorEngagements/RelationshipDeterminationNotice";
 import EvidenceSection from "@/components/vendorEngagements/EvidenceSection";
 import ResponsesSection from "@/components/vendorEngagements/ResponsesSection";
 import CommentsSection from "@/components/vendorEngagements/CommentsSection";
@@ -204,6 +205,16 @@ export default async function VendorEngagementPage({
           relationship={rel}
           methodologyVersion={e.methodology_version}
           domains={q.domains}
+        />
+
+        {/* WA-3 / R8: the relationship has been re-assessed since this
+            engagement was opened. Says so, shows exactly which of the
+            seventeen basis fields moved, and — pre-issue only — offers the
+            explicit rebase. Never recomposes: that stays the analyst's next,
+            separate act. */}
+        <RelationshipDeterminationNotice
+          engagementId={e.id}
+          determination={detail.relationship_determination}
         />
 
         <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap", alignItems: "flex-end" }}>

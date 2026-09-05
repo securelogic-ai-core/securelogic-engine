@@ -113,6 +113,12 @@ import {
 } from "../lib/vendorRisk/engagementStateMachine.js";
 import { METHODOLOGY_VERSION, SCOPE_RULE_VERSION, INHERENT_METHODOLOGY_VERSION_V2 } from "../lib/vendorRisk/methodologyVersion.js";
 import { v1FactsFromRelationship } from "../lib/vendorRisk/relationshipEngagementBridge.js";
+import {
+  basisFromEngagementRow,
+  basisFromSeed,
+  compareRelationshipBasis,
+  type EngagementBasisRow,
+} from "../lib/vendorRisk/relationshipBasis.js";
 import type { RelationshipIntakeFacts } from "../lib/vendorRisk/relationshipClassification.js";
 import { promoteFindings, type PromotableControl } from "../lib/vendorRisk/findingPromotion.js";
 import { resolveVendorContact, type VendorContactRow } from "./vendorContacts.js";
@@ -708,6 +714,46 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
       relationship = rel.rows[0] ?? null;
     }
 
+    // R8-3 — is this engagement still assessing against what the relationship
+    // determines TODAY? DERIVED on every read, never a stored flag: a cached
+    // boolean would be a copy of a comparison between two rows that both
+    // already exist, and it would go stale itself the moment either side moved.
+    //
+    // Seventeen values participate — the thirteen v1 facts the resolver reads
+    // plus the four determination outputs (see relationshipBasis.ts, which owns
+    // the list and documents the two copied-but-excluded fields). Nothing about
+    // the relationship's NAME, description, primary flag, status, policy
+    // minimum or timestamps is compared: renaming a service must never make an
+    // assessment look stale.
+    //
+    // A relationship that can no longer produce a determination (deactivated,
+    // or its intake withdrawn) is reported as indeterminate rather than stale —
+    // "we cannot tell" is not "it changed".
+    let relationshipDetermination: Record<string, unknown> | null = null;
+    if (relationshipId) {
+      const e = result.rows[0] as unknown as EngagementBasisRow;
+      const vendorIdForSeed = (result.rows[0] as { vendor_id?: string }).vendor_id ?? "";
+      const seeded = await seedFromRelationship(organizationId, vendorIdForSeed, relationshipId);
+      if (!seeded.ok) {
+        relationshipDetermination = {
+          stale: false,
+          indeterminate: true,
+          reason: seeded.error,
+          changed_fields: [],
+        };
+      } else {
+        const changes = compareRelationshipBasis(basisFromEngagementRow(e), basisFromSeed(seeded.seed));
+        relationshipDetermination = {
+          stale: changes.length > 0,
+          indeterminate: false,
+          changed_fields: changes,
+          // Whether the analyst may act on it here, or must open a new
+          // engagement. The UI needs both facts to say anything useful.
+          reseedable: isScopeMutable(result.rows[0]!.status as EngagementState),
+        };
+      }
+    }
+
     // Goal §B: whether and how the invitation was delivered, and whether the
     // vendor ever opened it. Metadata only — token material never leaves the
     // invites table.
@@ -716,6 +762,7 @@ export async function getEngagement(req: Request, res: Response): Promise<void> 
     res.status(200).json({
       engagement: result.rows[0],
       relationship,
+      relationship_determination: relationshipDetermination,
       invite,
       questionnaire: {
         scoped: Number(scope.rows[0]?.n ?? "0"),
@@ -832,6 +879,253 @@ export async function overrideInherent(req: Request, res: Response): Promise<voi
   } catch (err) {
     logger.error({ event: "vendor_inherent_override_failed", organizationId, err }, "Inherent override failed");
     res.status(500).json({ error: "override_failed" });
+  }
+}
+
+/* =========================================================
+   POST /api/vendor-engagements/:id/reseed-from-relationship — WA-3 / R8-1.
+
+   An engagement copies its relationship's determination basis at creation and
+   then holds it. That is what makes a completed assessment reproducible: the
+   questions a vendor answered were chosen from the facts as they stood, and a
+   later re-intake must not reach back and restate them.
+
+   The cost of that immutability is a DRAFT engagement whose facts have gone out
+   of date, with no way to bring them forward except deleting it and starting
+   again. R8 rules that a not-yet-issued engagement MAY be explicitly rebased
+   onto the relationship's current determination, with provenance.
+
+   Three properties this route holds to:
+
+     - PRE-ISSUE ONLY. `isScopeMutable` (draft / scoping / scoped) is the same
+       gate `POST /scope` and the inherent override use. Past issue the answer
+       is a refusal that says what to do instead — open a new engagement — not
+       a silent rewrite. `SCOPE_MUTABLE_STATES` and `PORTAL_WRITABLE_STATES`
+       are disjoint, so there is no state in which a reseed can run while vendor
+       responses exist.
+
+     - BASIS ONLY, AND IT DOES NOT ADVANCE ANYTHING. This writes the copied
+       determination columns and nothing else. It does not resolve scope, issue,
+       or touch a scope item, response, evidence row, finding or remediation.
+       The analyst runs the ordinary composition step afterwards and sees the
+       resulting question set BEFORE it becomes the operative scope.
+
+     - IT REFUSES A NO-OP. If all seventeen compared values already match, there
+       is nothing to record and no reason to ask for a reason.
+   ========================================================= */
+export async function reseedFromRelationship(req: Request, res: Response): Promise<void> {
+  const organizationId = orgOf(req);
+  if (!organizationId) {
+    res.status(403).json({ error: "organization_context_missing" });
+    return;
+  }
+  const id = String(req.params["id"] ?? "");
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+
+  // Same bar as the inherent override and the WA-2 challenge.
+  if (reason.length < 10) {
+    res.status(400).json({
+      error: "reason_required",
+      message:
+        "Explain why this engagement should be rebased onto the relationship's current facts. " +
+        "This is recorded against the engagement and cannot be edited afterwards.",
+    });
+    return;
+  }
+
+  // A reseed names a HUMAN, exactly as an applicability challenge does. An
+  // API-key integration silently rebasing an assessment's determination and
+  // leaving an anonymous row behind is the thing the 20261071 posture exists to
+  // prevent — applied at birth rather than retrofitted.
+  const actor = userOf(req);
+  if (!actor) {
+    res.status(403).json({
+      error: "human_actor_required",
+      message:
+        "A reseed is recorded against the person who decided it, so it cannot be performed with an API key alone.",
+    });
+    return;
+  }
+
+  const client = await pg.connect();
+  try {
+    await client.query("BEGIN");
+
+    // FOR UPDATE: two concurrent reseeds must serialize, or both would read the
+    // same prior basis and write two provenance rows claiming the same origin.
+    const current = await client.query<
+      EngagementBasisRow & { status: string; vendor_id: string; relationship_id: string | null }
+    >(
+      `SELECT status, vendor_id, relationship_id,
+              data_sensitivity, data_volume_band, access_level, operational_dependency,
+              recoverability, business_criticality, regulatory_exposure,
+              regulatory_breach_notification, ai_involvement, ai_autonomy, hosting_model,
+              fourth_party_exposure, concentration_snapshot,
+              assessment_tier, inherent_score, inherent_rating, inherent_arithmetic_rating
+         FROM vendor_engagements
+        WHERE id = $1 AND organization_id = $2
+        FOR UPDATE`,
+      [id, organizationId]
+    );
+    if (current.rowCount === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "engagement_not_found" });
+      return;
+    }
+    const row = current.rows[0]!;
+    const state = row.status as EngagementState;
+
+    if (!row.relationship_id) {
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "engagement_not_relationship_derived",
+        message:
+          "This engagement was opened from a direct intake rather than a relationship, so there is no relationship determination to rebase onto.",
+      });
+      return;
+    }
+
+    if (!isScopeMutable(state)) {
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "engagement_basis_locked",
+        status: state,
+        message:
+          "This engagement has already been issued, so its determination basis is history: the questions the vendor was asked were chosen from these facts. " +
+          "Rebasing it now would restate an assessment that is already under way. Record the new facts on the relationship and open a new engagement to assess against them.",
+      });
+      return;
+    }
+
+    const seeded = await seedFromRelationship(organizationId, row.vendor_id, row.relationship_id);
+    if (!seeded.ok) {
+      await client.query("ROLLBACK");
+      res
+        .status(seeded.status)
+        .json(seeded.message ? { error: seeded.error, message: seeded.message } : { error: seeded.error });
+      return;
+    }
+
+    const priorBasis = basisFromEngagementRow(row);
+    const newBasis = basisFromSeed(seeded.seed);
+    const changes = compareRelationshipBasis(priorBasis, newBasis);
+
+    if (changes.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(409).json({
+        error: "basis_current",
+        message:
+          "This engagement already reflects the relationship's current determination. Nothing was changed and nothing was recorded.",
+      });
+      return;
+    }
+
+    // The copied basis, and ONLY the copied basis. `inherent_basis` rides along
+    // because it is the explainability envelope FOR the score being written —
+    // leaving the old one beside a new score would be worse than either.
+    await client.query(
+      `UPDATE vendor_engagements
+          SET data_sensitivity = $3, data_volume_band = $4, access_level = $5,
+              operational_dependency = $6, recoverability = $7, business_criticality = $8,
+              regulatory_exposure = $9, regulatory_breach_notification = $10,
+              ai_involvement = $11, ai_autonomy = $12, hosting_model = $13,
+              fourth_party_exposure = $14, concentration_snapshot = $15,
+              concentration_snapshot_at = NOW(),
+              assessment_tier = $16, inherent_score = $17, inherent_rating = $18,
+              inherent_arithmetic_rating = $19, inherent_basis = $20::jsonb,
+              updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2`,
+      [
+        id,
+        organizationId,
+        newBasis.data_sensitivity,
+        newBasis.data_volume,
+        newBasis.access_level,
+        newBasis.operational_dependency,
+        newBasis.recoverability,
+        newBasis.business_criticality,
+        newBasis.regulatory_exposure,
+        newBasis.regulatory_breach_notification,
+        newBasis.ai_involvement,
+        newBasis.ai_autonomy,
+        newBasis.hosting_model,
+        newBasis.fourth_party_exposure,
+        newBasis.concentration,
+        newBasis.assessment_tier,
+        newBasis.inherent_score,
+        newBasis.inherent_rating,
+        newBasis.inherent_arithmetic_rating,
+        JSON.stringify(seeded.seed.inherent.basis ?? null),
+      ]
+    );
+
+    const provenance = await client.query<{ id: string; created_at: string }>(
+      `INSERT INTO vendor_engagement_relationship_reseeds
+         (organization_id, engagement_id, relationship_id, prior_basis, new_basis,
+          changed_fields, reason, reseeded_by_user_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::text[], $7, $8)
+       RETURNING id, created_at`,
+      [
+        organizationId,
+        id,
+        row.relationship_id,
+        JSON.stringify(priorBasis),
+        JSON.stringify(newBasis),
+        changes.map((c) => c.field),
+        reason,
+        actor,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    writeAuditEvent({
+      organizationId,
+      actorUserId: userOf(req),
+      eventType: "vendor_engagement.relationship_basis_reseeded",
+      resourceType: "vendor_engagement",
+      resourceId: id,
+      payload: {
+        relationship_id: row.relationship_id,
+        changed_fields: changes.map((c) => c.field),
+        tier_from: priorBasis.assessment_tier,
+        tier_to: newBasis.assessment_tier,
+        reason,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    res.status(200).json({
+      reseed: {
+        id: provenance.rows[0]!.id,
+        created_at: provenance.rows[0]!.created_at,
+        changed_fields: changes,
+        prior_basis: priorBasis,
+        new_basis: newBasis,
+      },
+      // The composition is deliberately NOT run here. Saying so is part of the
+      // affordance: the analyst decides when to recompose and sees the result
+      // before it replaces the current scope.
+      next_step: {
+        action: "resolve_scope",
+        message:
+          "The engagement now assesses against the relationship's current facts. Run the composition to see the question set these facts produce before it replaces the current scope.",
+      },
+    });
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ignore rollback failure
+    }
+    logger.error(
+      { event: "vendor_engagement_reseed_failed", organizationId, engagementId: id, err },
+      "Engagement reseed failed"
+    );
+    res.status(500).json({ error: "engagement_reseed_failed" });
+  } finally {
+    client.release();
   }
 }
 
@@ -3359,6 +3653,11 @@ export async function getAssuranceCoverage(req: Request, res: Response): Promise
 router.get("/vendor-engagements/:id", ...chain, asTenant(getEngagement));
 router.patch("/vendor-engagements/:id/inherent", ...chain, asTenant(overrideInherent));
 router.post("/vendor-engagements/:id/scope", ...chain, asTenant(resolveScope));
+router.post(
+  "/vendor-engagements/:id/reseed-from-relationship",
+  ...chain,
+  asTenant(reseedFromRelationship)
+);
 router.get("/vendor-engagements/:id/assurance-coverage", ...chain, asTenant(getAssuranceCoverage));
 router.get("/vendor-engagements/:id/composition", ...chain, asTenant(getComposition));
 router.get("/vendor-engagements/:id/facts", ...chain, asTenant(getEngagementFacts));
