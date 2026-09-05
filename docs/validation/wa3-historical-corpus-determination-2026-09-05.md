@@ -683,3 +683,140 @@ at opening a new engagement.
    to see the resulting question set before it replaces the current scope;
 7. on an issued engagement the control is absent and the copy says to open a new
    engagement instead.
+
+---
+
+# Part 4 — deployed-staging validation
+
+## Historical non-mutation, on the real population
+
+Migration `20261091` ran for the first time against real data during the
+staging deploy of develop `ab5283b2`. The pre-bridge capture was taken at
+`2026-09-05T10:56:17Z`, before the deploy; the post-bridge capture at
+`13:07:22Z`, after it.
+
+| Invariant (owner ruling §G) | Result |
+|---|---|
+| 7/7 engagements accounted for | PASS |
+| 93/93 items accounted for | PASS |
+| 51/51 answered items accounted for | PASS |
+| No population item left unstamped | PASS (0) |
+| 93/93 bound to **version 1** | PASS |
+| 0 bound to any other version (the A1.1 v2 trap) | PASS |
+| 51 responses bound, none orphaned or added | PASS |
+| 57 revisions bound | PASS |
+| No cross-tenant version binding | PASS (0) |
+| The SAME 93 items, none added or dropped | PASS |
+| **100% render byte-identical content before vs after** | **PASS** |
+| Every answered item's response bound to the frozen version | PASS |
+
+Re-verified after a second and third deploy: still 93 bound to v1, so the
+migration is genuinely idempotent rather than merely once-correct.
+
+## The curation experiment — both halves of the durable invariant
+
+The whole WA-3 thesis, run against deployed staging on `CC6.1`
+(`d57c402e…`), a requirement genuinely inside the frozen population, on frozen
+engagement `8de82330`:
+
+1. the canonical requirement text was **curated** through the real admin route;
+2. **HALF 1** — the frozen engagement rendered **byte-identical** content
+   afterwards. Before migration `20261091` it would not have: an unstamped item
+   reads `COALESCE(qv.guidance, r.description)`, so the curation would have
+   silently rewritten 93 already-answered questions;
+3. **HALF 2** — a NEW composition made after the curation rendered the
+   **corrected** text and was bound to a **new immutable version**
+   (`63a177b8` ≠ `0808e4fb`);
+4. the canonical text was restored.
+
+`CC6.1` now carries v1 (235 chars, published `2026-08-28T18:06:54Z`, what all 93
+frozen items point at) and v2 (257 chars, `2026-09-05T13:56:04Z`, the curated
+text), with the canonical description restored to match v1. Append-only history
+kept every step — that is the mechanism working, not damage.
+
+The negative control for this lives in the isolation suite: the arm that asserts
+a bound item does not move under a corpus edit **while a deliberately-unbound
+one does**.
+
+## R8 provenance, written through the real UI
+
+Four `vendor_engagement_relationship_reseeds` rows were written by the browser
+journey, each carrying a **17-field** `prior_basis` and `new_basis`, a named
+human actor, a reason, and `tier_1_critical → tier_4_low`.
+
+**15 of 17** fields are reported as changed. `ai_involvement` and `ai_autonomy`
+were `none` in both the high and low fixtures and are correctly absent — live
+evidence that the comparison reports genuine movement rather than flagging the
+whole basis.
+
+Schema verified on staging: RLS enabled, `app_request` holds exactly
+`{INSERT, SELECT}`, two shared `worm_guard_mutation` triggers.
+
+## Three defects found by browser validation
+
+None of these could have been caught by a unit or isolation test.
+
+1. **The component unmounted itself on success.** `if (!determination.stale)
+   return null` ran before the success message was considered, so the
+   `revalidatePath` that followed a successful rebase made the analyst's
+   next-step guidance vanish mid-read — the one instruction R8-1 exists to give.
+2. **A redundant `router.refresh()` cancelled its own action stream.** There was
+   only ever ONE POST: the server action. The action already calls
+   `revalidatePath`, so Next streams the revalidated page back in that same
+   response, and refreshing on top superseded the stream mid-flight. The user
+   saw the right thing, but the request logged as aborted — indistinguishable
+   from a mutation that failed. It was a Heisenbug: attaching request listeners
+   perturbed the timing enough to let the stream finish, so the journey passed
+   *because it was being observed*.
+3. **The harness degraded the environment it validated.** The journey created a
+   new vendor per run and walked the staging org into its 75-monitored-entity
+   plan limit (`entity_limit_reached`). It now reuses one harness vendor and
+   creates only fresh relationships, which carry no such limit.
+
+## Operational finding — journey fixture debt
+
+`[SEED] Walkthrough Org` holds **74 vendors + 1 AI system = 75/75**, at the plan
+limit. **38 are journey fixtures**: WA1 9, WA2 17, WA3 12. WA-3's journey no
+longer adds to this, but the existing fixtures remain and the org has no
+headroom for new monitored entities. Reported, not acted on: deleting staging
+data was not authorized and is not required for WA-3.
+
+## Browser validation at the final SHA
+
+Deployed staging, both services live on develop **`9f870a12`**
+(`securelogic-engine-staging` and `securelogic-app-staging`, verified by deploy
+API before each run).
+
+| Run | Result |
+|---|---|
+| Chromium `20260905T143639` | **32/32** |
+| WebKit `20260905T143740` | **32/32** (zero failed requests of any kind) |
+| Chromium `20260905T143844` (stability re-run) | **32/32** |
+
+Thirty-two arms per run, covering:
+
+- **Ruling 1** — 6 arms: the rationale renders for the vendor on 79 questions;
+  no scope-rule id in the markup; none in the captured
+  `/vendor-portal/questions` payload; and a non-vacuity arm asserting
+  `why_we_are_asking` is present, so the negative assertions cannot pass against
+  an empty payload.
+- **Internal provenance** — the analyst composition payload still carries
+  `rule_id`, returning a real value (`S1.baseline`).
+- **R8-3** — staleness reported on both a pre-issue and an issued engagement,
+  fields itemised, the engagement's value shown beside the relationship's.
+- **R8-1** — the control is disabled until a reason is given; the basis moves to
+  `tier_4_low`; the analyst gets the next-step sentence; and the composition's
+  **content hash and `history_count` are unchanged**, proving it was not
+  silently re-run.
+- **R8 refusal** — the issued engagement shows the notice, names "open a new
+  engagement", and offers **no** rebase control.
+- **Freeze** — integrity verdict `match`; 79/79 newly composed items bound to an
+  immutable content version.
+- **Hygiene** — no client-side exceptions; no failed request other than
+  navigation-cancelled GET prefetches (Chromium 21–23, WebKit 0); and no aborted
+  POST.
+
+The aborted-POST arm is asserted separately from the tolerated prefetch class,
+because a cancelled mutation is indistinguishable from a failed one in a log.
+It is what surfaced the `router.refresh()` defect, and it is green three runs
+running.
