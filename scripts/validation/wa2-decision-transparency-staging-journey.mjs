@@ -141,11 +141,16 @@ async function main() {
   // ── 2. The engagement page defends its own rating ──
   await page.goto(`${APP}/vendor-engagements/${s.engagementId}`);
   await page.getByLabel("Relationship under assessment").waitFor({ timeout: 60_000 });
+  // Guarded: a FAILED assertion must not abort the run. The whole point of
+  // running this against a pre-WA-2 deployment (the negative control) is to see
+  // every assertion fail, and a hard crash on the first missing element hides
+  // the rest of the picture.
   const why = page.getByText("Why this rating?");
-  (await why.count()) > 0
+  const hasWhy = (await why.count()) > 0;
+  hasWhy
     ? ok("WA-2: the engagement page offers 'Why this rating?'")
     : bad("no basis disclosure on the engagement page");
-  await why.first().click();
+  if (hasWhy) await why.first().click();
 
   const body = await page.textContent("body");
   // A stored factor explanation, rendered verbatim from the envelope.
@@ -155,9 +160,13 @@ async function main() {
   /on the approved matrix/.test(body)
     ? ok("WA-2: the tier is explained as the joint function it is")
     : bad("no tier matrix sentence");
-  /criticality v1\.0\.0|vendor_criticality_v1/.test(body)
-    ? ok("WA-2: the methodology stamp travels with the basis")
-    : bad("no methodology stamp");
+  // NOT `/criticality v1\.0\.0/` — the VO-11 header already prints that, so
+  // matching it passed against a pre-WA-2 deployment and proved nothing. The
+  // negative control caught it. `method` + version together is rendered ONLY by
+  // ClassificationBasisPanel, off the stored envelope.
+  /vendor_inherent_v2 v2\.0\.0/.test(body)
+    ? ok("WA-2: the basis envelope's own method + methodology stamp render")
+    : bad("no basis-envelope methodology stamp");
   /correct the facts and record the intake/.test(body)
     ? ok("WA-2: the page says ratings are corrected through facts, never edited")
     : bad("no correction guidance");
@@ -176,7 +185,15 @@ async function main() {
 
   // ── 4. Challenge: recorded, and offering no way to remove anything ──
   const chal = page.getByLabel("Applicability challenges");
-  await chal.waitFor({ timeout: 60_000 });
+  const hasChallenges = await chal
+    .waitFor({ timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!hasChallenges) {
+    bad("no challenge surface on a composed engagement");
+    await finish(browser, page, pageErrors, s);
+    return;
+  }
   ok("WA-2: the challenge surface is present on a composed engagement");
   await page.getByRole("button", { name: /Disagree with a determination/ }).click();
   const formText = await chal.textContent();
@@ -275,10 +292,15 @@ async function main() {
     ? ok("WA-2: exactly one row still holds that address")
     : bad("a duplicate was created");
 
+  await finish(browser, page, pageErrors, s);
+}
+
+/** Single exit: an early return must still write the ledger and the artifacts. */
+async function finish(browser, page, pageErrors, s) {
   pageErrors.length === 0
     ? ok(`no client-side exceptions (${BROWSER})`)
     : bad(`client-side exceptions (${BROWSER})`, pageErrors.join(" | "));
-
+  await shot(page, "99-final");
   await browser.close();
   console.log("\n" + ledger.join("\n"));
   console.log(`\nBROWSER=${BROWSER} PASS=${ledger.length - fails} FAIL=${fails} vendor=${s.vendorId} engagement=${s.engagementId}`);
