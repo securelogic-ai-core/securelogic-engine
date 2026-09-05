@@ -31,7 +31,6 @@
  */
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import type { VendorEngagementRelationshipDetermination } from "@/lib/api";
 import { reseedFromRelationship } from "@/app/actions/vendorEngagements";
 
@@ -72,7 +71,6 @@ export default function RelationshipDeterminationNotice({
   engagementId: string;
   determination: VendorEngagementRelationshipDetermination | null | undefined;
 }): JSX.Element | null {
-  const router = useRouter();
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -131,7 +129,14 @@ export default function RelationshipDeterminationNotice({
       }
       setDone(res.nextStep);
       setReason("");
-      router.refresh();
+      // NO router.refresh() here. The server action already calls
+      // revalidatePath for this engagement, so Next streams the revalidated
+      // page back as part of THIS action's own response. Calling refresh()
+      // on top of it supersedes that stream mid-flight — the user still sees
+      // the right thing, but the POST is reported as aborted, which in a
+      // request log is indistinguishable from a mutation that failed. Proven
+      // on deployed staging: exactly one POST, cancelled by the redundant
+      // refresh.
     });
   };
 
