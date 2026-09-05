@@ -3582,8 +3582,17 @@ export async function raiseApplicabilityChallenge(req: Request, res: Response): 
       return;
     }
     const snapshot = latest.snapshot;
-    const objective = snapshot.core_assurance?.objectives.find((o) => o.reference === reference) ?? null;
-    const additional = snapshot.additional.find((a) => a.reference === reference) ?? null;
+    // Read DEFENSIVELY. `snapshot` is stored JSONB written under a versioned
+    // contract (`snapshot_version`), and this route may one day read a row a
+    // newer or older writer produced. Assuming the shape would turn the first
+    // such row into a 500 on a governance surface; treating a missing branch as
+    // "no such determination" degrades to an honest 404 instead.
+    const objectives = Array.isArray(snapshot.core_assurance?.objectives)
+      ? snapshot.core_assurance.objectives
+      : [];
+    const additionals = Array.isArray(snapshot.additional) ? snapshot.additional : [];
+    const objective = objectives.find((o) => o.reference === reference) ?? null;
+    const additional = additionals.find((a) => a.reference === reference) ?? null;
     if (!objective && !additional) {
       res.status(404).json({
         error: "determination_not_found",
