@@ -94,6 +94,27 @@ export default function RelationshipDeterminationNotice({
       </section>
     );
   }
+  // A rebase that has just succeeded keeps its confirmation on screen.
+  //
+  // Without this the component is unmounted by its own success: router.refresh()
+  // lands fresh server data in which the basis is no longer stale, the early
+  // return below fires, and the analyst's next-step guidance disappears while
+  // they are still reading it — taking the in-flight revalidation with it, which
+  // then surfaces in a request log as a cancelled POST indistinguishable from a
+  // mutation that failed. Found by the deployed-staging journey, where the abort
+  // was intermittent.
+  if (!determination.stale && done) {
+    return (
+      <section
+        aria-label="Relationship determination"
+        style={{ marginTop: 12, padding: "10px 12px", border: "1px solid #166534", borderRadius: 8, background: "rgba(22,101,52,0.12)" }}
+      >
+        <p role="status" style={{ margin: 0, fontSize: 13, color: "#86efac" }}>
+          {done}
+        </p>
+      </section>
+    );
+  }
   if (!determination.stale) return null;
 
   const changed = determination.changed_fields;

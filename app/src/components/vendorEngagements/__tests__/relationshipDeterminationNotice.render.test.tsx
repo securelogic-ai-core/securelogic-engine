@@ -101,6 +101,39 @@ describe("R8 — the rebase is deliberate, reasoned, and pre-issue only", () => 
     expect(await screen.findByText(/Run the composition to see the question set/i)).toBeInTheDocument();
   });
 
+  it("keeps the confirmation on screen after the refresh clears staleness", async () => {
+    // The component is rendered by a server page. On success it calls
+    // router.refresh(), and the fresh data says the basis is no longer stale —
+    // so a naive `if (!stale) return null` unmounts the component by its own
+    // success and the analyst's next-step guidance vanishes mid-read. The
+    // deployed-staging journey caught it as an intermittently cancelled POST.
+    actions.reseedFromRelationship.mockResolvedValue({
+      ok: true,
+      changed: [{ field: "assessment_tier", from: "tier_1_critical", to: "tier_4_low" }],
+      nextStep: "Run the composition to see the question set these facts produce.",
+    });
+    const { rerender } = renderNotice(CHANGED);
+    fireEvent.change(screen.getByLabelText(/Why are you rebasing/i), {
+      target: { value: "Scope reduced to a read-only reporting feed." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Rebase onto current determination/i }));
+    // `role="status"` is the confirmation specifically. Matching on the words
+    // alone would also hit the form's static "you will still run the
+    // composition" hint and prove nothing.
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/these facts produce/i));
+
+    // The server re-renders with the basis now current.
+    rerender(
+      <RelationshipDeterminationNotice
+        engagementId="eng-1"
+        determination={{ stale: false, indeterminate: false, reseedable: true, changed_fields: [] }}
+      />
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/these facts produce/i);
+    // ...and the stale banner is correctly gone.
+    expect(screen.queryByText(/relationship has been re-assessed/i)).not.toBeInTheDocument();
+  });
+
   it("surfaces a refusal without claiming anything changed", async () => {
     actions.reseedFromRelationship.mockResolvedValue({
       ok: false,
