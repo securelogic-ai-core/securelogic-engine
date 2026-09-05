@@ -291,6 +291,32 @@ async function main() {
   after.filter((c) => c.email === s.retiredEmail).length === 1
     ? ok("WA-2: exactly one row still holds that address")
     : bad("a duplicate was created");
+  await page.waitForTimeout(PACE_MS);
+
+  // ── 7. Re-recording the intake can say WHY ──
+  //
+  // The engine refuses a re-intake without `change_reason`. The form had no
+  // field for it, so "Re-record intake" answered 400 with nowhere to reply —
+  // a dead end this arm exists to keep closed.
+  const reRecord = page.getByRole("button", { name: "Re-record intake" });
+  const canReRecord = (await reRecord.count()) > 0;
+  if (!canReRecord) {
+    bad("no re-record control on a classified relationship");
+  } else {
+    await reRecord.first().click();
+    const changed = page.getByLabel("What changed about this relationship?");
+    (await changed.count()) > 0
+      ? ok("WA-2: a re-intake asks what changed — the field the engine requires exists")
+      : bad("re-intake offers no way to give the reason the engine demands");
+    // The precise gating (facts answered, reason too short, reason accepted) is
+    // pinned by the card's unit arms; here we prove the field reached staging
+    // and explains why it is being asked.
+    const guidance = await page.textContent("body");
+    /The reason is kept\s+with the new facts|The reason is kept with the new facts/.test(guidance)
+      ? ok("WA-2: the form says what the reason is for and that history is kept")
+      : bad("no re-intake reason guidance");
+    await shot(page, "06-reintake-reason");
+  }
 
   await finish(browser, page, pageErrors, s);
 }

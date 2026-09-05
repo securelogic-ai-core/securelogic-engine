@@ -8446,6 +8446,13 @@ export type RelationshipIntakeInput = {
   ai_autonomy: string;
   hosting_model: string;
   fourth_party_exposure: string;
+  /**
+   * WA-2: why the facts changed. The engine REQUIRES it (>= 10 chars) on a
+   * re-intake and rejects it with `change_reason_required`; a first intake is
+   * the baseline and is exempt. Optional here because the same input type
+   * serves both calls.
+   */
+  change_reason?: string;
 };
 
 export type VendorRelationshipResult<T> = T | { failure: { error: string; message?: string; missing?: string[]; invalid?: string[] } };

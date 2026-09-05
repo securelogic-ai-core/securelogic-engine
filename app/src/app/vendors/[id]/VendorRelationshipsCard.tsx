@@ -55,13 +55,27 @@ function Field({ def, value, onChange, disabled }: { def: IntakeFieldDef; value:
   );
 }
 
+/**
+ * Mirrors the engine's re-intake gate in `vendorRelationships.ts` (a trimmed
+ * `change_reason` shorter than this is refused with `change_reason_required`).
+ * Kept client-side only to disable the button rather than let the round trip
+ * fail; the engine remains the authority.
+ */
+const REASON_MIN = 10;
+
 function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; relationship: VendorRelationship; onDone: (msg: string) => void }): JSX.Element {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [v, setV] = useState<Record<string, string>>({});
   const [breach, setBreach] = useState(false);
+  // WA-2: a re-intake must say what changed. The first intake is the baseline
+  // and is exempt, so the field only appears once a classification exists.
+  const isReintake = relationship.classification_state === "classified";
+  const [reason, setReason] = useState("");
+  const reasonOk = !isReintake || reason.trim().length >= REASON_MIN;
   const all = [...DEPENDENCY_FIELDS, ...EXPOSURE_FIELDS];
-  const complete = all.every((f) => (v[f.name] ?? "") !== "");
+  const factsComplete = all.every((f) => (v[f.name] ?? "") !== "");
+  const complete = factsComplete && reasonOk;
   const set = (k: string, val: string) => setV((s) => ({ ...s, [k]: val, ...(k === "ai_involvement" && val === "none" ? { ai_autonomy: "none" } : {}) }));
 
   return (
@@ -84,6 +98,23 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
         <input type="checkbox" checked={breach} onChange={(e) => setBreach(e.target.checked)} disabled={pending} />
         An active obligation in scope carries a breach-notification duty
       </label>
+      {isReintake && (
+        <label style={{ display: "grid", gap: 3, marginTop: 10 }}>
+          <span style={{ fontSize: 11, color: "#94a3b8" }}>What changed about this relationship?</span>
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={pending}
+            rows={2}
+            aria-label="What changed about this relationship?"
+            style={{ ...input(), resize: "vertical", fontFamily: "inherit" }}
+          />
+          <span style={{ fontSize: 10, color: "#64748b" }}>
+            Re-recording the intake re-derives Criticality, Inherent risk and the Assessment tier. The reason is kept
+            with the new facts, and the previous version stays in the history.
+          </span>
+        </label>
+      )}
       <button
         type="button"
         disabled={pending || !complete}
@@ -96,7 +127,11 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
             // route, which has no error boundary and would crash the page.
             let r: Awaited<ReturnType<typeof recordRelationshipIntake>>;
             try {
-              r = await recordRelationshipIntake(vendorId, relationship.id, { ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">), regulatory_breach_notification: breach });
+              r = await recordRelationshipIntake(vendorId, relationship.id, {
+                ...(v as unknown as Omit<RelationshipIntakeInput, "regulatory_breach_notification">),
+                regulatory_breach_notification: breach,
+                ...(isReintake ? { change_reason: reason.trim() } : {}),
+              });
             } catch {
               setError(TRANSPORT_FAILURE);
               return;
@@ -106,7 +141,13 @@ function IntakeForm({ vendorId, relationship, onDone }: { vendorId: string; rela
           });
         }}
       >
-        {pending ? "Deriving…" : complete ? "Record intake and classify" : "Answer every question to continue"}
+        {pending
+          ? "Deriving…"
+          : !factsComplete
+            ? "Answer every question to continue"
+            : reasonOk
+              ? "Record intake and classify"
+              : "Say what changed to continue"}
       </button>
       {error && <p style={{ marginTop: 8, fontSize: 12, color: "#fca5a5" }}>{error}</p>}
     </div>
